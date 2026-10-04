@@ -30,7 +30,7 @@ describe('VFR source', () => {
   it('probe flags the file as VFR (r_frame_rate 24 vs avg 26.96) and reports both rates', () => {
     const v = vfr.probe!.video!;
     console.log(`[vfr] fps=${v.fps.num}/${v.fps.den} avgFps=${v.avgFps.num}/${v.avgFps.den} isVfr=${v.isVfr} duration=${vfr.probe!.duration} frames=${srcPts.length} first pts: ${srcPts.slice(0, 3).map((p) => fmt(p, 4))} ... ${srcPts.slice(118, 124).map((p) => fmt(p, 4))}`);
-    console.log(`[vfr] counters[118..124]=${srcCounters.slice(118, 125)} pts[126..130]=${srcPts.slice(126, 131).map((p) => fmt(p, 4))} model(5.25)=${editorFrameOnGrid(5.25)}`);
+    console.log(`[vfr] counters.length=${srcCounters.length} pts.length=${srcPts.length} counters[126..130]=${srcCounters.slice(126, 131)} pts[126..130]=${srcPts.slice(126, 131).map((p) => fmt(p, 4))} model(5.25)=${editorFrameOnGrid(5.25)}`);
     expect(v.isVfr).toBe(true);
     expect(srcPts.length).toBe(120 + 150);
   });

@@ -5,7 +5,7 @@
  * Export (electron/export/renderGraph.ts): -ss/trim keep frames with pts >= sourceTime, then fps=<seq fps>.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { sourceTimeAt } from '@shared/timeline';
+import { sourceTimeAt, clipEnd } from '@shared/timeline';
 import { framesToSeconds } from '@shared/time';
 import type { MediaItem, Rational, Sequence } from '@shared/model';
 import { ensureMedia, mediaPath, makeMediaItem, makeSeq, vclip, exportSeq, exportPatched, request, readCounters, editorMediaFrame, FPS_23976, FPS_24, FPS_25, FPS_2997, countFrames } from './helpers';
@@ -87,6 +87,21 @@ describe('export frame mapping vs editor model', () => {
     const r = await compare(seq, c25, '25->29.97');
     expect(r.frames).toBe(r.expectedFrames);
     expect(r.mismatches).toEqual([]);
+  });
+
+  it('ATTRIBUTION: 25 -> 29.97 with exact setpts: remaining mismatches are the fps-filter policy, not truncation', async () => {
+    const seq = makeSeq(FPS_2997);
+    manyClips(seq, c25, 12, 30, 10, 40);
+    const re = /setpts=N\*1001\/30000\/TB/g;
+    const { outputPath } = await exportPatched(request(seq, [c25]), { filter: (g) => g.replace(re, 'settb=1001/30000,setpts=N') });
+    const counters = await readCounters(outputPath);
+    let mism = 0; const ex: string[] = [];
+    for (const clip of seq.videoTracks[0].clips) for (let f = clip.start; f < clipEnd(clip); f++) {
+      const want = editorMediaFrame(sourceTimeAt(clip, f, seq.fps), c25.probe!.video!.fps);
+      if (counters[f] !== want) { mism++; if (ex.length < 6) ex.push(`j=${f - clip.start} src=${sourceTimeAt(clip, f, seq.fps).toFixed(4)} want=${want} got=${counters[f]}`); }
+    }
+    console.log(`[framemap 25->29.97 exact setpts] frames=${counters.length} mismatches=${mism} ${ex.join('; ')}`);
+    expect(counters.length).toBe(360);
   });
 
   it('24 fps source in a 24 fps sequence with sourceIn OFF the media frame grid (after slip/trim in a 25 fps sequence)', async () => {

@@ -76,5 +76,6 @@ have cover.mp3 || $FF -f lavfi -i "sine=f=440:r=48000:d=3" -i "$OUT/cover.png" -
 
 # counter variants for timestamp tests (appended)
 have counter24.ts || $FF -i "$OUT/counter24.mp4" -c copy -f mpegts "$OUT/counter24.ts"
+have counter24_start.mkv || $FF -i "$OUT/counter24.ts" -c copy "$OUT/counter24_start.mkv"
 have counter24_ts10.mp4 || $FF -i "$OUT/counter24.mp4" -c copy -output_ts_offset 10 "$OUT/counter24_ts10.mp4"
 echo ok

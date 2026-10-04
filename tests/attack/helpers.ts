@@ -69,7 +69,7 @@ export async function framePts(file: string): Promise<number[]> {
  * Returns -1 for frames that do not carry a valid counter (e.g. black gap frames, fades).
  */
 export async function readCounters(file: string, extraInput: string[] = []): Promise<number[]> {
-  const { stdout } = await ff([...extraInput, '-i', file, '-map', '0:v:0', '-vf', 'scale=2:2:flags=area', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-']);
+  const { stdout } = await ff([...extraInput, '-i', file, '-map', '0:v:0', '-vf', 'scale=2:2:flags=area', '-fps_mode', 'passthrough', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-']);
   const out: number[] = [];
   for (let i = 0; i + 6 <= stdout.length; i += 6) {
     const top = (stdout[i] + stdout[i + 1]) / 2, bot = (stdout[i + 2] + stdout[i + 3]) / 2;
@@ -83,7 +83,7 @@ export async function readCounters(file: string, extraInput: string[] = []): Pro
 
 /** Mean luma (Y plane, 16..235) of every frame. */
 export async function frameLuma(file: string): Promise<number[]> {
-  const { stdout } = await ff(['-i', file, '-map', '0:v:0', '-vf', 'scale=2:2:flags=area', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-']);
+  const { stdout } = await ff(['-i', file, '-map', '0:v:0', '-vf', 'scale=2:2:flags=area', '-fps_mode', 'passthrough', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-']);
   const out: number[] = [];
   for (let i = 0; i + 6 <= stdout.length; i += 6) out.push((stdout[i] + stdout[i + 1] + stdout[i + 2] + stdout[i + 3]) / 4);
   return out;

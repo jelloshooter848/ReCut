@@ -28,7 +28,8 @@ test.describe('Chromium <video> seek semantics', () => {
       v.muted = true; v.preload = 'auto'; v.src = url;
       document.body.appendChild(v);
       await new Promise<void>((res, rej) => { v.addEventListener('loadeddata', () => res(), { once: true }); v.addEventListener('error', () => rej(new Error('load error')), { once: true }); });
-      const cv = document.createElement('canvas'); cv.width = 2; cv.height = 2;
+      const W = v.videoWidth, H = v.videoHeight;
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
       const ctx = cv.getContext('2d', { willReadFrequently: true })!;
       const results: SeekResult[] = [];
       for (const t of times) {
@@ -42,11 +43,13 @@ test.describe('Chromium <video> seek semantics', () => {
         await new Promise<void>((res) => { v.addEventListener('seeked', () => res(), { once: true }); v.currentTime = t; });
         await vfc;
         await new Promise((r) => requestAnimationFrame(() => r(null)));
-        ctx.drawImage(v, 0, 0, 2, 2);
-        const d = ctx.getImageData(0, 0, 2, 2).data;
-        // limited-range Y from R (grey frames): Y = R*219/255 + 16; counter = (Y-16)/4 => R/4.657
-        const lo = Math.round(d[0] / (4 * 255 / 219)), hi = Math.round(d[8] / (4 * 255 / 219));
-        results.push({ t, currentTime: v.currentTime, counter: hi * 50 + lo, mediaTime, r: [d[0], d[8]] });
+        ctx.drawImage(v, 0, 0, W, H);
+        // average a 8x8 block in the middle of each half (grey frames: R=G=B)
+        const avg = (x: number, y: number) => { const d = ctx.getImageData(x, y, 8, 8).data; let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i]; return s / (d.length / 4); };
+        const top = avg(Math.floor(W / 2) - 4, Math.floor(H / 4) - 4), bot = avg(Math.floor(W / 2) - 4, Math.floor(3 * H / 4) - 4);
+        // limited-range Y from R: Y = R*219/255 + 16; counter digit = (Y-16)/4 = R/4.657
+        const lo = Math.round(top / (4 * 255 / 219)), hi = Math.round(bot / (4 * 255 / 219));
+        results.push({ t, currentTime: v.currentTime, counter: hi * 50 + lo, mediaTime, r: [Math.round(top), Math.round(bot)] });
       }
       v.remove();
       return { duration: v.duration, videoWidth: v.videoWidth, videoHeight: v.videoHeight, results };
@@ -60,12 +63,17 @@ test.describe('Chromium <video> seek semantics', () => {
     const starts = ks.map((k) => k / 24);
     const before = ks.filter((k) => k > 0).map((k) => k / 24 - 0.0005);
     const r = await probe(file, [...centers, ...starts, ...before]);
-    const lines = r.results.map((x) => `t=${x.t.toFixed(5)} currentTime=${x.currentTime.toFixed(6)} frame=${x.counter} mediaTime=${x.mediaTime === null ? 'n/a' : x.mediaTime.toFixed(6)}`);
+    const lines = r.results.map((x) => `t=${x.t.toFixed(5)} currentTime=${x.currentTime.toFixed(6)} frame=${x.counter} rgb=${x.r} mediaTime=${x.mediaTime === null ? 'n/a' : x.mediaTime.toFixed(6)}`);
     console.log(`[chromium 24fps] duration=${r.duration} size=${r.videoWidth}x${r.videoHeight}\n  ${lines.join('\n  ')}`);
     const got = r.results.map((x) => x.counter);
-    expect(got.slice(0, ks.length)).toEqual(ks);                       // centers -> k
-    expect(got.slice(ks.length, 2 * ks.length)).toEqual(ks);           // exact starts -> k
+    expect(got.slice(0, ks.length)).toEqual(ks);                       // centers -> k (covering frame)
+    // exact starts: Chromium truncates currentTime to microseconds, so k/24 lands 0.3 µs BEFORE frame k and shows k-1
+    // unless k/24 is exactly representable (k = 0, 48): seeking to frame starts is not frame-safe.
+    const starts = got.slice(ks.length, 2 * ks.length);
+    starts.forEach((f, i) => expect([ks[i], ks[i] - 1]).toContain(f));
+    expect(starts.filter((f, i) => f === ks[i] - 1).length).toBeGreaterThan(0);
     expect(got.slice(2 * ks.length)).toEqual(ks.filter((k) => k > 0).map((k) => k - 1)); // 0.5 ms before -> k-1
+    for (const x of r.results) if (x.mediaTime !== null) expect(Math.abs(x.mediaTime - x.counter / 24)).toBeLessThan(1e-4); // rVFC mediaTime = frame start
   });
 
   test('23.976 fps, hour-long file: frame-center seeks land on frame k for k = 0, 1, 1000, 86300', async () => {
@@ -82,14 +90,18 @@ test.describe('Chromium <video> seek semantics', () => {
     }
   });
 
-  test('container start_time 10 s with video 22 ms after the container start: which frame is at frame-center 100?', async () => {
-    const file = path.join(MEDIA_DIR, 'counter24_ts10.mp4');
-    const r = await probe(file, [0, 0.5 / 24, (100 + 0.5) / 24, 100 / 24, (100 + 0.5) / 24 + 0.0015]);
-    const lines = r.results.map((x) => `t=${x.t.toFixed(5)} currentTime=${x.currentTime.toFixed(6)} frame=${x.counter} mediaTime=${x.mediaTime === null ? 'n/a' : x.mediaTime.toFixed(6)}`);
-    console.log(`[chromium ts10] duration=${r.duration}\n  ${lines.join('\n  ')}`);
-    // Chromium's timeline starts at the container start (9.978); video frame k sits at 0.022 + k/24, so the frame-center of
-    // frame 100 (4.1875) is still inside frame 99 (4.147..4.189) => the editor shows 99 while ffmpeg -ss 4.1875 / trim>=4.1875 pick 100.
-    expect(r.results[2].counter).toBe(99);
-    expect(r.results[4].counter).toBe(100);
-  });
+  for (const name of ['counter24_ts10.mp4', 'counter24_start.mkv']) {
+    test(`${name} (container start_time != 0): the editor seeks with 0-based source time, Chromium's timeline is NOT 0-based`, async () => {
+      const file = path.join(MEDIA_DIR, name);
+      const start = Number(JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', file]).toString()).format.start_time);
+      const r = await probe(file, [0, (100 + 0.5) / 24, start + (100 + 0.5) / 24, start + (300 + 0.5) / 24]);
+      const lines = r.results.map((x) => `seek t=${x.t.toFixed(4)} -> currentTime=${x.currentTime.toFixed(4)} frame=${x.counter} mediaTime=${x.mediaTime === null ? 'n/a' : x.mediaTime.toFixed(4)}`);
+      console.log(`[chromium ${name}] ffprobe start_time=${start} video.duration=${r.duration}\n  ${lines.join('\n  ')}`);
+      // With the offset applied (start + center) Chromium shows the intended frames:
+      expect(r.results[2].counter).toBe(100);
+      expect(r.results[3].counter).toBe(300);
+      // What SourcePlayer/SequencePlayer actually do (currentTime = 0-based source time) must also show frame 100:
+      expect(r.results[1].counter).toBe(100);
+    });
+  }
 });

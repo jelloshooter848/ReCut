@@ -8,7 +8,7 @@ import path from 'node:path';
 import type { MediaItem, Sequence } from '@shared/model';
 import { addTransition, clipEnd } from '@shared/timeline';
 import { buildRenderGraph } from '../../electron/export/renderGraph';
-import { ensureMedia, mediaPath, makeMediaItem, makeSeq, vclip, aclip, exportSeq, request, readCounters, frameLuma, flashFrames, audioOnsets, audioRms, countFrames, ffprobeJson, framePts, FPS_24, FPS_23976, SCRATCH, fmt, ff } from './helpers';
+import { ensureMedia, mediaPath, makeMediaItem, makeSeq, vclip, aclip, exportSeq, exportPatched, request, readCounters, frameLuma, flashFrames, audioOnsets, audioRms, countFrames, ffprobeJson, framePts, FPS_24, FPS_23976, SCRATCH, fmt, ff } from './helpers';
 
 let counter24: MediaItem, sync24: MediaItem, small360: MediaItem, odd853: MediaItem, rotated: MediaItem, image: MediaItem;
 beforeAll(async () => {
@@ -24,7 +24,7 @@ beforeAll(async () => {
 describe('scale: 300-clip sequence', () => {
   it('buildRenderGraph is fast and ffmpeg accepts a 300-input graph; frames are exact', async () => {
     const seq = makeSeq(FPS_24);
-    for (let k = 0; k < 300; k++) { vclip(seq, counter24, k * 2, 2, (k % 200) / 24 * 2); aclip(seq, counter24, k * 2, 2, (k % 200) / 24 * 2); }
+    for (let k = 0; k < 300; k++) { vclip(seq, counter24, k * 2, 2, (k % 200) / 24 * 2 + 1 / 24); aclip(seq, counter24, k * 2, 2, (k % 200) / 24 * 2 + 1 / 24); }
     const t0 = performance.now();
     const g = buildRenderGraph(request(seq, [counter24]));
     const buildMs = performance.now() - t0;
@@ -36,11 +36,24 @@ describe('scale: 300-clip sequence', () => {
     const frames = await countFrames(outputPath);
     const counters = await readCounters(outputPath);
     let bad = 0;
-    for (let k = 0; k < 300; k++) for (let j = 0; j < 2; j++) if (counters[k * 2 + j] !== (k % 200) * 2 + j) bad++;
+    for (let k = 0; k < 300; k++) for (let j = 0; j < 2; j++) if (counters[k * 2 + j] !== (k % 200) * 2 + 1 + j) bad++;
     console.log(`[300 clips] ffmpeg ran ${runS.toFixed(1)} s for ${frames} frames (25 s of output); wrong frames=${bad}`);
     expect(frames).toBe(600);
     expect(bad).toBe(0);
-  }, 600_000);
+
+    // PERF EXPERIMENT: the same graph with the 1 s decoder pre-roll removed (-ss moved to the exact start, trim=start=0).
+    const t2 = performance.now();
+    const patched = await exportPatched(request(seq, [counter24]), {
+      args: (a) => a.map((x, i) => (a[i - 1] === '-ss' ? String(Number(x) + 1) : x)),
+      filter: (g) => g.replace(/\btrim=start=1:/g, 'trim=start=0:').replace(/\batrim=start=1:/g, 'atrim=start=0:'),
+    });
+    const runS2 = (performance.now() - t2) / 1000;
+    const c2 = await readCounters(patched.outputPath);
+    let bad2 = 0;
+    for (let k = 0; k < 300; k++) for (let j = 0; j < 2; j++) if (c2[k * 2 + j] !== (k % 200) * 2 + 1 + j) bad2++;
+    console.log(`[300 clips, no pre-roll] ffmpeg ran ${runS2.toFixed(1)} s; wrong frames=${bad2} (speed-up ${(runS / runS2).toFixed(2)}x)`);
+    expect(bad2).toBe(0);
+  }, 900_000);
 });
 
 describe('transitions at the edges', () => {
