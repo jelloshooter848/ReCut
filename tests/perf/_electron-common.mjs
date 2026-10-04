@@ -66,7 +66,7 @@ export const INIT_SCRIPT = `
       const inner = (f.tag === 5 && f.stateNode && f.stateNode.classList && f.stateNode.classList.contains('zone-panel')) ? labelOf(f.stateNode) : ctx;
       if (isComp(f)) {
         const clip = isClipFiber(f); if (clip) out.clipTotal++;
-        if (!seen.has(f)) { seen.add(f); if (f.flags & 1) { out.rendered++; out.byPanel[inner] = (out.byPanel[inner] || 0) + 1; if (clip) out.clipRendered++; } }
+        if (!seen.has(f)) { seen.add(f); if (f.flags & 1) { out.rendered++; out.byPanel[inner] = (out.byPanel[inner] || 0) + 1; if (clip) out.clipRendered++; const ty = f.type && (f.type.displayName || f.type.name || (f.type.type && (f.type.type.displayName || f.type.type.name)) || (f.type.render && f.type.render.name)) || '?'; out.byName = out.byName || {}; out.byName[ty] = (out.byName[ty] || 0) + 1; } }
       }
       if (f.child) { stack.push(f); labels.push(ctx); label = inner; f = f.child; continue; }
       label = ctx;
