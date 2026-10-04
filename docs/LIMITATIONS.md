@@ -1,6 +1,6 @@
 # Known limitations
 
-This page describes ReCut 0.1.0 at commit `7156564`. Every item was checked against the code. Items marked **bug** are
+This page describes ReCut 0.1.0 after the final polish pass (October 2026). Every item was checked against the code. Items marked **bug** are
 defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.md)).
 
 ## Editing and effects
@@ -11,12 +11,12 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **No titles or generators.** Text, shapes and solids are not available. Import a still image instead.
 - **Three transitions:** Cross Dissolve, Dip to Black, Audio Crossfade.
 - **No nested sequences or compound clips.**
-- **Speed:** forward only (no reverse). The Speed / Duration dialog (Ctrl+R) accepts 1 %–10 000 %. The Inspector's
-  Speed field is limited to 10 %–800 %.
+- **Speed:** forward only (no reverse). The Speed / Duration dialog (Ctrl+R) and the Inspector's Speed field both
+  accept 1 %–10 000 %.
 - **Sync:** linked clips that drift show an out-of-sync badge with the frame offset. There is no "Move / Slip into
   Sync" command, so you fix the offset by hand.
-- **What-if experiments** disable clips and show an *estimated* runtime. No single action removes the disabled
-  clips and closes the gaps. Use Ripple Delete, or duplicate the cut first.
+- **What-if experiments** disable clips and show an *estimated* runtime (V1 only, gaps not closed). **Remove
+  disabled** / **Duplicate as cut** make it real, but skip clips on locked tracks.
 - **Transcript search** flags lines that are already in the cut ("on timeline") only when the scope is a
   **Sequence**. In project, series or season scope it does not.
 - **Undo** keeps the last 200 steps per session. Playhead, zoom and In/Out are not undoable.
@@ -32,8 +32,9 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **Preview of surround:** proxies are stereo, and the browser downmixes directly-played 5.1 to your output device.
 - **Multi-stream originals:** export renders each clip's selected audio stream. The preview does not: a
   directly-playable file plays Chromium's default (first) audio track, and a proxied file plays the single stream
-  baked into its proxy (the media's selected stream at proxy time). Changing a clip's stream does not change what
-  you hear in the preview.
+  baked into its proxy. Changing the **media's** Audio stream in the Inspector marks a proxy built for another stream
+  stale and, with proxies on, rebuilds it for files that need one. Changing a single **clip's** stream does not change
+  what you hear in the preview.
 
 ## Preview (Chromium) and proxies
 
@@ -43,12 +44,9 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   [FORMATS](FORMATS.md).
 - **Proxies off does not mean originals only.** For an original Chromium cannot decode, a ready proxy is still used
   (Program shows the **Proxy** chip). This is deliberate. "Needs proxy" appears only when no proxy exists.
-- **Bug: still images are not drawn in the Program monitor.** Images are probed as not browser-playable
-  (`playabilityReason: "still image"`), so Program shows black and a **Needs proxy** chip over them. A proxy cannot
-  fix this: Generate Proxy is disabled for images in the Project menu, and the proxy job rejects a source with no
-  duration ("source has neither video nor audio"). The Source monitor shows images, and export renders them
-  correctly. (Checked by reading the code and by running `resolvePlaybackPath` on a probed PNG. Not reproduced in
-  the UI.)
+- **Still images** in PNG, JPEG, WebP, GIF and BMP are drawn directly (no proxy). Other image formats (TIFF, HEIC,
+  AVIF, JPEG XL, ...) export correctly, but the Program monitor lists them as missing ("convert to PNG or JPEG"). An
+  animated GIF shows its first frame in the preview.
 - **VFR sources** are flagged in the Media Inspector ("timecodes may drift; consider a proxy"). In the media attack
   suite, exports of VFR clips match the editor's frame model, but Chromium's own seeking on VFR files has not been
   measured. For frame-critical work on VFR material, use a proxy or a constant-frame-rate transcode.
@@ -74,13 +72,10 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 
 - **Only the Linux unpacked build** (`npm run package` → `release/linux-unpacked`) has been verified. The AppImage,
   dmg and nsis targets are configured but untested. Nothing is signed or notarised.
-- **FFmpeg is not bundled.** Install it yourself. ReCut does not warn at startup when it is missing. Imports and
-  exports fail, and Preferences / About show "not found".
-- **Bug (minor):** the exporter resolves FFmpeg on its own path. It honours `RECUT_FFMPEG` and `PATH` (then falls back
-  to `/usr/bin/ffmpeg`), but ignores `RECUT_FFMPEG_PATH` and the `<resources>/ffmpeg` folder that the media services
-  check.
-- **Preferences** are reachable with Ctrl+, (or Cmd+, / the app menu on macOS). On Linux and Windows there is no menu
-  item for them.
+- **FFmpeg is not bundled by default.** Install it yourself, or drop static binaries into `resources/ffmpeg/` before
+  `npm run package` / `npm run dist` (see [INSTALL](INSTALL.md#bundling-ffmpeg)). Bundling has only been exercised
+  with the Linux unpacked build. When FFmpeg is missing, ReCut shows a banner and import / proxies / export stop with
+  an explanation. ReCut finds FFmpeg once per session, so restart it after installing.
 - The cache location can only be changed with `RECUT_CACHE_DIR` or `cacheDir` in `prefs.json`. There is no UI for it.
 - One window and one open project at a time. Projects store **absolute** media paths, so moving media means using
   Relink.

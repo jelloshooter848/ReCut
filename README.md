@@ -35,6 +35,8 @@ Electron + React + TypeScript. FFmpeg does all media work. Version 0.1.0.
   and group them, and drag them to the timeline.
 - **Story tagging.** Tag clips with characters, plotlines, locations and tags. The Storyline panel can **Highlight** or
   **Solo** matching clips, and its **What if** buttons disable matching / non-matching clips and estimate the runtime.
+  **Remove disabled** turns the experiment into the real cut (ripple, one undo step), and **Duplicate as cut** does the
+  same in a new version of the sequence.
 - **Storyline blocks.** Label acts and arcs as coloured blocks above the cut.
 - **Alternate cuts and snapshots.** Duplicate a sequence as a versioned alternate cut, or take restorable snapshots.
 - **Compare cuts.** Play two sequences side by side on one clock and read a structural diff
@@ -48,7 +50,8 @@ Electron + React + TypeScript. FFmpeg does all media work. Version 0.1.0.
 
 ### Media
 - **Proxies.** Media that Chromium cannot decode (HEVC, AC-3, DTS, MPEG-TS, ...) gets a 540p H.264 proxy
-  automatically. Proxies are used only for preview: export always reads the originals.
+  automatically. Proxies are used only for preview: export always reads the originals. Still images (PNG, JPEG, WebP,
+  GIF, BMP) are drawn directly and never need one.
 - **Relink.** Offline detection, a folder search that matches by name + size, and per-file Locate.
 - **5.1.** 5.1 sources can be exported as 5.1 AC-3, or as a stereo downmix.
 - **Export presets.** 1080p High Quality, 1080p Smaller File, 4K High Quality, 720p Preview, 1080p 5.1 Surround,
@@ -67,10 +70,13 @@ Electron + React + TypeScript. FFmpeg does all media work. Version 0.1.0.
 | ![Storyline](docs/screenshots/storyline.png) Storyline blocks and tag filters | ![Compare](docs/screenshots/compare.png) Compare cuts with structural diff |
 | ![Continuity](docs/screenshots/continuity.png) Continuity notes | ![Jobs](docs/screenshots/jobs.png) Jobs and proxies |
 | ![Export](docs/screenshots/export.png) Export dialog | ![Program maximized](docs/screenshots/program-maximized.png) Program monitor maximized |
+| ![Still image](docs/screenshots/program-still.png) A PNG on V2 over video in the Program monitor | |
 
 ## Quick start
 
-Requires Node.js 20+ (22 recommended) and FFmpeg 6+ (`ffmpeg` and `ffprobe` on `PATH`). See [docs/INSTALL.md](docs/INSTALL.md).
+Requires Node.js 20+ (22 recommended) and FFmpeg 6+ (`ffmpeg` and `ffprobe` on `PATH`, or set `RECUT_FFMPEG` /
+`RECUT_FFPROBE`). ReCut shows a banner at startup when it cannot find them. See [docs/INSTALL.md](docs/INSTALL.md),
+which also explains how to bundle FFmpeg into a package.
 
 ```bash
 git clone <this repo> ReCut && cd ReCut
