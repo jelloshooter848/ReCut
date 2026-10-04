@@ -286,7 +286,7 @@ export class Gauntlet {
   }
 
   /** Record an observation that is not a pass/fail step (shows up in the report). */
-  note(text: string, mode: Mode = 'UI'): void { this.steps.push({ name: `  ↳ ${text}`, mode, ok: true }); }
+  note(text: string, mode: Mode = 'UI'): void { this.steps.push({ name: `  ↳ ${text}`, mode, ok: true }); console.log(`[${this.label}]   ↳ ${text}`); }
 
   /** Write the step log (for the acceptance report). Idempotent; called from afterAll too so partial runs leave a log. */
   write(outDir: string, pageErrors: string[] = []): void {

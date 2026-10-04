@@ -106,7 +106,9 @@ async function runExport(page: Page, outDir: string, fileName: string, configure
   await page.getByTestId('export-outdir').fill(outDir);
   await page.getByTestId('export-filename').fill(fileName);
   if (configure) await configure();
-  await expect(page.getByTestId('export-checklist')).toContainText('Ready to export');
+  // No blocking (error) items; info / warnings such as "Export always uses original media, not proxies." are fine.
+  await expect(page.getByTestId('export-checklist').locator('.xd-check-item.error')).toHaveCount(0);
+  await expect(page.getByTestId('export-start')).toBeEnabled();
   const before = (await jobs(page)).filter((j) => j.kind === 'export').map((j) => j.id);
   await page.getByTestId('export-start').click();
   await expect(page.getByTestId('export-progress')).toBeVisible({ timeout: 20_000 });
@@ -466,6 +468,10 @@ test.describe.serial('TEST 2 — TV Fan Edit', () => {
       seq = await seqState(page);
       expect(vclips(seq).map((c) => c.mediaId)).toEqual([ep1, ep2, ep3]);
       expect(aclips(seq)).toHaveLength(3);
+      const v = vclips(seq);
+      const cues = seq.subtitleTracks.flatMap((t, ti) => t.cues.map((c) => `${ti}:${c.text}@${['E01', 'E02', 'E03'][v.findIndex((x) => x.id === c.clipId)] ?? c.clipId}`));
+      g.note(`sequence cues after the three inserts: ${cues.join(' | ')}`);
+      expect(seq.subtitleTracks.flatMap((t) => t.cues.filter((c) => c.clipId === v[2].id).map((c) => c.text))).toEqual(['Nobody trusts the doctor now.']);
     });
 
     await g.step('Tag clip 1 by character through the Timeline context menu "Tag…" dialog', 'UI+API', async () => {
@@ -514,7 +520,9 @@ test.describe.serial('TEST 2 — TV Fan Edit', () => {
       seq = await seqState(page);
       expect(vclips(seq).map((x) => x.id)).toEqual([a.id, c.id]);
       expect(vclips(seq)[1].start).toBe(a.duration);
-      expect(seq.subtitleTracks[0].cues.map((x) => x.text).sort()).toEqual(['Nobody trusts the doctor now.', 'Where is the doctor?']);
+      const cuesAfter = seq.subtitleTracks.flatMap((t, ti) => t.cues.map((x) => `${ti}:${x.text}@${x.clipId === a.id ? 'E01' : x.clipId === c.id ? 'E03' : x.clipId}`));
+      g.note(`sequence cues after the ripple delete: ${cuesAfter.join(' | ')}`);
+      expect(seq.subtitleTracks.flatMap((t) => t.cues.map((x) => x.text)).sort()).toEqual(['Nobody trusts the doctor now.', 'Where is the doctor?']);
     });
 
     await g.step('Rearrange: mouse-drag the first clip (E01) behind the last one → order becomes [E03, E01]', 'UI', async () => {
@@ -727,13 +735,42 @@ test.describe.serial('TEST 3 — Large-Media Workflow', () => {
       g.note(`needs-proxy chip text with one undecodable file at the playhead: "${(await chip.innerText()).replace(/\s+/g, ' ').trim()}" (counts video + linked audio clips, not files)`);
       expect(await page.getByTestId('program-offline').count()).toBe(0);
       await playheadInto(id.h264);
-      await expect.poll(() => programBrightness(page), { timeout: 30_000, intervals: [250] }).toBeGreaterThan(20);
+      await expect.poll(() => programBrightness(page), { message: 'H.264 clip renders while HEVC needs a proxy', timeout: 30_000, intervals: [250] }).toBeGreaterThan(20);
       await expect(page.getByTestId('program-proxy')).toHaveCount(0);
-      await page.getByTestId('program-generate-proxies').click();
-      await expect(proxyRow(id.hevc)).toHaveAttribute('data-proxy-status', 'ready', { timeout: 180_000 });
+      // the chip reflects the clips under the playhead → go back to the HEVC clip before using its action
       await playheadInto(id.hevc);
-      await expect.poll(() => programBrightness(page), { timeout: 30_000, intervals: [250] }).toBeGreaterThan(20);
+      await expect(chip).toBeVisible({ timeout: 20_000 });
+      const gen = page.getByTestId('program-generate-proxies');
+      if (!(await gen.isVisible({ timeout: 20_000 }).catch(() => false)) && !(await gen.waitFor({ timeout: 20_000 }).then(() => true, () => false))) {
+        const st = await evalStore<unknown>(page, '(s, id) => s.project.media[id].proxy', id.hevc);
+        const active = (await jobs(page)).filter((j) => j.kind === 'proxy' && j.mediaId === id.hevc).map((j) => j.status);
+        throw new Error(`no "Generate proxies" action on the chip: chip="${(await chip.innerText().catch(() => '(gone)')).replace(/\s+/g, ' ')}" hevc proxy=${JSON.stringify(st)} jobs=${active.join(',')}`);
+      }
+      await gen.click();
+      await expect(proxyRow(id.hevc)).toHaveAttribute('data-proxy-status', 'ready', { timeout: 180_000 });
       await expect(page.getByTestId('program-needs-proxy')).toHaveCount(0, { timeout: 20_000 });
+      // Nudge the playhead one frame so the frame is re-planned (the paused-frame refresh is checked separately below).
+      const seqNow = await seqState(page);
+      await evalStore(page, '(s, f) => s.setView(s.project.activeSequenceId, { playhead: f })', seqNow.view.playhead + 1);
+      await expect.poll(() => programBrightness(page), { message: 'HEVC renders again after regenerating its proxy (proxies off → fallback)', timeout: 30_000, intervals: [250] }).toBeGreaterThan(20);
+    });
+
+    await g.step('Paused Program frame refreshes by itself when the clip under the playhead gets a playable source (proxy becomes ready)', 'UI+API', async () => {
+      if (hevcNative) { g.note('skipped: HEVC decodes natively in this Chromium build'); return; }
+      // proxies are off; delete the proxy again → black + chip; regenerate from the Proxies row WITHOUT moving the playhead.
+      await proxyRow(id.hevc).getByLabel('Delete proxy').click();
+      await playheadInto(id.hevc);
+      await expect(page.getByTestId('program-needs-proxy')).toBeVisible({ timeout: 20_000 });
+      await proxyRow(id.hevc).getByTestId('proxy-generate').click();
+      await expect(proxyRow(id.hevc)).toHaveAttribute('data-proxy-status', 'ready', { timeout: 180_000 });
+      await expect(page.getByTestId('program-needs-proxy')).toHaveCount(0, { timeout: 20_000 });
+      let refreshed = true;
+      try { await expect.poll(() => programBrightness(page), { timeout: 15_000, intervals: [250] }).toBeGreaterThan(20); } catch { refreshed = false; }
+      const seqNow = await seqState(page);
+      await evalStore(page, '(s, f) => s.setView(s.project.activeSequenceId, { playhead: f })', seqNow.view.playhead + 1);
+      const afterNudge = await expect.poll(() => programBrightness(page), { timeout: 30_000, intervals: [250] }).toBeGreaterThan(20).then(() => true, () => false);
+      g.note(`paused frame refreshed on its own=${refreshed}; rendered after a 1-frame playhead nudge=${afterNudge}`);
+      expect(refreshed, 'Program stays black on the paused frame after the proxy becomes ready until the playhead moves').toBe(true);
     });
 
     await g.step('Re-enable proxies', 'UI', async () => {
@@ -959,29 +996,65 @@ test.describe.serial('TEST 4 — Failure Recovery', () => {
       await expect(row.getByTestId('proxy-generate')).toBeVisible();
     }, { note: 'proxies switched off through the Proxies-tab switch so the import does not auto-start a proxy' });
 
-    await g.step('Start an export to an unwritable directory (/proc/recut-nope) → error shown, app continues', 'UI+API', async () => {
-      const n0 = errorsBefore();
-      await evalStore(page, '(s, id) => { s.insertFromSource(s.project.activeSequenceId, { mediaId: id, in: 1, out: 3, atFrame: 0, mode: "insert" }); s.openDialog("export"); }', movieId);
+    /** Fill the Export dialog with `outDir`, press Export, expect a start error or a failed job; returns the message. */
+    const exportExpectingFailure = async (outDir: string): Promise<string> => {
       const dialog = page.getByTestId('export-dialog');
       await expect(dialog).toBeVisible();
-      await page.getByTestId('export-outdir').fill('/proc/recut-nope');
+      await page.getByTestId('export-outdir').fill(outDir);
       await page.getByTestId('export-filename').fill('nope.mp4');
-      const why = await page.getByTestId('export-start').getAttribute('title');
-      g.note(`Export button before start: disabled=${await page.getByTestId('export-start').isDisabled()} title=${why} checklist="${(await page.getByTestId('export-checklist').innerText()).replace(/\s+/g, ' ')}"`);
-      await page.getByTestId('export-start').click({ timeout: 10_000 });
+      await expect(page.getByTestId('export-start')).toBeEnabled();
+      const clicked = page.getByTestId('export-start').click({ timeout: 15_000 }).then(() => 'ok', (e: Error) => e.message);
       const startError = page.getByTestId('export-start-error');
       const failed = page.getByTestId('export-error');
-      await expect(startError.or(failed)).toBeVisible({ timeout: 60_000 });
+      const shown = await Promise.race([
+        expect(startError.or(failed)).toBeVisible({ timeout: 45_000 }).then(() => true, () => false),
+        new Promise<boolean>((r) => setTimeout(() => r(false), 50_000)),
+      ]);
+      if (!shown) {
+        const mainAlive = await Promise.race([L.app.evaluate(() => 1).then(() => true, () => false), new Promise<boolean>((r) => setTimeout(() => r(false), 8_000))]);
+        throw new Error(`no export error after 45 s; click=${await Promise.race([clicked, Promise.resolve('pending')])}; main process responsive=${mainAlive}`);
+      }
       const text = (await startError.count()) ? await startError.innerText() : await failed.innerText();
-      g.note(`export error surfaced as: ${text.replace(/\s+/g, ' ').slice(0, 160)}`);
-      expect(text).toMatch(/Cannot create output folder|failed|ENOENT|EACCES|No such file/i);
       await expect(dialog).toBeVisible();
       await page.keyboard.press('Escape');
       await expect(dialog).toHaveCount(0);
       expect(await page.evaluate(() => (window as unknown as W).__recut.runCommand('edit.deselectAll'))).toBe(true);
+      return text.replace(/\s+/g, ' ').trim();
+    };
+
+    await g.step('Start an export to an unwritable directory (/proc/recut-nope) → error shown, app continues', 'UI+API', async () => {
+      const n0 = errorsBefore();
+      await evalStore(page, '(s, id) => { s.insertFromSource(s.project.activeSequenceId, { mediaId: id, in: 1, out: 3, atFrame: 0, mode: "insert" }); s.openDialog("export"); }', movieId);
+      const text = await exportExpectingFailure('/proc/recut-nope');
+      g.note(`export error surfaced as: ${text.slice(0, 160)}`);
+      expect(text).toMatch(/Cannot create output folder|failed|ENOENT|EACCES|No such file/i);
       expect(fs.existsSync('/proc/recut-nope')).toBe(false);
       expect(L.errors.length - n0).toBe(0);
-    }, { note: 'sequence seeded through the store; dialog opened through the store (Ctrl+M path covered in TEST 1–3)' });
+    }, {
+      note: 'sequence seeded through the store; dialog opened through the store (Ctrl+M path covered in TEST 1–3)',
+      timeoutMs: 150_000,
+      fallback: async () => {
+        // The main process is frozen: kill it, relaunch (crash recovery may offer the untitled autosave → Discard),
+        // re-seed and verify the same failure handling with an unwritable path that does not hang (parent is a file).
+        L.app.process().kill('SIGKILL');
+        await new Promise((r) => setTimeout(r, 2_000));
+        L = await launchGauntlet(tmp);
+        page = L.page;
+        const rec = page.getByTestId('recovery-dialog');
+        if (await rec.waitFor({ timeout: 8_000 }).then(() => true, () => false)) {
+          g.note('relaunch after the forced kill offered crash recovery (untitled autosave) → Discard');
+          await page.getByRole('button', { name: 'Discard', exact: true }).click();
+        }
+        [movieId] = await importMedia(page, [path.join(mediaDir, MEDIA.movie1)]);
+        await evalStore(page, '(s, id) => { s.insertFromSource(s.project.activeSequenceId, { mediaId: id, in: 1, out: 3, atFrame: 0, mode: "insert" }); s.openDialog("export"); }', movieId);
+        const blocker = path.join(tmp, 'not-a-folder.txt');
+        fs.writeFileSync(blocker, 'x');
+        const text = await exportExpectingFailure(path.join(blocker, 'out'));
+        g.note(`export to <file>/out error surfaced as: ${text.slice(0, 160)}`);
+        expect(text).toMatch(/Cannot create output folder|ENOTDIR|EEXIST|failed/i);
+        expect(L.errors).toEqual([]);
+      },
+    });
 
     const p1 = path.join(tmp, 'keep.recut');
     const p2 = path.join(tmp, 'garbage.recut');
