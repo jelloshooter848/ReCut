@@ -22,7 +22,7 @@ import { downsamplePeaks } from '../../electron/media/peaks';
 import { startProxyJob, buildProxyArgs, proxyOutputPath } from '../../electron/media/proxy';
 import { startSceneDetectJob, enforceMinSceneGap, parseShowinfoPts } from '../../electron/media/sceneDetect';
 import { extractSubtitles } from '../../electron/media/subtitlesExtract';
-import { JobQueue } from '../../electron/jobs/jobQueue';
+import { JobQueue, laneFor } from '../../electron/jobs/jobQueue';
 import { mediaHandlers, jobQueue } from '../../electron/media/index';
 
 const FF = getFfmpegPath() ?? 'ffmpeg';
@@ -437,6 +437,42 @@ describe('jobs', () => {
     const exp = q.add({ kind: 'export', title: 'exp', run: async () => 2 });
     expect(q.get(exp.id)?.status).toBe('running');
     await Promise.all([q.waitFor(slow.id), q.waitFor(exp.id)]);
+  });
+
+  it('scene detection has its own lane (concurrency 1): long detects never starve proxies (P-07)', async () => {
+    expect(laneFor('sceneDetect')).toBe('background');
+    expect(laneFor('proxy')).toBe('media');
+    expect(laneFor('waveform')).toBe('media');
+    expect(laneFor('export')).toBe('export');
+    const q = new JobQueue();
+    const releases: (() => void)[] = [];
+    const longJob = (title: string) => q.add({ kind: 'sceneDetect', title, run: (ctx) => new Promise<void>((resolve, reject) => {
+      releases.push(resolve);
+      ctx.onCancel(() => reject(new Error('canceled')));
+    }) });
+    const d1 = longJob('detect 1'), d2 = longJob('detect 2');
+    // Only one detect runs; the second waits in the background lane.
+    expect(q.get(d1.id)?.status).toBe('running');
+    expect(q.get(d2.id)?.status).toBe('queued');
+    // Proxies and waveforms start immediately, both media slots free.
+    const p1 = q.add({ kind: 'proxy', title: 'p1', run: async () => 'p1' });
+    const p2 = q.add({ kind: 'proxy', title: 'p2', run: async () => 'p2' });
+    const w = q.add({ kind: 'waveform', title: 'w', run: async () => 'w' });
+    expect(q.get(p1.id)?.status).toBe('running');
+    expect(q.get(p2.id)?.status).toBe('running');
+    expect(q.get(w.id)?.status).toBe('queued'); // media lane limit 2
+    const done = await Promise.all([q.waitFor(p1.id), q.waitFor(p2.id), q.waitFor(w.id)]);
+    expect(done.map((j) => j.status)).toEqual(['done', 'done', 'done']);
+    expect(q.get(d1.id)?.status).toBe('running');
+    // Finishing the first detect starts the second.
+    releases[0]();
+    await q.waitFor(d1.id);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(q.get(d2.id)?.status).toBe('running');
+    q.cancel(d2.id);
+    expect((await q.waitFor(d2.id)).status).toBe('canceled');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(q.activeCount).toBe(0);
   });
 });
 

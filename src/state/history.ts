@@ -4,6 +4,7 @@
  */
 import { produce } from 'immer';
 import type { ID, MediaItem, Project } from '../../shared/model';
+import { liveView } from '../../shared/project';
 import type { HistoryState } from './types';
 
 export const DEFAULT_HISTORY_LIMIT = 200;
@@ -31,7 +32,13 @@ export function carryViewState(restored: Project, current: Project): Project {
   return produce(restored, (draft) => {
     for (const id of Object.keys(draft.sequences)) {
       const cur = current.sequences[id];
-      if (cur) draft.sequences[id].view = { ...cur.view };
+      if (!cur) continue;
+      // Views are often the very same object (playhead / scroll are mutated in place): only replace when they
+      // differ, so undo keeps the identity of every sequence it did not touch.
+      const rv = restored.sequences[id].view, cv = cur.view;
+      if (rv === cv) continue;
+      if (rv.playhead === cv.playhead && rv.zoom === cv.zoom && rv.scroll === cv.scroll && rv.inPoint === cv.inPoint && rv.outPoint === cv.outPoint) continue;
+      draft.sequences[id].view = liveView(cv); // share the live object (view is not undoable)
     }
     // Job/status mirrors (probe, proxy, offline/relink, scene-detect status) are applied quietly and are not
     // undoable, so they may have arrived after the snapshot being restored was taken: keep the current values.

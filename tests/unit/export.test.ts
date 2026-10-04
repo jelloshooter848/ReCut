@@ -14,6 +14,8 @@ import { createSequence } from '@shared/project';
 import { makeClip } from '@shared/timeline';
 import { buildRenderGraph, escapeFilterPath, exportOutputPath, FILTER_SCRIPT_TOKEN, sanitizeExportFileName } from '../../electron/export/renderGraph';
 import { runExport, buildExportCommand, startExportJob, type ExportJobQueue, type ExportJobSpec } from '../../electron/export/exporter';
+import { planExportChunks, sampleIndexAt, shouldChunk } from '../../electron/export/chunks';
+import type { ChildProcess } from 'node:child_process';
 
 const exec = promisify(execFile);
 const FFMPEG = process.env.RECUT_FFMPEG || 'ffmpeg';
@@ -509,4 +511,212 @@ describe('render graph timestamps (docs/attack/media.md M-01..M-04, M-09)', () =
     const g = buildRenderGraph({ ...req(s), media: { [m.id]: m } });
     expect(g.filterGraph).toContain("lut=a=0:enable='lt(t,0.479166)'");
   });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Chunked export (docs/attack/performance.md P-01)
+// ---------------------------------------------------------------------------------------------------
+
+describe('chunked export (P-01)', () => {
+  let lumaMedia: MediaItem; // 64x36, 24 fps, luma = 8 * frame index (mod 256), 440 Hz tone
+  let toneMedia: MediaItem; // 60 s, 660 Hz, 48 kHz, audio only
+  const CLIPS = 400, LEN = 3, AUDIO_LEN = 49;
+  /** Source frame shown by output frame f (clip i = f / LEN starts at source frame (i*7) % 20). */
+  const srcFrameAt = (f: number) => ((Math.floor(f / LEN) * 7) % 20) + (f % LEN);
+
+  beforeAll(async () => {
+    const f = path.join(dir, 'luma.mp4');
+    await ff(['-f', 'lavfi', '-i', "nullsrc=s=64x36:r=24:d=4,geq=lum='mod(N*8,256)':cb=128:cr=128", '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=4',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-qp', '0', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-ac', '2', '-shortest', f]);
+    lumaMedia = await makeMedia('mL', f, 'video');
+    const t = path.join(dir, 'tone60.m4a');
+    await ff(['-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=48000:duration=60', '-c:a', 'aac', '-ac', '1', t]);
+    toneMedia = await makeMedia('mT', t, 'audio');
+  }, 60000);
+
+  function bigSeq(): { s: Sequence; transCut: number } {
+    const s = createSequence('Big', FPS, 64, 36);
+    for (let i = 0; i < CLIPS; i++) {
+      const c = makeClip({ mediaId: lumaMedia.id, name: `c${i}`, sourceIn: ((i * 7) % 20) / 24, duration: LEN, kind: 'video' }, i * LEN);
+      s.videoTracks[0].clips.push(c);
+    }
+    // A cross dissolve exactly where a 100-segment chunk would naturally end: the planner must avoid it.
+    const v = s.videoTracks[0].clips;
+    s.videoTracks[0].transitions.push({ id: 'trX', type: 'crossDissolve', duration: 2, outClipId: v[99].id, inClipId: v[100].id });
+    const stream = lumaMedia.probe!.audio[0].index;
+    for (let i = 0; i < Math.floor((CLIPS * LEN) / AUDIO_LEN); i++) {
+      // Audio clips (49 frames) rarely share a cut with video: chunk boundaries split some of them mid-clip.
+      s.audioTracks[0].clips.push(makeClip({ mediaId: lumaMedia.id, name: `a${i}`, sourceIn: (i % 5) * 0.25, duration: AUDIO_LEN, kind: 'audio', audioStream: stream }, i * AUDIO_LEN));
+    }
+    // One long A2 clip under everything: no clean cut exists, so boundaries split audio clips mid-clip.
+    s.audioTracks[1].clips.push(makeClip({ mediaId: toneMedia.id, name: 'tone', sourceIn: 0.5, duration: CLIPS * LEN, kind: 'audio', audioStream: toneMedia.probe!.audio[0].index }, 0));
+    return { s, transCut: 100 * LEN };
+  }
+  const bigReq = (s: Sequence, over: Partial<ExportSettings> = {}): ExportRequest => ({
+    sequence: s, media: { [lumaMedia.id]: lumaMedia, [toneMedia.id]: toneMedia }, settings: settings({ width: 64, height: 36, crf: 18, ...over }),
+  });
+
+  /** Mean luma of every frame (1x1 gray scale-down). */
+  async function lumaPerFrame(file: string): Promise<number[]> {
+    const { stdout } = await exec(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-i', file, '-map', '0:v:0', '-vf', 'extractplanes=y,scale=1:1:flags=area', '-f', 'rawvideo', '-'], { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
+    return [...(stdout as unknown as Buffer)];
+  }
+  it('plans boundaries at cuts outside transition windows, within the segment budget', () => {
+    const { s, transCut } = bigSeq();
+    const r = bigReq(s);
+    const input = { req: r, startF: 0, endF: CLIPS * LEN };
+    expect(shouldChunk(input, buildRenderGraph(r).inputCount)).toBe(true);
+    const chunks = planExportChunks(input);
+    expect(chunks.length).toBeGreaterThanOrEqual(4);
+    expect(chunks[0].startF).toBe(0);
+    expect(chunks[chunks.length - 1].endF).toBe(CLIPS * LEN);
+    for (let i = 0; i < chunks.length; i++) {
+      const c = chunks[i];
+      if (i > 0) expect(c.startF).toBe(chunks[i - 1].endF);
+      expect(c.videoSegments).toBeLessThanOrEqual(100);
+      expect(c.audioSegments).toBeLessThanOrEqual(100);
+      expect(c.startF % LEN).toBe(0); // on a video cut
+      expect(c.startF === transCut).toBe(false); // not inside the dissolve window (299..301)
+    }
+    // At least one boundary splits an audio clip (exercises sample-exact mid-clip joins).
+    expect(chunks.slice(1).some((c) => c.startF % AUDIO_LEN !== 0 && c.startF < Math.floor((CLIPS * LEN) / AUDIO_LEN) * AUDIO_LEN)).toBe(true);
+    // Sample-exact cumulative boundaries (23.976: 2002 samples per frame at 48 kHz).
+    expect(sampleIndexAt(1001, 1, 48000, { num: 24000, den: 1001 })).toBe(2002000);
+  });
+
+  it('exports a 400-clip sequence in chunks: exact frames, content at boundaries, exact audio, bounded ffmpeg RSS', async () => {
+    const { s, transCut } = bigSeq();
+    const r = bigReq(s);
+    const chunks = planExportChunks({ req: r, startF: 0, endF: CLIPS * LEN });
+    let peakKb = 0;
+    const timers: NodeJS.Timeout[] = [];
+    const onSpawn = (child: ChildProcess) => {
+      const sample = () => {
+        try {
+          const st = fs.readFileSync(`/proc/${child.pid}/status`, 'utf8');
+          const m = /VmHWM:\s+(\d+) kB/.exec(st) ?? /VmRSS:\s+(\d+) kB/.exec(st);
+          if (m) peakKb = Math.max(peakKb, Number(m[1]));
+        } catch { /* exited */ }
+      };
+      sample();
+      const t = setInterval(sample, 20);
+      timers.push(t);
+      child.once('exit', () => clearInterval(t));
+    };
+    const progress: number[] = [];
+    const res = await runExport(r, (p) => progress.push(p), undefined, { onSpawn });
+    const peakDuringExportKb = peakKb;
+    timers.forEach(clearInterval);
+    expect(res.chunks).toBe(chunks.length);
+    expect(res.chunks).toBeGreaterThanOrEqual(4);
+    // Progress is monotonic across chunks.
+    for (let i = 1; i < progress.length; i++) expect(progress[i]).toBeGreaterThanOrEqual(progress[i - 1] - 1e-9);
+    expect(progress[progress.length - 1]).toBe(1);
+
+    // Exact frame count / duration.
+    const { stdout } = await exec(FFPROBE, ['-v', 'error', '-count_packets', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_packets,duration,r_frame_rate', '-of', 'json', res.outputPath]);
+    const vs = JSON.parse(stdout).streams[0];
+    expect(Number(vs.nb_read_packets)).toBe(CLIPS * LEN);
+    expect(Math.abs(Number(vs.duration) - (CLIPS * LEN) / 24)).toBeLessThan(1e-3);
+    expect(vs.r_frame_rate).toBe('24/1');
+
+    // Every frame shows the editor's source frame (chunk boundaries included); dissolve frames skipped.
+    const luma = await lumaPerFrame(res.outputPath);
+    expect(luma.length).toBe(CLIPS * LEN);
+    const bad: string[] = [];
+    for (let f = 0; f < luma.length; f++) {
+      if (f >= transCut - 1 && f <= transCut) continue;
+      const want = srcFrameAt(f) * 8;
+      if (Math.abs(luma[f] - want) > 4) bad.push(`f${f}: ${luma[f]} != ${want}`);
+    }
+    expect(bad.slice(0, 10)).toEqual([]);
+    for (const c of chunks.slice(1)) {
+      // Frames on both sides of each chunk boundary.
+      expect(Math.abs(luma[c.startF - 1] - srcFrameAt(c.startF - 1) * 8)).toBeLessThanOrEqual(4);
+      expect(Math.abs(luma[c.startF] - srcFrameAt(c.startF) * 8)).toBeLessThanOrEqual(4);
+    }
+
+    // Audio: exactly frames * 2000 samples.
+    const total = sampleIndexAt(CLIPS * LEN, 0, 48000, FPS);
+    // The MP4 edit list carries the exact length (a plain decode also emits the AAC frame's tail padding).
+    const { stdout: ajs } = await exec(FFPROBE, ['-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=duration_ts,time_base', '-of', 'json', res.outputPath]);
+    const as = JSON.parse(ajs).streams[0];
+    expect(as.time_base).toBe('1/48000');
+    expect(Number(as.duration_ts)).toBe(total);
+
+    // PCM level: the chunks' audio passes (boundaries split A2 and some A1 clips) concatenate to the
+    // single-pass PCM (float rounding only: SIMD vs scalar tails at different frame splits, about -100 dB).
+    const raw = async (file: string, map = '0:a:0') => {
+      const { stdout: o } = await exec(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-i', file, '-map', map, '-f', 'f32le', '-c:a', 'pcm_f32le', '-'], { encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 });
+      const bb = o as unknown as Buffer;
+      return new Float32Array(bb.buffer, bb.byteOffset, bb.length / 4);
+    };
+    const script = path.join(dir, 'chunk-audio.txt');
+    const renderWav = async (opts: Parameters<typeof buildRenderGraph>[1], out: string) => {
+      const g = buildRenderGraph(r, opts);
+      fs.writeFileSync(script, g.filterGraph);
+      await ff([...g.inputArgs, '-filter_complex_script', script, '-map', '[aout]', '-c:a', 'pcm_f32le', '-f', 'wav', out]);
+      return g;
+    };
+    const refWav = path.join(dir, 'chunk-ref.wav');
+    const refGraph = await renderWav({ streams: 'audio', audioSamples: total }, refWav);
+    const refPcm = await raw(refWav);
+    expect(refPcm.length).toBe(total * 2);
+    let off = 0, pcmDiff = 0;
+    for (const c of chunks) {
+      const n = sampleIndexAt(c.endF, 0, 48000, FPS) - sampleIndexAt(c.startF, 0, 48000, FPS);
+      const w = path.join(dir, `chunk-${c.startF}.wav`);
+      await renderWav({ range: { startF: c.startF, endF: c.endF }, streams: 'audio', audioSamples: n }, w);
+      const p = await raw(w);
+      expect(p.length).toBe(n * 2);
+      for (let i = 0; i < p.length; i++) pcmDiff = Math.max(pcmDiff, Math.abs(p[i] - refPcm[off + i]));
+      off += p.length;
+    }
+    expect(off).toBe(refPcm.length);
+    expect(pcmDiff).toBeLessThan(1e-4);
+
+    // Output level: the exported AAC matches an AAC encode of the single-pass PCM (no sample shift at any join;
+    // a one-sample shift would give an RMS difference of about 0.03 here).
+    const refM4a = path.join(dir, 'chunk-ref.m4a');
+    await ff(['-i', refWav, ...refGraph.audioCodecArgs, '-t', String((CLIPS * LEN) / 24), '-f', 'mp4', refM4a]);
+    const a = await raw(res.outputPath), ref = await raw(refM4a);
+    expect(a.length / 2 - total).toBeLessThan(1024);
+    expect(ref.length).toBe(a.length);
+    let sq = 0;
+    for (let i = 0; i < a.length; i++) sq += (a[i] - ref[i]) ** 2;
+    expect(Math.sqrt(sq / a.length)).toBeLessThan(0.003);
+
+    // ffmpeg memory stays bounded (one chunk at a time).
+    expect(peakDuringExportKb).toBeGreaterThan(0);
+    expect(peakDuringExportKb / 1024).toBeLessThan(1536);
+    console.log(`[chunked export] ${res.chunks} chunks, boundaries ${chunks.map((c) => c.startF).join(',')}, peak ffmpeg RSS ${(peakDuringExportKb / 1024).toFixed(0)} MB`);
+  }, 300000);
+
+  it('cancel during a chunked export deletes temp files and the partial output', async () => {
+    const { s } = bigSeq();
+    const r = bigReq(s);
+    // Private TMPDIR (os.tmpdir() reads it per call) so other processes' exports do not interfere.
+    const tmp = fs.mkdtempSync(path.join(dir, 'tmp-'));
+    const saved = process.env.TMPDIR;
+    process.env.TMPDIR = tmp;
+    const ac = new AbortController();
+    let spawned = 0;
+    try {
+      const p = runExport(r, undefined, ac.signal, { onSpawn: () => { if (++spawned === 2) ac.abort(); } });
+      await expect(p).rejects.toThrow(/canceled/);
+    } finally {
+      if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved;
+    }
+    expect(spawned).toBe(2);
+    expect(fs.readdirSync(tmp)).toEqual([]);
+    expect(fs.existsSync(path.join(dir, r.settings.fileName.replace(/\.mp4$/, '.part.mp4')))).toBe(false);
+    expect(fs.existsSync(path.join(dir, r.settings.fileName))).toBe(false);
+  }, 60000);
+
+  it('reports which chunk failed', async () => {
+    const { s } = bigSeq();
+    const broken: MediaItem = { ...lumaMedia, path: path.join(dir, 'gone.mp4') };
+    const r: ExportRequest = { ...bigReq(s), media: { [lumaMedia.id]: broken, [toneMedia.id]: toneMedia } };
+    await expect(runExport(r)).rejects.toThrow(/Export failed in chunk 1\/\d+ \(video, frames 0-\d+\)/);
+  }, 60000);
 });

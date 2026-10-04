@@ -17,27 +17,75 @@ const FILMSTRIP_BATCH = 12;
 const MIN_JPEG_BYTES = 200;
 
 // ------------------------------------------------------------------
-// Tiny semaphore
+// LIFO semaphore with cancellable waiters (P-05): the newest request (the current viewport) is served first and
+// a queued waiter whose requester went away is dropped before it ever spawns ffmpeg.
 // ------------------------------------------------------------------
 let active = 0;
-const waiting: (() => void)[] = [];
+interface Waiter { run: () => void; drop: () => void; signal?: AbortSignal }
+const waiting: Waiter[] = [];
 
-function acquire(): Promise<void> {
+class ThumbAbortError extends Error { constructor() { super('thumbnail request canceled'); this.name = 'AbortError'; } }
+
+function acquire(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new ThumbAbortError());
   if (active < MAX_CONCURRENT) { active++; return Promise.resolve(); }
-  return new Promise((resolve) => waiting.push(() => { active++; resolve(); }));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => { const i = waiting.indexOf(w); if (i >= 0) { waiting.splice(i, 1); reject(new ThumbAbortError()); } };
+    const w: Waiter = {
+      run: () => { signal?.removeEventListener('abort', onAbort); active++; resolve(); },
+      drop: onAbort,
+      signal,
+    };
+    waiting.push(w);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 function release(): void {
   active--;
-  const next = waiting.shift();
-  if (next) next();
+  const next = waiting.pop(); // LIFO
+  if (next) next.run();
 }
-async function withSlot<T>(fn: () => Promise<T>): Promise<T> {
-  await acquire();
+async function withSlot<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  await acquire(signal);
   try { return await fn(); } finally { release(); }
 }
 
+/** Number of queued (not yet running) thumbnail jobs. For tests / diagnostics. */
+export function thumbQueueDepth(): { active: number; waiting: number } { return { active, waiting: waiting.length }; }
+
 // ------------------------------------------------------------------
-const inFlight = new Map<string, Promise<string>>();
+// Request cancellation. A renderer request may carry a `requestId`; a later request carrying `cancel: [ids]`
+// aborts those requesters. Until shared/ipc.ts grows a dedicated channel, cancellations ride on the filmstrip
+// channel (`{ path: '', times: [], width: 0, cancel }`), see src/playback/thumbnails.ts.
+// ------------------------------------------------------------------
+export type CancellableFilmstripRequest = FilmstripRequest & { requestId?: string; cancel?: string[] };
+const requesters = new Map<string, AbortController>();
+
+/** Abort the given renderer requests: their queued batches are dropped (running ffmpeg jobs finish and are cached). */
+export function cancelThumbRequests(ids: readonly string[]): void {
+  for (const id of ids) { requesters.get(id)?.abort(); requesters.delete(id); }
+}
+
+/**
+ * Shared extraction batch: several requesters may wait for the same frames (in-flight dedupe). The batch is
+ * only abandoned (while still queued) when every requester interested in it has canceled.
+ */
+interface SharedBatch { controller: AbortController; refs: number }
+const frameBatch = new Map<string, SharedBatch>();
+
+function joinBatch(b: SharedBatch, signal: AbortSignal | undefined, joined: Set<SharedBatch>): void {
+  if (joined.has(b)) return;
+  joined.add(b);
+  if (!signal) { b.refs = Number.POSITIVE_INFINITY; return; } // an uncancellable requester pins the batch
+  b.refs++;
+}
+function leaveBatches(joined: Set<SharedBatch>): void {
+  for (const b of joined) { b.refs--; if (b.refs <= 0) b.controller.abort(); }
+}
+
+// ------------------------------------------------------------------
+/** Output path -> pending extraction. Resolves to null when its (queued) batch was dropped because every requester canceled. */
+const inFlight = new Map<string, Promise<string | null>>();
 
 function normWidth(w: number | undefined): number {
   const v = Math.round(w && w > 0 ? w : DEFAULT_WIDTH);
@@ -166,7 +214,9 @@ export async function getThumbnail(req: ThumbnailRequest): Promise<string> {
   if (await fileExists(out)) return out;
 
   const existing = inFlight.get(out);
-  if (existing) return existing;
+  if (existing) { const v = await existing; if (v !== null) return v; }
+  const again = inFlight.get(out); // another caller may have restarted it while we awaited
+  if (again) { const v = await again; if (v !== null) return v; }
 
   const task = withSlot(async () => {
     if (await fileExists(out)) return out; // produced by a filmstrip batch meanwhile
@@ -181,50 +231,92 @@ export async function getThumbnail(req: ThumbnailRequest): Promise<string> {
  * Extract several thumbnails from one file. Uncached times are batched into a single ffmpeg
  * process (one `-ss T -i file` input per frame, each mapped to its own output) which is far
  * faster than one process per frame; frames the batch cannot produce fall back to getThumbnail.
- * Returns file paths aligned with `req.times`.
+ * Returns file paths aligned with `req.times` ('' for frames dropped because the request was canceled).
+ *
+ * Queueing is LIFO (newest viewport first). `signal` (or a `requestId` later named in a `cancel` request)
+ * drops this request's still-queued batches unless another live request is waiting for the same frames.
  */
-export async function getFilmstrip(req: FilmstripRequest): Promise<string[]> {
+export async function getFilmstrip(req: CancellableFilmstripRequest, signal?: AbortSignal): Promise<string[]> {
+  if (req.cancel) { cancelThumbRequests(req.cancel); return []; }
+  // Register synchronously (before any await) so a cancel arriving right behind this request finds it.
+  if (req.requestId && !signal) {
+    const ac = new AbortController();
+    requesters.set(req.requestId, ac);
+    signal = ac.signal;
+  }
+  try {
+    return await filmstripInner(req, signal);
+  } finally {
+    if (req.requestId) requesters.delete(req.requestId);
+  }
+}
+
+async function filmstripInner(req: FilmstripRequest, signal: AbortSignal | undefined): Promise<string[]> {
   const width = normWidth(req.width);
   const key = await cacheKeyForPath(req.path);
   const dir = await thumbDir(key);
   const outs = req.times.map((t) => path.join(dir, thumbFileName(t, width)));
+  const joined = new Set<SharedBatch>();
 
   // unique uncached times (not currently in flight elsewhere)
   const pending = new Map<string, number>();
   for (let i = 0; i < req.times.length; i++) {
     const out = outs[i];
-    if (pending.has(out) || inFlight.has(out)) continue;
+    if (pending.has(out)) continue;
+    if (inFlight.has(out)) { const b = frameBatch.get(out); if (b) joinBatch(b, signal, joined); continue; }
     if (await fileExists(out)) continue;
     pending.set(out, Math.max(0, req.times[i]));
   }
+  if (signal?.aborted) { leaveBatches(joined); return outs.map(() => ''); }
 
   const entries = [...pending.entries()].sort((a, b) => a[1] - b[1]);
   const batches: [string, number][][] = [];
   for (let i = 0; i < entries.length; i += FILMSTRIP_BATCH) batches.push(entries.slice(i, i + FILMSTRIP_BATCH));
 
   const batchPromises = batches.map((batch) => {
-    const p = withSlot(() => extractBatch(req.path, width, batch));
+    const shared: SharedBatch = { controller: new AbortController(), refs: 0 };
+    joinBatch(shared, signal, joined);
+    const bsig = shared.controller.signal;
+    const p = withSlot(() => extractBatch(req.path, width, batch), bsig).then(() => true, () => false);
     // Each frame gets its own in-flight promise: batch result, then per-frame fallback if missing.
     for (const [out, t] of batch) {
-      const single = p.then(async () => {
+      frameBatch.set(out, shared);
+      const single: Promise<string | null> = p.then(async (ran) => {
         if (await fileExists(out)) return out;
-        await withSlot(() => extractWithFallback(req.path, t, width, out));
+        if (!ran || bsig.aborted) return null; // dropped while queued: nobody wants it any more
+        try {
+          await withSlot(() => extractWithFallback(req.path, t, width, out), bsig);
+        } catch (err) {
+          if (bsig.aborted) return null;
+          throw err;
+        }
         return out;
-      }).finally(() => { if (inFlight.get(out) === single) inFlight.delete(out); });
+      }).finally(() => {
+        if (inFlight.get(out) === single) inFlight.delete(out);
+        if (frameBatch.get(out) === shared) frameBatch.delete(out);
+      });
       inFlight.set(out, single);
     }
     return p;
   });
-  await Promise.all(batchPromises);
-
-  // Resolve every requested time (cached, in flight from this or another call, or extract now).
-  return Promise.all(req.times.map(async (t, i) => {
-    const out = outs[i];
-    const pending = inFlight.get(out);
-    if (pending) return pending;
-    if (await fileExists(out)) return out;
-    return getThumbnail({ path: req.path, time: t, width, mediaId: req.mediaId });
-  }));
+  // Abort → drop our interest in every batch we created or joined.
+  const onAbort = () => leaveBatches(joined);
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    await Promise.all(batchPromises);
+    // Resolve every requested time (cached, in flight from this or another call, or extract now).
+    return await Promise.all(req.times.map(async (t, i) => {
+      const out = outs[i];
+      const inflight = inFlight.get(out);
+      if (inflight) { const v = await inflight; if (v !== null) return v; }
+      if (await fileExists(out)) return out;
+      if (signal?.aborted) return '';
+      return getThumbnail({ path: req.path, time: t, width, mediaId: req.mediaId });
+    }));
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    if (!signal?.aborted) for (const b of joined) { if (Number.isFinite(b.refs)) b.refs--; }
+  }
 }
 
 async function extractBatch(file: string, width: number, batch: [string, number][]): Promise<void> {

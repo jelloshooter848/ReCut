@@ -94,3 +94,13 @@
 .scn-form .scn-tc { min-width: 88px; height: var(--control-h-sm); font-size: var(--font-size-sm); }
 .scn-form textarea.scn-notes { min-height: 44px; font-size: var(--font-size-sm); }
 .scn-form .swatches { flex-wrap: wrap; }
+
+/* virtualised body (P-09): fixed row heights, see ScenesPanel VRow */
+.scn-body:has(> .scn-vlist) { overflow: hidden; }
+.scn-vlist { flex: 1; min-height: 0; height: 100%; }
+.scn-vlist .scn-row { height: 100%; box-sizing: border-box; overflow: hidden; }
+.scn-vlist .scn-chips { flex-wrap: nowrap; overflow: hidden; }
+.scn-vlist.grid { padding-top: 6px; box-sizing: border-box; }
+.scn-grid.scn-grid-row { padding: 0 6px 6px; height: 100%; box-sizing: border-box; }
+.scn-grid-row .scn-card { height: 100%; box-sizing: border-box; }
+.scn-grid-row .scn-card-thumb { flex-shrink: 0; }

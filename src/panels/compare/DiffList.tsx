@@ -20,7 +20,7 @@ export interface DiffListProps {
 
 function signed(n: number): string { return n > 0 ? `+${n}` : String(n); }
 
-function Row({ e, fps, selected, onPick }: { e: DiffEntry; fps: Rational; selected: boolean; onPick: (e: DiffEntry) => void }) {
+const Row = React.memo(function Row({ e, fps, selected, onPick }: { e: DiffEntry; fps: Rational; selected: boolean; onPick: (e: DiffEntry) => void }) {
   const detail: string[] = [];
   if (e.positionDelta !== undefined && e.positionDelta !== 0) detail.push(`${signed(e.positionDelta)}f ${e.side === 'A' ? 'in B' : 'in A'}`);
   if (e.kind === 'trimmed') {
@@ -46,7 +46,7 @@ function Row({ e, fps, selected, onPick }: { e: DiffEntry; fps: Rational; select
       </div>
     </div>
   );
-}
+});
 
 export function DiffList({ diff, fpsA, fpsB, selectedClipId, onPick, nameA, nameB }: DiffListProps) {
   return (

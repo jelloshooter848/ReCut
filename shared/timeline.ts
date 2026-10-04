@@ -3,6 +3,7 @@
  * and never touch anything outside of it. All positions are integer frames.
  */
 import type { Clip, ClipAudio, ClipTransform, Sequence, Track, Transition, TransitionType, ID, Rational, Marker } from './model';
+import { isDraft } from 'immer';
 import { uid } from './ids';
 import { secondsToFrames } from './time';
 
@@ -45,8 +46,27 @@ export function findClip(seq: Sequence, clipId: ID): ClipLocation | undefined {
   return undefined;
 }
 
+const IMMER_STATE = Symbol.for('immer-state');
+
+/**
+ * Read-only items of a (possibly immer-drafted) array without creating a child proxy per element. Reading the
+ * elements of a draft array drafts each one; scanning 600+ clips that way on every commit dominated edit latency
+ * (P-03). Items already drafted come back as their draft (reading primitive fields off them is free); the rest are
+ * the untouched originals. `current()` is not used: with auto-freeze off it deep-copies every untouched clip.
+ * Never mutate through the result.
+ */
+export function readItems<T>(arr: T[]): readonly T[] {
+  if (!isDraft(arr)) return arr;
+  const st = (arr as unknown as Record<symbol, { copy_?: unknown; base_?: unknown } | undefined>)[IMMER_STATE];
+  const raw = st ? (st.copy_ ?? st.base_) : undefined;
+  return Array.isArray(raw) ? (raw as T[]) : arr;
+}
+
 export function sortTrack(track: Track): void {
-  track.clips.sort((a, b) => a.start - b.start);
+  const clips = readItems(track.clips);
+  for (let i = 1; i < clips.length; i++) {
+    if (clips[i - 1].start > clips[i].start) { track.clips.sort((a, b) => a.start - b.start); return; }
+  }
 }
 
 export function linkedClips(seq: Sequence, clip: Clip): Clip[] {
@@ -87,31 +107,68 @@ export function maxDurationFrom(sourceIn: number, speed: number, mediaDuration: 
 
 /** Drop transitions whose clips are gone or no longer adjacent. */
 export function reconcileTransitions(track: Track): void {
-  const byId = new Map(track.clips.map((c) => [c.id, c]));
-  track.transitions = track.transitions.filter((tr) => {
+  if (track.transitions.length === 0) return;
+  // Clips are only read: scan them without creating draft proxies, index by id once.
+  const clips = readItems(track.clips);
+  const byId = new Map<ID, Clip>();
+  for (const c of clips) byId.set(c.id, c);
+  const trs = readItems(track.transitions);
+  const kept: Transition[] = [];
+  for (let i = 0; i < trs.length; i++) {
+    let tr = trs[i];
     const a = tr.outClipId ? byId.get(tr.outClipId) : null;
     const b = tr.inClipId ? byId.get(tr.inClipId) : null;
-    if (tr.outClipId && !a) return false;
-    if (tr.inClipId && !b) return false;
-    if (a && b && clipEnd(a) !== b.start) return false;
-    if (!a && !b) return false;
+    if (tr.outClipId && !a) continue;
+    if (tr.inClipId && !b) continue;
+    if (a && b && clipEnd(a) !== b.start) continue;
+    if (!a && !b) continue;
     const limit = Math.min(a ? a.duration : Infinity, b ? b.duration : Infinity);
-    if (!Number.isFinite(tr.duration) || tr.duration < 1) tr.duration = 1;
-    if (tr.duration > limit) tr.duration = Math.max(1, limit);
-    return true;
-  });
+    let d = tr.duration;
+    if (!Number.isFinite(d) || d < 1) d = 1;
+    if (d > limit) d = Math.max(1, limit);
+    if (d !== tr.duration) { tr = track.transitions[i]; tr.duration = d; } // draft only what changes
+    kept.push(tr);
+  }
+  // Only replace the array when something was dropped, so untouched tracks keep their identity.
+  if (kept.length !== trs.length) track.transitions = kept;
+  if (kept.length < 2) return;
   // Two transitions on one clip (its in- and out-transition) must not overlap: in + out <= clip.duration.
   // The out-transition gives way; if nothing is left of it, it is dropped.
+  // Cheap read-only check first: overlaps are rare, and the fix-up below drafts every transition.
+  const firstBy = (list: readonly Transition[], key: 'inClipId' | 'outClipId') => {
+    const m = new Map<ID, Transition>();
+    for (const t of list) { const id = t[key]; if (id && !m.has(id)) m.set(id, t); }
+    return m;
+  };
+  {
+    const ins = firstBy(kept, 'inClipId'), outs = firstBy(kept, 'outClipId');
+    let overlap = false;
+    for (const [id, tin] of ins) {
+      const tout = outs.get(id); if (!tout || tout === tin) continue;
+      const c = byId.get(id);
+      if (c && tin.duration + tout.duration > c.duration) { overlap = true; break; }
+    }
+    if (!overlap) return;
+  }
+  const live = track.transitions;
+  const ins = new Map<ID, Transition[]>();
+  const outs = new Map<ID, Transition[]>();
+  for (const t of live) {
+    if (t.inClipId) { const l = ins.get(t.inClipId); if (l) l.push(t); else ins.set(t.inClipId, [t]); }
+    if (t.outClipId) { const l = outs.get(t.outClipId); if (l) l.push(t); else outs.set(t.outClipId, [t]); }
+  }
   const drop = new Set<ID>();
-  for (const c of track.clips) {
-    const tin = track.transitions.find((t) => t.inClipId === c.id && !drop.has(t.id));
-    const tout = track.transitions.find((t) => t.outClipId === c.id && !drop.has(t.id));
+  for (const c of clips) {
+    const il = ins.get(c.id); if (!il) continue;
+    const ol = outs.get(c.id); if (!ol) continue;
+    const tin = il.find((t) => !drop.has(t.id));
+    const tout = ol.find((t) => !drop.has(t.id));
     if (!tin || !tout || tin === tout) continue;
     if (tin.duration + tout.duration <= c.duration) continue;
     const room = c.duration - tin.duration;
     if (room >= 1) tout.duration = room; else drop.add(tout.id);
   }
-  if (drop.size) track.transitions = track.transitions.filter((t) => !drop.has(t.id));
+  if (drop.size) track.transitions = live.filter((t) => !drop.has(t.id));
 }
 
 /** Frames of `clip` already used by its transition on the other edge (excluding `exceptId`). */

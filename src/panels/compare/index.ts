@@ -8,6 +8,7 @@ registerPanel({
   defaultZone: 'right',
   icon: Columns2,
   component: ComparePanel,
+  keepAlive: true,
   description: 'Play two cuts side by side, compare durations and structure, manage alternate cuts and snapshots',
 });
 

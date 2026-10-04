@@ -38,6 +38,21 @@ export function issuesAsText(rows: IssueRow[]): string {
   return lines.join('\n');
 }
 
+/** Issue rows of one sequence, cached per sequence object: an edit rebuilds only the sequence it touched. */
+const rowsCache = new WeakMap<Sequence, IssueRow[]>();
+function sequenceRows(seq: Sequence): IssueRow[] {
+  let rows = rowsCache.get(seq);
+  if (rows) return rows;
+  rows = [];
+  const ms = seq.markers.filter((m) => m.kind === 'continuity').sort((a, b) => a.time - b.time);
+  for (const m of ms) {
+    const clip = m.clipId ? findClip(seq, m.clipId)?.clip : undefined;
+    rows.push({ seq, marker: m, clipName: clip?.name ?? null, timecode: formatTimecode(m.time, seq.fps) });
+  }
+  rowsCache.set(seq, rows);
+  return rows;
+}
+
 export function ContinuityPanel({ active }: PanelProps) {
   const sequences = useStore((s) => s.project.sequences);
   const order = useStore((s) => s.project.sequenceOrder);
@@ -59,12 +74,7 @@ export function ContinuityPanel({ active }: PanelProps) {
     const out: IssueRow[] = [];
     for (const id of order) {
       const seq = sequences[id];
-      if (!seq) continue;
-      const ms = seq.markers.filter((m) => m.kind === 'continuity').sort((a, b) => a.time - b.time);
-      for (const m of ms) {
-        const clip = m.clipId ? findClip(seq, m.clipId)?.clip : undefined;
-        out.push({ seq, marker: m, clipName: clip?.name ?? null, timecode: formatTimecode(m.time, seq.fps) });
-      }
+      if (seq) for (const r of sequenceRows(seq)) out.push(r);
     }
     return out;
   }, [sequences, order]);
@@ -118,7 +128,9 @@ export function ContinuityPanel({ active }: PanelProps) {
       toast.error('Could not access the clipboard');
     }
   };
-  const toggleExpanded = (id: ID) => setExpanded((e) => { const n = new Set(e); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleExpanded = useCallback((r: IssueRow) => setExpanded((e) => { const n = new Set(e); const id = r.marker.id; if (n.has(id)) n.delete(id); else n.add(id); return n; }), []);
+  const startEdit = useCallback((r: IssueRow) => { setFocusedId(r.marker.id); setEditingId(r.marker.id); }, []);
+  const endEdit = useCallback(() => setEditingId(null), []);
 
   // Keep focus row valid.
   useEffect(() => { if (focusedId && !rows.some((r) => r.marker.id === focusedId)) setFocusedId(rows[0]?.marker.id ?? null); }, [rows, focusedId]);
@@ -171,8 +183,7 @@ export function ContinuityPanel({ active }: PanelProps) {
             {rows.map((r) => (
               <IssueRowView key={r.marker.id} row={r} focused={focusedId === r.marker.id} selected={selectedMarkerId === r.marker.id}
                 expanded={expanded.has(r.marker.id)} editing={editingId === r.marker.id} showSequence={seqScope === 'all'}
-                onJump={() => jumpTo(r)} onToggle={(v) => toggleResolved(r, v)} onRemove={() => remove(r)} onExpand={() => toggleExpanded(r.marker.id)}
-                onEdit={() => { setFocusedId(r.marker.id); setEditingId(r.marker.id); }} onEndEdit={() => setEditingId(null)} />
+                onJump={jumpTo} onToggle={toggleResolved} onRemove={remove} onExpand={toggleExpanded} onEdit={startEdit} onEndEdit={endEdit} />
             ))}
           </div>
         )}
@@ -193,9 +204,10 @@ export function ContinuityPanel({ active }: PanelProps) {
           onClose={() => setAddOpen(false)}
           onAdd={(input) => {
             const s = useStore.getState();
-            const id = s.addContinuityNote(activeSeq.id, { time: activeSeq.view.playhead, ...input });
+            const time = s.project.sequences[activeSeq.id]?.view.playhead ?? 0;
+            const id = s.addContinuityNote(activeSeq.id, { time, ...input });
             setAddOpen(false);
-            if (id) { s.selectMarker(id); setFocusedId(id); toast.ok(`Continuity note added at ${formatTimecode(activeSeq.view.playhead, activeSeq.fps)}`); }
+            if (id) { s.selectMarker(id); setFocusedId(id); toast.ok(`Continuity note added at ${formatTimecode(time, activeSeq.fps)}`); }
           }} />
       ) : null}
     </div>
@@ -206,19 +218,21 @@ export function ContinuityPanel({ active }: PanelProps) {
 
 interface RowProps {
   row: IssueRow; focused: boolean; selected: boolean; expanded: boolean; editing: boolean; showSequence: boolean;
-  onJump: () => void; onToggle: (v: boolean) => void; onRemove: () => void; onExpand: () => void; onEdit: () => void; onEndEdit: () => void;
+  onJump: (r: IssueRow) => void; onToggle: (r: IssueRow, v: boolean) => void; onRemove: (r: IssueRow) => void;
+  onExpand: (r: IssueRow) => void; onEdit: (r: IssueRow) => void; onEndEdit: () => void;
 }
 
-function IssueRowView({ row, focused, selected, expanded, editing, showSequence, onJump, onToggle, onRemove, onExpand, onEdit, onEndEdit }: RowProps) {
+/** Memoized: props are the cached row plus flags and stable callbacks, so only changed rows re-render. */
+const IssueRowView = React.memo(function IssueRowView({ row, focused, selected, expanded, editing, showSequence, onJump, onToggle, onRemove, onExpand, onEdit, onEndEdit }: RowProps) {
   const { marker: m, seq } = row;
   const cat = categoryOf(m);
   const hasNote = m.note.trim().length > 0;
   return (
     <div className={['cty-row', m.resolved ? 'resolved' : '', focused ? 'focused' : '', selected ? 'selected' : '', editing ? 'editing' : ''].filter(Boolean).join(' ')}
       data-marker-id={m.id} data-seq-id={seq.id} data-resolved={!!m.resolved} role="option" aria-selected={focused}
-      onClick={() => { if (!editing) onJump(); }} onDoubleClick={(e) => { e.preventDefault(); if (!editing) onEdit(); }}>
+      onClick={() => { if (!editing) onJump(row); }} onDoubleClick={(e) => { e.preventDefault(); if (!editing) onEdit(row); }}>
       <input type="checkbox" className="cty-check" checked={!!m.resolved} aria-label={m.resolved ? 'Reopen issue' : 'Mark resolved'} title={m.resolved ? 'Reopen' : 'Mark resolved'}
-        onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()} onChange={(e) => onToggle(e.target.checked)} />
+        onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()} onChange={(e) => onToggle(row, e.target.checked)} />
       <div className="cty-main">
         {editing ? (
           <InlineEdit marker={m} seqId={seq.id} onDone={onEndEdit} />
@@ -234,7 +248,7 @@ function IssueRowView({ row, focused, selected, expanded, editing, showSequence,
               <span className="cty-name ellipsis" title={m.name}>{m.name || <span className="text-faint">Untitled</span>}</span>
               {hasNote ? (
                 <button type="button" className="cty-expand" aria-label={expanded ? 'Collapse note' : 'Expand note'} aria-expanded={expanded}
-                  onClick={(e) => { e.stopPropagation(); onExpand(); }} onDoubleClick={(e) => e.stopPropagation()}>
+                  onClick={(e) => { e.stopPropagation(); onExpand(row); }} onDoubleClick={(e) => e.stopPropagation()}>
                   {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
                 </button>
               ) : null}
@@ -244,10 +258,10 @@ function IssueRowView({ row, focused, selected, expanded, editing, showSequence,
           </>
         )}
       </div>
-      {!editing ? <IconButton icon={Trash2} label="Delete issue" size="sm" className="cty-del" onClick={(e) => { e.stopPropagation(); onRemove(); }} onDoubleClick={(e) => e.stopPropagation()} /> : null}
+      {!editing ? <IconButton icon={Trash2} label="Delete issue" size="sm" className="cty-del" onClick={(e) => { e.stopPropagation(); onRemove(row); }} onDoubleClick={(e) => e.stopPropagation()} /> : null}
     </div>
   );
-}
+});
 
 function InlineEdit({ marker, seqId, onDone }: { marker: Marker; seqId: ID; onDone: () => void }) {
   const [name, setName] = useState(marker.name);
@@ -276,6 +290,8 @@ function InlineEdit({ marker, seqId, onDone }: { marker: Marker; seqId: ID; onDo
 interface AddInput { name: string; note: string; category: string; clipId?: ID }
 
 function AddNoteDialog({ open, seq, selectedClip, onClose, onAdd }: { open: boolean; seq: Sequence; selectedClip: { id: ID; name: string } | null; onClose: () => void; onAdd: (i: AddInput) => void }) {
+  // Only track the playhead while the dialog is open (the closed dialog must not re-render during playback).
+  const playhead = useStore((s) => (open ? s.project.sequences[seq.id]?.view.playhead ?? 0 : 0));
   const [name, setName] = useState('');
   const [note, setNote] = useState('');
   const [category, setCategory] = useState<string>('other');
@@ -283,7 +299,7 @@ function AddNoteDialog({ open, seq, selectedClip, onClose, onAdd }: { open: bool
   useEffect(() => { if (open) { setName(''); setNote(''); setCategory('other'); setLink(true); } }, [open]);
   const submit = () => { if (!name.trim()) return; onAdd({ name: name.trim(), note, category, clipId: link && selectedClip ? selectedClip.id : undefined }); };
   return (
-    <Dialog open={open} title={<span className="row gap-6"><AlertTriangle size={14} className="text-accent-2" />Continuity note at {formatTimecode(seq.view.playhead, seq.fps)}</span>} onClose={onClose} width={420}
+    <Dialog open={open} title={<span className="row gap-6"><AlertTriangle size={14} className="text-accent-2" />Continuity note at {formatTimecode(playhead, seq.fps)}</span>} onClose={onClose} width={420}
       footer={<>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="primary" disabled={!name.trim()} onClick={submit} data-testid="continuity-dialog-add">Add note</Button>

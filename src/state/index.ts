@@ -3,3 +3,4 @@ export * from './selectors';
 export * from './mediaActions';
 export * from './history';
 export type * from './types';
+export { usePlayhead, useViewScroll } from './hooks';

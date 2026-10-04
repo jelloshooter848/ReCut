@@ -142,6 +142,7 @@ export function TabbedZone({ zoneId }: TabbedZoneProps) {
           const def = getPanel(id)!;
           const Comp = def.component;
           const isActive = id === active;
+          if (!isActive && !def.keepAlive) return null;
           return (
             <div key={id} className="zone-panel" role="tabpanel" hidden={!isActive} style={isActive ? undefined : { display: 'none' }}>
               <Comp panelId={id} zoneId={zoneId} active={isActive} focused={focused && isActive} />

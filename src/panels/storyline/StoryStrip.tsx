@@ -7,7 +7,7 @@ import { Palette, StickyNote, Trash2 } from 'lucide-react';
 import type { Sequence, StoryBlock } from '@shared/model';
 import { clipEnd, sequenceDuration } from '@shared/timeline';
 import { formatTimecode, fpsValue } from '@shared/time';
-import { useStore } from '@/state';
+import { useStore, usePlayhead } from '@/state';
 import { filterMatches, filtersActive } from '@/state/selectors';
 import type { FilterState } from '@/state/types';
 import { openContextMenu, type MenuItem } from '@/components/ui/ContextMenu';
@@ -287,7 +287,6 @@ export function StoryStrip({ seq, zoom, onZoomChange, palette, filters, snapping
   }, [ppf, fpsNum, extent, fps]);
 
   const selected = seq.storyBlocks.find((b) => b.id === selectedBlockId) ?? null;
-  const playheadX = seq.view.playhead * ppf;
   const inX = seq.view.inPoint !== null ? seq.view.inPoint * ppf : null;
   const outX = seq.view.outPoint !== null ? seq.view.outPoint * ppf : null;
 
@@ -401,15 +400,23 @@ export function StoryStrip({ seq, zoom, onZoomChange, palette, filters, snapping
 
         {/* playhead */}
         {ppf > 0 ? (
-          <div className="sl-playhead" style={{ left: playheadX }} data-testid="story-playhead">
-            <div className="sl-playhead-head" />
-          </div>
+          <StoryPlayhead seqId={seq.id} ppf={ppf} />
         ) : null}
       </div>
 
       {popover && selected && popover.blockId === selected.id ? (
         <BlockPopover popover={popover} block={selected} seqId={seq.id} onClose={() => setPopover(null)} />
       ) : null}
+    </div>
+  );
+}
+
+/** Only this line re-renders on playhead moves (the playhead is mutated in place; see setView). */
+function StoryPlayhead({ seqId, ppf }: { seqId: string; ppf: number }) {
+  const playhead = usePlayhead(seqId);
+  return (
+    <div className="sl-playhead" style={{ left: playhead * ppf }} data-testid="story-playhead">
+      <div className="sl-playhead-head" />
     </div>
   );
 }

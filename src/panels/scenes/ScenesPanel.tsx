@@ -2,7 +2,8 @@
  * Scene Library panel: a database view over project.scenes (SceneRecords = references into source media).
  * Rows/cards select, double-click loads in Source, drag feeds the Timeline, the context menu inserts at the playhead.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronRight, Clapperboard, Copy, Film, LayoutGrid, List, Palette, Pencil, Plus, Scissors, Star, Trash2, Wand2, Filter, X,
 } from 'lucide-react';
@@ -22,7 +23,21 @@ import {
 import { useThumb } from './useThumb';
 import { NamePromptDialog, ConfirmDialog } from './NamePromptDialog';
 import { RatingStars, SceneBatchEditor, SceneEditor } from './SceneEditor';
+import { VirtualList, type VirtualListHandle } from '@/panels/transcript/VirtualList';
 import './scenes.css';
+
+/** Virtualised body rows (P-09): group headers, list rows, or grid rows of `cols` cards. Heights are fixed. */
+type VRow =
+  | { kind: 'head'; key: string; group: { key: string; label: string; count: number } }
+  | { kind: 'row'; key: string; scene: SceneRecord }
+  | { kind: 'cards'; key: string; scenes: SceneRecord[] };
+const HEAD_H = 22;
+const ROW_H = 58;
+const ROW_CHIPS_H = 76;
+const CARD_MIN_W = 150;
+const GRID_GAP = 6;
+const CARD_BODY_H = 70;
+const hasChips = (s: SceneRecord) => !!(s.characters.length || s.location || s.arc || s.tags.length);
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'name', label: 'Name' }, { value: 'source', label: 'Source' }, { value: 'rating', label: 'Rating' }, { value: 'created', label: 'Created' }, { value: 'duration', label: 'Duration' },
@@ -37,8 +52,10 @@ export function ScenesPanel({ active }: PanelProps) {
   const scenesMap = useStore((s) => s.project.scenes);
   const media = useStore((s) => s.project.media);
   const selectedIds = useStore((s) => s.ui.selectedSceneIds);
-  const sourceClip = useStore((s) => s.ui.sourceClip);
-  const selectedClipIds = useStore((s) => s.ui.selectedClipIds);
+  // Narrow selectors: the Source clip's playback time and the timeline selection must not re-render the library.
+  const sourceClip = useStore(useShallow((s) => (s.ui.sourceClip
+    ? { mediaId: s.ui.sourceClip.mediaId, inPoint: s.ui.sourceClip.inPoint, outPoint: s.ui.sourceClip.outPoint } : null)));
+  const hasSelectedClip = useStore((s) => s.ui.selectedClipIds.length > 0);
   const selectedMediaIds = useStore((s) => s.ui.selectedMediaIds);
   const activeSeqId = useStore((s) => s.project.activeSequenceId);
 
@@ -53,7 +70,17 @@ export function ScenesPanel({ active }: PanelProps) {
   const [prompt, setPrompt] = useState<Prompt>(null);
   const [confirmDelete, setConfirmDelete] = useState<ID[] | null>(null);
   const anchorRef = useRef<ID | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<VirtualListHandle>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [bodyW, setBodyW] = useState(0);
+  useLayoutEffect(() => {
+    const el = bodyRef.current; if (!el) return;
+    const measure = () => setBodyW(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const menu = useContextMenu();
 
   const all = useMemo(() => Object.values(scenesMap), [scenesMap]);
@@ -84,7 +111,7 @@ export function ScenesPanel({ active }: PanelProps) {
   }, [importCandidate, all]);
 
   const canNewFromSource = !!sourceClip && sourceClip.inPoint !== null && sourceClip.outPoint !== null && sourceClip.outPoint > sourceClip.inPoint && !!media[sourceClip.mediaId];
-  const canNewFromClip = !!activeSeqId && selectedClipIds.length > 0;
+  const canNewFromClip = !!activeSeqId && hasSelectedClip;
 
   // ---- selection
   const selectScene = useCallback((id: ID, e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => {
@@ -175,7 +202,8 @@ export function ScenesPanel({ active }: PanelProps) {
       const id = visibleIds[next];
       if (e.shiftKey && anchorRef.current) { const a = visibleIds.indexOf(anchorRef.current); const [lo, hi] = a < next ? [a, next] : [next, a]; s.selectScenes(visibleIds.slice(lo, hi + 1), 'set'); }
       else { s.selectScenes([id], 'set'); anchorRef.current = id; }
-      listRef.current?.querySelector<HTMLElement>(`[data-scene-id="${id}"]`)?.scrollIntoView({ block: 'nearest' });
+      const ri = rowOfScene.get(id);
+      if (ri !== undefined) listRef.current?.scrollToIndex(ri);
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); e.stopPropagation(); s.selectScenes(visibleIds, 'set'); }
@@ -187,6 +215,69 @@ export function ScenesPanel({ active }: PanelProps) {
   const toggleGroup = (key: string) => setCollapsed((c) => { const n = new Set(c); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   const setFilter = <K extends keyof SceneFilters>(k: K, v: SceneFilters[K]) => setFilters((f) => ({ ...f, [k]: v }));
   const activeFilterCount = [filters.character, filters.location, filters.arc, filters.tag, filters.mediaId, filters.color].filter(Boolean).length + (filters.minRating > 0 ? 1 : 0);
+
+  // ---- virtual rows
+  const cols = view === 'grid' ? Math.max(1, Math.floor((Math.max(bodyW, CARD_MIN_W) - 2 * GRID_GAP + GRID_GAP) / (CARD_MIN_W + GRID_GAP))) : 1;
+  const cardRowH = useMemo(() => {
+    const colW = (Math.max(bodyW, CARD_MIN_W) - 2 * GRID_GAP - GRID_GAP * (cols - 1)) / cols;
+    return Math.round(colW * 9 / 16 + CARD_BODY_H + GRID_GAP);
+  }, [bodyW, cols]);
+  const vrows = useMemo<VRow[]>(() => {
+    const out: VRow[] = [];
+    for (const g of groups) {
+      if (groupBy !== 'none') out.push({ kind: 'head', key: `h:${g.key}`, group: { key: g.key, label: g.label, count: g.scenes.length } });
+      if (collapsed.has(g.key)) continue;
+      if (view === 'grid') for (let i = 0; i < g.scenes.length; i += cols) out.push({ kind: 'cards', key: `c:${g.key}:${i}`, scenes: g.scenes.slice(i, i + cols) });
+      else for (const sc of g.scenes) out.push({ kind: 'row', key: `r:${g.key}:${sc.id}`, scene: sc });
+    }
+    return out;
+  }, [groups, groupBy, collapsed, view, cols]);
+  const rowOfScene = useMemo(() => {
+    const m = new Map<ID, number>();
+    vrows.forEach((r, i) => {
+      if (r.kind === 'row') { if (!m.has(r.scene.id)) m.set(r.scene.id, i); }
+      else if (r.kind === 'cards') for (const sc of r.scenes) if (!m.has(sc.id)) m.set(sc.id, i);
+    });
+    return m;
+  }, [vrows]);
+  const rowHeight = useCallback((r: VRow) => (r.kind === 'head' ? HEAD_H : r.kind === 'cards' ? cardRowH : hasChips(r.scene) ? ROW_CHIPS_H : ROW_H), [cardRowH]);
+
+  // Stable per-item handlers (rows / cards are memoised): read the latest panel state through a ref.
+  const live = useRef({ selectScene, sceneMenu, menu, selectedSet });
+  live.current = { selectScene, sceneMenu, menu, selectedSet };
+  const handlers = useMemo<ItemHandlers>(() => ({
+    onSelect: (scene, e) => live.current.selectScene(scene.id, e),
+    onOpen: (scene) => loadSceneInSource(scene),
+    onMenu: (scene, e) => {
+      if (!live.current.selectedSet.has(scene.id)) { useStore.getState().selectScenes([scene.id], 'set'); anchorRef.current = scene.id; }
+      live.current.menu.open(e, live.current.sceneMenu(scene));
+    },
+    onDragStart: (scene, e) => {
+      const s = useStore.getState();
+      const sel = s.ui.selectedSceneIds.includes(scene.id) ? s.ui.selectedSceneIds.map((id) => s.project.scenes[id]).filter((x): x is SceneRecord => !!x) : [scene];
+      startSceneDrag(e.dataTransfer, sel.length ? sel : [scene]);
+    },
+    onRate: (scene, v) => useStore.getState().updateScene(scene.id, { rating: v }),
+  }), []);
+
+  const renderRow = (r: VRow) => {
+    if (r.kind === 'head') {
+      const open = !collapsed.has(r.group.key);
+      return (
+        <div className="scn-group-head" data-group={r.group.key} onClick={() => toggleGroup(r.group.key)} role="button" aria-expanded={open}>
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          <span className="ellipsis grow">{r.group.label}</span>
+          <span className="badge dim">{r.group.count}</span>
+        </div>
+      );
+    }
+    if (r.kind === 'row') return <SceneRow scene={r.scene} media={media[r.scene.mediaId]} selected={selectedSet.has(r.scene.id)} h={handlers} />;
+    return (
+      <div className="scn-grid scn-grid-row" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+        {r.scenes.map((sc) => <SceneCard key={sc.id} scene={sc} media={media[sc.mediaId]} selected={selectedSet.has(sc.id)} h={handlers} />)}
+      </div>
+    );
+  };
 
   const editing = editorOpen && selectedScenes.length === 1 ? selectedScenes[0] : null;
   const batch = editorOpen && selectedScenes.length > 1 ? selectedScenes : null;
@@ -253,43 +344,16 @@ export function ScenesPanel({ active }: PanelProps) {
       ) : null}
 
       {/* ---- body */}
-      <div className="panel-body scn-body" ref={listRef} onClick={(e) => { if (e.target === e.currentTarget) useStore.getState().selectScenes([], 'clear'); }}>
+      <div className="panel-body scn-body" ref={bodyRef} onClick={(e) => { if (!(e.target as HTMLElement).closest('[data-scene-id], .scn-group-head')) useStore.getState().selectScenes([], 'clear'); }}>
         {all.length === 0 ? (
           <EmptyState icon={Clapperboard} title="No scenes in the library yet"
             description="Mark In/Out in the Source monitor and press “From Source In/Out”, or import detected scenes from a movie. Scene records only reference the source — nothing is copied." />
         ) : filtered.length === 0 ? (
           <EmptyState icon={Filter} title="No scenes match" description="Try a different search or clear the filters." action={<Button size="sm" onClick={() => setFilters(EMPTY_FILTERS)}>Clear filters</Button>} />
-        ) : groups.map((g) => (
-          <div key={g.key} className="scn-group" data-group={g.key}>
-            {groupBy !== 'none' ? (
-              <div className="scn-group-head" onClick={() => toggleGroup(g.key)} role="button" aria-expanded={!collapsed.has(g.key)}>
-                {collapsed.has(g.key) ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-                <span className="ellipsis grow">{g.label}</span>
-                <span className="badge dim">{g.scenes.length}</span>
-              </div>
-            ) : null}
-            {!collapsed.has(g.key) ? (
-              <div className={view === 'grid' ? 'scn-grid' : 'list scn-list'}>
-                {g.scenes.map((scene) => {
-                  const m = media[scene.mediaId];
-                  const common = {
-                    scene, media: m, selected: selectedSet.has(scene.id),
-                    onSelect: (e: React.MouseEvent) => selectScene(scene.id, e),
-                    onOpen: () => loadSceneInSource(scene),
-                    onMenu: (e: React.MouseEvent) => { if (!selectedSet.has(scene.id)) { useStore.getState().selectScenes([scene.id], 'set'); anchorRef.current = scene.id; } menu.open(e, sceneMenu(scene)); },
-                    onDragStart: (e: React.DragEvent) => {
-                      const s = useStore.getState();
-                      const sel = s.ui.selectedSceneIds.includes(scene.id) ? s.ui.selectedSceneIds.map((id) => s.project.scenes[id]).filter((x): x is SceneRecord => !!x) : [scene];
-                      startSceneDrag(e.dataTransfer, sel.length ? sel : [scene]);
-                    },
-                    onRate: (v: number) => useStore.getState().updateScene(scene.id, { rating: v }),
-                  };
-                  return view === 'grid' ? <SceneCard key={scene.id} {...common} /> : <SceneRow key={scene.id} {...common} />;
-                })}
-              </div>
-            ) : null}
-          </div>
-        ))}
+        ) : (
+          <VirtualList ref={listRef} className={view === 'grid' ? 'scn-vlist grid' : 'scn-vlist list scn-list'} items={vrows} itemKey={rowKey} itemHeight={rowHeight}
+            threshold={40} overscan={4} render={renderRow} />
+        )}
       </div>
 
       {/* ---- editor sheet */}
@@ -322,16 +386,23 @@ export function ScenesPanel({ active }: PanelProps) {
 
 // ------------------------------------------------------------------ row / card
 
+interface ItemHandlers {
+  onSelect: (scene: SceneRecord, e: React.MouseEvent) => void;
+  onOpen: (scene: SceneRecord) => void;
+  onMenu: (scene: SceneRecord, e: React.MouseEvent) => void;
+  onDragStart: (scene: SceneRecord, e: React.DragEvent) => void;
+  onRate: (scene: SceneRecord, v: number) => void;
+}
+
 interface ItemProps {
   scene: SceneRecord;
   media: MediaItem | undefined;
   selected: boolean;
-  onSelect: (e: React.MouseEvent) => void;
-  onOpen: () => void;
-  onMenu: (e: React.MouseEvent) => void;
-  onDragStart: (e: React.DragEvent) => void;
-  onRate: (v: number) => void;
+  /** Stable handler bundle shared by every row / card. */
+  h: ItemHandlers;
 }
+
+const rowKey = (r: VRow) => r.key;
 
 function Thumb({ media, time, width, className }: { media: MediaItem | undefined; time: number; width: number; className: string }) {
   const url = useThumb(media?.offline ? undefined : media?.path, time, width, media?.id);
@@ -342,18 +413,18 @@ function Thumb({ media, time, width, className }: { media: MediaItem | undefined
   );
 }
 
-function SceneRow(p: ItemProps) {
-  const { scene, media, selected } = p;
+const SceneRow = memo(function SceneRow(p: ItemProps) {
+  const { scene, media, selected, h } = p;
   const fps = mediaFps(media);
   return (
     <div className={['scn-row', selected ? 'selected' : '', media ? '' : 'missing'].filter(Boolean).join(' ')} data-scene-id={scene.id} aria-selected={selected} role="option"
-      draggable onDragStart={p.onDragStart} onClick={p.onSelect} onDoubleClick={p.onOpen} onContextMenu={p.onMenu}>
+      draggable onDragStart={(e) => h.onDragStart(scene, e)} onClick={(e) => h.onSelect(scene, e)} onDoubleClick={() => h.onOpen(scene)} onContextMenu={(e) => h.onMenu(scene, e)}>
       <span className="scn-row-color" style={{ background: labelColorHex(scene.color) ?? 'transparent' }} />
       <Thumb media={media} time={scene.in} width={160} className="scn-thumb" />
       <div className="scn-row-main">
         <div className="row gap-6">
           <span className="scn-name ellipsis" title={scene.name}>{scene.name}</span>
-          <RatingStars value={scene.rating} onChange={p.onRate} size={10} className="ml-auto" />
+          <RatingStars value={scene.rating} onChange={(v) => h.onRate(scene, v)} size={10} className="ml-auto" />
         </div>
         <div className="row gap-6 text-sm">
           <span className="text-dim ellipsis grow" title={sourceLabel(media)}>{sourceLabel(media)}</span>
@@ -371,14 +442,14 @@ function SceneRow(p: ItemProps) {
       </div>
     </div>
   );
-}
+});
 
-function SceneCard(p: ItemProps) {
-  const { scene, media, selected } = p;
+const SceneCard = memo(function SceneCard(p: ItemProps) {
+  const { scene, media, selected, h } = p;
   const fps = mediaFps(media);
   return (
     <div className={['scn-card', selected ? 'selected' : '', media ? '' : 'missing'].filter(Boolean).join(' ')} data-scene-id={scene.id} aria-selected={selected} role="option"
-      draggable onDragStart={p.onDragStart} onClick={p.onSelect} onDoubleClick={p.onOpen} onContextMenu={p.onMenu}>
+      draggable onDragStart={(e) => h.onDragStart(scene, e)} onClick={(e) => h.onSelect(scene, e)} onDoubleClick={() => h.onOpen(scene)} onContextMenu={(e) => h.onMenu(scene, e)}>
       <Thumb media={media} time={scene.in} width={160} className="scn-card-thumb" />
       <span className="scn-card-dur mono">{durationLabel(scene)}</span>
       <span className="scn-card-color" style={{ background: labelColorHex(scene.color) ?? 'transparent' }} />
@@ -387,13 +458,13 @@ function SceneCard(p: ItemProps) {
         <div className="text-dim text-xs ellipsis" title={sourceLabel(media)}>{sourceLabel(media)}</div>
         <div className="text-faint text-xs mono ellipsis">{formatSecondsTimecode(scene.in, fps)}</div>
         <div className="row gap-4">
-          <RatingStars value={scene.rating} onChange={p.onRate} size={9} />
+          <RatingStars value={scene.rating} onChange={(v) => h.onRate(scene, v)} size={9} />
           {scene.characters.length ? <span className="text-xs text-dim ellipsis ml-auto" title={scene.characters.join(', ')}>{scene.characters.join(', ')}</span> : null}
         </div>
       </div>
     </div>
   );
-}
+});
 
 /** Used by the e2e tests / command palette: bring the Scenes panel to front. */
 export function focusScenesPanel(): void { useLayoutStore.getState().focusPanel('scenes'); }

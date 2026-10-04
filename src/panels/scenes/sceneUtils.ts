@@ -95,20 +95,31 @@ export function matchesFilters(scene: SceneRecord, f: SceneFilters, media: Media
   return true;
 }
 
+const numericCollator = new Intl.Collator(undefined, { numeric: true });
+const nameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+/** sourceLabel per media object (labels only change when the media item does). */
+const sourceLabelCache = new WeakMap<MediaItem, string>();
+function cachedSourceLabel(m: MediaItem | undefined): string {
+  if (!m) return sourceLabel(m);
+  let l = sourceLabelCache.get(m);
+  if (l === undefined) { l = sourceLabel(m); sourceLabelCache.set(m, l); }
+  return l;
+}
+
 export function compareScenes(a: SceneRecord, b: SceneRecord, key: SortKey, dir: 1 | -1, media: Record<ID, MediaItem>): number {
   let r = 0;
   switch (key) {
-    case 'name': r = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }); break;
+    case 'name': r = nameCollator.compare(a.name, b.name); break;
     case 'rating': r = b.rating - a.rating; break;
     case 'created': r = a.createdAt - b.createdAt; break;
     case 'duration': r = sceneDuration(a) - sceneDuration(b); break;
     case 'source': {
       const ma = media[a.mediaId], mb = media[b.mediaId];
-      r = sourceLabel(ma).localeCompare(sourceLabel(mb), undefined, { numeric: true }) || a.in - b.in;
+      r = (ma === mb ? 0 : numericCollator.compare(cachedSourceLabel(ma), cachedSourceLabel(mb))) || a.in - b.in;
       break;
     }
   }
-  if (r === 0) r = a.name.localeCompare(b.name, undefined, { numeric: true }) || a.in - b.in;
+  if (r === 0) r = numericCollator.compare(a.name, b.name) || a.in - b.in;
   return r * dir;
 }
 

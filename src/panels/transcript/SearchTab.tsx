@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDownToLine, GripVertical, MonitorPlay, Regex, Search, WholeWord } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
+import type { Sequence } from '@shared/model';
 import { useStore } from '@/state';
 import { IconButton, SearchField, Select, EmptyState } from '@/components/ui';
 import { setClipDrag } from '@/app/dnd';
@@ -41,9 +43,9 @@ export function SearchTab({ index, active }: SearchTabProps) {
 
   const sourceMediaId = useStore((s) => s.ui.sourceClip?.mediaId ?? null);
   const activeSequenceId = useStore((s) => s.project.activeSequenceId);
-  const sequences = useStore((s) => s.project.sequences);
   const media = useStore((s) => s.project.media);
-  const seqFps = activeSequenceId ? sequences[activeSequenceId]?.fps : undefined;
+  // Narrow selector: the fps object is structurally shared, so playhead / scroll moves never re-render this tab.
+  const seqFps = useStore((s) => (activeSequenceId ? s.project.sequences[activeSequenceId]?.fps : undefined));
 
   const options = useMemo(() => scopeOptions(index.project, { sourceMediaId, activeSequenceId }), [index, sourceMediaId, activeSequenceId]);
   const optionList = useMemo(() => options.map((o) => ({ value: o.key, label: o.label })), [options]);
@@ -52,12 +54,19 @@ export function SearchTab({ index, active }: SearchTabProps) {
 
   const debounced = useDebounced(query, 120);
   // Sequence scope depends on the timeline, which the memoized index does not track: search against the live
-  // sequences then (and only then, so playhead moves do not re-run project-wide searches).
-  const liveSequences = scope.kind === 'sequence' ? sequences : null;
+  // clip structure of that sequence only (track arrays + fps), never the sequence object or its view, so
+  // playhead / scroll / zoom moves do not re-run the search (P-10).
+  const scopeSeqId = scope.kind === 'sequence' ? scope.sequenceId ?? null : null;
+  const seqStructure = useStore(useShallow((s) => {
+    const q = scopeSeqId ? s.project.sequences[scopeSeqId] : undefined;
+    return q ? { id: q.id, fps: q.fps, videoTracks: q.videoTracks, audioTracks: q.audioTracks } : null;
+  }));
   const result = useMemo(() => {
-    const idx = liveSequences ? { ...index, project: { ...index.project, sequences: liveSequences } } : index;
+    const idx = seqStructure
+      ? { ...index, project: { ...index.project, sequences: { ...index.project.sequences, [seqStructure.id]: { ...index.project.sequences[seqStructure.id], ...seqStructure } as Sequence } } }
+      : index;
     return searchTranscript(idx, debounced, scope, { limit: LIMIT, regex, wholeWord });
-  }, [index, debounced, scope, regex, wholeWord, liveSequences]);
+  }, [index, debounced, scope, regex, wholeWord, seqStructure]);
 
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];

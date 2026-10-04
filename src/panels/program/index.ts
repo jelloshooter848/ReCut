@@ -8,6 +8,7 @@ registerPanel({
   defaultZone: 'monitor-right',
   icon: Monitor,
   component: ProgramPanel,
+  keepAlive: true,
   description: 'Program Monitor — plays the active sequence',
 });
 

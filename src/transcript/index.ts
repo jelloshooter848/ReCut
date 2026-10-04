@@ -4,7 +4,7 @@
  * Build once per project (memoize on `project.subtitleTracks` / `project.media` identity) and query it with
  * `searchTranscript`. No DOM, no store — safe to unit-test under node.
  */
-import type { Clip, ID, MediaItem, Project, Rational, Sequence, SubtitleCue } from '../../shared/model';
+import type { Clip, ID, MediaItem, Project, Rational, Sequence, SubtitleCue, Track } from '../../shared/model';
 import { clipSourceOut } from '../../shared/timeline';
 import { identityLabel } from '../state/selectors';
 
@@ -235,32 +235,55 @@ function emptyResult(query: string, scope: SearchScope, error?: string): SearchR
   return { query, scope, matches: [], groups: [], total: 0, truncated: false, error };
 }
 
+interface ClipRef { clip: Clip; trackId: ID }
+interface SeqClipIndex { audio: readonly Track[]; clips: (readonly Clip[])[]; lengths: number[]; byMedia: Map<ID, ClipRef[]> }
+/** mediaId -> clips (video tracks first, then audio, in track order), cached per tracks-array identity (P-10). */
+const clipIndexCache = new WeakMap<readonly Track[], SeqClipIndex>();
+
+/** Clips of `seq` grouped by media id. Recomputed only when the sequence's track arrays change identity. */
+export function sequenceClipsByMedia(seq: Pick<Sequence, 'videoTracks' | 'audioTracks'>): Map<ID, ClipRef[]> {
+  const tracks = [...seq.videoTracks, ...seq.audioTracks];
+  const hit = clipIndexCache.get(seq.videoTracks);
+  // Valid while the track arrays and every track's clips array are the same (immer replaces them on edits; the
+  // length check also catches in-place pushes on plain, non-store objects).
+  if (hit && hit.audio === seq.audioTracks && hit.clips.length === tracks.length
+    && tracks.every((t, i) => t.clips === hit.clips[i] && t.clips.length === hit.lengths[i])) return hit.byMedia;
+  const byMedia = new Map<ID, ClipRef[]>();
+  const add = (t: Track) => {
+    for (const c of t.clips) {
+      let l = byMedia.get(c.mediaId);
+      if (!l) { l = []; byMedia.set(c.mediaId, l); }
+      l.push({ clip: c, trackId: t.id });
+    }
+  };
+  for (const t of seq.videoTracks) add(t);
+  for (const t of seq.audioTracks) add(t);
+  clipIndexCache.set(seq.videoTracks, { audio: seq.audioTracks, clips: tracks.map((t) => t.clips), lengths: tracks.map((t) => t.clips.length), byMedia });
+  return byMedia;
+}
+
 /** Media ids used by clips in a sequence. */
-export function sequenceMediaIds(seq: Sequence): Set<ID> {
-  const ids = new Set<ID>();
-  for (const t of seq.videoTracks) for (const c of t.clips) ids.add(c.mediaId);
-  for (const t of seq.audioTracks) for (const c of t.clips) ids.add(c.mediaId);
-  return ids;
+export function sequenceMediaIds(seq: Pick<Sequence, 'videoTracks' | 'audioTracks'>): Set<ID> {
+  return new Set(sequenceClipsByMedia(seq).keys());
 }
 
 /** Timeline positions where source range [start, end) of `mediaId` appears in `seq` (video clips first; audio only when unlinked). */
-export function timelineHitsFor(seq: Sequence, mediaId: ID, start: number, end: number): TimelineHit[] {
+export function timelineHitsFor(seq: Pick<Sequence, 'id' | 'fps' | 'videoTracks' | 'audioTracks'>, mediaId: ID, start: number, end: number): TimelineHit[] {
   const out: TimelineHit[] = [];
   const fps: Rational = seq.fps;
   const seenLinks = new Set<ID>();
-  const consider = (c: Clip, trackId: ID) => {
-    if (c.mediaId !== mediaId) return;
-    if (c.linkId) { if (seenLinks.has(c.linkId)) return; }
+  const refs = sequenceClipsByMedia(seq).get(mediaId);
+  if (!refs) return out;
+  for (const { clip: c, trackId } of refs) {
+    if (c.linkId) { if (seenLinks.has(c.linkId)) continue; }
     const srcOut = clipSourceOut(c, fps);
-    if (end <= c.sourceIn || start >= srcOut) return;
+    if (end <= c.sourceIn || start >= srcOut) continue;
     if (c.linkId) seenLinks.add(c.linkId);
     const toFrame = (sec: number) => c.start + Math.round((sec - c.sourceIn) / c.speed * fps.num / fps.den);
     const f = Math.max(c.start, Math.min(c.start + c.duration - 1, toFrame(start)));
     const ef = Math.max(f + 1, Math.min(c.start + c.duration, toFrame(end)));
     out.push({ sequenceId: seq.id, clipId: c.id, clipName: c.name, trackId, frame: f, endFrame: ef });
-  };
-  for (const t of seq.videoTracks) for (const c of t.clips) consider(c, t.id);
-  for (const t of seq.audioTracks) for (const c of t.clips) consider(c, t.id);
+  }
   out.sort((a, b) => a.frame - b.frame);
   return out;
 }

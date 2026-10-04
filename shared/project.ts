@@ -1,5 +1,5 @@
 import { PROJECT_FORMAT_VERSION } from './model';
-import type { Project, Sequence, Rational, MediaItem, ProjectSettings, Bin, ID, TagVocabulary } from './model';
+import type { Project, Sequence, Rational, MediaItem, ProjectSettings, Bin, ID, TagVocabulary, SequenceView } from './model';
 import { uid } from './ids';
 import { makeTrack, defaultTransform, defaultAudio, reconcileTransitions } from './timeline';
 
@@ -21,6 +21,26 @@ export function emptyTags(): TagVocabulary {
   return { characters: [], plotlines: [], locations: [], themes: [], custom: [] };
 }
 
+/**
+ * A sequence's view state (playhead / zoom / scroll / in / out). Deliberately a class instance: immer treats it as
+ * an opaque value, so it is neither drafted nor auto-frozen, and the renderer store moves the playhead / scroll
+ * IN PLACE without producing a new project (see `setView` in src/state/store.ts). Replace the whole object to
+ * change zoom / in / out (so sequence identity changes). Serialises (JSON / structuredClone) as a plain object.
+ */
+export class LiveView implements SequenceView {
+  playhead = 0;
+  zoom = 4;
+  scroll = 0;
+  inPoint: number | null = null;
+  outPoint: number | null = null;
+  constructor(v?: Partial<SequenceView>) { if (v) Object.assign(this, v); }
+}
+
+/** `v` as a LiveView (a copy when it is a plain object). */
+export function liveView(v: SequenceView): SequenceView {
+  return v instanceof LiveView ? v : new LiveView(v);
+}
+
 export function createSequence(name: string, fps: Rational = { num: 24000, den: 1001 }, width = 1920, height = 1080): Sequence {
   const now = Date.now();
   return {
@@ -30,7 +50,7 @@ export function createSequence(name: string, fps: Rational = { num: 24000, den: 
     subtitleTracks: [],
     markers: [], storyBlocks: [], snapshots: [],
     createdAt: now, modifiedAt: now, binId: null,
-    view: { playhead: 0, zoom: 4, scroll: 0, inPoint: null, outPoint: null },
+    view: new LiveView(),
   };
 }
 
@@ -101,7 +121,7 @@ export function normalizeProject(raw: unknown): Project {
       markers: Array.isArray(s.markers) ? s.markers : [],
       storyBlocks: Array.isArray(s.storyBlocks) ? s.storyBlocks : [],
       snapshots: Array.isArray(s.snapshots) ? s.snapshots : [],
-      view: repairView({ ...template.view, ...(s.view ?? {}) }, template.view),
+      view: new LiveView(repairView({ ...template.view, ...(s.view ?? {}) }, template.view)),
     };
     for (const t of [...out.sequences[id].videoTracks, ...out.sequences[id].audioTracks]) {
       t.clips = Array.isArray(t.clips) ? t.clips.filter(isValidClip) : [];

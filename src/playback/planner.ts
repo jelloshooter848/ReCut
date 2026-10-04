@@ -16,7 +16,7 @@
  *  - audioCrossfade follows the crossDissolve geometry with gains instead of alphas.
  */
 import type { Clip, ClipTransform, ID, MediaItem, Rational, Sequence, Track, Transition } from '../../shared/model';
-import { clipEnd, sourceTimeAt, transitionsForClip } from '../../shared/timeline';
+import { clipEnd, sourceTimeAt } from '../../shared/timeline';
 import { resolvePlaybackPath, mediaFps, mediaSize } from './mediaSource';
 
 export interface LayerPlan {
@@ -95,61 +95,124 @@ function clamp01(v: number): number { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
 interface Contribution { clip: Clip; weight: number; handle: boolean }
 
+interface TrackIndex {
+  /** Clips are sorted by start (the normal case); otherwise fall back to a linear scan. */
+  sorted: boolean;
+  starts: number[];
+  /** maxEnd[i] = max clipEnd over clips[0..i] (non-decreasing; handles overlapping clips). */
+  maxEnd: number[];
+  /** How far (frames) a transition can make a clip contribute outside its own range. */
+  reach: number;
+  trIn: Map<ID, Transition>;
+  trOut: Map<ID, Transition>;
+}
+
+/** Per-track lookup structures, cached per (immutable) track object. */
+const trackIndexCache = new WeakMap<Track, TrackIndex>();
+
+function trackIndex(track: Track): TrackIndex {
+  let idx = trackIndexCache.get(track);
+  if (idx) return idx;
+  const clips = track.clips;
+  const starts = new Array<number>(clips.length);
+  const maxEnd = new Array<number>(clips.length);
+  let sorted = true, m = -Infinity;
+  for (let i = 0; i < clips.length; i++) {
+    const c = clips[i];
+    starts[i] = c.start;
+    if (i > 0 && c.start < starts[i - 1]) sorted = false;
+    m = Math.max(m, clipEnd(c));
+    maxEnd[i] = m;
+  }
+  const trIn = new Map<ID, Transition>(), trOut = new Map<ID, Transition>();
+  let reach = 0;
+  for (const t of track.transitions) {
+    // First match wins, like Array.find in transitionsForClip.
+    if (t.inClipId && !trIn.has(t.inClipId)) trIn.set(t.inClipId, t);
+    if (t.outClipId && !trOut.has(t.outClipId)) trOut.set(t.outClipId, t);
+    reach = Math.max(reach, Math.ceil(Math.max(1, t.duration)));
+  }
+  idx = { sorted, starts, maxEnd, reach, trIn, trOut };
+  trackIndexCache.set(track, idx);
+  return idx;
+}
+
+/** Index of the first element of sorted `a` greater than `v`. */
+function upperBound(a: number[], v: number): number {
+  let lo = 0, hi = a.length;
+  while (lo < hi) { const mid = (lo + hi) >>> 1; if (a[mid] <= v) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+
 /**
  * For one track, compute which clips contribute at `frame` and with what transition weight (0..1).
  * A clip may contribute while the frame is outside its range (crossDissolve handles).
+ * Binary-searches the (sorted) clips instead of scanning the whole track every frame.
  */
 export function contributionsAt(track: Track, frame: number): Contribution[] {
   const out: Contribution[] = [];
-  for (const clip of track.clips) {
-    if (!clip.enabled) continue;
-    const start = clip.start;
-    const end = clipEnd(clip);
-    const { in: trIn, out: trOut } = transitionsForClip(track, clip.id);
-    let weight = 1;
-    let inside = frame >= start && frame < end;
-    let handle = false;
-
-    // Transition at the clip's start (this clip is the incoming side).
-    if (trIn) {
-      const D = Math.max(1, trIn.duration);
-      if (trIn.outClipId === null) {
-        // from black over D frames inside the clip
-        if (inside && frame < start + D) weight *= (frame - start) / D;
-      } else if (trIn.type === 'dipToBlack') {
-        const half = D / 2;
-        if (inside && frame < start + half) weight *= (frame - start) / half;
-      } else {
-        // crossDissolve / audioCrossfade: centered, t = 0 at start - D/2, 1 at start + D/2
-        const half = D / 2;
-        if (frame >= start - half && frame < start + half) {
-          const t = (frame - (start - half)) / D;
-          weight *= t;
-          if (!inside) { inside = true; handle = true; }
-        }
-      }
-    }
-    // Transition at the clip's end (this clip is the outgoing side).
-    if (trOut) {
-      const D = Math.max(1, trOut.duration);
-      if (trOut.inClipId === null) {
-        if (inside && frame >= end - D) weight *= (end - frame) / D;
-      } else if (trOut.type === 'dipToBlack') {
-        const half = D / 2;
-        if (inside && frame >= end - half) weight *= (end - frame) / half;
-      } else {
-        const half = D / 2;
-        if (frame >= end - half && frame < end + half) {
-          const t = (frame - (end - half)) / D;
-          weight *= 1 - t;
-          if (!inside) { inside = true; handle = true; }
-        }
-      }
-    }
-    if (!inside) continue;
-    out.push({ clip, weight: clamp01(weight), handle });
+  const idx = trackIndex(track);
+  const clips = track.clips;
+  if (!idx.sorted) {
+    for (const clip of clips) contribute(idx, clip, frame, out);
+    return out;
   }
+  // Candidates: start <= frame + reach, and (some clip up to here) end + reach > frame.
+  const hi = upperBound(idx.starts, frame + idx.reach) - 1;
+  let lo = hi;
+  while (lo >= 0 && idx.maxEnd[lo] + idx.reach > frame) lo--;
+  for (let i = lo + 1; i <= hi; i++) contribute(idx, clips[i], frame, out);
   return out;
+}
+
+function contribute(idx: TrackIndex, clip: Clip, frame: number, out: Contribution[]): void {
+  if (!clip.enabled) return;
+  const start = clip.start;
+  const end = clipEnd(clip);
+  const trIn = idx.trIn.get(clip.id);
+  const trOut = idx.trOut.get(clip.id);
+  let weight = 1;
+  let inside = frame >= start && frame < end;
+  let handle = false;
+
+  // Transition at the clip's start (this clip is the incoming side).
+  if (trIn) {
+    const D = Math.max(1, trIn.duration);
+    if (trIn.outClipId === null) {
+      // from black over D frames inside the clip
+      if (inside && frame < start + D) weight *= (frame - start) / D;
+    } else if (trIn.type === 'dipToBlack') {
+      const half = D / 2;
+      if (inside && frame < start + half) weight *= (frame - start) / half;
+    } else {
+      // crossDissolve / audioCrossfade: centered, t = 0 at start - D/2, 1 at start + D/2
+      const half = D / 2;
+      if (frame >= start - half && frame < start + half) {
+        const t = (frame - (start - half)) / D;
+        weight *= t;
+        if (!inside) { inside = true; handle = true; }
+      }
+    }
+  }
+  // Transition at the clip's end (this clip is the outgoing side).
+  if (trOut) {
+    const D = Math.max(1, trOut.duration);
+    if (trOut.inClipId === null) {
+      if (inside && frame >= end - D) weight *= (end - frame) / D;
+    } else if (trOut.type === 'dipToBlack') {
+      const half = D / 2;
+      if (inside && frame >= end - half) weight *= (end - frame) / half;
+    } else {
+      const half = D / 2;
+      if (frame >= end - half && frame < end + half) {
+        const t = (frame - (end - half)) / D;
+        weight *= 1 - t;
+        if (!inside) { inside = true; handle = true; }
+      }
+    }
+  }
+  if (!inside) return;
+  out.push({ clip, weight: clamp01(weight), handle });
 }
 
 /** Build the composition plan for one timeline frame. */

@@ -4,7 +4,7 @@
  * Coordinates: `zoom` is pixels per frame (float), `scroll` is the first visible frame (float).
  * x = (frame - scroll) * zoom.
  */
-import type { Rational } from '../../../shared/model';
+import type { Rational, Track } from '../../../shared/model';
 import { formatTimecode, fpsValue } from '../../../shared/time';
 
 /** Default lower zoom bound (px per frame); long sequences lower it dynamically (see minZoomFor). */
@@ -264,3 +264,65 @@ export function clipVisiblePx(clipX: number, clipW: number, viewX0: number, view
   if (b <= a) return null;
   return { visFrom: Math.floor(a / chunk) * chunk, visTo: Math.min(clipW, Math.ceil(b / chunk) * chunk) };
 }
+
+// ------------------------------------------------------------------
+// Level of detail (P-05)
+// ------------------------------------------------------------------
+
+/** Clips narrower than this (px) are not DOM nodes: they are drawn into one canvas per track lane. */
+export const LOD_MIN_CLIP_PX = 6;
+/** Clips narrower than this (px) request no filmstrip / waveform. */
+export const MEDIA_MIN_CLIP_PX = 40;
+/** A clip's filmstrip / waveform request waits until its visible range has been stable this long (ms). */
+export const MEDIA_SETTLE_MS = 150;
+
+export interface LodClip { start: number; duration: number }
+export interface LodRect { x: number; w: number; first: number; last: number }
+
+/**
+ * Merge clips (sorted by start, in frames) into pixel runs for the canvas lane: clips whose pixel extents touch
+ * (gap below `mergeGapPx`) become one rect. `originPx` is subtracted from every x. `first`/`last` index `clips`.
+ * Only clips overlapping [x0, x1) (pixels, after the origin shift) are considered.
+ */
+export function mergeLodRuns(clips: readonly LodClip[], zoom: number, originPx: number, x0: number, x1: number, mergeGapPx = 1): LodRect[] {
+  const out: LodRect[] = [];
+  let cur: LodRect | null = null;
+  for (let i = 0; i < clips.length; i++) {
+    const c = clips[i];
+    const a = c.start * zoom - originPx;
+    const b = Math.max(a + 1, (c.start + c.duration) * zoom - originPx);
+    if (b <= x0 || a >= x1) continue;
+    if (cur && a - (cur.x + cur.w) < mergeGapPx) { cur.w = Math.max(cur.w, b - cur.x); cur.last = i; continue; }
+    cur = { x: a, w: b - a, first: i, last: i };
+    out.push(cur);
+  }
+  return out;
+}
+
+/**
+ * Clip of `clips` (sorted by start) under `frame`, for hit-testing a canvas-drawn lane: the clip containing the
+ * frame, else the nearest one within `tolPx` pixels (tiny clips are hard to hit exactly).
+ */
+export function lodClipAt<T extends LodClip>(clips: readonly T[], frame: number, zoom: number, tolPx = 3): T | undefined {
+  let lo = 0, hi = clips.length - 1, idx = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (clips[mid].start <= frame) { idx = mid; lo = mid + 1; } else hi = mid - 1; }
+  let best: T | undefined; let bestD = tolPx / Math.max(zoom, 1e-9);
+  for (let i = Math.max(0, idx - 2); i <= Math.min(clips.length - 1, idx + 2); i++) {
+    const c = clips[i];
+    if (frame >= c.start && frame < c.start + c.duration) return c;
+    const d = frame < c.start ? c.start - frame : frame - (c.start + c.duration);
+    if (d <= bestD) { bestD = d; best = c; }
+  }
+  return best;
+}
+
+/** Hit-test a canvas-drawn (LOD) lane: the clip of track `trackId` under `frame`, as findClip would locate it. */
+export function lodHit(
+  tracks: { videoTracks: readonly Track[]; audioTracks: readonly Track[] }, trackId: string, frame: number, zoom: number,
+): { track: Track; clip: Track['clips'][number]; index: number } | undefined {
+  const track = tracks.videoTracks.find((t) => t.id === trackId) ?? tracks.audioTracks.find((t) => t.id === trackId);
+  if (!track) return undefined;
+  const clip = lodClipAt(track.clips, frame, zoom);
+  return clip ? { track, clip, index: track.clips.indexOf(clip) } : undefined;
+}
+

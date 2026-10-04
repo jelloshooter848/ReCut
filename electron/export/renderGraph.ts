@@ -34,6 +34,18 @@ export interface RenderGraph {
   subtitleContent?: string;
   /** Number of ffmpeg inputs (one per rendered clip segment). */
   inputCount: number;
+  /** The `-i` input args alone (flattened), as they appear in `args`. */
+  inputArgs: string[];
+  /** Video encoder args (`-c:v` .. `-fps_mode cfr`), as they appear in `args`. */
+  videoCodecArgs: string[];
+  /** Audio encoder args (`-c:a` .. `-ac N`), as they appear in `args`. */
+  audioCodecArgs: string[];
+  /** Output audio sample rate and channel count. */
+  sampleRate: number;
+  channels: number;
+  /** Rendered range in absolute sequence frames `[startF, endF)`. */
+  startF: number;
+  endF: number;
 }
 
 export interface RenderGraphOptions {
@@ -46,6 +58,16 @@ export interface RenderGraphOptions {
   canonicalPath?: (p: string) => string;
   /** Platform for case-insensitive path comparison (defaults to process.platform). */
   platform?: NodeJS.Platform;
+  /**
+   * Render only this sub-range `[startF, endF)` (absolute sequence frames, inside the request's range).
+   * Used by chunked export (exporter.ts); burn-in subtitles become relative to the sub-range.
+   * The "nothing enabled in range" check is skipped (a chunk may be all gap).
+   */
+  range?: { startF: number; endF: number };
+  /** Build only the video (`[vout]`) or only the audio (`[aout]`) part of the graph. Default: both. */
+  streams?: 'video' | 'audio';
+  /** Make `[aout]` exactly this many samples long (padded with silence / trimmed). */
+  audioSamples?: number;
 }
 
 /** Output dimension limits (mirror src/panels/export/settings.ts MIN_DIMENSION / MAX_DIMENSION). */
@@ -57,7 +79,7 @@ export const MAX_EXPORT_DIMENSION = 8192;
 // ---------------------------------------------------------------------------------------------------
 
 /** Format seconds for filter options (fixed decimals, no exponent). */
-function sec(x: number): string {
+export function sec(x: number): string {
   const v = Math.round(x * 1e6) / 1e6;
   return v.toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
 }
@@ -87,7 +109,7 @@ function mediaDurationSec(m: MediaItem): number {
   return d && d > 0 ? d : Infinity;
 }
 
-function activeTracks(tracks: Track[]): Track[] {
+export function activeTracks(tracks: Track[]): Track[] {
   const live = tracks.filter((t) => !t.muted);
   const solo = live.filter((t) => t.solo);
   return solo.length ? solo : live;
@@ -571,11 +593,11 @@ function audioTrack(ctx: Ctx, plan: TrackPlan): string | null {
 // ---------------------------------------------------------------------------------------------------
 
 /** Range-relative SRT for the request's subtitles (sidecar or burn-in), or null when there are none. */
-export function buildSubtitleSrt(req: ExportRequest): string | null {
+export function buildSubtitleSrt(req: ExportRequest, range?: { startF: number; endF: number }): string | null {
   const cues = req.subtitles;
   if (!cues || cues.length === 0) return null;
   const warnings: string[] = [];
-  const { startF, endF } = resolveRange(req.sequence, req.settings, warnings);
+  const { startF, endF } = range ?? resolveRange(req.sequence, req.settings, warnings);
   const s0 = framesToSeconds(startF, req.sequence.fps);
   const s1 = framesToSeconds(endF, req.sequence.fps);
   const out = cues
@@ -680,10 +702,19 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   const channels = settings.audioChannels === 6 ? 6 : 2;
   const layout = channels === 6 ? '5.1' : 'stereo';
 
-  const { startF, endF } = resolveRange(seq, settings, warnings);
+  let { startF, endF } = resolveRange(seq, settings, warnings);
+  if (opts.range) {
+    const r = opts.range;
+    if (!Number.isInteger(r.startF) || !Number.isInteger(r.endF) || r.startF < startF || r.endF > endF || r.endF <= r.startF) {
+      throw new Error(`Invalid export sub-range ${r.startF}..${r.endF} (export range is ${startF}..${endF}).`);
+    }
+    startF = r.startF; endF = r.endF;
+  }
   const frameCount = endF - startF;
   if (frameCount <= 0) throw new Error('Nothing to export: the range is empty.');
-  if (!hasEnabledClipInRange(seq, startF, endF)) throw new Error('Nothing enabled to export in the selected range');
+  if (!opts.range && !hasEnabledClipInRange(seq, startF, endF)) throw new Error('Nothing enabled to export in the selected range');
+  const wantVideo = opts.streams !== 'audio';
+  const wantAudio = opts.streams !== 'video';
   assertOutputNotASource(req, exportOutputPath(settings), opts);
   const seqFd = seq.fps.den / seq.fps.num;
   const durationSec = frameCount * seqFd;
@@ -695,68 +726,82 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
 
   // ---- Video
   const videoLabels: string[] = [];
-  for (const track of activeTracks(seq.videoTracks)) {
-    const plan = collectTrackSegments(track, seq, media, startF, endF, 'video', warnings);
-    const label = videoTrack(ctx, plan);
-    if (label) videoLabels.push(label);
-  }
-  ctx.chains.push(`color=c=black:s=${W}x${H}:r=${fpsStr(seq.fps)}:d=${sec(durationSec + seqFd)},format=yuv420p,trim=end_frame=${frameCount},setpts=PTS-STARTPTS[vbase]`);
-  let vcur = '[vbase]';
-  videoLabels.forEach((lbl, i) => {
-    const out = i === videoLabels.length - 1 ? '[vcomp]' : `[vc${i}]`;
-    ctx.chains.push(`${vcur}${lbl}overlay=0:0:eof_action=pass:shortest=0${out}`);
-    vcur = out;
-  });
-  const finalVideo: string[] = [];
   let subtitleContent: string | undefined;
-  if (settings.burnSubtitles) {
-    const srt = buildSubtitleSrt(req);
-    if (srt) {
-      subtitleContent = srt;
-      if (opts.subtitleFilePath) finalVideo.push(`subtitles=filename=${escapeFilterPath(opts.subtitleFilePath)}`);
-      else warnings.push('Subtitle burn-in requested but no subtitle file path was provided; subtitles are not burned in.');
+  if (wantVideo) {
+    for (const track of activeTracks(seq.videoTracks)) {
+      const plan = collectTrackSegments(track, seq, media, startF, endF, 'video', warnings);
+      const label = videoTrack(ctx, plan);
+      if (label) videoLabels.push(label);
     }
+    ctx.chains.push(`color=c=black:s=${W}x${H}:r=${fpsStr(seq.fps)}:d=${sec(durationSec + seqFd)},format=yuv420p,trim=end_frame=${frameCount},setpts=PTS-STARTPTS[vbase]`);
+    let vcur = '[vbase]';
+    videoLabels.forEach((lbl, i) => {
+      const out = i === videoLabels.length - 1 ? '[vcomp]' : `[vc${i}]`;
+      ctx.chains.push(`${vcur}${lbl}overlay=0:0:eof_action=pass:shortest=0${out}`);
+      vcur = out;
+    });
+    const finalVideo: string[] = [];
+    if (settings.burnSubtitles) {
+      const srt = buildSubtitleSrt(req, opts.range ? { startF, endF } : undefined);
+      if (srt) {
+        subtitleContent = srt;
+        if (opts.subtitleFilePath) finalVideo.push(`subtitles=filename=${escapeFilterPath(opts.subtitleFilePath)}`);
+        else warnings.push('Subtitle burn-in requested but no subtitle file path was provided; subtitles are not burned in.');
+      }
+    }
+    finalVideo.push('format=yuv420p');
+    ctx.chains.push(`${vcur}${finalVideo.join(',')}[vout]`);
   }
-  finalVideo.push('format=yuv420p');
-  ctx.chains.push(`${vcur}${finalVideo.join(',')}[vout]`);
 
   // ---- Audio
-  const audioLabels: string[] = [];
-  for (const track of activeTracks(seq.audioTracks)) {
-    const plan = collectTrackSegments(track, seq, media, startF, endF, 'audio', warnings);
-    const label = audioTrack(ctx, plan);
-    if (label) audioLabels.push(label);
-  }
-  if (audioLabels.length === 0) {
-    ctx.chains.push(`anullsrc=r=${SR}:cl=${layout}:d=${sec(durationSec + 0.1)},aformat=sample_fmts=fltp,atrim=duration=${sec(durationSec)},asetpts=PTS-STARTPTS[aout]`);
-  } else if (audioLabels.length === 1) {
-    ctx.chains.push(`${audioLabels[0]}aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=${layout}[aout]`);
-  } else {
-    ctx.chains.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:normalize=0:duration=longest,aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=${layout}[aout]`);
+  if (wantAudio) {
+    const audioLabels: string[] = [];
+    for (const track of activeTracks(seq.audioTracks)) {
+      const plan = collectTrackSegments(track, seq, media, startF, endF, 'audio', warnings);
+      const label = audioTrack(ctx, plan);
+      if (label) audioLabels.push(label);
+    }
+    // Exact sample count (chunked export: sample-exact chunk boundaries).
+    const N = opts.audioSamples !== undefined ? Math.max(0, Math.round(opts.audioSamples)) : -1;
+    const tail = N >= 0 ? `,apad=whole_len=${N},atrim=end_sample=${N}` : '';
+    if (audioLabels.length === 0) {
+      ctx.chains.push(`anullsrc=r=${SR}:cl=${layout}:d=${sec(durationSec + 0.1)},aformat=sample_fmts=fltp,atrim=duration=${sec(durationSec)},asetpts=PTS-STARTPTS${tail}[aout]`);
+    } else if (audioLabels.length === 1) {
+      ctx.chains.push(`${audioLabels[0]}aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=${layout}${tail}[aout]`);
+    } else {
+      ctx.chains.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:normalize=0:duration=longest,aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=${layout}${tail}[aout]`);
+    }
   }
 
   // ---- Args
   const outputPath = exportOutputPath(settings);
-  const args: string[] = ['-hide_banner', '-nostdin', '-y'];
-  for (const inp of ctx.inputs) args.push(...inp);
-  args.push('-filter_complex_script', FILTER_SCRIPT_TOKEN);
-  args.push('-map', '[vout]', '-map', '[aout]');
+  const inputArgs: string[] = [];
+  for (const inp of ctx.inputs) inputArgs.push(...inp);
+  const videoCodecArgs: string[] = [];
   const vcodec = settings.videoCodec === 'libx265' ? 'libx265' : 'libx264';
-  args.push('-c:v', vcodec, '-preset', settings.preset || 'medium');
+  videoCodecArgs.push('-c:v', vcodec, '-preset', settings.preset || 'medium');
   if (settings.qualityMode === 'bitrate' && settings.videoBitrateKbps > 0) {
     const kb = Math.round(settings.videoBitrateKbps);
-    args.push('-b:v', `${kb}k`, '-maxrate', `${kb}k`, '-bufsize', `${kb * 2}k`);
+    videoCodecArgs.push('-b:v', `${kb}k`, '-maxrate', `${kb}k`, '-bufsize', `${kb * 2}k`);
   } else {
-    args.push('-crf', String(Math.round(Number.isFinite(settings.crf) ? settings.crf : 18)));
+    videoCodecArgs.push('-crf', String(Math.round(Number.isFinite(settings.crf) ? settings.crf : 18)));
   }
-  if (vcodec === 'libx265') args.push('-tag:v', 'hvc1');
-  args.push('-pix_fmt', 'yuv420p', '-r', fpsStr(seq.fps), '-fps_mode', 'cfr');
+  if (vcodec === 'libx265') videoCodecArgs.push('-tag:v', 'hvc1');
+  videoCodecArgs.push('-pix_fmt', 'yuv420p', '-r', fpsStr(seq.fps), '-fps_mode', 'cfr');
   const acodec = settings.audioCodec === 'ac3' ? 'ac3' : 'aac';
-  args.push('-c:a', acodec, '-b:a', `${Math.round(settings.audioBitrateKbps || (channels === 6 ? 640 : 192))}k`, '-ar', String(SR), '-ac', String(channels));
+  const audioCodecArgs = ['-c:a', acodec, '-b:a', `${Math.round(settings.audioBitrateKbps || (channels === 6 ? 640 : 192))}k`, '-ar', String(SR), '-ac', String(channels)];
+
+  const args: string[] = ['-hide_banner', '-nostdin', '-y', ...inputArgs];
+  args.push('-filter_complex_script', FILTER_SCRIPT_TOKEN);
+  if (wantVideo) args.push('-map', '[vout]');
+  if (wantAudio) args.push('-map', '[aout]');
+  if (wantVideo) args.push(...videoCodecArgs); else args.push('-vn');
+  if (wantAudio) args.push(...audioCodecArgs); else args.push('-an');
   args.push('-movflags', '+faststart', '-t', sec(durationSec), '-f', 'mp4', outputPath);
 
   return {
     args, filterGraph: ctx.chains.join(';\n'), durationSec, frameCount, outputPath, warnings,
     subtitleContent, inputCount: ctx.inputs.length,
+    inputArgs, videoCodecArgs, audioCodecArgs, sampleRate: SR, channels, startF, endF,
   };
 }

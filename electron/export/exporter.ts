@@ -12,8 +12,9 @@ import path from 'node:path';
 import type { ExportRequest, ExportStartResult } from '@shared/ipc';
 import type { ID, JobInfo } from '@shared/model';
 import {
-  buildRenderGraph, buildSubtitleSrt, exportPartPath, exportSidecarPath, FILTER_SCRIPT_TOKEN, type RenderGraph,
+  buildRenderGraph, buildSubtitleSrt, exportPartPath, exportSidecarPath, FILTER_SCRIPT_TOKEN, sec, type RenderGraph,
 } from './renderGraph';
+import { CHUNK_MAX_SEGMENTS, planExportChunks, sampleIndexAt, shouldChunk, type ExportChunk } from './chunks';
 
 /**
  * Canonical form of a path for comparisons: realpath when it exists, else realpath(dir)/basename,
@@ -76,6 +77,18 @@ export interface ExportRunResult {
   warnings: string[];
   /** Path of the sidecar .srt when one was written. */
   sidecarPath?: string;
+  /** Number of chunks rendered (1 = single pass). */
+  chunks: number;
+}
+
+/** Test / tuning knobs for runExport. */
+export interface ExportRunOptions {
+  /** Force (true) or forbid (false) chunked rendering; default: automatic (see chunks.ts thresholds). */
+  chunked?: boolean;
+  /** Max clip segments per chunk and pass (default CHUNK_MAX_SEGMENTS). */
+  maxSegmentsPerChunk?: number;
+  /** Called with each ffmpeg child process as it starts (e.g. to sample its memory). */
+  onSpawn?: (child: ChildProcess) => void;
 }
 
 export type ExportProgress = (progress: number, message?: string) => void;
@@ -133,7 +146,7 @@ export function cancelExportJob(queue: ExportJobQueue, jobId: ID): void {
  * Runs an export to completion without a queue. Rejects on ffmpeg failure (message carries the last
  * stderr lines) or cancel (message "Export canceled").
  */
-export async function runExport(req: ExportRequest, onProgress?: ExportProgress, signal?: AbortSignal): Promise<ExportRunResult> {
+export async function runExport(req: ExportRequest, onProgress?: ExportProgress, signal?: AbortSignal, opts: ExportRunOptions = {}): Promise<ExportRunResult> {
   const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const tmpDir = path.join(os.tmpdir(), `recut-export-${id}`);
   fs.mkdirSync(tmpDir, { recursive: true });
@@ -142,17 +155,23 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
   try {
     if (signal?.aborted) throw new Error('Export canceled');
     const graph = buildRenderGraph(req, { subtitleFilePath, canonicalPath });
-    if (graph.subtitleContent) fs.writeFileSync(subtitleFilePath, graph.subtitleContent, 'utf8');
-    const scriptPath = path.join(tmpDir, 'filter.txt');
-    fs.writeFileSync(scriptPath, graph.filterGraph, 'utf8');
-
     fs.mkdirSync(path.dirname(graph.outputPath), { recursive: true });
     partPath = exportPartPath(graph.outputPath);
-    const args = graph.args.map((a) => (a === FILTER_SCRIPT_TOKEN ? scriptPath : a));
-    args[args.length - 1] = partPath;
+    const planInput = { req, startF: graph.startF, endF: graph.endF };
+    const chunked = opts.chunked ?? shouldChunk(planInput, graph.inputCount);
+    const chunks = chunked ? planExportChunks(planInput, opts.maxSegmentsPerChunk ?? CHUNK_MAX_SEGMENTS) : [];
 
-    onProgress?.(0, 'Starting ffmpeg');
-    await runFfmpeg(args, graph.durationSec, onProgress, signal);
+    if (chunks.length > 1) {
+      await runChunkedExport(req, graph, chunks, tmpDir, partPath, onProgress, signal, opts.onSpawn);
+    } else {
+      if (graph.subtitleContent) fs.writeFileSync(subtitleFilePath, graph.subtitleContent, 'utf8');
+      const scriptPath = path.join(tmpDir, 'filter.txt');
+      fs.writeFileSync(scriptPath, graph.filterGraph, 'utf8');
+      const args = graph.args.map((a) => (a === FILTER_SCRIPT_TOKEN ? scriptPath : a));
+      args[args.length - 1] = partPath;
+      onProgress?.(0, 'Starting ffmpeg');
+      await runFfmpeg(args, graph.durationSec, onProgress, signal, opts.onSpawn);
+    }
 
     // Replace the final file atomically-ish.
     try { fs.unlinkSync(graph.outputPath); } catch { /* did not exist */ }
@@ -168,7 +187,7 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
       }
     }
     onProgress?.(1, 'Done');
-    return { outputPath: graph.outputPath, durationSec: graph.durationSec, warnings: graph.warnings, sidecarPath };
+    return { outputPath: graph.outputPath, durationSec: graph.durationSec, warnings: graph.warnings, sidecarPath, chunks: Math.max(1, chunks.length) };
   } finally {
     if (partPath) { try { fs.unlinkSync(partPath); } catch { /* nothing to clean */ } }
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best effort */ }
@@ -176,10 +195,114 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Chunked export (P-01): bounded ffmpeg memory for sequences with thousands of clips
+// ---------------------------------------------------------------------------------------------------
+
+/** x264/x265 GOP settings for chunk files: closed GOPs, IDR at each chunk start, headers independent of content. */
+function chunkGopArgs(vcodecArgs: string[]): string[] {
+  const hevc = vcodecArgs[vcodecArgs.indexOf('-c:v') + 1] === 'libx265';
+  return hevc
+    ? ['-x265-params', 'keyint=250:open-gop=0', '-force_key_frames', '0']
+    : ['-x264-params', 'keyint=250:open-gop=0:stitchable=1', '-force_key_frames', '0'];
+}
+
+function concatList(files: string[]): string {
+  return 'ffconcat version 1.0\n' + files.map((f) => `file '${path.basename(f).replace(/'/g, "'\\''")}'\n`).join('');
+}
+
+/**
+ * Renders `chunks` (consecutive, covering the export range) one ffmpeg process at a time:
+ * 1. video per chunk -> chunk-NNN.mp4 (same encoder settings, closed GOP, IDR at 0, exact frame count);
+ * 2. audio per chunk -> chunk-NNN.wav (32-bit float PCM, exactly S(end) - S(start) samples where
+ *    S(f) = round((f - startF) * SR * den/num), so the chunks join with no drift);
+ * 3. one final process: concat demuxer (video stream copy + PCM) -> one AAC/AC-3 encode -> MP4.
+ * Every chunk graph is buildRenderGraph over the chunk's sub-range, so frame choice and timing are the
+ * single-pass ones; boundaries never split a transition or fade (chunks.ts).
+ */
+async function runChunkedExport(
+  req: ExportRequest, full: RenderGraph, chunks: ExportChunk[], tmpDir: string, partPath: string,
+  onProgress: ExportProgress | undefined, signal: AbortSignal | undefined, onSpawn: ExportRunOptions['onSpawn'],
+): Promise<void> {
+  const n = chunks.length;
+  const fps = req.sequence.fps;
+  const fd = fps.den / fps.num;
+  // Progress weights: video encode dominates; audio passes and the final mux are cheaper.
+  const total = full.frameCount;
+  const W_VIDEO = 0.8, W_AUDIO = 0.12, W_MUX = 0.08;
+  let done = 0; // completed weight
+  const report = (w: number, p: number, msg: string) => onProgress?.(Math.min(0.999, done + w * p), msg);
+
+  const videoFiles: string[] = [];
+  const audioFiles: string[] = [];
+  const label = (i: number, c: ExportChunk, kind: string) => `chunk ${i + 1}/${n} (${kind}, frames ${c.startF}-${c.endF})`;
+  const step = async (i: number, c: ExportChunk, kind: string, args: string[], dur: number, w: number) => {
+    if (signal?.aborted) throw new Error('Export canceled');
+    try {
+      await runFfmpeg(args, dur, (p, m) => report(w, p, `Chunk ${i + 1}/${n} ${kind}: ${m ?? ''}`.trim()), signal, onSpawn);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === 'Export canceled') throw e;
+      throw new Error(`Export failed in ${label(i, c, kind)}: ${msg}`);
+    }
+    done += w;
+  };
+
+  onProgress?.(0, `Rendering in ${n} chunks`);
+  for (let i = 0; i < n; i++) {
+    const c = chunks[i];
+    const tag = String(i).padStart(4, '0');
+    const srt = path.join(tmpDir, `sub-${tag}.srt`);
+    const g = buildRenderGraph(req, { range: { startF: c.startF, endF: c.endF }, streams: 'video', subtitleFilePath: srt, canonicalPath });
+    if (g.subtitleContent) fs.writeFileSync(srt, g.subtitleContent, 'utf8');
+    const script = path.join(tmpDir, `v-${tag}.txt`);
+    fs.writeFileSync(script, g.filterGraph, 'utf8');
+    const out = path.join(tmpDir, `chunk-${tag}.mp4`);
+    const args = ['-hide_banner', '-nostdin', '-y', ...g.inputArgs, '-filter_complex_script', script, '-map', '[vout]',
+      ...g.videoCodecArgs, ...chunkGopArgs(g.videoCodecArgs), '-an', '-t', sec(g.durationSec), '-f', 'mp4', out];
+    await step(i, c, 'video', args, g.durationSec, W_VIDEO * (c.endF - c.startF) / total);
+    try { fs.unlinkSync(script); } catch { /* best effort */ }
+    videoFiles.push(out);
+  }
+  for (let i = 0; i < n; i++) {
+    const c = chunks[i];
+    const tag = String(i).padStart(4, '0');
+    const samples = sampleIndexAt(c.endF, full.startF, full.sampleRate, fps) - sampleIndexAt(c.startF, full.startF, full.sampleRate, fps);
+    const g = buildRenderGraph(req, { range: { startF: c.startF, endF: c.endF }, streams: 'audio', audioSamples: samples, canonicalPath });
+    const script = path.join(tmpDir, `a-${tag}.txt`);
+    fs.writeFileSync(script, g.filterGraph, 'utf8');
+    const out = path.join(tmpDir, `chunk-${tag}.wav`);
+    const args = ['-hide_banner', '-nostdin', '-y', ...g.inputArgs, '-filter_complex_script', script, '-map', '[aout]',
+      '-c:a', 'pcm_f32le', '-ar', String(g.sampleRate), '-ac', String(g.channels), '-vn', '-f', 'wav', out];
+    await step(i, c, 'audio', args, (c.endF - c.startF) * fd, W_AUDIO * (c.endF - c.startF) / total);
+    try { fs.unlinkSync(script); } catch { /* best effort */ }
+    audioFiles.push(out);
+  }
+
+  const vList = path.join(tmpDir, 'video.ffconcat');
+  const aList = path.join(tmpDir, 'audio.ffconcat');
+  fs.writeFileSync(vList, concatList(videoFiles), 'utf8');
+  fs.writeFileSync(aList, concatList(audioFiles), 'utf8');
+  const hevc = full.videoCodecArgs.includes('libx265');
+  const args = ['-hide_banner', '-nostdin', '-y',
+    '-f', 'concat', '-safe', '0', '-i', vList, '-f', 'concat', '-safe', '0', '-i', aList,
+    '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', ...(hevc ? ['-tag:v', 'hvc1'] : []), ...full.audioCodecArgs,
+    '-movflags', '+faststart', '-t', sec(full.durationSec), '-f', 'mp4', partPath];
+  const all: ExportChunk = { startF: full.startF, endF: full.endF, videoSegments: 0, audioSegments: 0 };
+  try {
+    if (signal?.aborted) throw new Error('Export canceled');
+    await runFfmpeg(args, full.durationSec, (p) => report(W_MUX, p, `Joining ${n} chunks`), signal, onSpawn);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === 'Export canceled') throw e;
+    throw new Error(`Export failed joining ${n} chunks (frames ${all.startF}-${all.endF}): ${msg}`);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------
 // ffmpeg process runner
 // ---------------------------------------------------------------------------------------------------
 
-function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgress, signal?: AbortSignal): Promise<void> {
+function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgress, signal?: AbortSignal, onSpawn?: (c: ChildProcess) => void): Promise<void> {
   const bin = resolveFfmpegPath();
   const full = ['-progress', 'pipe:1', '-nostats', '-loglevel', 'warning', ...args];
   return new Promise<void>((resolve, reject) => {
@@ -190,6 +313,7 @@ function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgr
       reject(new Error(`Cannot start ffmpeg (${bin}): ${e instanceof Error ? e.message : String(e)}`));
       return;
     }
+    try { onSpawn?.(child); } catch { /* observer errors do not affect the export */ }
     const stderrLines: string[] = [];
     let stderrBuf = '';
     let stdoutBuf = '';

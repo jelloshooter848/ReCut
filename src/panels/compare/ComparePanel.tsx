@@ -252,8 +252,11 @@ export function ComparePanel({ active, focused }: PanelProps) {
   const bValue = snapshot ? `${SNAP_PREFIX}${snapshot.id}` : bId ?? '';
 
   // ---- comparison ----
-  const diff = useMemo(() => (seqA && seqB ? diffSequences(seqA, seqB) : null), [seqA, seqB]);
+  // Only diff while visible: a hidden Compare tab must not re-diff on every edit.
+  const diff = useMemo(() => (active && seqA && seqB ? diffSequences(seqA, seqB) : null), [active, seqA, seqB]);
 
+  const pickRef = useRef<(e: DiffEntry) => void>(() => {});
+  const onPickEntry = useCallback((e: DiffEntry) => pickRef.current(e), []);
   const pickEntry = (e: DiffEntry) => {
     const p = players.current;
     const fA = e.side === 'A' ? e.start : e.match?.start ?? null;
@@ -272,10 +275,15 @@ export function ComparePanel({ active, focused }: PanelProps) {
     else if (e.side === 'B' && act === bId) s.select([e.clipId]);
   };
 
+  pickRef.current = pickEntry;
+
   const durA = diff?.durationA ?? 0;
   const durB = diff?.durationB ?? 0;
   const delta = diff?.durationDelta ?? 0;
   const pct = durA > 0 ? (delta / durA) * 100 : 0;
+
+  // Hidden tab: a lightweight shell (players are only created while active; see above).
+  if (!active) return <div className="panel compare-panel" ref={rootRef} data-testid="compare-panel" data-active="false" />;
 
   if (!seqA) {
     return (
@@ -375,7 +383,7 @@ export function ComparePanel({ active, focused }: PanelProps) {
               <div className="cmp-legend">
                 <span className="k-same">same</span><span className="k-moved">moved</span><span className="k-trimmed">trimmed</span><span className="k-onlyA">only A</span><span className="k-onlyB">only B</span>
               </div>
-              <DiffList diff={diff} fpsA={seqA.fps} fpsB={seqB.fps} selectedClipId={selectedClip} onPick={pickEntry} nameA={seqA.name} nameB={nameB} />
+              <DiffList diff={diff} fpsA={seqA.fps} fpsB={seqB.fps} selectedClipId={selectedClip} onPick={onPickEntry} nameA={seqA.name} nameB={nameB} />
             </>
           ) : <div className="cmp-empty">Pick a second sequence (or a snapshot) for B to compare structure.</div>}
         </div>

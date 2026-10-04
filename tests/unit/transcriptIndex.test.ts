@@ -211,3 +211,23 @@ describe('scope options', () => {
     expect(decodeScope('project')).toEqual({ kind: 'project' });
   });
 });
+
+describe('sequence clip index (P-10)', () => {
+  it('is cached per track structure and rebuilt when the clips change', async () => {
+    const { sequenceClipsByMedia } = await import('../../src/transcript/index');
+    const seq = createSequence('S');
+    const clip = makeClip({ mediaId: 'm1', name: 'a', sourceIn: 0, duration: 24, kind: 'video' }, 0);
+    seq.videoTracks[0].clips.push(clip);
+    const a = sequenceClipsByMedia(seq);
+    expect(a.get('m1')?.map((r) => r.clip.id)).toEqual([clip.id]);
+    // Same structure (e.g. only the view moved): same cached map.
+    seq.view.playhead = 99;
+    expect(sequenceClipsByMedia({ videoTracks: seq.videoTracks, audioTracks: seq.audioTracks })).toBe(a);
+    // New clips array (immer edit): rebuilt.
+    const clip2 = makeClip({ mediaId: 'm2', name: 'b', sourceIn: 0, duration: 24, kind: 'video' }, 24);
+    seq.videoTracks = [{ ...seq.videoTracks[0], clips: [clip, clip2] }, ...seq.videoTracks.slice(1)];
+    const b = sequenceClipsByMedia(seq);
+    expect(b).not.toBe(a);
+    expect([...b.keys()].sort()).toEqual(['m1', 'm2']);
+  });
+});

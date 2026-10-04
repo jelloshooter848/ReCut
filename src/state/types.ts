@@ -72,6 +72,11 @@ export interface StoreState {
   ui: UIState;
   jobs: JobInfo[];
   playback: PlaybackState;
+  /**
+   * Bumped whenever a sequence view (playhead / scroll / zoom / in / out) changes. Playhead and scroll are
+   * mutated in place (no new project reference), so subscribe to this — or use `usePlayhead` — to react.
+   */
+  viewTick: number;
 }
 
 export type Recipe = (draft: Project) => void;

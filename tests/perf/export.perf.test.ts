@@ -15,6 +15,8 @@ import type { ExportRequest } from '../../shared/ipc';
 import { useStore, resetStore } from '../../src/state/store';
 import { buildRenderGraph, FILTER_SCRIPT_TOKEN } from '../../electron/export/renderGraph';
 import { allTracks } from '../../shared/timeline';
+import { runExport } from '../../electron/export/exporter';
+import { planExportChunks } from '../../electron/export/chunks';
 // @ts-expect-error plain JS module shared with the Electron harness
 import { buildBigProject } from './bigProject.mjs';
 import { bench, flush, ms, now, record, round } from './_report';
@@ -146,4 +148,34 @@ describe('export graph @ 2500 clips', () => {
     }
     expect(true).toBe(true);
   });
+  it('chunked export of the full 2500-clip sequence (P-01): wall time and peak ffmpeg RSS', async () => {
+    // RECUT_PERF_SKIP_FULL_EXPORT=1 skips this (it renders the whole ~26 min sequence at 1280x720).
+    if (process.env.RECUT_PERF_SKIP_FULL_EXPORT) return;
+    const seq = S().project.sequences[big.seqId];
+    const req = { ...requestFor(seq), settings: { ...settings(), fileName: 'perf-export-full.mp4' } };
+    const g = buildRenderGraph(req);
+    const chunks = planExportChunks({ req, startF: g.startF, endF: g.endF });
+    let peakKb = 0; let procs = 0;
+    const onSpawn = (child: import('node:child_process').ChildProcess) => {
+      procs++;
+      const sample = () => {
+        try { const m = /VmHWM:\s+(\d+) kB/.exec(fs.readFileSync(`/proc/${child.pid}/status`, 'utf8')); if (m) peakKb = Math.max(peakKb, Number(m[1])); } catch { /* exited */ }
+      };
+      const t = setInterval(sample, 100);
+      child.once('exit', () => clearInterval(t));
+    };
+    const t0 = now();
+    const res = await runExport(req, undefined, undefined, { onSpawn });
+    const wall = now() - t0;
+    const out = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-count_packets', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_packets', '-of', 'json', res.outputPath]).toString());
+    const frames = Number(out.streams[0].nb_read_packets);
+    record({ section: 'export', metric: 'full export 2500 clips: chunks / ffmpeg processes', value: `${res.chunks} / ${procs}`, unit: '', note: `segments per chunk (video) max ${Math.max(...chunks.map((c) => c.videoSegments))}` });
+    record({ section: 'export', metric: 'full export 2500 clips: frames out / expected', value: `${frames} / ${g.frameCount}`, unit: 'frames', threshold: 'equal', pass: frames === g.frameCount });
+    ms('export', 'full export 2500 clips wall time (1280x720 ultrafast)', wall);
+    record({ section: 'export', metric: 'full export 2500 clips: peak ffmpeg RSS (MB)', value: round(peakKb / 1024), unit: 'MB', threshold: '<= 1536 MB', pass: peakKb / 1024 <= 1536 });
+    console.log(`[perf] full export: ${res.chunks} chunks, ${frames}/${g.frameCount} frames, ${round(wall / 1000)} s, peak ffmpeg RSS ${round(peakKb / 1024)} MB`);
+    expect(frames).toBe(g.frameCount);
+    expect(peakKb / 1024).toBeLessThan(1536);
+  });
+
 });

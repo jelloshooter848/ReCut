@@ -276,9 +276,11 @@ export interface Sequence {
   createdAt: number;
   modifiedAt: number;
   binId: ID | null;
-  /** Editor state that is nice to persist (not undoable) */
-  view: { playhead: number; zoom: number; scroll: number; inPoint: number | null; outPoint: number | null };
+  /** Editor state that is nice to persist (not undoable). See `LiveView` in project.ts. */
+  view: SequenceView;
 }
+
+export interface SequenceView { playhead: number; zoom: number; scroll: number; inPoint: number | null; outPoint: number | null }
 
 export interface SceneRecord {
   id: ID;

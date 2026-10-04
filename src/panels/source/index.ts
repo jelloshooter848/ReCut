@@ -8,6 +8,7 @@ registerPanel({
   defaultZone: 'monitor-left',
   icon: Film,
   component: SourcePanel,
+  keepAlive: true,
   description: 'Source Monitor — preview media, mark In/Out, insert into the sequence',
 });
 

@@ -13,11 +13,11 @@ import { create } from 'zustand';
 import { produce, current } from 'immer';
 import type {
   Bin, Clip, DetectedScene, ID, Marker, MediaItem, MediaKind, MediaProbe, Project, SceneRecord, Sequence,
-  SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock, Track, Transition, TransitionType, TagVocabulary,
+  SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock, Track, Transition, TransitionType, TagVocabulary, SequenceView,
 } from '../../shared/model';
 import { uid } from '../../shared/ids';
 import { secondsToFrames } from '../../shared/time';
-import { createProject } from '../../shared/project';
+import { createProject, LiveView } from '../../shared/project';
 import {
   MIN_CLIP_FRAMES, allTracks, clipEnd, clipSourceOut, findClip, findTrack, linkedClips, makeClip, placeClips,
   razorAt, removeClips as tlRemoveClips, rippleDeleteClips, liftRange, extractRange, trimStart, trimEnd,
@@ -182,6 +182,7 @@ export function cloneSequenceWithNewIds(src: Sequence, newName: string): Sequenc
   copy.createdAt = now;
   copy.modifiedAt = now;
   copy.parentSequenceId = src.id;
+  copy.view = new LiveView(copy.view); // own (non-shared, never frozen) view object
   return copy;
 }
 
@@ -199,6 +200,7 @@ function initialState(): StoreState {
     ui: initialUi(),
     jobs: [],
     playback: { playing: false, rate: 1 },
+    viewTick: 0,
   };
 }
 
@@ -277,18 +279,45 @@ export const useStore = create<RecutStore>()((set, get) => {
     clearHistory() { set((s) => ({ history: emptyHistory(s.history.limit) })); },
 
     setView(seqId, patch) {
-      quiet((d) => {
+      const cur = get().project.sequences[seqId];
+      if (!cur) return;
+      const v = cur.view;
+      // Hot path (playback / scrubbing / wheel): playhead and scroll are mutated in place. No new project or
+      // sequence reference, so panels selecting `sequences` / a sequence do not re-render; `viewTick` makes
+      // zustand re-run selectors so consumers of the primitive (`usePlayhead`) update. Not dirty, no history.
+      if (patch.zoom === undefined && patch.inPoint === undefined && patch.outPoint === undefined && !Object.isFrozen(v)) {
+        let changed = false;
+        if (patch.playhead !== undefined) {
+          const ph = Math.max(0, Math.round(patch.playhead));
+          if (ph !== v.playhead) { v.playhead = ph; changed = true; }
+        }
+        if (patch.scroll !== undefined) {
+          const sc = Math.max(0, patch.scroll);
+          if (sc !== v.scroll) { v.scroll = sc; changed = true; }
+        }
+        if (changed) set((s) => ({ viewTick: s.viewTick + 1 }));
+        return;
+      }
+      // Zoom / in / out (or a frozen plain view): replace the view object so every consumer of the sequence
+      // re-renders. The new view is a LiveView (never frozen), so later playhead moves take the fast path.
+      const prev = get().project;
+      const next = produce(prev, (d) => {
         const seq = d.sequences[seqId];
         if (!seq) return;
-        if (patch.playhead !== undefined) seq.view.playhead = Math.max(0, Math.round(patch.playhead));
-        if (patch.zoom !== undefined) seq.view.zoom = patch.zoom;
-        if (patch.scroll !== undefined) seq.view.scroll = Math.max(0, patch.scroll);
-        if (patch.inPoint !== undefined) seq.view.inPoint = patch.inPoint === null ? null : Math.max(0, Math.round(patch.inPoint));
-        if (patch.outPoint !== undefined) seq.view.outPoint = patch.outPoint === null ? null : Math.max(0, Math.round(patch.outPoint));
-        if (seq.view.inPoint !== null && seq.view.outPoint !== null && seq.view.outPoint < seq.view.inPoint) {
-          const t = seq.view.inPoint; seq.view.inPoint = seq.view.outPoint; seq.view.outPoint = t;
+        const nv: SequenceView = { ...seq.view };
+        if (patch.playhead !== undefined) nv.playhead = Math.max(0, Math.round(patch.playhead));
+        if (patch.zoom !== undefined) nv.zoom = patch.zoom;
+        if (patch.scroll !== undefined) nv.scroll = Math.max(0, patch.scroll);
+        if (patch.inPoint !== undefined) nv.inPoint = patch.inPoint === null ? null : Math.max(0, Math.round(patch.inPoint));
+        if (patch.outPoint !== undefined) nv.outPoint = patch.outPoint === null ? null : Math.max(0, Math.round(patch.outPoint));
+        if (nv.inPoint !== null && nv.outPoint !== null && nv.outPoint < nv.inPoint) {
+          const t = nv.inPoint; nv.inPoint = nv.outPoint; nv.outPoint = t;
         }
+        const ov = seq.view;
+        if (ov instanceof LiveView && nv.playhead === ov.playhead && nv.zoom === ov.zoom && nv.scroll === ov.scroll && nv.inPoint === ov.inPoint && nv.outPoint === ov.outPoint) return;
+        seq.view = new LiveView(nv);
       });
+      if (next !== prev) set((s) => ({ project: next, viewTick: s.viewTick + 1 }));
     },
 
     beginTransaction() {

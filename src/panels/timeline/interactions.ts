@@ -13,7 +13,7 @@ import { clipEnd, findClip, linkedClips, maxDurationFrom } from '@shared/timelin
 import { useStore, mediaDurationLookup } from '@/state';
 import type { Tool } from '@/state';
 import type { DragPreview } from './types';
-import { formatDelta, rowAtY, snapDelta, snapFrame, snapThresholdFrames, type TrackLayout } from './viewMath';
+import { formatDelta, lodHit, rowAtY, snapDelta, snapFrame, snapThresholdFrames, type TrackLayout } from './viewMath';
 
 export interface InteractionCtx {
   seqId: ID;
@@ -160,7 +160,9 @@ export function useTimelineDrag(ctxRef: React.MutableRefObject<InteractionCtx>, 
     const trackId = rowEl?.dataset.trackId ?? null;
     const { x, y } = local(e);
     const dur = mediaDurationLookup(st.project);
-    const loc = clipEl ? findClip(seq, clipEl.dataset.clipId!) : undefined;
+    // Clips narrower than LOD_MIN_CLIP_PX are canvas-drawn (LodLane): hit-test those by position.
+    const loc = clipEl ? findClip(seq, clipEl.dataset.clipId!)
+      : trackId && target.closest('[data-lod-lane]') ? lodHit(seq, trackId, frameAt(x), ctx.zoom) : undefined;
 
     if (e.button === 1 || ctx.tool === 'hand') {
       e.preventDefault();

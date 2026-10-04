@@ -16,7 +16,7 @@ export const ZONE_TITLES: Record<ZoneId, string> = {
 export interface PanelProps {
   panelId: string;
   zoneId: ZoneId;
-  /** True when this panel's tab is the active one in its zone. Inactive panels stay mounted but hidden. */
+  /** True when this panel's tab is the active one in its zone. Inactive panels are unmounted unless `keepAlive`. */
   active: boolean;
   /** True when the zone has keyboard focus (last clicked). */
   focused: boolean;
@@ -30,6 +30,12 @@ export interface PanelDef {
   icon?: LucideIcon;
   /** Shown in menus/tooltips. */
   description?: string;
+  /**
+   * Keep the panel mounted (hidden) while another tab of its zone is active. Default false: hidden panels are
+   * unmounted (their state lives in the store) so they cost nothing during playback and edits. Monitors that own
+   * players / canvases set this.
+   */
+  keepAlive?: boolean;
 }
 
 const panels = new Map<string, PanelDef>();

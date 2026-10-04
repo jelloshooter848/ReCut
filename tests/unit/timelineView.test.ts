@@ -353,3 +353,68 @@ describe('audio meter scale (E-10)', () => {
     expect(dbToPos(-30)).toBeCloseTo(0.5, 10);
   });
 });
+
+describe('timeline level of detail (P-05)', () => {
+  it('merges touching narrow clips into pixel runs and skips off-screen ones', async () => {
+    const { mergeLodRuns } = await import('../../src/panels/timeline/viewMath');
+    const clips = [{ start: 0, duration: 2 }, { start: 2, duration: 2 }, { start: 10, duration: 1 }, { start: 1000, duration: 5 }];
+    const runs = mergeLodRuns(clips, 1, 0, 0, 100);
+    expect(runs).toEqual([{ x: 0, w: 4, first: 0, last: 1 }, { x: 10, w: 1, first: 2, last: 2 }]);
+    // Origin shift (scroll) moves runs left; the clip at 1000 px comes into view.
+    expect(mergeLodRuns(clips, 1, 990, 0, 100)).toEqual([{ x: 10, w: 5, first: 3, last: 3 }]);
+  });
+  it('hit-tests canvas-drawn clips by frame with a pixel tolerance', async () => {
+    const { lodClipAt, lodHit } = await import('../../src/panels/timeline/viewMath');
+    const clips = [{ id: 'a', start: 0, duration: 10 }, { id: 'b', start: 10, duration: 10 }, { id: 'c', start: 40, duration: 5 }];
+    expect(lodClipAt(clips, 5, 0.5)?.id).toBe('a');
+    expect(lodClipAt(clips, 10, 0.5)?.id).toBe('b');
+    expect(lodClipAt(clips, 23, 0.5)?.id).toBe('b'); // 3 frames * 0.5 px = 1.5 px away: within tolerance
+    expect(lodClipAt(clips, 30, 0.5)).toBeUndefined(); // 10 frames = 5 px from both neighbours
+    expect(lodClipAt(clips, 47, 1)?.id).toBe('c');
+    const track = { id: 't1', clips } as unknown as Track;
+    expect(lodHit({ videoTracks: [track], audioTracks: [] }, 't1', 12, 0.5)).toMatchObject({ index: 1, clip: { id: 'b' } });
+    expect(lodHit({ videoTracks: [track], audioTracks: [] }, 'nope', 12, 0.5)).toBeUndefined();
+  });
+});
+
+describe('cancellable filmstrip requests (P-05)', () => {
+  it('abort resolves at once, cancels the IPC only when every sharer aborted, and caches nothing for it', async () => {
+    const { ThumbnailCache } = await import('../../src/playback/thumbnails');
+    const calls: { times: number[]; requestId?: string; cancel?: string[] }[] = [];
+    let release: (v: string[]) => void = () => {};
+    const filmstrip = (req: { times: number[]; requestId?: string; cancel?: string[] }) => {
+      calls.push(req);
+      if (req.cancel) return Promise.resolve([]);
+      return new Promise<string[]>((r) => { release = r; });
+    };
+    const g = globalThis as { window?: unknown };
+    const prev = g.window;
+    g.window = { recut: { filmstrip, thumbnail: async () => '' } };
+    try {
+      const tc = new ThumbnailCache();
+      const a = new AbortController(), b = new AbortController();
+      const pa = tc.filmstrip('/x.mkv', [1, 2], 64, undefined, a.signal);
+      const pb = tc.filmstrip('/x.mkv', [1, 2], 64, undefined, b.signal);
+      expect(calls).toHaveLength(1); // deduped
+      expect(calls[0].requestId).toBeTruthy();
+      a.abort();
+      await expect(pa).resolves.toEqual(['', '']);
+      await Promise.resolve();
+      expect(calls).toHaveLength(1); // b still wants it
+      b.abort();
+      await expect(pb).resolves.toEqual(['', '']);
+      await Promise.resolve(); await Promise.resolve();
+      expect(calls[1]).toMatchObject({ cancel: [calls[0].requestId] });
+      release(['recut-media://local/a', 'recut-media://local/b']);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(tc.size).toBe(0); // canceled results are not cached
+      // A fresh request after the cancel goes out again.
+      const pc = tc.filmstrip('/x.mkv', [1, 2], 64);
+      expect(calls).toHaveLength(3);
+      release(['recut-media://local/a', 'recut-media://local/']);
+      await expect(pc).resolves.toEqual(['recut-media://local/a', '']);
+    } finally {
+      g.window = prev;
+    }
+  });
+});

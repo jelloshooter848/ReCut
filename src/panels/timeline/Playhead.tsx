@@ -3,7 +3,7 @@
  * and page-flips the view when the playhead leaves it (playback, keyboard stepping).
  */
 import React, { useEffect } from 'react';
-import { useStore } from '@/state';
+import { useStore, usePlayhead } from '@/state';
 import { frameToX, pageFlipScroll } from './viewMath';
 import { RULER_H } from './types';
 
@@ -17,7 +17,7 @@ export interface PlayheadProps {
 }
 
 export function Playhead({ seqId, zoom, scroll, width, suppressFlip }: PlayheadProps) {
-  const playhead = useStore((s) => s.project.sequences[seqId]?.view.playhead ?? 0);
+  const playhead = usePlayhead(seqId);
   const playing = useStore((s) => s.playback.playing);
 
   useEffect(() => {

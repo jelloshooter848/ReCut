@@ -103,6 +103,7 @@ export class SequencePlayer {
 
   /** Cheap to call on every store change: stores refs and schedules one redraw. */
   setSequence(seq: Sequence, media: Record<ID, MediaItem>, settings: SequencePlayerSettings): void {
+    if (seq !== this.seq) this.pruneAudio(seq);
     const fpsChanged = !this.seq || this.seq.fps.num !== seq.fps.num || this.seq.fps.den !== seq.fps.den;
     const resChanged = settings.playbackResolution !== this.settings.playbackResolution;
     const sizeChanged = !this.seq || this.seq.width !== seq.width || this.seq.height !== seq.height;
@@ -425,6 +426,32 @@ export class SequencePlayer {
         try { route.source.disconnect(); route.clipGain.disconnect(); } catch { /* ignore */ }
         this.activeAudio.delete(clipId);
       }
+    }
+  }
+
+  /**
+   * Disconnect audio routes whose clip is no longer in `seq` and track gains whose track is gone (sequence switch,
+   * deleted clips / tracks). Without this, GainNodes accumulate across sequence switches (P-12).
+   */
+  private pruneAudio(seq: Sequence): void {
+    if (!this.activeAudio.size && !this.trackGains.size) return;
+    const trackIds = new Set<ID>();
+    const clipIds = new Set<ID>();
+    for (const t of seq.audioTracks) {
+      trackIds.add(t.id);
+      if (this.activeAudio.size) for (const c of t.clips) clipIds.add(c.id);
+    }
+    for (const [clipId, route] of this.activeAudio) {
+      if (clipIds.has(clipId) && trackIds.has(route.trackId)) continue;
+      try { route.clipGain.gain.value = 0; } catch { /* ignore */ }
+      if (!route.el.paused) route.el.pause();
+      try { route.source.disconnect(); route.clipGain.disconnect(); } catch { /* ignore */ }
+      this.activeAudio.delete(clipId);
+    }
+    for (const [trackId, g] of this.trackGains) {
+      if (trackIds.has(trackId)) continue;
+      try { g.disconnect(); } catch { /* ignore */ }
+      this.trackGains.delete(trackId);
     }
   }
 

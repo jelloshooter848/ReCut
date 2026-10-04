@@ -32,17 +32,19 @@ function CueText({ value, onCommit }: { value: string; onCommit: (v: string) => 
 
 interface RowProps {
   seq: Sequence; cue: ResolvedCue; raw: SequenceSubtitleCue | undefined; next: ResolvedCue | undefined; originLabel: string;
-  current: boolean; playhead: number;
+  current: boolean;
 }
 
-function CueRow({ seq, cue, raw, next, originLabel, current, playhead }: RowProps) {
+function CueRow({ seq, cue, raw, next, originLabel, current }: RowProps) {
   const st = useStore.getState;
   const fps = seq.fps;
   const nudge = (dir: 1 | -1, e: React.MouseEvent) => {
     e.stopPropagation();
     st().updateCue(seq.id, cue.id, { offset: (raw?.offset ?? 0) + dir * (e.shiftKey ? 10 : 1) });
   };
-  const canSplit = playhead > cue.start && playhead < cue.end;
+  // Boolean selector: the row re-renders only when the playhead enters / leaves this cue.
+  const canSplit = useStore((s) => { const ph = s.project.sequences[seq.id]?.view.playhead ?? 0; return ph > cue.start && ph < cue.end; });
+  const playheadNow = () => st().project.sequences[seq.id]?.view.playhead ?? 0;
   return (
     <div className={['st-row', current ? 'current' : ''].filter(Boolean).join(' ')} data-testid="subtitle-cue" data-cue-id={cue.id}
       onClick={() => st().setView(seq.id, { playhead: cue.start })}>
@@ -57,7 +59,7 @@ function CueRow({ seq, cue, raw, next, originLabel, current, playhead }: RowProp
         <div className="row gap-0">
           <IconButton size="sm" icon={Minus} label="Nudge earlier (−1 frame, Shift −10)" onClick={(e) => nudge(-1, e)} />
           <IconButton size="sm" icon={Plus} label="Nudge later (+1 frame, Shift +10)" onClick={(e) => nudge(1, e)} />
-          <IconButton size="sm" icon={Scissors} label="Split at playhead" disabled={!canSplit} onClick={() => st().splitCue(seq.id, cue.id, playhead)} />
+          <IconButton size="sm" icon={Scissors} label="Split at playhead" disabled={!canSplit} onClick={() => st().splitCue(seq.id, cue.id, playheadNow())} />
           <IconButton size="sm" icon={Merge} label="Merge with next" disabled={!next} onClick={() => next && st().mergeCues(seq.id, [cue.id, next.id])} />
           <IconButton size="sm" icon={Trash2} label="Delete cue" onClick={() => st().removeCue(seq.id, cue.id)} />
         </div>
@@ -79,8 +81,12 @@ export function SubtitlesPanel({ active }: PanelProps) {
   const rawById = useMemo(() => { const m = new Map<ID, SequenceSubtitleCue>(); for (const c of track?.cues ?? []) m.set(c.id, c); return m; }, [track]);
   const clipNames = useMemo(() => { const m = new Map<ID, string>(); if (seq) for (const t of allTracks(seq)) for (const c of t.clips) m.set(c.id, c.name); return m; }, [seq]);
   const orphans = useMemo(() => (seq ? orphanCues(seq) : []), [seq]);
-  const playhead = seq?.view.playhead ?? 0;
-  const currentIndex = useMemo(() => resolved.findIndex((c) => c.start <= playhead && c.end > playhead), [resolved, playhead]);
+  // Select the index (changes on cue boundaries only), not the playhead, so playback does not re-render the list.
+  const seqId = seq?.id;
+  const currentIndex = useStore((s) => {
+    const ph = seqId ? s.project.sequences[seqId]?.view.playhead ?? 0 : 0;
+    return resolved.findIndex((c) => c.start <= ph && c.end > ph);
+  });
 
   useEffect(() => { if (follow && active && currentIndex >= 0) listRef.current?.scrollToIndex(currentIndex); }, [currentIndex, follow, active]);
 
@@ -95,7 +101,7 @@ export function SubtitlesPanel({ active }: PanelProps) {
     let tid: ID | undefined = track?.id;
     if (!tid) { tid = useStore.getState().addSequenceSubtitleTrack(seq.id, { name: 'Subtitles 1', language: 'und' }) ?? undefined; if (tid) setTrackId(tid); }
     if (!tid) return;
-    useStore.getState().addManualCue(seq.id, tid, { start: seq.view.playhead, duration: secondsToFrames(2, seq.fps), text: 'New subtitle' });
+    useStore.getState().addManualCue(seq.id, tid, { start: useStore.getState().project.sequences[seq.id]?.view.playhead ?? 0, duration: secondsToFrames(2, seq.fps), text: 'New subtitle' });
   }, [seq, track]);
 
   const importToTrack = useCallback(async () => {
@@ -159,7 +165,7 @@ export function SubtitlesPanel({ active }: PanelProps) {
       ) : (
         <VirtualList ref={listRef} className="st-list grow" items={resolved} itemHeight={ROW_H} itemKey={(c) => c.id}
           render={(c, i) => (
-            <CueRow seq={seq} cue={c} raw={rawById.get(c.id)} next={resolved[i + 1]} playhead={playhead} current={i === currentIndex}
+            <CueRow seq={seq} cue={c} raw={rawById.get(c.id)} next={resolved[i + 1]} current={i === currentIndex}
               originLabel={c.clipId ? clipNames.get(c.clipId) ?? 'clip' : 'manual'} />
           )} />
       )}

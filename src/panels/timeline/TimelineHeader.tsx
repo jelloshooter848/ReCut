@@ -5,7 +5,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import type { Rational } from '@shared/model';
-import { useStore, filtersActive } from '@/state';
+import { useStore, filtersActive, usePlayhead } from '@/state';
 import type { Tool } from '@/state';
 import { TimecodeField } from '@/components/ui/TimecodeField';
 import { Slider } from '@/components/ui/Slider';
@@ -24,7 +24,7 @@ export const TOOLS: { id: Tool; key: string; icon: LucideIcon; label: string }[]
 ];
 
 function PlayheadTimecode({ seqId, fps }: { seqId: string; fps: Rational }) {
-  const playhead = useStore((s) => s.project.sequences[seqId]?.view.playhead ?? 0);
+  const playhead = usePlayhead(seqId);
   return <TimecodeField value={playhead} fps={fps} min={0} onChange={(f) => useStore.getState().setView(seqId, { playhead: f })} title="Playhead (click to type, drag to scrub)" />;
 }
 

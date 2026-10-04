@@ -11,6 +11,7 @@ import { thumbs, waves } from '@/app/media';
 import { peaksForRange } from '@/playback/thumbnails';
 import { labelColorHex } from '@/components/ui/ColorSwatch';
 import { CLIP_BAR_H, COMPACT_ROW_H } from './types';
+import { MEDIA_MIN_CLIP_PX, MEDIA_SETTLE_MS } from './viewMath';
 import { formatSyncOffset, mediaNeedsProxy } from './clipBadges';
 
 export type FilterLook = 'none' | 'dim' | 'hide';
@@ -74,8 +75,11 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   const tilesGen = useRef(0);
   const stripKey = `${path}|${tileW}|${zoom}|${clip.sourceIn}|${clip.speed}`;
   useEffect(() => { setTiles({}); tilesGen.current++; }, [stripKey]);
+  // P-05: no filmstrip for narrow clips; requests wait MEDIA_SETTLE_MS for the view to settle (zooming / fast
+  // scrolling re-runs this effect and cancels the timer) and are aborted when the clip leaves the viewport.
+  const wantMedia = w >= MEDIA_MIN_CLIP_PX;
   useEffect(() => {
-    if (!isVideo || offline || !media || media.kind === 'audio' || lastTile <= firstTile) return;
+    if (!wantMedia || !isVideo || offline || !media || media.kind === 'audio' || lastTile <= firstTile) return;
     const gen = tilesGen.current;
     const idx: number[] = []; const times: number[] = [];
     for (let i = firstTile; i < lastTile && idx.length < MAX_TILES_PER_REQUEST; i++) {
@@ -84,28 +88,37 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
       times.push(isImage ? 0 : quantizeTime(Math.max(0, clip.sourceIn + ((i * tileW + tileW / 2) / zoom) * frameSec * clip.speed)));
     }
     if (!idx.length) return;
-    let alive = true;
-    thumbs.filmstrip(path, times, tileW, media.id).then((urls) => {
-      if (!alive || gen !== tilesGen.current) return;
+    const apply = (urls: string[]) => {
+      if (ac.signal.aborted || gen !== tilesGen.current) return;
+      if (!urls.some(Boolean)) return;
       setTiles((prev) => { const next = { ...prev }; idx.forEach((i, j) => { if (urls[j]) next[i] = urls[j]; }); return next; });
-    }).catch(() => { /* ignore */ });
-    return () => { alive = false; };
+    };
+    const ac = new AbortController();
+    // Fully cached strips (revisiting a view) paint at once; anything else waits for the view to settle.
+    const cached = idx.map((_, j) => thumbs.peek(path, times[j], tileW) ?? '');
+    if (cached.every(Boolean)) { apply(cached); return; }
+    const timer = window.setTimeout(() => {
+      thumbs.filmstrip(path, times, tileW, media.id, ac.signal).then(apply).catch(() => { /* ignore */ });
+    }, MEDIA_SETTLE_MS);
+    return () => { window.clearTimeout(timer); ac.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isVideo, offline, path, firstTile, lastTile, tileW, zoom, clip.sourceIn, clip.speed, stripKey]);
+  }, [wantMedia, isVideo, offline, path, firstTile, lastTile, tileW, zoom, clip.sourceIn, clip.speed, stripKey]);
 
   // ---- waveform --------------------------------------------------------------------------
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [wave, setWave] = useState<WaveformData | null>(() => (path ? waves.peek(path) ?? null : null));
   useEffect(() => {
-    if (isVideo || offline || !media || !path) return;
+    if (!wantMedia || isVideo || offline || !media || !path) return;
     const hit = waves.peek(path);
     if (hit !== undefined) { setWave(hit); return; }
     let alive = true;
-    waves.get(path, media.id).then((d) => { if (alive) setWave(d); }).catch(() => { /* ignore */ });
-    return () => { alive = false; };
-  }, [isVideo, offline, path, media]);
+    const timer = window.setTimeout(() => {
+      waves.get(path, media.id).then((d) => { if (alive) setWave(d); }).catch(() => { /* ignore */ });
+    }, MEDIA_SETTLE_MS);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [wantMedia, isVideo, offline, path, media]);
   const waveX = visFrom;
-  const waveW = Math.min(MAX_WAVE_CANVAS_PX, Math.max(0, visTo - visFrom));
+  const waveW = wantMedia ? Math.min(MAX_WAVE_CANVAS_PX, Math.max(0, visTo - visFrom)) : 0;
   useEffect(() => {
     const cv = canvasRef.current;
     if (!cv || isVideo) return;

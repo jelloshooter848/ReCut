@@ -164,11 +164,31 @@ let autosaveInFlight = false;
 let lastAutosaveAt = 0;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let intervalTimer: ReturnType<typeof setInterval> | null = null;
+let idleHandle: number | null = null;
+/** An autosave came due while playing; run it (debounced) once playback stops. */
+let deferredWhilePlaying = false;
 
-async function runAutosave(): Promise<void> {
+type IdleApi = { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (h: number) => void };
+const idleApi = (): IdleApi => globalThis as unknown as IdleApi;
+
+/** Run `fn` when the renderer is idle (after paint / input), so a save never lands mid-interaction. */
+function whenIdle(fn: () => void): void {
+  if (idleHandle !== null) return; // one pending idle autosave is enough
+  const ric = idleApi().requestIdleCallback;
+  if (ric) idleHandle = ric(() => { idleHandle = null; fn(); }, { timeout: 3000 });
+  else { idleHandle = -1; setTimeout(() => { idleHandle = null; fn(); }, 0); }
+}
+function cancelIdle(): void {
+  if (idleHandle !== null && idleHandle >= 0) idleApi().cancelIdleCallback?.(idleHandle);
+  idleHandle = null;
+}
+
+async function runAutosave(force = false): Promise<void> {
   if (autosaveInFlight) return;
   const st = useStore.getState();
   if (!st.dirty || st.transaction) return;
+  // Never autosave while playing: serialising + cloning a big project stalls playback (P-06).
+  if (!force && st.playback.playing) { deferredWhilePlaying = true; return; }
   autosaveInFlight = true;
   try { await autosaveProject(); lastAutosaveAt = Date.now(); }
   catch (e) { console.warn('[autosave] failed', e); }
@@ -177,18 +197,19 @@ async function runAutosave(): Promise<void> {
 
 function scheduleDebouncedAutosave(): void {
   if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => { debounceTimer = null; void runAutosave(); }, AUTOSAVE_DEBOUNCE_MS);
+  debounceTimer = setTimeout(() => { debounceTimer = null; whenIdle(() => { void runAutosave(); }); }, AUTOSAVE_DEBOUNCE_MS);
 }
 
 function autosaveTick(): void {
   const st = useStore.getState();
   if (!st.dirty) return;
+  if (st.playback.playing) { deferredWhilePlaying = true; return; }
   const sec = st.project.settings.autosaveIntervalSec > 0 ? st.project.settings.autosaveIntervalSec : DEFAULT_AUTOSAVE_INTERVAL_SEC;
-  if (Date.now() - lastAutosaveAt >= sec * 1000) void runAutosave();
+  if (Date.now() - lastAutosaveAt >= sec * 1000) whenIdle(() => { void runAutosave(); });
 }
 
 /** Force an autosave now (tests / before risky operations). */
-export function autosaveNow(): Promise<void> { return runAutosave(); }
+export function autosaveNow(): Promise<void> { return runAutosave(true); }
 
 // ------------------------------------------------------------------
 // Recovery
@@ -274,6 +295,9 @@ export function initProjectLifecycle(): () => void {
     if (s.dirty && !s.transaction && (key !== prevCommitKey || !prev.dirty)) scheduleDebouncedAutosave();
     prevCommitKey = key;
     if (!s.dirty && debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+    if (!s.dirty) { cancelIdle(); deferredWhilePlaying = false; }
+    // Playback stopped with an autosave pending: save once things settle.
+    if (prev.playback.playing && !s.playback.playing && deferredWhilePlaying && s.dirty) { deferredWhilePlaying = false; scheduleDebouncedAutosave(); }
   }));
 
   // (c) interval autosave
@@ -302,5 +326,7 @@ export function disposeProjectLifecycle(): void {
   disposers.forEach((d) => { try { d(); } catch { /* ignore */ } });
   disposers = [];
   if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+  cancelIdle();
+  deferredWhilePlaying = false;
   initialized = false;
 }
