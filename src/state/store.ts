@@ -1,0 +1,1252 @@
+/**
+ * ReCut renderer store: a single zustand store holding the Project plus editor UI state, with an
+ * immer-based undo/redo model.
+ *
+ *  - Every project change goes through `commit(label, recipe)` (undoable) or `setView` / `setActiveSequence`
+ *    / `updateTransient` (not undoable).
+ *  - Transient drags use beginTransaction / updateTransient / endTransaction so a drag is one undo step.
+ *  - This module is DOM-free and importable from vitest (node). IPC wrappers live in ./mediaActions.ts.
+ *
+ * Usage: `useStore((s) => s.project)` in React, `useStore.getState()` anywhere else.
+ */
+import { create } from 'zustand';
+import { produce, current } from 'immer';
+import type {
+  Bin, Clip, DetectedScene, ID, Marker, MediaItem, MediaKind, MediaProbe, Project, SceneRecord, Sequence,
+  SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock, Track, Transition, TransitionType, TagVocabulary,
+} from '../../shared/model';
+import { uid } from '../../shared/ids';
+import { secondsToFrames } from '../../shared/time';
+import { createProject } from '../../shared/project';
+import {
+  MIN_CLIP_FRAMES, allTracks, clipEnd, clipSourceOut, findClip, findTrack, linkedClips, makeClip, placeClips,
+  razorAt, removeClips as tlRemoveClips, rippleDeleteClips, liftRange, extractRange, trimStart, trimEnd,
+  rippleTrimStart, rippleTrimEnd, rollEdit as tlRollEdit, slipClip, slideClip, moveClips as tlMoveClips,
+  addTransition as tlAddTransition, removeTransition as tlRemoveTransition, addTrack as tlAddTrack,
+  removeTrack as tlRemoveTrack, reconcileTransitions, reconcileAll, rippleShift, addMarker as tlAddMarker,
+  type NewClipSpec, type MediaDurationLookup,
+} from '../../shared/timeline';
+import { emptyHistory, pushHistory, undoHistory, redoHistory, changedSequenceIds, undoLabel, redoLabel } from './history';
+import type {
+  RecutStore, StoreState, UIState, Recipe, SelectMode, Tool, DialogName, ToastKind,
+} from './types';
+
+// ------------------------------------------------------------------
+// Helpers
+// ------------------------------------------------------------------
+
+export function initialUi(): UIState {
+  return {
+    tool: 'select',
+    selectedClipIds: [],
+    selectedTransitionId: null,
+    selectedMediaIds: [],
+    selectedSceneIds: [],
+    selectedBinId: null,
+    selectedMarkerId: null,
+    sourceClip: null,
+    activePanel: 'project',
+    timelineFocus: false,
+    filters: { characters: [], plotlines: [], locations: [], tags: [], mode: 'highlight' },
+    compare: { sequenceA: null, sequenceB: null, open: false },
+    dialogs: { export: false, relink: false, shortcuts: false, newSequence: false, preferences: false },
+    toasts: [],
+  };
+}
+
+/** Selection-ish UI state that is reset when a different project is loaded. */
+function resetSelectionUi(ui: UIState): UIState {
+  return {
+    ...ui,
+    selectedClipIds: [], selectedTransitionId: null, selectedMediaIds: [], selectedSceneIds: [],
+    selectedBinId: null, selectedMarkerId: null, sourceClip: null,
+    filters: { characters: [], plotlines: [], locations: [], tags: [], mode: ui.filters.mode },
+    compare: { sequenceA: null, sequenceB: null, open: false },
+  };
+}
+
+export function kindFromProbe(p: MediaProbe, path = ''): MediaKind {
+  if (p.video) {
+    const imageCodecs = ['png', 'mjpeg', 'bmp', 'gif', 'webp', 'tiff', 'jpeg', 'jpegls', 'ppm', 'pgm'];
+    const imageExt = /\.(png|jpe?g|gif|bmp|webp|tiff?)$/i.test(path);
+    const stillish = /image|pipe/i.test(p.container) || !Number.isFinite(p.duration) || p.duration <= 0.05;
+    if (imageExt || (imageCodecs.includes(p.video.codec) && stillish)) return 'image';
+    return 'video';
+  }
+  if (p.audio.length > 0) return 'audio';
+  if (p.subtitles.length > 0) return 'subtitle';
+  return 'unknown';
+}
+
+export function mediaDurationLookup(project: Project): MediaDurationLookup {
+  return (id) => {
+    const m = project.media[id];
+    if (!m || m.kind === 'image') return Infinity;
+    return m.probe?.duration ?? Infinity;
+  };
+}
+
+/** Drop UI references to things that no longer exist in the project. Returns the same object when nothing changed. */
+function pruneUi(project: Project, ui: UIState): UIState {
+  let next = ui;
+  const seq = project.activeSequenceId ? project.sequences[project.activeSequenceId] : undefined;
+  if (ui.selectedClipIds.length || ui.selectedTransitionId) {
+    const clipIds = new Set<ID>(); const trIds = new Set<ID>();
+    if (seq) for (const t of allTracks(seq)) { for (const c of t.clips) clipIds.add(c.id); for (const tr of t.transitions) trIds.add(tr.id); }
+    const kept = ui.selectedClipIds.filter((id) => clipIds.has(id));
+    if (kept.length !== ui.selectedClipIds.length) next = { ...next, selectedClipIds: kept };
+    if (ui.selectedTransitionId && !trIds.has(ui.selectedTransitionId)) next = { ...next, selectedTransitionId: null };
+  }
+  if (ui.selectedMarkerId && !(seq && seq.markers.some((m) => m.id === ui.selectedMarkerId))) next = { ...next, selectedMarkerId: null };
+  if (ui.selectedMediaIds.length) {
+    const kept = ui.selectedMediaIds.filter((id) => project.media[id]);
+    if (kept.length !== ui.selectedMediaIds.length) next = { ...next, selectedMediaIds: kept };
+  }
+  if (ui.selectedSceneIds.length) {
+    const kept = ui.selectedSceneIds.filter((id) => project.scenes[id]);
+    if (kept.length !== ui.selectedSceneIds.length) next = { ...next, selectedSceneIds: kept };
+  }
+  if (ui.selectedBinId && !project.bins[ui.selectedBinId]) next = { ...next, selectedBinId: null };
+  if (ui.sourceClip && !project.media[ui.sourceClip.mediaId]) next = { ...next, sourceClip: null };
+  return next;
+}
+
+function applySelect(list: ID[], ids: ID[], mode: SelectMode): ID[] {
+  switch (mode) {
+    case 'clear': return [];
+    case 'add': { const s = new Set(list); for (const id of ids) s.add(id); return [...s]; }
+    case 'toggle': { const s = new Set(list); for (const id of ids) { if (s.has(id)) s.delete(id); else s.add(id); } return [...s]; }
+    default: return [...ids];
+  }
+}
+
+function addToVocab(tags: TagVocabulary, kind: keyof TagVocabulary, values: string[] | undefined): void {
+  if (!values) return;
+  for (const v of values) { const t = v.trim(); if (t && !tags[kind].includes(t)) tags[kind].push(t); }
+}
+
+function plainClone<T>(v: T): T { return JSON.parse(JSON.stringify(v)) as T; }
+
+/** Resolved [start,end) frames of a sequence subtitle cue, or null when it cannot be placed. */
+function cueFrames(seq: Sequence, cue: SequenceSubtitleCue): { start: number; end: number; clip?: Clip } | null {
+  if (cue.clipId) {
+    const clip = findClip(seq, cue.clipId)?.clip;
+    if (!clip || cue.srcStart === undefined || cue.srcEnd === undefined) return null;
+    const toF = (sec: number) => clip.start + Math.round((sec - clip.sourceIn) / clip.speed * seq.fps.num / seq.fps.den) + cue.offset;
+    return { start: toF(cue.srcStart), end: toF(cue.srcEnd), clip };
+  }
+  return { start: cue.start + cue.offset, end: cue.start + cue.duration + cue.offset };
+}
+
+function findCue(seq: Sequence, cueId: ID): { track: SequenceSubtitleTrack; cue: SequenceSubtitleCue; index: number } | null {
+  for (const track of seq.subtitleTracks) {
+    const index = track.cues.findIndex((c) => c.id === cueId);
+    if (index >= 0) return { track, cue: track.cues[index], index };
+  }
+  return null;
+}
+
+function findTransition(seq: Sequence, id: ID): { track: Track; transition: Transition } | null {
+  for (const track of allTracks(seq)) {
+    const transition = track.transitions.find((t) => t.id === id);
+    if (transition) return { track, transition };
+  }
+  return null;
+}
+
+/** Deep-clone a sequence with fresh ids for everything, keeping link groups / transition / cue references consistent. */
+export function cloneSequenceWithNewIds(src: Sequence, newName: string): Sequence {
+  const copy = plainClone<Sequence>({ ...src, snapshots: [] });
+  const clipMap = new Map<ID, ID>();
+  const linkMap = new Map<ID, ID>();
+  const mapClip = (id: ID) => { let n = clipMap.get(id); if (!n) { n = uid('clip'); clipMap.set(id, n); } return n; };
+  const mapLink = (id: ID) => { let n = linkMap.get(id); if (!n) { n = uid('link'); linkMap.set(id, n); } return n; };
+  for (const t of [...copy.videoTracks, ...copy.audioTracks]) {
+    t.id = uid(t.kind === 'video' ? 'v' : 'a');
+    for (const c of t.clips) { c.id = mapClip(c.id); if (c.linkId) c.linkId = mapLink(c.linkId); }
+    for (const tr of t.transitions) {
+      tr.id = uid('tr');
+      tr.outClipId = tr.outClipId ? mapClip(tr.outClipId) : null;
+      tr.inClipId = tr.inClipId ? mapClip(tr.inClipId) : null;
+    }
+  }
+  for (const st of copy.subtitleTracks) {
+    st.id = uid('sst');
+    for (const c of st.cues) { c.id = uid('scue'); if (c.clipId) c.clipId = clipMap.get(c.clipId) ?? c.clipId; }
+  }
+  for (const m of copy.markers) { m.id = uid('mk'); if (m.clipId) m.clipId = clipMap.get(m.clipId) ?? m.clipId; }
+  for (const b of copy.storyBlocks) b.id = uid('sb');
+  const now = Date.now();
+  copy.id = uid('seq');
+  copy.name = newName;
+  copy.createdAt = now;
+  copy.modifiedAt = now;
+  copy.parentSequenceId = src.id;
+  return copy;
+}
+
+// ------------------------------------------------------------------
+// Store
+// ------------------------------------------------------------------
+
+function initialState(): StoreState {
+  return {
+    project: createProject(),
+    projectPath: null,
+    dirty: false,
+    history: emptyHistory(),
+    transaction: null,
+    ui: initialUi(),
+    jobs: [],
+    playback: { playing: false, rate: 1 },
+  };
+}
+
+export const useStore = create<RecutStore>()((set, get) => {
+  /** Stamp modifiedAt on the project and on sequences whose identity changed. */
+  const stamp = (prev: Project, next: Project): Project => {
+    const changed = changedSequenceIds(prev, next);
+    const now = Date.now();
+    return produce(next, (d) => {
+      d.modifiedAt = now;
+      for (const id of changed) if (d.sequences[id]) d.sequences[id].modifiedAt = now;
+    });
+  };
+
+  const commit = (label: string, recipe: Recipe): boolean => {
+    const prev = get().project;
+    const produced = produce(prev, recipe);
+    if (produced === prev) return false;
+    const next = stamp(prev, produced);
+    set((s) => ({ project: next, dirty: true, history: pushHistory(s.history, prev, label), ui: pruneUi(next, s.ui) }));
+    return true;
+  };
+
+  /** Apply a recipe without touching history or dirty state (view / active sequence / transient drags). */
+  const quiet = (recipe: Recipe, opts: { dirty?: boolean } = {}): void => {
+    const prev = get().project;
+    const next = produce(prev, recipe);
+    if (next === prev) return;
+    set((s) => ({ project: next, ui: pruneUi(next, s.ui), ...(opts.dirty ? { dirty: true } : {}) }));
+  };
+
+  const activeId = (seqId?: ID): ID | null => seqId ?? get().project.activeSequenceId;
+  const seqOf = (seqId?: ID): Sequence | null => { const id = activeId(seqId); return id ? get().project.sequences[id] ?? null : null; };
+  const selectedIn = (seq: Sequence, ids: ID[]): Clip[] => {
+    const set_ = new Set(ids); const out: Clip[] = [];
+    for (const t of allTracks(seq)) for (const c of t.clips) if (set_.has(c.id)) out.push(c);
+    return out;
+  };
+
+  const setUi = (patch: Partial<UIState> | ((ui: UIState) => Partial<UIState>)) =>
+    set((s) => ({ ui: { ...s.ui, ...(typeof patch === 'function' ? patch(s.ui) : patch) } }));
+
+  return {
+    ...initialState(),
+
+    // ---------------------------------------------------------------- undo model
+    commit,
+    undo() {
+      const s = get();
+      if (s.transaction) return false;
+      const step = undoHistory(s.history, s.project);
+      if (!step) return false;
+      set({ project: step.project, history: step.history, dirty: true, ui: pruneUi(step.project, s.ui) });
+      return true;
+    },
+    redo() {
+      const s = get();
+      if (s.transaction) return false;
+      const step = redoHistory(s.history, s.project);
+      if (!step) return false;
+      set({ project: step.project, history: step.history, dirty: true, ui: pruneUi(step.project, s.ui) });
+      return true;
+    },
+    canUndo() { return get().history.past.length > 0; },
+    canRedo() { return get().history.future.length > 0; },
+    clearHistory() { set((s) => ({ history: emptyHistory(s.history.limit) })); },
+
+    setView(seqId, patch) {
+      quiet((d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        if (patch.playhead !== undefined) seq.view.playhead = Math.max(0, Math.round(patch.playhead));
+        if (patch.zoom !== undefined) seq.view.zoom = patch.zoom;
+        if (patch.scroll !== undefined) seq.view.scroll = Math.max(0, patch.scroll);
+        if (patch.inPoint !== undefined) seq.view.inPoint = patch.inPoint === null ? null : Math.max(0, Math.round(patch.inPoint));
+        if (patch.outPoint !== undefined) seq.view.outPoint = patch.outPoint === null ? null : Math.max(0, Math.round(patch.outPoint));
+        if (seq.view.inPoint !== null && seq.view.outPoint !== null && seq.view.outPoint < seq.view.inPoint) {
+          const t = seq.view.inPoint; seq.view.inPoint = seq.view.outPoint; seq.view.outPoint = t;
+        }
+      });
+    },
+
+    beginTransaction() {
+      if (get().transaction) return;
+      set({ transaction: get().project });
+    },
+    updateTransient(recipe) {
+      if (!get().transaction) set({ transaction: get().project });
+      quiet(recipe);
+    },
+    endTransaction(label) {
+      const s = get();
+      const snapshot = s.transaction;
+      if (!snapshot) return false;
+      if (snapshot === s.project) { set({ transaction: null }); return false; }
+      const next = stamp(snapshot, s.project);
+      set({ project: next, transaction: null, dirty: true, history: pushHistory(s.history, snapshot, label), ui: pruneUi(next, s.ui) });
+      return true;
+    },
+    cancelTransaction() {
+      const s = get();
+      if (!s.transaction) return;
+      set({ project: s.transaction, transaction: null, ui: pruneUi(s.transaction, s.ui) });
+    },
+
+    // ---------------------------------------------------------------- project
+    newProject(name = 'Untitled Project') {
+      set((s) => ({
+        project: createProject(name), projectPath: null, dirty: false, history: emptyHistory(s.history.limit),
+        transaction: null, ui: resetSelectionUi(s.ui), playback: { playing: false, rate: 1 },
+      }));
+    },
+    loadProjectData(project, path) {
+      set((s) => ({
+        project, projectPath: path, dirty: false, history: emptyHistory(s.history.limit), transaction: null,
+        ui: pruneUi(project, resetSelectionUi(s.ui)), playback: { playing: false, rate: 1 },
+      }));
+    },
+    markSaved(path) { set({ projectPath: path, dirty: false }); },
+    setSettings(patch) { commit('Change settings', (d) => { Object.assign(d.settings, patch); }); },
+    renameProject(name) { commit('Rename project', (d) => { d.name = name; }); },
+
+    // ---------------------------------------------------------------- bins
+    addBin(name, parentId = null, kind = 'bin') {
+      const id = uid('bin');
+      commit('New bin', (d) => { d.bins[id] = { id, name, parentId: parentId && d.bins[parentId] ? parentId : null, kind }; });
+      return id;
+    },
+    renameBin(id, name) { commit('Rename bin', (d) => { const b = d.bins[id]; if (b) b.name = name; }); },
+    deleteBin(id) {
+      commit('Delete bin', (d) => {
+        const bin = d.bins[id];
+        if (!bin) return;
+        const parent = bin.parentId;
+        for (const b of Object.values(d.bins)) if (b.parentId === id) b.parentId = parent;
+        for (const m of Object.values(d.media)) if (m.binId === id) m.binId = parent;
+        for (const s of Object.values(d.sequences)) if (s.binId === id) s.binId = parent;
+        delete d.bins[id];
+      });
+    },
+    moveToBin(ids, binId) {
+      commit('Move to bin', (d) => {
+        const target = binId && d.bins[binId] ? binId : null;
+        for (const id of ids) {
+          if (d.media[id]) d.media[id].binId = target;
+          else if (d.sequences[id]) d.sequences[id].binId = target;
+          else if (d.bins[id] && id !== target) {
+            // prevent cycles: a bin cannot be moved into its own subtree
+            let p: ID | null = target; let cycle = false;
+            while (p) { if (p === id) { cycle = true; break; } p = d.bins[p]?.parentId ?? null; }
+            if (!cycle) d.bins[id].parentId = target;
+          }
+        }
+      });
+    },
+    organizeAsSeries(mediaIds, series, season) {
+      let seriesBinId = ''; let seasonBinId = '';
+      commit('Organize as series', (d) => {
+        const tvParent = d.bins['bin-tv'] ? 'bin-tv' : null;
+        let seriesBin = Object.values(d.bins).find((b) => b.kind === 'series' && b.name === series);
+        if (!seriesBin) { seriesBin = { id: uid('bin'), name: series, parentId: tvParent, kind: 'series' }; d.bins[seriesBin.id] = seriesBin; }
+        const seasonName = `Season ${season}`;
+        let seasonBin = Object.values(d.bins).find((b) => b.kind === 'season' && b.parentId === seriesBin!.id && b.name === seasonName);
+        if (!seasonBin) { seasonBin = { id: uid('bin'), name: seasonName, parentId: seriesBin.id, kind: 'season' }; d.bins[seasonBin.id] = seasonBin; }
+        seriesBinId = seriesBin.id; seasonBinId = seasonBin.id;
+        for (const id of mediaIds) {
+          const m = d.media[id];
+          if (!m) continue;
+          m.identity.series = series;
+          m.identity.season = season;
+          if (m.category === 'Other' || m.category === 'Movie') m.category = 'Episode';
+          m.binId = seasonBin.id;
+        }
+      });
+      return { seriesBinId, seasonBinId };
+    },
+
+    // ---------------------------------------------------------------- media
+    addMedia(items) {
+      if (items.length === 0) return;
+      commit(items.length === 1 ? 'Import media' : `Import ${items.length} media files`, (d) => {
+        for (const it of items) d.media[it.id] = it;
+      });
+    },
+    updateMedia(id, patch) {
+      commit('Edit media', (d) => {
+        const m = d.media[id];
+        if (!m) return;
+        Object.assign(m, patch, { id });
+        if (patch.identity) m.identity = { ...m.identity, ...patch.identity };
+        addToVocab(d.tags, 'custom', patch.tags);
+      });
+    },
+    removeMedia(ids) {
+      const idSet = new Set(ids);
+      commit(ids.length === 1 ? 'Remove media' : `Remove ${ids.length} media items`, (d) => {
+        for (const id of ids) {
+          const m = d.media[id];
+          if (!m) continue;
+          for (const tid of m.subtitleTrackIds) delete d.subtitleTracks[tid];
+          delete d.media[id];
+        }
+        for (const st of Object.values(d.subtitleTracks)) if (st.mediaId && idSet.has(st.mediaId)) delete d.subtitleTracks[st.id];
+        for (const sc of Object.values(d.scenes)) if (idSet.has(sc.mediaId)) delete d.scenes[sc.id];
+        for (const seq of Object.values(d.sequences)) {
+          const removedClips = new Set<ID>();
+          for (const t of allTracks(seq)) {
+            const before = t.clips.length;
+            t.clips = t.clips.filter((c) => { if (idSet.has(c.mediaId)) { removedClips.add(c.id); return false; } return true; });
+            if (t.clips.length !== before) reconcileTransitions(t);
+          }
+          if (removedClips.size) for (const st of seq.subtitleTracks) st.cues = st.cues.filter((c) => !(c.clipId && removedClips.has(c.clipId)));
+        }
+      });
+    },
+    setMediaProbe(id, result) {
+      commit('Probe media', (d) => {
+        const m = d.media[id];
+        if (!m) return;
+        if ('error' in result) { m.probeError = result.error; m.probe = undefined; return; }
+        m.probe = result;
+        m.probeError = undefined;
+        m.offline = false;
+        m.kind = kindFromProbe(result, m.path);
+        if (m.preferredAudioStream === undefined && result.audio.length) m.preferredAudioStream = result.audio[0].index;
+      });
+    },
+    setProxy(id, proxy) { commit('Update proxy', (d) => { const m = d.media[id]; if (m) m.proxy = proxy; }); },
+    setSceneDetectStatus(id, status) { commit('Scene detection', (d) => { const m = d.media[id]; if (m) m.sceneDetectStatus = status; }); },
+    setDetectedScenes(id, boundaries, duration) {
+      commit('Detect scenes', (d) => {
+        const m = d.media[id];
+        if (!m) return;
+        const cuts = [...new Set(boundaries.filter((b) => b > 0 && b < duration))].sort((a, b) => a - b);
+        const edges = [0, ...cuts, duration];
+        const scenes: DetectedScene[] = [];
+        for (let i = 0; i < edges.length - 1; i++) {
+          if (edges[i + 1] - edges[i] <= 0) continue;
+          scenes.push({ id: uid('dsc'), start: edges[i], end: edges[i + 1], name: `Scene ${String(scenes.length + 1).padStart(3, '0')}`, tags: [], characters: [] });
+        }
+        m.detectedScenes = scenes;
+        m.sceneDetectStatus = 'done';
+      });
+    },
+    renameDetectedScene(mediaId, sceneId, name) {
+      commit('Rename scene', (d) => { const s = d.media[mediaId]?.detectedScenes.find((x) => x.id === sceneId); if (s) s.name = name; });
+    },
+    mergeDetectedScenes(mediaId, sceneIds) {
+      commit('Merge scenes', (d) => {
+        const m = d.media[mediaId];
+        if (!m || sceneIds.length < 2) return;
+        const want = new Set(sceneIds);
+        const list = m.detectedScenes;
+        const idx = list.map((s, i) => (want.has(s.id) ? i : -1)).filter((i) => i >= 0);
+        if (idx.length < 2) return;
+        // must be adjacent (contiguous indices)
+        for (let i = 1; i < idx.length; i++) if (idx[i] !== idx[i - 1] + 1) return;
+        const first = list[idx[0]];
+        for (let i = 1; i < idx.length; i++) {
+          const s = list[idx[i]];
+          first.end = Math.max(first.end, s.end);
+          for (const t of s.tags) if (!first.tags.includes(t)) first.tags.push(t);
+          for (const c of s.characters) if (!first.characters.includes(c)) first.characters.push(c);
+        }
+        m.detectedScenes = list.filter((s, i) => i === idx[0] || !want.has(s.id));
+      });
+    },
+    splitDetectedScene(mediaId, sceneId, atSeconds) {
+      commit('Split scene', (d) => {
+        const m = d.media[mediaId];
+        if (!m) return;
+        const i = m.detectedScenes.findIndex((s) => s.id === sceneId);
+        if (i < 0) return;
+        const s = m.detectedScenes[i];
+        if (atSeconds <= s.start || atSeconds >= s.end) return;
+        const tail: DetectedScene = { id: uid('dsc'), start: atSeconds, end: s.end, name: `${s.name} (2)`, tags: [...s.tags], characters: [...s.characters] };
+        s.end = atSeconds;
+        m.detectedScenes.splice(i + 1, 0, tail);
+      });
+    },
+    tagDetectedScene(mediaId, sceneId, patch) {
+      commit('Tag scene', (d) => {
+        const s = d.media[mediaId]?.detectedScenes.find((x) => x.id === sceneId);
+        if (!s) return;
+        if (patch.tags) { s.tags = [...patch.tags]; addToVocab(d.tags, 'custom', patch.tags); }
+        if (patch.characters) { s.characters = [...patch.characters]; addToVocab(d.tags, 'characters', patch.characters); }
+      });
+    },
+    deleteDetectedScene(mediaId, sceneId) {
+      commit('Delete scene', (d) => { const m = d.media[mediaId]; if (m) m.detectedScenes = m.detectedScenes.filter((s) => s.id !== sceneId); });
+    },
+    relinkMedia(id, newPath, stat) {
+      commit('Relink media', (d) => {
+        const m = d.media[id];
+        if (!m) return;
+        m.path = newPath;
+        m.offline = false;
+        m.probeError = undefined;
+        if (stat?.size !== undefined) m.fileSize = stat.size;
+        if (stat?.mtimeMs !== undefined) m.fileMtime = stat.mtimeMs;
+      });
+    },
+    setOffline(id, offline) { commit(offline ? 'Media offline' : 'Media online', (d) => { const m = d.media[id]; if (m) m.offline = offline; }); },
+    addMediaSubtitleTrack(track) {
+      commit('Add subtitles', (d) => {
+        d.subtitleTracks[track.id] = track;
+        if (track.mediaId) {
+          const m = d.media[track.mediaId];
+          if (m && !m.subtitleTrackIds.includes(track.id)) m.subtitleTrackIds.push(track.id);
+        }
+      });
+    },
+    removeMediaSubtitleTrack(trackId) {
+      commit('Remove subtitles', (d) => {
+        delete d.subtitleTracks[trackId];
+        for (const m of Object.values(d.media)) m.subtitleTrackIds = m.subtitleTrackIds.filter((id) => id !== trackId);
+      });
+    },
+
+    // ---------------------------------------------------------------- sequences
+    addSequence(seq, opts = {}) {
+      commit('New sequence', (d) => {
+        if (seq.binId === null && d.bins['bin-sequences']) seq = { ...seq, binId: 'bin-sequences' };
+        d.sequences[seq.id] = seq;
+        if (!d.sequenceOrder.includes(seq.id)) d.sequenceOrder.push(seq.id);
+        if (opts.activate ?? true) d.activeSequenceId = seq.id;
+      });
+    },
+    duplicateSequence(id, newName) {
+      const src = get().project.sequences[id];
+      if (!src) return null;
+      const copy = cloneSequenceWithNewIds(src, newName);
+      commit('Duplicate sequence', (d) => {
+        const siblings = Object.values(d.sequences).filter((s) => s.parentSequenceId === id || s.id === id).length;
+        copy.versionLabel = `v${siblings + 1}`;
+        d.sequences[copy.id] = copy;
+        const at = d.sequenceOrder.indexOf(id);
+        d.sequenceOrder.splice(at >= 0 ? at + 1 : d.sequenceOrder.length, 0, copy.id);
+        d.activeSequenceId = copy.id;
+      });
+      return copy.id;
+    },
+    deleteSequence(id) {
+      commit('Delete sequence', (d) => {
+        if (!d.sequences[id]) return;
+        const at = d.sequenceOrder.indexOf(id);
+        delete d.sequences[id];
+        d.sequenceOrder = d.sequenceOrder.filter((x) => x !== id);
+        if (d.activeSequenceId === id) d.activeSequenceId = d.sequenceOrder[Math.min(Math.max(at, 0), d.sequenceOrder.length - 1)] ?? null;
+      });
+    },
+    renameSequence(id, name) { commit('Rename sequence', (d) => { const s = d.sequences[id]; if (s) s.name = name; }); },
+    setActiveSequence(id) {
+      quiet((d) => { if (id === null || d.sequences[id]) d.activeSequenceId = id; });
+    },
+    takeSnapshot(seqId, name) {
+      const snapId = uid('snap');
+      const ok = commit('Take snapshot', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const { snapshots: _s, ...data } = current(seq);
+        seq.snapshots.push({ id: snapId, name, createdAt: Date.now(), data });
+      });
+      return ok ? snapId : null;
+    },
+    restoreSnapshot(seqId, snapshotId) {
+      commit('Restore snapshot', (d) => {
+        const seq = d.sequences[seqId];
+        const snap = seq?.snapshots.find((s) => s.id === snapshotId);
+        if (!seq || !snap) return;
+        const live = current(seq);
+        d.sequences[seqId] = { ...plainClone(snap.data), id: seqId, snapshots: live.snapshots, view: live.view } as Sequence;
+      });
+    },
+    deleteSnapshot(seqId, snapshotId) {
+      commit('Delete snapshot', (d) => { const seq = d.sequences[seqId]; if (seq) seq.snapshots = seq.snapshots.filter((s) => s.id !== snapshotId); });
+    },
+    updateSequenceSettings(seqId, patch) {
+      commit('Sequence settings', (d) => { const seq = d.sequences[seqId]; if (seq) Object.assign(seq, patch); });
+    },
+
+    // ---------------------------------------------------------------- timeline
+    insertFromSource(seqId, o) {
+      let created: ID[] = [];
+      commit(o.mode === 'insert' ? 'Insert' : 'Overwrite', (d) => {
+        const seq = d.sequences[seqId];
+        const media = d.media[o.mediaId];
+        if (!seq || !media) return;
+        const inS = Math.max(0, Math.min(o.in, o.out));
+        const outS = Math.max(o.in, o.out);
+        const speed = o.extra?.speed && o.extra.speed > 0 ? o.extra.speed : 1;
+        const duration = Math.max(MIN_CLIP_FRAMES, secondsToFrames((outS - inS) / speed, seq.fps));
+        const unprobed = media.kind === 'unknown' && !media.probe;
+        const hasVideo = media.kind === 'video' || media.kind === 'image' || !!media.probe?.video || unprobed;
+        const hasAudio = media.kind === 'audio' || (media.probe?.audio.length ?? 0) > 0 || unprobed;
+        const includeVideo = (o.includeVideo ?? true) && hasVideo;
+        const includeAudio = (o.includeAudio ?? true) && hasAudio;
+        const pick = (tracks: Track[], id?: ID) => (id ? tracks.find((t) => t.id === id) : tracks.find((t) => t.patched && !t.locked) ?? tracks.find((t) => !t.locked));
+        const vTrack = includeVideo ? pick(seq.videoTracks, o.videoTrackId) : undefined;
+        const aTrack = includeAudio ? pick(seq.audioTracks, o.audioTrackId) : undefined;
+        if (!vTrack && !aTrack) return;
+        const linkId = vTrack && aTrack ? uid('link') : null;
+        const base: NewClipSpec = {
+          mediaId: o.mediaId, name: media.name, sourceIn: inS, duration, kind: 'video',
+          ...(o.extra ?? {}), speed, linkId,
+        };
+        const placements: { trackId: ID; clip: Clip }[] = [];
+        let videoClip: Clip | undefined; let audioClip: Clip | undefined;
+        const at = Math.max(0, Math.round(o.atFrame));
+        if (vTrack) { videoClip = makeClip({ ...base, kind: 'video', audioStream: undefined }, at); placements.push({ trackId: vTrack.id, clip: videoClip }); }
+        if (aTrack) {
+          const stream = o.extra?.audioStream ?? media.preferredAudioStream ?? media.probe?.audio[0]?.index;
+          audioClip = makeClip({ ...base, kind: 'audio', audioStream: stream }, at);
+          placements.push({ trackId: aTrack.id, clip: audioClip });
+        }
+        if (!placeClips(seq, placements, o.mode)) return;
+        created = placements.map((p) => p.clip.id);
+        addToVocab(d.tags, 'characters', base.characters);
+        addToVocab(d.tags, 'plotlines', base.plotlines);
+        addToVocab(d.tags, 'locations', base.locations);
+        addToVocab(d.tags, 'custom', base.tags);
+        // Carry media subtitle cues overlapping [in,out] into the sequence, anchored to the new clip.
+        const anchor = videoClip ?? audioClip;
+        if (d.settings.carrySubtitles && anchor) {
+          for (const tid of media.subtitleTrackIds) {
+            const st = d.subtitleTracks[tid];
+            if (!st) continue;
+            const overlapping = st.cues.filter((c) => c.end > inS && c.start < outS);
+            if (overlapping.length === 0) continue;
+            let target = seq.subtitleTracks.find((t) => t.language === st.language);
+            if (!target) {
+              target = { id: uid('sst'), name: st.language || st.name || 'Subtitles', language: st.language, enabled: true, cues: [] };
+              seq.subtitleTracks.push(target);
+            }
+            for (const cue of overlapping) {
+              const s = anchor.start + Math.round((cue.start - inS) / speed * seq.fps.num / seq.fps.den);
+              const e = anchor.start + Math.round((cue.end - inS) / speed * seq.fps.num / seq.fps.den);
+              target.cues.push({ id: uid('scue'), clipId: anchor.id, srcStart: cue.start, srcEnd: cue.end, start: s, duration: Math.max(1, e - s), offset: 0, text: cue.text });
+            }
+            target.cues.sort((a, b) => (a.srcStart ?? a.start) - (b.srcStart ?? b.start));
+          }
+        }
+      });
+      return created;
+    },
+    placeClipsAction(seqId, placements, mode) {
+      let ok = false;
+      commit(mode === 'insert' ? 'Insert clips' : 'Overwrite clips', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        ok = placeClips(seq, placements.map((p) => ({ trackId: p.trackId, clip: plainClone(p.clip) })), mode);
+      });
+      return ok;
+    },
+    razor(seqId, frame, trackIds) {
+      let created: ID[] = [];
+      commit('Razor', (d) => { const seq = d.sequences[seqId]; if (seq) created = razorAt(seq, Math.round(frame), trackIds).map((c) => c.id); });
+      return created;
+    },
+    razorAtPlayhead(seqId) {
+      const seq = seqOf(seqId);
+      if (!seq) return [];
+      const frame = seq.view.playhead;
+      const sel = selectedIn(seq, get().ui.selectedClipIds).filter((c) => c.start < frame && clipEnd(c) > frame);
+      const trackIds = sel.length ? [...new Set(sel.map((c) => findClip(seq, c.id)!.track.id))] : undefined;
+      return get().razor(seq.id, frame, trackIds);
+    },
+    deleteSelected(seqId) {
+      const seq = seqOf(seqId);
+      if (!seq) return;
+      const { selectedClipIds, selectedTransitionId } = get().ui;
+      if (!selectedClipIds.length && !selectedTransitionId) return;
+      commit('Delete', (d) => {
+        const s = d.sequences[seq.id];
+        if (!s) return;
+        if (selectedClipIds.length) tlRemoveClips(s, selectedClipIds);
+        if (selectedTransitionId) tlRemoveTransition(s, selectedTransitionId);
+      });
+    },
+    rippleDeleteSelected(seqId) {
+      const seq = seqOf(seqId);
+      if (!seq) return;
+      const { selectedClipIds, selectedTransitionId } = get().ui;
+      if (!selectedClipIds.length && !selectedTransitionId) return;
+      commit('Ripple delete', (d) => {
+        const s = d.sequences[seq.id];
+        if (!s) return;
+        if (selectedTransitionId) tlRemoveTransition(s, selectedTransitionId);
+        if (selectedClipIds.length) rippleDeleteClips(s, selectedClipIds);
+      });
+    },
+    liftInOut(seqId, trackIds) {
+      const seq = seqOf(seqId);
+      if (!seq || seq.view.inPoint === null || seq.view.outPoint === null || seq.view.outPoint <= seq.view.inPoint) return;
+      const { inPoint, outPoint } = seq.view;
+      commit('Lift', (d) => { const s = d.sequences[seq.id]; if (s) liftRange(s, inPoint, outPoint, trackIds); });
+    },
+    extractInOut(seqId, trackIds) {
+      const seq = seqOf(seqId);
+      if (!seq || seq.view.inPoint === null || seq.view.outPoint === null || seq.view.outPoint <= seq.view.inPoint) return;
+      const { inPoint, outPoint } = seq.view;
+      commit('Extract', (d) => { const s = d.sequences[seq.id]; if (s) extractRange(s, inPoint, outPoint, trackIds); });
+    },
+    trimClipEdge(seqId, clipId, edge, frame, ripple) {
+      commit(ripple ? 'Ripple trim' : 'Trim', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const dur = mediaDurationLookup(d);
+        const f = Math.round(frame);
+        if (ripple) { if (edge === 'start') rippleTrimStart(seq, clipId, f, dur); else rippleTrimEnd(seq, clipId, f, dur); return; }
+        const loc = findClip(seq, clipId);
+        if (!loc) return;
+        const anchor = edge === 'start' ? loc.clip.start : clipEnd(loc.clip);
+        const group = linkedClips(seq, loc.clip).filter((c) => (edge === 'start' ? c.start : clipEnd(c)) === anchor);
+        for (const g of group) { if (edge === 'start') trimStart(seq, g.id, f, dur); else trimEnd(seq, g.id, f, dur); }
+      });
+    },
+    rollEdit(seqId, outClipId, inClipId, frame) {
+      commit('Rolling edit', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const dur = mediaDurationLookup(d);
+        const a = findClip(seq, outClipId); const b = findClip(seq, inClipId);
+        if (!a || !b) return;
+        // roll linked partners that share the same cut too
+        const cut = clipEnd(a.clip);
+        const outs = linkedClips(seq, a.clip).filter((c) => clipEnd(c) === cut);
+        const ins = linkedClips(seq, b.clip).filter((c) => c.start === cut);
+        const pairs: [ID, ID][] = [[outClipId, inClipId]];
+        for (const o of outs) {
+          if (o.id === outClipId) continue;
+          const ot = findClip(seq, o.id)!.track;
+          const partner = ins.find((i) => i.id !== inClipId && findClip(seq, i.id)!.track.id === ot.id);
+          if (partner) pairs.push([o.id, partner.id]);
+        }
+        let target = Math.round(frame);
+        for (const [o, i] of pairs) { const r = tlRollEdit(seq, o, i, target, dur); if (!Number.isNaN(r)) target = r; }
+      });
+    },
+    slip(seqId, clipId, deltaFrames) {
+      commit('Slip', (d) => { const seq = d.sequences[seqId]; if (seq) slipClip(seq, clipId, Math.round(deltaFrames), mediaDurationLookup(d)); });
+    },
+    slide(seqId, clipId, deltaFrames) {
+      commit('Slide', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const loc = findClip(seq, clipId);
+        if (!loc) return;
+        const group = linkedClips(seq, loc.clip);
+        let dlt = Math.round(deltaFrames);
+        for (const g of group) dlt = slideClip(seq, g.id, dlt, mediaDurationLookup(d));
+      });
+    },
+    moveClips(seqId, moves, mode) {
+      let ok = false;
+      commit('Move', (d) => { const seq = d.sequences[seqId]; if (seq) ok = tlMoveClips(seq, moves, mode); });
+      return ok;
+    },
+    nudgeSelected(deltaFrames, seqId) {
+      const seq = seqOf(seqId);
+      if (!seq) return;
+      const clips = selectedIn(seq, get().ui.selectedClipIds);
+      if (!clips.length || deltaFrames === 0) return;
+      let delta = Math.round(deltaFrames);
+      const minStart = Math.min(...clips.map((c) => c.start));
+      if (minStart + delta < 0) delta = -minStart;
+      if (delta === 0) return;
+      const moves = clips.map((c) => ({ clipId: c.id, toTrackId: findClip(seq, c.id)!.track.id, toStart: c.start + delta }));
+      commit('Nudge', (d) => { const s = d.sequences[seq.id]; if (s) tlMoveClips(s, moves, 'overwrite'); });
+    },
+    setClipEnabled(seqId, clipId, enabled) {
+      commit(enabled ? 'Enable clip' : 'Disable clip', (d) => { const loc = d.sequences[seqId] && findClip(d.sequences[seqId], clipId); if (loc) loc.clip.enabled = enabled; });
+    },
+    toggleClipEnabledSelected(seqId) {
+      const seq = seqOf(seqId);
+      if (!seq) return;
+      const ids = get().ui.selectedClipIds;
+      if (!ids.length) return;
+      commit('Toggle enabled', (d) => { const s = d.sequences[seq.id]; if (s) for (const c of selectedIn(s, ids)) c.enabled = !c.enabled; });
+    },
+    linkSelected(seqId) {
+      const seq = seqOf(seqId);
+      if (!seq) return;
+      const ids = get().ui.selectedClipIds;
+      if (ids.length < 2) return;
+      commit('Link', (d) => { const s = d.sequences[seq.id]; if (!s) return; const link = uid('link'); for (const c of selectedIn(s, ids)) c.linkId = link; });
+    },
+    unlinkSelected(seqId) {
+      const seq = seqOf(seqId);
+      if (!seq) return;
+      const ids = get().ui.selectedClipIds;
+      if (!ids.length) return;
+      commit('Unlink', (d) => { const s = d.sequences[seq.id]; if (s) for (const c of selectedIn(s, ids)) c.linkId = null; });
+    },
+    setClipTransform(seqId, clipId, patch) {
+      commit('Transform', (d) => {
+        const loc = d.sequences[seqId] && findClip(d.sequences[seqId], clipId);
+        if (!loc) return;
+        const { crop, ...rest } = patch;
+        Object.assign(loc.clip.transform, rest);
+        if (crop) loc.clip.transform.crop = { ...loc.clip.transform.crop, ...crop };
+      });
+    },
+    setClipAudio(seqId, clipId, patch) {
+      commit('Audio', (d) => { const loc = d.sequences[seqId] && findClip(d.sequences[seqId], clipId); if (loc) Object.assign(loc.clip.audio, patch); });
+    },
+    setClipSpeed(seqId, clipId, speed, opts = {}) {
+      if (!(speed > 0) || !Number.isFinite(speed)) return;
+      commit('Speed', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const loc = findClip(seq, clipId);
+        if (!loc) return;
+        const group = linkedClips(seq, loc.clip);
+        const groupIds = new Set(group.map((g) => g.id));
+        const oldEnd = clipEnd(loc.clip);
+        const newDur = Math.max(MIN_CLIP_FRAMES, Math.round(loc.clip.duration * loc.clip.speed / speed));
+        const delta = newDur - loc.clip.duration;
+        if (opts.ripple) {
+          if (delta > 0) rippleShift(seq, oldEnd, delta, { except: groupIds });
+          for (const g of group) { g.duration = Math.max(MIN_CLIP_FRAMES, Math.round(g.duration * g.speed / speed)); g.speed = speed; }
+          if (delta < 0) rippleShift(seq, oldEnd, delta, { except: groupIds });
+        } else {
+          for (const g of group) {
+            const gl = findClip(seq, g.id)!;
+            const next = gl.track.clips[gl.index + 1];
+            let dur = Math.max(MIN_CLIP_FRAMES, Math.round(g.duration * g.speed / speed));
+            if (next) dur = Math.max(MIN_CLIP_FRAMES, Math.min(dur, next.start - g.start));
+            g.duration = dur; g.speed = speed;
+          }
+        }
+        reconcileAll(seq);
+      });
+    },
+    setClipTags(seqId, clipId, patch) {
+      commit('Tag clip', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const loc = findClip(seq, clipId);
+        if (!loc) return;
+        for (const c of linkedClips(seq, loc.clip)) {
+          if (patch.characters) c.characters = [...patch.characters];
+          if (patch.plotlines) c.plotlines = [...patch.plotlines];
+          if (patch.locations) c.locations = [...patch.locations];
+          if (patch.tags) c.tags = [...patch.tags];
+          if (patch.notes !== undefined) c.notes = patch.notes;
+          if ('color' in patch) c.color = patch.color;
+          if (patch.name !== undefined) c.name = patch.name;
+        }
+        addToVocab(d.tags, 'characters', patch.characters);
+        addToVocab(d.tags, 'plotlines', patch.plotlines);
+        addToVocab(d.tags, 'locations', patch.locations);
+        addToVocab(d.tags, 'custom', patch.tags);
+      });
+    },
+    addTransitionAtCut(seqId, trackId, frame, type, frames) {
+      let tr: Transition | null = null;
+      commit('Add transition', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const made = tlAddTransition(seq, trackId, Math.round(frame), type, Math.max(1, Math.round(frames ?? d.settings.defaultTransitionFrames)));
+        if (made) tr = { ...made };
+      });
+      return tr;
+    },
+    addDefaultTransitionAtSelection(seqId) {
+      const seq = seqOf(seqId);
+      if (!seq) return;
+      const ids = get().ui.selectedClipIds;
+      commit('Add default transition', (d) => {
+        const s = d.sequences[seq.id];
+        if (!s) return;
+        const frames = Math.max(1, d.settings.defaultTransitionFrames);
+        const typeFor = (t: Track): TransitionType => (t.kind === 'audio' ? 'audioCrossfade' : 'crossDissolve');
+        const cuts: { trackId: ID; frame: number }[] = [];
+        if (ids.length) {
+          const sel = new Set(ids);
+          let pairs = 0;
+          for (const t of allTracks(s)) {
+            for (let i = 0; i < t.clips.length - 1; i++) {
+              const a = t.clips[i]; const b = t.clips[i + 1];
+              if (sel.has(a.id) && sel.has(b.id) && clipEnd(a) === b.start) { cuts.push({ trackId: t.id, frame: b.start }); pairs++; }
+            }
+          }
+          if (pairs === 0) {
+            // single clip(s): the edge nearest the playhead
+            for (const c of selectedIn(s, ids)) {
+              const t = findClip(s, c.id)!.track;
+              const ph = s.view.playhead;
+              const frame = Math.abs(ph - c.start) <= Math.abs(clipEnd(c) - ph) ? c.start : clipEnd(c);
+              cuts.push({ trackId: t.id, frame });
+            }
+          }
+        } else {
+          // nearest edit point to the playhead across unlocked tracks; apply on every track with a cut there
+          const ph = s.view.playhead;
+          let best: number | null = null;
+          for (const t of allTracks(s)) {
+            if (t.locked) continue;
+            for (const c of t.clips) for (const f of [c.start, clipEnd(c)]) if (best === null || Math.abs(f - ph) < Math.abs(best - ph)) best = f;
+          }
+          if (best === null) return;
+          for (const t of allTracks(s)) {
+            if (t.locked) continue;
+            if (t.clips.some((c) => c.start === best || clipEnd(c) === best)) cuts.push({ trackId: t.id, frame: best });
+          }
+        }
+        for (const cut of cuts) {
+          const t = findTrack(s, cut.trackId);
+          if (t) tlAddTransition(s, cut.trackId, cut.frame, typeFor(t), frames);
+        }
+      });
+    },
+    removeTransition(seqId, transitionId) {
+      commit('Remove transition', (d) => { const seq = d.sequences[seqId]; if (seq) tlRemoveTransition(seq, transitionId); });
+    },
+    setTransitionDuration(seqId, transitionId, frames) {
+      commit('Transition duration', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const found = findTransition(seq, transitionId);
+        if (!found) return;
+        found.transition.duration = Math.max(1, Math.round(frames));
+        reconcileTransitions(found.track);
+      });
+    },
+    addTrack(seqId, kind) {
+      let id: ID | null = null;
+      commit(`Add ${kind} track`, (d) => { const seq = d.sequences[seqId]; if (seq) id = tlAddTrack(seq, kind).id; });
+      return id;
+    },
+    removeTrack(seqId, trackId) {
+      commit('Remove track', (d) => { const seq = d.sequences[seqId]; if (seq) tlRemoveTrack(seq, trackId); });
+    },
+    setTrackFlags(seqId, trackId, patch) {
+      commit('Track settings', (d) => {
+        const seq = d.sequences[seqId];
+        const track = seq && findTrack(seq, trackId);
+        if (!seq || !track) return;
+        if (patch.patched === true) {
+          // source patching is exclusive within a track kind
+          for (const t of track.kind === 'video' ? seq.videoTracks : seq.audioTracks) t.patched = t.id === trackId;
+        } else if (patch.patched === false) track.patched = false;
+        const { patched: _p, ...rest } = patch;
+        Object.assign(track, rest);
+      });
+    },
+
+    // ---------------------------------------------------------------- markers
+    addMarker(seqId, marker) {
+      let id: ID | null = null;
+      commit('Add marker', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const m = tlAddMarker(seq, {
+          time: Math.max(0, Math.round(marker.time)), duration: marker.duration ?? 0, name: marker.name ?? 'Marker', note: marker.note ?? '',
+          color: marker.color ?? '#4d7cfe', kind: marker.kind ?? 'marker', category: marker.category, resolved: marker.resolved, clipId: marker.clipId,
+        });
+        id = m.id;
+      });
+      return id;
+    },
+    updateMarker(seqId, markerId, patch) {
+      commit('Edit marker', (d) => {
+        const seq = d.sequences[seqId];
+        const m = seq?.markers.find((x) => x.id === markerId);
+        if (!seq || !m) return;
+        Object.assign(m, patch);
+        seq.markers.sort((a, b) => a.time - b.time);
+      });
+    },
+    removeMarker(seqId, markerId) {
+      commit('Remove marker', (d) => { const seq = d.sequences[seqId]; if (seq) seq.markers = seq.markers.filter((m) => m.id !== markerId); });
+    },
+    addContinuityNote(seqId, note) {
+      let id: ID | null = null;
+      commit('Add continuity note', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const m = tlAddMarker(seq, {
+          time: Math.max(0, Math.round(note.time)), duration: note.duration ?? 0, name: note.name, note: note.note, color: '#f5a623',
+          kind: 'continuity', category: note.category ?? 'other', resolved: false, clipId: note.clipId,
+        });
+        id = m.id;
+      });
+      return id;
+    },
+    resolveContinuity(seqId, markerId, resolved = true) {
+      commit(resolved ? 'Resolve continuity note' : 'Reopen continuity note', (d) => {
+        const m = d.sequences[seqId]?.markers.find((x) => x.id === markerId);
+        if (m) m.resolved = resolved;
+      });
+    },
+
+    // ---------------------------------------------------------------- story blocks
+    addStoryBlock(seqId, block) {
+      const id = uid('sb');
+      const ok = commit('Add story block', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const start = Math.max(0, Math.round(Math.min(block.start, block.end)));
+        const end = Math.max(start + 1, Math.round(Math.max(block.start, block.end)));
+        const b: StoryBlock = { id, name: block.name ?? 'Block', start, end, color: block.color ?? '#7c5cff', notes: block.notes ?? '' };
+        seq.storyBlocks.push(b);
+        seq.storyBlocks.sort((a, c) => a.start - c.start);
+      });
+      return ok ? id : null;
+    },
+    updateStoryBlock(seqId, blockId, patch) {
+      commit('Edit story block', (d) => {
+        const seq = d.sequences[seqId];
+        const b = seq?.storyBlocks.find((x) => x.id === blockId);
+        if (!seq || !b) return;
+        Object.assign(b, patch);
+        if (b.end <= b.start) b.end = b.start + 1;
+        seq.storyBlocks.sort((a, c) => a.start - c.start);
+      });
+    },
+    removeStoryBlock(seqId, blockId) {
+      commit('Remove story block', (d) => { const seq = d.sequences[seqId]; if (seq) seq.storyBlocks = seq.storyBlocks.filter((b) => b.id !== blockId); });
+    },
+
+    // ---------------------------------------------------------------- sequence subtitles
+    addSequenceSubtitleTrack(seqId, init = {}) {
+      const id = uid('sst');
+      const ok = commit('Add subtitle track', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const language = init.language ?? 'und';
+        seq.subtitleTracks.push({ id, name: init.name ?? language, language, enabled: true, cues: [] });
+      });
+      return ok ? id : null;
+    },
+    removeSequenceSubtitleTrack(seqId, trackId) {
+      commit('Remove subtitle track', (d) => { const seq = d.sequences[seqId]; if (seq) seq.subtitleTracks = seq.subtitleTracks.filter((t) => t.id !== trackId); });
+    },
+    toggleSubtitleTrack(seqId, trackId, enabled) {
+      commit('Toggle subtitle track', (d) => { const t = d.sequences[seqId]?.subtitleTracks.find((x) => x.id === trackId); if (t) t.enabled = enabled ?? !t.enabled; });
+    },
+    updateCue(seqId, cueId, patch) {
+      commit('Edit subtitle', (d) => {
+        const seq = d.sequences[seqId];
+        const f = seq && findCue(seq, cueId);
+        if (!f) return;
+        if (patch.text !== undefined) f.cue.text = patch.text;
+        if (patch.offset !== undefined) f.cue.offset = Math.round(patch.offset);
+      });
+    },
+    addManualCue(seqId, trackId, cue) {
+      const id = uid('scue');
+      const ok = commit('Add subtitle', (d) => {
+        const t = d.sequences[seqId]?.subtitleTracks.find((x) => x.id === trackId);
+        if (!t) return;
+        t.cues.push({ id, start: Math.max(0, Math.round(cue.start)), duration: Math.max(1, Math.round(cue.duration)), offset: 0, text: cue.text });
+        t.cues.sort((a, b) => a.start - b.start);
+      });
+      return ok ? id : null;
+    },
+    splitCue(seqId, cueId, atFrame) {
+      let newId: ID | null = null;
+      commit('Split subtitle', (d) => {
+        const seq = d.sequences[seqId];
+        const f = seq && findCue(seq, cueId);
+        if (!seq || !f) return;
+        const r = cueFrames(seq, f.cue);
+        const at = Math.round(atFrame);
+        if (!r || at <= r.start || at >= r.end) return;
+        const lines = f.cue.text.split('\n');
+        const half = Math.ceil(lines.length / 2);
+        const textA = lines.length > 1 ? lines.slice(0, half).join('\n') : f.cue.text;
+        const textB = lines.length > 1 ? lines.slice(half).join('\n') : f.cue.text;
+        const second: SequenceSubtitleCue = { ...f.cue, id: uid('scue'), text: textB };
+        f.cue.text = textA;
+        if (r.clip) {
+          const clip = r.clip;
+          const srcAt = clip.sourceIn + ((at - f.cue.offset) - clip.start) * seq.fps.den / seq.fps.num * clip.speed;
+          f.cue.srcEnd = srcAt;
+          second.srcStart = srcAt;
+        } else {
+          f.cue.duration = at - r.start;
+          second.start = f.cue.start + (at - r.start);
+          second.duration = r.end - at;
+        }
+        f.track.cues.splice(f.index + 1, 0, second);
+        newId = second.id;
+      });
+      return newId;
+    },
+    mergeCues(seqId, cueIds) {
+      if (cueIds.length < 2) return;
+      commit('Merge subtitles', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const found = cueIds.map((id) => findCue(seq, id)).filter((x): x is NonNullable<typeof x> => !!x);
+        if (found.length < 2) return;
+        const resolved = found.map((f) => ({ f, r: cueFrames(seq, f.cue) })).filter((x): x is { f: typeof x.f; r: NonNullable<typeof x.r> } => !!x.r);
+        if (resolved.length < 2) return;
+        resolved.sort((a, b) => a.r.start - b.r.start);
+        const first = resolved[0];
+        const text = resolved.map((x) => x.f.cue.text).join('\n');
+        const sameClip = resolved.every((x) => x.f.cue.clipId && x.f.cue.clipId === first.f.cue.clipId);
+        const cue = first.f.cue;
+        if (sameClip) {
+          cue.srcStart = Math.min(...resolved.map((x) => x.f.cue.srcStart ?? Infinity));
+          cue.srcEnd = Math.max(...resolved.map((x) => x.f.cue.srcEnd ?? -Infinity));
+        } else {
+          const start = Math.min(...resolved.map((x) => x.r.start));
+          const end = Math.max(...resolved.map((x) => x.r.end));
+          cue.clipId = undefined; cue.srcStart = undefined; cue.srcEnd = undefined;
+          cue.start = start; cue.duration = Math.max(1, end - start); cue.offset = 0;
+        }
+        cue.text = text;
+        const drop = new Set(resolved.slice(1).map((x) => x.f.cue.id));
+        for (const t of seq.subtitleTracks) t.cues = t.cues.filter((c) => !drop.has(c.id));
+      });
+    },
+    removeCue(seqId, cueId) {
+      commit('Remove subtitle', (d) => { const seq = d.sequences[seqId]; if (seq) for (const t of seq.subtitleTracks) t.cues = t.cues.filter((c) => c.id !== cueId); });
+    },
+
+    // ---------------------------------------------------------------- scenes library
+    addScene(record) {
+      commit('Add scene', (d) => {
+        d.scenes[record.id] = record;
+        addToVocab(d.tags, 'characters', record.characters);
+        addToVocab(d.tags, 'custom', record.tags);
+        if (record.location) addToVocab(d.tags, 'locations', [record.location]);
+        if (record.arc) addToVocab(d.tags, 'plotlines', [record.arc]);
+      });
+    },
+    updateScene(id, patch) {
+      commit('Edit scene', (d) => {
+        const s = d.scenes[id];
+        if (!s) return;
+        Object.assign(s, patch, { id });
+        addToVocab(d.tags, 'characters', patch.characters);
+        addToVocab(d.tags, 'custom', patch.tags);
+        if (patch.location) addToVocab(d.tags, 'locations', [patch.location]);
+        if (patch.arc) addToVocab(d.tags, 'plotlines', [patch.arc]);
+      });
+    },
+    removeScene(id) { commit('Remove scene', (d) => { delete d.scenes[id]; }); },
+    sceneFromSource(name) {
+      const s = get();
+      const sc = s.ui.sourceClip;
+      const media = sc ? s.project.media[sc.mediaId] : undefined;
+      if (!sc || !media) return null;
+      const inS = sc.inPoint ?? 0;
+      const outS = sc.outPoint ?? media.probe?.duration ?? inS;
+      if (outS <= inS) return null;
+      const n = Object.values(s.project.scenes).filter((x) => x.mediaId === media.id).length + 1;
+      const record: SceneRecord = {
+        id: uid('scn'), name: name ?? `${media.name} – Scene ${n}`, mediaId: media.id, in: inS, out: outS,
+        characters: [], location: '', arc: '', tags: [], notes: '', rating: 0, color: '#4d7cfe', createdAt: Date.now(),
+      };
+      get().addScene(record);
+      return record.id;
+    },
+    sceneFromClip(seqId, clipId, name) {
+      const seq = get().project.sequences[seqId];
+      const loc = seq && findClip(seq, clipId);
+      if (!seq || !loc) return null;
+      const c = loc.clip;
+      const record: SceneRecord = {
+        id: uid('scn'), name: name ?? c.name, mediaId: c.mediaId, in: c.sourceIn, out: clipSourceOut(c, seq.fps),
+        characters: [...c.characters], location: c.locations[0] ?? '', arc: c.plotlines[0] ?? '', tags: [...c.tags], notes: c.notes,
+        rating: 0, color: c.color ?? '#4d7cfe', createdAt: Date.now(),
+      };
+      get().addScene(record);
+      return record.id;
+    },
+
+    // ---------------------------------------------------------------- tags
+    addTag(kind, value) { commit('Add tag', (d) => addToVocab(d.tags, kind, [value])); },
+
+    // ---------------------------------------------------------------- ui (no history)
+    setTool(tool: Tool) { setUi({ tool }); },
+    select(clipIds, mode = 'set') {
+      setUi((ui) => {
+        const selectedClipIds = applySelect(ui.selectedClipIds, clipIds, mode);
+        return { selectedClipIds, selectedTransitionId: selectedClipIds.length ? null : ui.selectedTransitionId };
+      });
+    },
+    selectTransition(id) { setUi((ui) => ({ selectedTransitionId: id, selectedClipIds: id ? [] : ui.selectedClipIds })); },
+    selectMedia(ids, mode = 'set') { setUi((ui) => ({ selectedMediaIds: applySelect(ui.selectedMediaIds, ids, mode) })); },
+    selectScenes(ids, mode = 'set') { setUi((ui) => ({ selectedSceneIds: applySelect(ui.selectedSceneIds, ids, mode) })); },
+    selectBin(id) { setUi({ selectedBinId: id }); },
+    selectMarker(id) { setUi({ selectedMarkerId: id }); },
+    setSourceClip(mediaId, time = 0) {
+      setUi((ui) => {
+        if (!mediaId) return { sourceClip: null };
+        if (ui.sourceClip?.mediaId === mediaId) return { sourceClip: { ...ui.sourceClip, time } };
+        return { sourceClip: { mediaId, inPoint: null, outPoint: null, time } };
+      });
+    },
+    setSourceIn(seconds) {
+      setUi((ui) => {
+        if (!ui.sourceClip) return {};
+        const sc = { ...ui.sourceClip, inPoint: seconds === null ? null : Math.max(0, seconds) };
+        if (sc.inPoint !== null && sc.outPoint !== null && sc.outPoint < sc.inPoint) sc.outPoint = sc.inPoint;
+        return { sourceClip: sc };
+      });
+    },
+    setSourceOut(seconds) {
+      setUi((ui) => {
+        if (!ui.sourceClip) return {};
+        const sc = { ...ui.sourceClip, outPoint: seconds === null ? null : Math.max(0, seconds) };
+        if (sc.inPoint !== null && sc.outPoint !== null && sc.inPoint > sc.outPoint) sc.inPoint = sc.outPoint;
+        return { sourceClip: sc };
+      });
+    },
+    setSourceTime(seconds) { setUi((ui) => (ui.sourceClip ? { sourceClip: { ...ui.sourceClip, time: Math.max(0, seconds) } } : {})); },
+    setActivePanel(panel) { setUi({ activePanel: panel }); },
+    setTimelineFocus(focus) { setUi({ timelineFocus: focus }); },
+    setFilters(patch) { setUi((ui) => ({ filters: { ...ui.filters, ...patch } })); },
+    clearFilters() { setUi((ui) => ({ filters: { characters: [], plotlines: [], locations: [], tags: [], mode: ui.filters.mode } })); },
+    setCompare(patch) { setUi((ui) => ({ compare: { ...ui.compare, ...patch } })); },
+    openDialog(name: DialogName) { setUi((ui) => ({ dialogs: { ...ui.dialogs, [name]: true } })); },
+    closeDialog(name: DialogName) { setUi((ui) => ({ dialogs: { ...ui.dialogs, [name]: false } })); },
+    toast(kind: ToastKind, text) {
+      const id = uid('toast');
+      setUi((ui) => ({ toasts: [...ui.toasts, { id, kind, text }] }));
+      return id;
+    },
+    dismissToast(id) { setUi((ui) => ({ toasts: ui.toasts.filter((t) => t.id !== id) })); },
+    setJobs(jobs) { set({ jobs }); },
+    setPlaying(playing) { set((s) => ({ playback: { ...s.playback, playing } })); },
+    setPlaybackRate(rate) { set((s) => ({ playback: { ...s.playback, rate } })); },
+  };
+});
+
+// ------------------------------------------------------------------
+// Persistence helpers / misc
+// ------------------------------------------------------------------
+
+/** Project data ready for saving (pure data already; just stamps modifiedAt). */
+export function serializeForSave(state: StoreState = useStore.getState()): Project {
+  return produce(state.project, (d) => { d.modifiedAt = Date.now(); });
+}
+
+export function getUndoLabels(state: StoreState = useStore.getState()): { undo: string | null; redo: string | null } {
+  return { undo: undoLabel(state.history), redo: redoLabel(state.history) };
+}
+
+/** Reset the store to a fresh project (tests / "New Project"). */
+export function resetStore(): void {
+  useStore.setState({ ...initialState() });
+}
+
+export type { RecutStore, StoreState, UIState } from './types';
+export type { Bin, Marker, MediaItem, Sequence, Track, Transition, Clip } from '../../shared/model';
