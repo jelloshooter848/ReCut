@@ -1,16 +1,16 @@
 /* Project / media panel */
 .pp { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; background: var(--bg-1); outline: none; position: relative; }
-.pp-toolbar { display: flex; align-items: center; gap: 3px; min-height: var(--panel-header-h); padding: 2px 4px; background: var(--bg-2); border-bottom: 1px solid var(--border); flex-wrap: wrap; flex-shrink: 0; }
-.pp-toolbar .input-wrap { flex: 1 1 110px; min-width: 90px; }
-.pp-toolbar .select { max-width: 112px; }
+.pp-toolbar { display: flex; align-items: center; gap: 3px; height: var(--panel-header-h); padding: 0 4px; background: var(--bg-2); border-bottom: 1px solid var(--border); flex-wrap: nowrap; flex-shrink: 0; min-width: 0; overflow: hidden; }
+.pp-toolbar .input-wrap { flex: 1 1 60px; min-width: 50px; }
+.pp-toolbar .select { width: 92px; flex: 0 0 auto; padding-left: 5px; }
 .pp-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; flex-shrink: 0; }
-.pp-seg > button { height: var(--control-h-sm); padding: 0 8px; border: none; background: var(--bg-3); color: var(--text-dim); font-size: var(--font-size-sm); }
+.pp-seg > button { height: var(--control-h-sm); padding: 0 7px; border: none; background: var(--bg-3); color: var(--text-dim); font-size: var(--font-size-sm); }
 .pp-seg > button + button { border-left: 1px solid var(--border); }
 .pp-seg > button:hover { color: var(--text); background: var(--bg-4); }
 .pp-seg > button.active { background: var(--accent-soft); color: var(--text-bright); }
 .pp-banner { display: flex; align-items: center; gap: 6px; padding: 3px 8px; background: var(--danger-soft); border-bottom: 1px solid var(--danger); color: var(--text-bright); font-size: var(--font-size-sm); flex-shrink: 0; }
 .pp-banner > svg { width: 13px; height: 13px; color: var(--danger); flex-shrink: 0; }
-.pp-body { flex: 1 1 auto; min-height: 0; min-width: 0; position: relative; display: flex; flex-direction: column; }
+.pp-body { flex: 1 1 auto; min-height: 96px; min-width: 0; position: relative; display: flex; flex-direction: column; }
 .pp-body.drop-files::after { content: 'Drop files to import'; position: absolute; inset: 4px; border: 2px dashed var(--accent); border-radius: var(--radius-lg); background: var(--accent-soft); color: var(--text-bright); display: flex; align-items: center; justify-content: center; font-size: 13px; pointer-events: none; z-index: 5; }
 
 /* virtual list */
@@ -76,12 +76,12 @@
 .pp-card-badges { position: absolute; left: 2px; top: 2px; display: flex; gap: 2px; }
 
 /* info footer */
-.pp-info { flex-shrink: 0; border-top: 1px solid var(--border); background: var(--bg-2); font-size: var(--font-size-sm); }
-.pp-info-head { display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 6px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-size: var(--font-size-xs); }
+.pp-info { flex: 0 1 auto; display: flex; flex-direction: column; min-height: 22px; max-height: 45%; border-top: 1px solid var(--border); background: var(--bg-2); font-size: var(--font-size-sm); }
+.pp-info-head { display: flex; align-items: center; gap: 4px; height: 22px; flex-shrink: 0; padding: 0 6px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-size: var(--font-size-xs); }
 .pp-info-head:hover { color: var(--text); }
 .pp-info-head > svg { width: 12px; height: 12px; }
 .pp-info-head .title { color: var(--text); text-transform: none; letter-spacing: 0; font-size: var(--font-size-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pp-info-body { max-height: min(140px, 35%); overflow: auto; padding: 2px 8px 6px; display: grid; grid-template-columns: max-content 1fr; column-gap: 10px; row-gap: 2px; }
+.pp-info-body { max-height: 150px; min-height: 0; overflow: auto; padding: 2px 8px 6px; display: grid; grid-template-columns: max-content 1fr; column-gap: 10px; row-gap: 2px; }
 .pp-info-body dt { color: var(--text-faint); white-space: nowrap; }
 .pp-info-body dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); user-select: text; -webkit-user-select: text; }
 .pp-info-body dd.wrap { white-space: normal; word-break: break-all; }

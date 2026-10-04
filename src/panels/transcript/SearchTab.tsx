@@ -74,7 +74,13 @@ export function SearchTab({ index, active }: SearchTabProps) {
   useEffect(() => { setSelected(result.matches.length ? 0 : -1); }, [debounced, scopeKey, regex, wholeWord]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setSelected((s) => (s >= result.matches.length ? result.matches.length - 1 : s)); }, [result.matches.length]);
   useEffect(() => { if (selected >= 0 && matchRowIndex[selected] !== undefined) listRef.current?.scrollToIndex(matchRowIndex[selected]); }, [selected, matchRowIndex]);
-  useEffect(() => { if (active) barRef.current?.querySelector('input')?.focus(); }, [active]);
+  // Focus the search box when the user switches to this panel/tab — not on mount, so launching the app with the
+  // Transcript tab visible does not steal keyboard focus from the global single-key shortcuts.
+  const wasActive = useRef(active);
+  useEffect(() => {
+    if (active && !wasActive.current) barRef.current?.querySelector('input')?.focus();
+    wasActive.current = active;
+  }, [active]);
 
   const load = useCallback((m: TranscriptMatch) => loadInSource(m.entry.mediaId, m.entry.cue.start, m.entry.cue.end), []);
   const insert = useCallback((m: TranscriptMatch) => insertAtPlayhead(m.entry.mediaId, m.entry.cue.start, m.entry.cue.end), []);

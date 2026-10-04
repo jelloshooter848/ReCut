@@ -35,8 +35,11 @@ test.beforeAll(async () => {
   page.on('pageerror', (e) => console.log('[renderer:pageerror]', e.message));
   page.on('console', (m) => { if (m.type() === 'error') console.log('[renderer:error]', m.text()); });
   // Deterministic layout for screenshots.
-  await page.waitForLoadState('domcontentloaded');
-  await page.evaluate(() => { localStorage.removeItem('recut.layout.v1'); });
+  await page.waitForSelector('#root', { state: 'attached', timeout: 60_000 });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { await page.evaluate(() => { localStorage.removeItem('recut.layout.v1'); }); break; }
+    catch { await page.waitForTimeout(500); } // execution context replaced during startup; retry
+  }
   await page.reload();
   const mounted = await page.waitForSelector('#root .layout', { timeout: 20_000 }).then(() => true, () => false);
   if (!mounted) {
@@ -188,11 +191,13 @@ test('screenshot', async () => {
   const dir = path.join(root, 'docs/screenshots');
   fs.mkdirSync(dir, { recursive: true });
   // Maximized panel with the info footer open: thumbnails are lazy, give them a moment to land.
+  await setMaximized(true);
   await page.locator('[data-row-kind="media"]').first().click();
   await page.getByTestId('info-footer').locator('.pp-info-head').click();
   await page.waitForTimeout(1500);
   await page.getByTestId('project-panel').screenshot({ path: path.join(dir, 'project-panel.png') });
-  // Normal layout for the docs shot.
+  // Normal layout for the docs shot (footer collapsed so the list gets the room).
+  await page.getByTestId('info-footer').locator('.pp-info-head').click();
   await setMaximized(false);
   await page.waitForTimeout(800);
   await page.screenshot({ path: path.join(dir, 'project.png') });

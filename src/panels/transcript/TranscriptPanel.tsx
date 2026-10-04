@@ -80,9 +80,9 @@ export function TranscriptPanel({ active }: PanelProps) {
         <div className={['col grow', tab === 'transcript' ? '' : 'hidden'].join(' ')}><TranscriptView active={active && tab === 'transcript'} /></div>
       </div>
       <div className="panel-footer" data-testid="transcript-stats">
-        <span>{index.stats.mediaWithTranscripts} media with transcripts</span>
+        <span className="nowrap">{index.stats.mediaWithTranscripts} media with transcripts</span>
         <span className="text-faint">·</span>
-        <span>{index.stats.cues} cues</span>
+        <span className="nowrap">{index.stats.cues} cues</span>
         {targetMedia ? <span className="ml-auto ellipsis text-faint" title={targetMedia.path}>{targetMedia.name}</span> : null}
       </div>
     </div>
