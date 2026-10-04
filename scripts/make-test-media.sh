@@ -7,6 +7,13 @@ MODE="${2:-full}"
 mkdir -p "$OUT/movies" "$OUT/tv/Season 01" "$OUT/subs"
 FF="ffmpeg -hide_banner -loglevel error -y"
 
+# Font for the burned-in labels: first one that exists (Linux, macOS, Windows/Git Bash), else FFmpeg's default.
+FONTOPT=""
+for f in /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf /System/Library/Fonts/Supplemental/Arial.ttf \
+         /Library/Fonts/Arial.ttf /c/Windows/Fonts/arial.ttf /mnt/c/Windows/Fonts/arial.ttf; do
+  if [ -f "$f" ]; then FONTOPT="fontfile=$f:"; break; fi
+done
+
 # A "movie": several distinct colored scenes with burned-in timecode and a tone that changes per scene.
 make_movie() { # name seconds_per_scene colors... (audio codec via AC env)
   local name="$1"; local per="$2"; shift 2
@@ -27,7 +34,7 @@ make_movie() { # name seconds_per_scene colors... (audio codec via AC env)
   local apan="anull"
   if [ "${CH:-2}" = "6" ]; then apan="pan=5.1|FL=c0|FR=c0|FC=c0|LFE=c0|BL=c0|BR=c0"; acargs+=" -ac 6"; else acargs+=" -ac 2"; fi
   # shellcheck disable=SC2086
-  $FF $inputs -filter_complex "${concat}concat=n=$n:v=1:a=1[v0][a0];[a0]$apan[a];[v0]drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='$name %{pts\:hms}':fontsize=28:fontcolor=white:x=20:y=20,drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='frame %{n}':fontsize=22:fontcolor=white:x=20:y=60[v]" \
+  $FF $inputs -filter_complex "${concat}concat=n=$n:v=1:a=1[v0][a0];[a0]$apan[a];[v0]drawtext=${FONTOPT}text='$name %{pts\:hms}':fontsize=28:fontcolor=white:x=20:y=20,drawtext=${FONTOPT}text='frame %{n}':fontsize=22:fontcolor=white:x=20:y=60[v]" \
     -map "[v]" -map "[a]" -c:v ${VC:-libx264} -preset veryfast -crf 23 -pix_fmt yuv420p -g 48 $acargs -movflags +faststart "$OUT/$name" 
   echo "made $OUT/$name (${total}s)"
 }
