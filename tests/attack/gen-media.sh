@@ -78,4 +78,8 @@ have cover.mp3 || $FF -f lavfi -i "sine=f=440:r=48000:d=3" -i "$OUT/cover.png" -
 have counter24.ts || $FF -i "$OUT/counter24.mp4" -c copy -f mpegts "$OUT/counter24.ts"
 have counter24_start.mkv || $FF -i "$OUT/counter24.ts" -c copy "$OUT/counter24_start.mkv"
 have counter24_ts10.mp4 || $FF -i "$OUT/counter24.mp4" -c copy -output_ts_offset 10 "$OUT/counter24_ts10.mp4"
+
+# appended (round 2): 29.97 counter, audio-first mp4
+have counter2997.mp4 || $FF -f lavfi -i "nullsrc=s=320x240:r=30000/1001:d=20,$(counter)" -f lavfi -i "sine=f=440:r=48000:d=20" $X264 -g 30 -c:a aac -b:a 128k -shortest "$OUT/counter2997.mp4"
+have audiofirst.mp4 || $FF -i "$OUT/counter24.mp4" -map 0:a -map 0:v -c copy -t 4 "$OUT/audiofirst.mp4"
 echo ok

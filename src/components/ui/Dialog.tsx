@@ -62,6 +62,10 @@ export function Dialog({ open, title, onClose, children, footer, width, closeOnB
   const submitRef = useRef<{ onSubmit: DialogProps['onSubmit']; disabled: boolean }>({ onSubmit, disabled: !!submitDisabled });
   submitRef.current = { onSubmit, disabled: !!submitDisabled };
   const formSubmitAt = useRef(0);
+  // Callers often pass an inline onClose; keep it in a ref so a parent re-render does not re-run the open effect
+  // (which would steal focus back and drop a pending Enter).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
@@ -76,7 +80,7 @@ export function Dialog({ open, title, onClose, children, footer, width, closeOnB
     };
     const onKey = (e: KeyboardEvent) => {
       if (!isTopmost()) return;
-      if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); onClose(); return; }
+      if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); onCloseRef.current(); return; }
       if (e.key === 'Tab' && el) {
         const nodes = Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(visible);
         if (!nodes.length) { e.preventDefault(); return; }
@@ -109,7 +113,7 @@ export function Dialog({ open, title, onClose, children, footer, width, closeOnB
       window.removeEventListener('keydown', onKey, true);
       (prevFocus.current as HTMLElement | null)?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   return (

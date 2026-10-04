@@ -264,18 +264,19 @@ test.describe('timeline keyboard target and dialogs', () => {
     await page.keyboard.press('Space');
     await expect.poll(async () => (await seqView(page)).playing).toBe(false);
     await page.keyboard.press('l');
-    await expect.poll(async () => (await seqView(page)).playing).toBe(true);
+    await expect.poll(async () => (await seqView(page)).playhead, { timeout: 10_000 }).toBeGreaterThan(2);
     await page.keyboard.press('k');
     await expect.poll(async () => (await seqView(page)).playing).toBe(false);
-    const ph = (await seqView(page)).playhead;
-    expect(ph).toBeGreaterThan(0);
+    // J shuttles backwards from the end.
+    await page.keyboard.press('End');
+    await expect.poll(async () => (await seqView(page)).playhead).toBe(288);
     await page.keyboard.press('j');
-    await expect.poll(async () => (await seqView(page)).playing).toBe(true);
+    await expect.poll(async () => (await seqView(page)).playhead, { timeout: 10_000 }).toBeLessThan(285);
     await page.keyboard.press('k');
     await expect.poll(async () => (await seqView(page)).playing).toBe(false);
     // The Source monitor never moved while the timeline had the keys.
     await expect(source).toHaveAttribute('data-transport-active', 'false');
-    await page.screenshot({ path: path.join(ROOT, 'docs/screenshots/timeline.png') });
+    await page.screenshot({ path: path.join(launched.tmp, 'timeline-keyboard.png') });
   });
 
   test('dialogs: focus starts in the body, Enter applies, global shortcuts stay out (UX-01, UX-02)', async () => {
@@ -285,6 +286,7 @@ test.describe('timeline keyboard target and dialogs', () => {
       const s = (window as unknown as { __recut: { store: AnyStore } }).__recut.store.getState();
       const q = s.project.sequences[s.project.activeSequenceId];
       s.select([], 'clear');
+      s.setView(q.id, { scroll: 0, zoom: 2, playhead: 0 });
       return q.videoTracks[0].clips[0].id as string;
     });
     const clip = page.locator(`.tl-clip[data-clip-id="${clipId}"]`);

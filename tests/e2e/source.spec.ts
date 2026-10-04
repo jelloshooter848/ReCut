@@ -113,6 +113,9 @@ test.describe('Source Monitor', () => {
     const seqBefore = await getState<Seq>(page, '(s) => s.project.sequences[s.project.activeSequenceId]');
     expect(seqBefore.view.playhead).toBe(0);
     await page.locator('.source-panel .source-transport [aria-label^="Insert"]').click();
+    // First edit into the empty 23.976 sequence offers to conform it to the 24 fps clip: keep the sequence here.
+    await page.getByTestId('conform-keep').click();
+    await expect.poll(() => getState<number>(page, '(s) => s.project.sequences[s.project.activeSequenceId].videoTracks[0].clips.length')).toBe(1);
 
     const seq = await getState<Seq>(page, '(s) => s.project.sequences[s.project.activeSequenceId]');
     const vclips = seq.videoTracks.flatMap((t) => t.clips);
@@ -181,7 +184,8 @@ test.describe('Source Monitor', () => {
     const card = page.locator('.source-panel .source-error-card');
     await expect(card).toBeVisible();
     await expect(card).toContainText(/HEVC video can't be decoded for preview/i);
-    await expect(card.getByRole('button', { name: /Generate proxy/i })).toBeVisible();
+    // Offers the proxy (or shows one already being generated automatically).
+    await expect(card.getByRole('button', { name: /Generate proxy/i }).or(card.getByText(/Generating proxy/i))).toBeVisible();
   });
 
   test('shows a waveform for audio-only media and the image for stills', async () => {
@@ -213,7 +217,8 @@ test.describe('Source Monitor', () => {
 
   test('first insert into an empty mismatching sequence offers to conform it (Change / Keep, remembered)', async () => {
     const { page } = launched;
-    const [id] = await importMedia(page, [path.join(mediaDir, MEDIA.movie1)]);
+    await importMedia(page, [path.join(mediaDir, MEDIA.movie1)]); // already imported by the first test → no new id
+    const id = await getState<string>(page, `(s) => Object.values(s.project.media).find((m) => m.path.endsWith(${JSON.stringify(path.basename(MEDIA.movie1))})).id`);
     const media = await getState<{ fps: { num: number; den: number }; width: number; height: number }>(page,
       `(s) => { const v = s.project.media[${JSON.stringify(id)}].probe.video; return { fps: v.fps, width: v.width, height: v.height }; }`);
     const makeEmpty = (name: string) => page.evaluate((name) => {
