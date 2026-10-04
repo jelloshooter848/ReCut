@@ -9,6 +9,8 @@ export const IPC = {
   // app
   appInfo: 'app:info',
   appQuit: 'app:quit',
+  appQuitAck: 'app:quitAck',
+  appQuitCancel: 'app:quitCancel',
   openExternal: 'app:openExternal',
   showItemInFolder: 'app:showItemInFolder',
   toggleFullscreen: 'app:toggleFullscreen',
@@ -82,7 +84,9 @@ export interface MessageOptions { type?: 'none' | 'info' | 'error' | 'question' 
 export interface FileStat { exists: boolean; size?: number; mtimeMs?: number; isDirectory?: boolean }
 
 export type SaveResult = { ok: true; path: string } | { ok: false; error: string }
-export type LoadResult = { ok: true; path: string; project: Project } | { ok: false; error: string }
+export type LoadResult =
+  | { ok: true; path: string; project: Project; fromBackup?: boolean; backupMtime?: number }
+  | { ok: false; error: string }
 
 export interface RecoveryInfo { autosavePath: string; projectPath: string | null; savedAt: number; project: Project }
 
@@ -118,6 +122,10 @@ export type MenuCommand = string;
 export interface RecutApi {
   appInfo(): Promise<AppInfo>;
   quit(force?: boolean): Promise<void>;
+  /** Acknowledge ev:beforeQuit (the renderer is alive and handling it; cancels the force-quit fallback). */
+  quitAck(): Promise<void>;
+  /** The renderer decided not to quit (Cancel / failed save): clear the pending quit and stay open. */
+  quitCancel(): Promise<void>;
   openExternal(url: string): Promise<void>;
   showItemInFolder(path: string): Promise<void>;
   toggleFullscreen(): Promise<boolean>;

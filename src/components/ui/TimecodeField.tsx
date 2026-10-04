@@ -24,7 +24,24 @@ export interface TimecodeFieldProps {
 }
 
 /**
- * Timecode display/editor (HH:MM:SS:FF). Click to type (accepts "01:00:00:00", "1:00", "+24", "-12"), drag to scrub.
+ * Premiere-style entry for an unseparated digit string: fields fill FF, SS, MM, HH from the right in pairs
+ * ("1512" → "15:12", "500" → "5:00", "11500" → "1:15:00"). Anything else ("+24", "1:00", "1.10") is returned as is.
+ */
+export function expandTimecodeDigits(input: string): string {
+  const t = input.trim();
+  if (!/^\d+$/.test(t)) return t;
+  const parts: string[] = [];
+  for (let end = t.length; end > 0; end -= 2) parts.unshift(t.slice(Math.max(0, end - 2), end));
+  return parts.slice(-4).join(':');
+}
+
+/** Parse typed timecode text (see `expandTimecodeDigits`; "+N" / "-N" stay frames relative to `current`). */
+export function parseTimecodeEntry(input: string, fps: Rational, current = 0): number | null {
+  return parseTimecode(expandTimecodeDigits(input), fps, current);
+}
+
+/**
+ * Timecode display/editor (HH:MM:SS:FF). Click to type (accepts "01:00:00:00", "1:00", "1512" = 15 s 12 f, "+24", "-12"), drag to scrub.
  */
 export function TimecodeField({ value, fps, onChange, onCommit, min = -Infinity, max = Infinity, disabled, scrub = true, pxPerFrame = 3, className = '', title, dropIndicator = true, tone = 'playhead' }: TimecodeFieldProps) {
   const [editing, setEditing] = useState(false);
@@ -37,7 +54,7 @@ export function TimecodeField({ value, fps, onChange, onCommit, min = -Infinity,
 
   const startEdit = () => { if (disabled) return; setText(formatTimecode(value, fps, { dropIndicator })); setInvalid(false); setEditing(true); };
   const commit = () => {
-    const parsed = parseTimecode(text, fps, value);
+    const parsed = parseTimecodeEntry(text, fps, value);
     if (parsed === null) { setInvalid(true); return; }
     const v = Math.round(clamp(parsed, min, max));
     setEditing(false); onChange(v); onCommit?.(v);
@@ -71,7 +88,7 @@ export function TimecodeField({ value, fps, onChange, onCommit, min = -Infinity,
       }}
       onKeyDown={(e) => {
         if (editing) {
-          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          if (e.key === 'Enter') commit(); // no preventDefault: a surrounding Dialog may run its primary action
           else if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
           e.stopPropagation();
           return;

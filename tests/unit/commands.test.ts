@@ -17,7 +17,12 @@ import { runCommand, getCommand } from '../../src/keyboard/shortcuts';
 import { COMMAND_IDS } from '../../src/keyboard/commandIds';
 import {
   registerEditingCommands, getClipboard, setClipboard, setTimelineViewportWidth, zoomToFitValue, EXTRA_COMMAND_IDS, ZOOM_MAX, topmostClipAt,
+  isProgramContext, sceneBoundaryTarget, defaultTransitionCuts,
 } from '../../src/app/commands';
+import { resolveThreePointEdit } from '../../src/panels/source/threePoint';
+import { conformTargetFor, resetConformMemory } from '../../src/panels/source/insert';
+import { getToasts } from '../../src/components/ui/toastStore';
+import { useTimelineUi } from '../../src/panels/timeline/timelineStore';
 import { routeJobs, resetJobsRouter } from '../../src/app/jobsRouter';
 import { zoomToFit } from '../../src/panels/timeline/viewMath';
 import { registerShellCommands } from '../../src/keyboard/commands';
@@ -236,10 +241,11 @@ describe('editing commands', () => {
     expect(v2.map((c) => [c.start, clipEnd(c)])).toEqual([[0, 24], [24, 72]]);
   });
 
-  it('lift/extract are unavailable without an in/out range', () => {
+  it('lift/extract without an in/out range only explain themselves (UX-13)', () => {
     insert(0);
-    expect(runCommand(COMMAND_IDS.lift)).toBe(false);
-    expect(runCommand(COMMAND_IDS.extract)).toBe(false);
+    expect(runCommand(COMMAND_IDS.lift)).toBe(true);
+    expect(runCommand(COMMAND_IDS.extract)).toBe(true);
+    expect(videoClips()[0]).toMatchObject({ start: 0, duration: 96 });
   });
 
   it('copy / paste places the clipboard at the playhead on the same tracks', () => {
@@ -428,5 +434,177 @@ describe('jobs router', () => {
     expect(m.sceneDetectStatus).toBe('done');
     routeJobs([job({ id: 'j3', kind: 'sceneDetect', status: 'failed', error: 'boom' })]);
     expect(S().project.media[media.id].sceneDetectStatus).toBe('failed');
+  });
+});
+
+// ------------------------------------------------------------------ three-point editing (E-02)
+
+describe('resolveThreePointEdit', () => {
+  const base = { fps: FPS, playhead: 200, seqIn: null, seqOut: null, srcIn: null, srcOut: null, mediaDuration: 100 };
+
+  it('no marks: whole media at the playhead', () => {
+    const r = resolveThreePointEdit(base);
+    expect(r).toMatchObject({ ok: true, atFrame: 200, inS: 0, outS: 100, frames: 2400, notes: [] });
+  });
+
+  it('source In/Out only: source range at the playhead', () => {
+    const r = resolveThreePointEdit({ ...base, srcIn: 2, srcOut: 4 });
+    expect(r).toMatchObject({ ok: true, atFrame: 200, inS: 2, outS: 4, frames: 48 });
+  });
+
+  it('sequence In set: edit lands at the sequence In, not the playhead', () => {
+    const r = resolveThreePointEdit({ ...base, seqIn: 48, srcIn: 2, srcOut: 4 });
+    expect(r).toMatchObject({ ok: true, atFrame: 48, frames: 48 });
+  });
+
+  it('sequence In+Out and source In only: the sequence range sets the duration', () => {
+    const r = resolveThreePointEdit({ ...base, seqIn: 48, seqOut: 144, srcIn: 20 });
+    expect(r).toMatchObject({ ok: true, atFrame: 48, inS: 20, frames: 96 });
+    if (r.ok) expect(r.outS).toBeCloseTo(24, 10);
+  });
+
+  it('sequence In+Out and no source marks: from source start for the sequence range', () => {
+    const r = resolveThreePointEdit({ ...base, seqIn: 10, seqOut: 34 });
+    expect(r).toMatchObject({ ok: true, atFrame: 10, inS: 0, frames: 24 });
+  });
+
+  it('sequence In+Out and source Out only: back-timed from the source Out', () => {
+    const r = resolveThreePointEdit({ ...base, seqIn: 0, seqOut: 48, srcOut: 10 });
+    expect(r).toMatchObject({ ok: true, atFrame: 0, frames: 48 });
+    if (r.ok) { expect(r.inS).toBeCloseTo(8, 10); expect(r.outS).toBe(10); }
+  });
+
+  it('all four points: source In/Out win at the sequence In, sequence Out ignored', () => {
+    const r = resolveThreePointEdit({ ...base, seqIn: 48, seqOut: 144, srcIn: 2, srcOut: 4 });
+    expect(r).toMatchObject({ ok: true, atFrame: 48, inS: 2, outS: 4, frames: 48 });
+    if (r.ok) expect(r.notes).toContain('seqOutIgnored');
+    // matching durations: nothing is ignored
+    const same = resolveThreePointEdit({ ...base, seqIn: 48, seqOut: 96, srcIn: 2, srcOut: 4 });
+    if (same.ok) expect(same.notes).not.toContain('seqOutIgnored');
+  });
+
+  it('sequence Out only: back-timed so the material ends at the sequence Out', () => {
+    const r = resolveThreePointEdit({ ...base, seqOut: 100, srcIn: 2, srcOut: 4 });
+    expect(r).toMatchObject({ ok: true, atFrame: 52, frames: 48 });
+  });
+
+  it('clamps a sequence range longer than the source and flags it', () => {
+    const r = resolveThreePointEdit({ ...base, mediaDuration: 3, seqIn: 0, seqOut: 240, srcIn: 1 });
+    expect(r).toMatchObject({ ok: true, inS: 1, outS: 3, frames: 48 });
+    if (r.ok) expect(r.notes).toContain('sourceTooShort');
+  });
+
+  it('stills / unknown length use the default length; empty ranges fail', () => {
+    expect(resolveThreePointEdit({ ...base, mediaDuration: Infinity })).toMatchObject({ ok: true, inS: 0, outS: 5, frames: 120 });
+    expect(resolveThreePointEdit({ ...base, mediaDuration: Infinity, seqIn: 0, seqOut: 12 })).toMatchObject({ ok: true, frames: 12 });
+    expect(resolveThreePointEdit({ ...base, srcIn: 4, srcOut: 4 }).ok).toBe(false);
+  });
+});
+
+describe('insert / overwrite commands use three-point editing', () => {
+  beforeEach(() => { resetConformMemory(); S().setSourceClip(media.id, 0); });
+  const lastToast = () => getToasts().at(-1)?.text ?? '';
+
+  it('edits at the sequence In, moves the playhead to the end and clears In/Out', () => {
+    S().setSourceIn(2); S().setSourceOut(4);
+    S().setView(seqId, { playhead: 300, inPoint: 48 });
+    runCommand(COMMAND_IDS.overwrite);
+    expect(videoClips()[0]).toMatchObject({ start: 48, duration: 48, sourceIn: 2 });
+    expect(seq().view.playhead).toBe(96);
+    expect(seq().view.inPoint).toBeNull();
+    expect(seq().view.outPoint).toBeNull();
+  });
+
+  it('sequence In+Out with source In only fills the sequence range', () => {
+    S().setSourceIn(20);
+    S().setView(seqId, { inPoint: 48, outPoint: 144 });
+    runCommand(COMMAND_IDS.insert);
+    expect(videoClips()[0]).toMatchObject({ start: 48, duration: 96, sourceIn: 20 });
+    expect(seq().view.playhead).toBe(144);
+  });
+
+  it('four points: source range at the sequence In with a "Sequence Out ignored" toast', () => {
+    S().setSourceIn(2); S().setSourceOut(4);
+    S().setView(seqId, { inPoint: 48, outPoint: 200 });
+    runCommand(COMMAND_IDS.overwrite);
+    expect(videoClips()[0]).toMatchObject({ start: 48, duration: 48 });
+    expect(lastToast()).toMatch(/Sequence Out ignored/);
+  });
+
+  it('asks nothing when the empty sequence already matches the clip (sync path)', () => {
+    expect(conformTargetFor(seq(), media)).toBeNull();
+  });
+
+  it('conformTargetFor proposes the clip settings only for an empty, mismatching sequence', () => {
+    const s2 = createSequence('NTSC', { num: 24000, den: 1001 }, 1280, 720);
+    S().addSequence(s2);
+    expect(conformTargetFor(S().project.sequences[s2.id], media)).toEqual({ fps: FPS, width: 1920, height: 1080 });
+    S().setActiveSequence(seqId);
+    insert(0);
+    expect(conformTargetFor(seq(), { ...media, probe: { ...media.probe!, video: { ...media.probe!.video!, fps: { num: 25, den: 1 } } } })).toBeNull();
+  });
+});
+
+// ------------------------------------------------------------------ editor P2/P3 fixes
+
+describe('editing fixes', () => {
+  const lastToast = () => getToasts().at(-1)?.text ?? '';
+
+  it('lift / extract without In and Out toast instead of failing silently (UX-13)', () => {
+    insert(0);
+    runCommand(COMMAND_IDS.lift);
+    expect(lastToast()).toBe('Mark In and Out first (I / O)');
+    S().setView(seqId, { inPoint: 10 });
+    runCommand(COMMAND_IDS.extract);
+    expect(lastToast()).toBe('Mark In and Out first (I / O)');
+    expect(videoClips()[0].duration).toBe(96);
+  });
+
+  it('Ctrl+D adds video transitions only, Ctrl+Shift+D audio only (E-24) — one undo step each', () => {
+    insert(0); insert(96, 10, 14);
+    S().setView(seqId, { playhead: 95 });
+    const cutsV = defaultTransitionCuts(seq(), [], 'video');
+    expect(cutsV).toEqual([{ trackId: seq().videoTracks[0].id, frame: 96 }]);
+    const before = S().history.past.length;
+    runCommand(COMMAND_IDS.defaultVideoTransition);
+    expect(seq().videoTracks[0].transitions.length).toBe(1);
+    expect(seq().audioTracks[0].transitions.length).toBe(0);
+    expect(S().history.past.length).toBe(before + 1);
+    runCommand(COMMAND_IDS.defaultAudioTransition);
+    expect(seq().audioTracks[0].transitions.length).toBe(1);
+    expect(seq().audioTracks[0].transitions[0].type).toBe('audioCrossfade');
+    expect(seq().videoTracks[0].transitions.length).toBe(1);
+  });
+
+  it('scene stepping compares frames, so Up just after a boundary goes to the previous one (E-16)', () => {
+    const b = [0, 10, 20, 30, 40];
+    const at = 30 + 0.5 / 24; // frame-centre time of the boundary frame
+    expect(sceneBoundaryTarget(b, at, FPS, -1)).toBe(20);
+    expect(sceneBoundaryTarget(b, at, FPS, 1)).toBe(40);
+    expect(sceneBoundaryTarget(b, 12, FPS, -1)).toBe(10);
+    expect(sceneBoundaryTarget(b, 0, FPS, -1)).toBeUndefined();
+  });
+
+  it('a focused Timeline is always the program context (E-01)', () => {
+    const t = fakeTransport('source');
+    const off = registerTransport(t);
+    try {
+      setActiveTransport('source');
+      expect(isProgramContext()).toBe(false);
+      S().setTimelineFocus(true);
+      expect(isProgramContext()).toBe(true);
+    } finally { S().setTimelineFocus(false); off(); }
+  });
+
+  it('M on an existing marker asks the Timeline to open its editor (E-14)', () => {
+    S().setView(seqId, { playhead: 30 });
+    runCommand(COMMAND_IDS.addMarker);
+    const id = seq().markers[0].id;
+    useTimelineUi.getState().setMarkerEditorHost(1);
+    try {
+      runCommand(COMMAND_IDS.addMarker);
+      expect(seq().markers.length).toBe(1);
+      expect(useTimelineUi.getState().markerEditRequest?.markerId).toBe(id);
+    } finally { useTimelineUi.getState().setMarkerEditorHost(-1); useTimelineUi.getState().requestMarkerEdit(null); }
   });
 });

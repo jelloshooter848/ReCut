@@ -174,7 +174,8 @@ describe('undo/redo torture', () => {
     for (const it of items) S().setMediaProbe(it.id, fakeProbe(10));
     // user presses undo once: expectation is that the import is gone
     S().undo();
-    expect(Object.keys(S().project.media).length, 'first undo only reverted a "Probe media" entry').toBe(0);
+    // fresh() already holds one fixture media item; the three imported ones must be gone.
+    expect(items.filter((it) => S().project.media[it.id]).length, 'first undo only reverted a "Probe media" entry').toBe(0);
   });
 
   it('marking media offline on open (setOffline) must not dirty the project or create history', () => {

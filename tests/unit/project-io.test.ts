@@ -9,6 +9,8 @@ import {
   untitledAutosavePath, clearUntitledAutosaveFor, defaultPrefs, readPrefs, updatePrefs, addRecentProject,
   pushRecent, MAX_RECENT, atomicWriteFile, ensureProjectExt, projectPathForAutosave,
 } from '../../electron/project/io';
+import { projectPathFromArgv } from '../../electron/project/argv';
+import { PROJECT_FORMAT_VERSION } from '../../shared/model';
 import { parseRange, contentTypeFor, mediaUrlPath } from '../../electron/media/range';
 
 let tmp: string;
@@ -269,5 +271,81 @@ describe('protocol helpers', () => {
     expect(mediaUrlPath('recut-media://other/%2Fx', 'recut-media')).toBeNull();
     expect(mediaUrlPath('https://local/%2Fx', 'recut-media')).toBeNull();
     expect(mediaUrlPath('recut-media://local/', 'recut-media')).toBeNull();
+  });
+});
+
+describe('backup fallback (QA-04 / QA-10)', () => {
+  it('a damaged .recut opens from .bak with fromBackup + backupMtime and the damaged file is kept aside', async () => {
+    const file = path.join(tmp, 'c.recut');
+    await saveProjectFile(file, createProject('good'));
+    await saveProjectFile(file, createProject('good2')); // .bak = good
+    await fsp.writeFile(file, '{ truncated');
+    const res = await loadProjectFile(file);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.project.name).toBe('good');
+    expect(res.fromBackup).toBe(true);
+    expect(res.backupMtime).toBe((await fsp.stat(file + '.bak')).mtimeMs);
+    const aside = (await fsp.readdir(tmp)).filter((f) => f.startsWith('c.recut.corrupt-'));
+    expect(aside).toHaveLength(1);
+    expect(await fsp.readFile(path.join(tmp, aside[0]), 'utf8')).toBe('{ truncated');
+  });
+
+  it('a normal open is not flagged fromBackup', async () => {
+    const file = path.join(tmp, 'n.recut');
+    await saveProjectFile(file, createProject('n'));
+    const res = await loadProjectFile(file);
+    expect(res.ok && res.fromBackup).toBeFalsy();
+  });
+
+  it('a newer-format project is refused, never replaced by its .bak', async () => {
+    const file = path.join(tmp, 'v.recut');
+    await saveProjectFile(file, createProject('a'));
+    await saveProjectFile(file, createProject('b'));
+    await fsp.writeFile(file, JSON.stringify({ ...createProject('future'), formatVersion: PROJECT_FORMAT_VERSION + 1 }));
+    const res = await loadProjectFile(file);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/newer ReCut/);
+    expect((await fsp.readdir(tmp)).some((f) => f.includes('.corrupt-'))).toBe(false);
+  });
+
+  it('a damaged file without a usable .bak reports an error', async () => {
+    const file = path.join(tmp, 'x.recut');
+    await fsp.writeFile(file, 'nope');
+    const res = await loadProjectFile(file);
+    expect(res.ok).toBe(false);
+  });
+
+  it('a corrupt autosave does not break checkRecovery', async () => {
+    const file = path.join(tmp, 'r.recut');
+    await saveProjectFile(file, createProject('r'));
+    const auto = autosavePathFor(file, userData);
+    await fsp.writeFile(auto, '{corrupt');
+    const future = new Date(Date.now() + 60_000);
+    await fsp.utimes(auto, future, future);
+    await fsp.mkdir(path.dirname(untitledAutosavePath(userData)), { recursive: true });
+    await fsp.writeFile(untitledAutosavePath(userData), '\u0000garbage');
+    await expect(checkRecovery(userData, [file, 42 as unknown as string])).resolves.toBeNull();
+  });
+});
+
+describe('projectPathFromArgv (QA-33)', () => {
+  it('Chromium-reordered argv: --project followed by a switch, real path last', () => {
+    const argv = ['--no-sandbox', '--project', '--allow-file-access-from-files', '--enable-features=X', '/app/dist/electron/main.js', '/tmp/x/second.recut'];
+    expect(projectPathFromArgv(argv)).toBe('/tmp/x/second.recut');
+  });
+  it('prefers the last positional .recut', () => {
+    expect(projectPathFromArgv(['/a/one.recut', '--flag', '/b/two.RECUT'])).toBe('/b/two.RECUT');
+    expect(projectPathFromArgv(['--project=/c/p.recut', '/d/q.recut'])).toBe('/d/q.recut');
+  });
+  it('--project=<p> and --project <p> (next token not a switch)', () => {
+    expect(projectPathFromArgv(['.', '--project=/c/p'])).toBe('/c/p');
+    expect(projectPathFromArgv(['.', '--project', '/c/plain'])).toBe('/c/plain');
+    expect(projectPathFromArgv(['.', '--project', '--other'])).toBeNull();
+    expect(projectPathFromArgv(['.', '--project'])).toBeNull();
+    expect(projectPathFromArgv(['.', '--no-sandbox'])).toBeNull();
+  });
+  it('relative paths resolve against the given working directory', () => {
+    expect(projectPathFromArgv(['rel/p.recut'], '/work')).toBe(path.resolve('/work', 'rel/p.recut'));
   });
 });

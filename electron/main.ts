@@ -17,6 +17,7 @@ import { installMenu } from './menu';
 import { registerMediaProtocol } from './media/protocol';
 import { mediaHandlers } from './media/index';
 import * as io from './project/io';
+import { projectPathFromArgv } from './project/argv';
 
 const isDev = Boolean(process.env.RECUT_DEV_URL) || !app.isPackaged;
 const smoke = process.env.RECUT_SMOKE === '1';
@@ -38,16 +39,7 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-/** Find a project path in argv: `--project <path>` or a bare `*.recut` argument. */
-export function projectPathFromArgv(argv: string[]): string | null {
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--project' && argv[i + 1]) return path.resolve(argv[i + 1]);
-    if (a.startsWith('--project=')) return path.resolve(a.slice('--project='.length));
-    if (!a.startsWith('-') && io.isProjectPath(a)) return path.resolve(a);
-  }
-  return null;
-}
+export { projectPathFromArgv };
 
 // ------------------------------------------------------------------
 // State
@@ -82,23 +74,45 @@ function openProjectPath(p: string): void {
 }
 
 // ------------------------------------------------------------------
-// Quit flow: ask the renderer first (it may prompt to save), confirm via quit(true), 3s fallback.
+// Quit flow: ask the renderer first (it may prompt to save).
+// The renderer acks ev:beforeQuit immediately (quitAck), which cancels the 3 s fallback; the
+// fallback only covers a hung renderer. It then confirms with quit(true) or stands down with
+// quitCancel() (user chose Cancel, or the save failed).
 // ------------------------------------------------------------------
+
+let quitPending = false;
+
+function clearQuitTimer(): void {
+  if (quitTimer) { clearTimeout(quitTimer); quitTimer = null; }
+}
 
 function requestQuit(force: boolean): void {
   if (force || quitConfirmed || !win || win.isDestroyed()) {
     quitConfirmed = true;
-    if (quitTimer) { clearTimeout(quitTimer); quitTimer = null; }
+    quitPending = false;
+    clearQuitTimer();
     app.quit();
     return;
   }
-  if (quitTimer) return; // already asked
+  if (quitPending) return; // already asked; the renderer is handling it
+  quitPending = true;
   win.webContents.send(IPC.evBeforeQuit);
   quitTimer = setTimeout(() => {
     quitTimer = null;
     quitConfirmed = true;
     app.quit();
   }, QUIT_FALLBACK_MS);
+}
+
+/** The renderer received ev:beforeQuit and is handling it: no more force-quit fallback. */
+function ackQuit(): void {
+  clearQuitTimer();
+}
+
+/** The renderer decided to stay open. */
+function cancelQuit(): void {
+  clearQuitTimer();
+  quitPending = false;
 }
 
 // ------------------------------------------------------------------
@@ -275,8 +289,8 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', (_e, argv) => {
-    const p = projectPathFromArgv(argv.slice(1));
+  app.on('second-instance', (_e, argv, workingDirectory) => {
+    const p = projectPathFromArgv(argv.slice(1), workingDirectory || undefined);
     if (p) openProjectPath(p);
     else if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.focus(); }
   });
@@ -312,6 +326,8 @@ if (!gotLock) {
     registerIpc({
       getWindow: () => win,
       requestQuit,
+      ackQuit,
+      cancelQuit,
       userData: ud,
       isDev,
       onRecentChanged: () => menu?.refresh(),

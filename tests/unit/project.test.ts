@@ -146,3 +146,81 @@ describe('normalizeProject', () => {
     expect(n.activeSequenceId).toBe(a.id);
   });
 });
+
+describe('normalizeProject hostile-input repairs (QA-08/09/16/18)', () => {
+  const roundTrip = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
+  function withClips() {
+    const p = createProject('x');
+    const s = p.sequences[p.activeSequenceId!];
+    const mk = (start: number, extra: Record<string, unknown> = {}) => ({ ...makeClip({ mediaId: 'm', name: `c${start}`, sourceIn: 0, duration: 24, kind: 'video' }, start), ...extra });
+    return { p, s, mk };
+  }
+
+  it('drops clips with non-finite / negative start or sourceIn and duration < 1; repairs bad speed', () => {
+    const { p, s, mk } = withClips();
+    s.videoTracks[0].clips = [
+      mk(0), mk(100, { id: 'nanStart', start: NaN }), mk(200, { id: 'negStart', start: -1 }), mk(300, { id: 'infStart', start: Infinity }),
+      mk(400, { id: 'negIn', sourceIn: -2 }), mk(500, { id: 'nanIn', sourceIn: NaN }), mk(600, { id: 'half', duration: 0.5 }),
+      mk(700, { id: 'infDur', duration: Infinity }), mk(800, { id: 'negSpeed', speed: -1 }), mk(900, { id: 'nanSpeed', speed: NaN }),
+      mk(1000, { id: 'infSpeed', speed: Infinity }),
+    ] as typeof s.videoTracks[0]['clips'];
+    // NaN / Infinity become null through JSON, so test both the raw object and a JSON round trip
+    for (const n of [normalizeProject(structuredClone(p)), normalizeProject(roundTrip(p))]) {
+      const clips = n.sequences[s.id].videoTracks[0].clips;
+      expect(clips.map((c) => c.id).filter((id) => !id.startsWith('clip'))).toEqual(['negSpeed', 'nanSpeed', 'infSpeed']);
+      expect(clips.every((c) => c.speed === 1)).toBe(true);
+    }
+  });
+
+  it('reconciles transitions on load: dangling ones dropped, overlapping ones clamped', () => {
+    const { p, s, mk } = withClips();
+    const a = mk(0, { id: 'a', duration: 100 }); const b = mk(100, { id: 'b', duration: 12 }); const c = mk(112, { id: 'c', duration: 100 });
+    s.videoTracks[0].clips = [a, b, c] as typeof s.videoTracks[0]['clips'];
+    s.videoTracks[0].transitions = [
+      { id: 'ghost', type: 'crossDissolve', duration: 10, outClipId: 'nope', inClipId: 'nada' },
+      { id: 't1', type: 'crossDissolve', duration: 12, outClipId: 'a', inClipId: 'b' },
+      { id: 't2', type: 'crossDissolve', duration: 12, outClipId: 'b', inClipId: 'c' },
+    ];
+    const n = normalizeProject(roundTrip(p));
+    const trs = n.sequences[s.id].videoTracks[0].transitions;
+    expect(trs.map((t) => t.id)).toEqual(['t1']); // t2 had no room left on b and was dropped
+  });
+
+  it('breaks bin cycles / self-parents / unknown parents and clears binIds pointing at unknown bins', () => {
+    const p = createProject('bins');
+    p.bins.a = { id: 'a', name: 'A', parentId: 'b' };
+    p.bins.b = { id: 'b', name: 'B', parentId: 'a' };
+    p.bins.self = { id: 'self', name: 'S', parentId: 'self' };
+    p.bins.orphan = { id: 'orphan', name: 'O', parentId: 'missing' };
+    p.bins.child = { id: 'child', name: 'C', parentId: 'a' };
+    const m = createMediaItem('/x.mp4', 'x.mp4'); m.binId = 'gone';
+    const m2 = createMediaItem('/y.mp4', 'y.mp4'); m2.binId = 'child';
+    p.media[m.id] = m; p.media[m2.id] = m2;
+    p.sequences[p.activeSequenceId!].binId = 'gone';
+    const n = normalizeProject(roundTrip(p));
+    expect(n.bins.self.parentId).toBeNull();
+    expect(n.bins.orphan.parentId).toBeNull();
+    // every bin reaches the root
+    for (const id of Object.keys(n.bins)) {
+      const seen = new Set<string>(); let cur: string | null = id;
+      while (cur) { expect(seen.has(cur)).toBe(false); seen.add(cur); cur = n.bins[cur].parentId; }
+    }
+    expect([n.bins.a.parentId, n.bins.b.parentId].filter((x) => x === null)).toHaveLength(1);
+    expect(n.bins.child.parentId).toBe('a');
+    expect(n.media[m.id].binId).toBeNull();
+    expect(n.media[m2.id].binId).toBe('child');
+    expect(n.sequences[p.activeSequenceId!].binId).toBeNull();
+  });
+
+  it('dedupes sequenceOrder and repairs the view', () => {
+    const p = createProject('v');
+    const id = p.activeSequenceId!;
+    p.sequenceOrder = [id, id];
+    p.sequences[id].view = { playhead: NaN, zoom: 0, scroll: -5, inPoint: Infinity, outPoint: 12 };
+    const n = normalizeProject(structuredClone(p));
+    expect(n.sequenceOrder).toEqual([id]);
+    expect(n.sequences[id].view).toEqual({ playhead: 0, zoom: 4, scroll: 0, inPoint: null, outPoint: 12 });
+    p.sequences[id].view = { playhead: -3, zoom: -1, scroll: 3, inPoint: -1, outPoint: null };
+    expect(normalizeProject(structuredClone(p)).sequences[id].view).toEqual({ playhead: 0, zoom: 4, scroll: 3, inPoint: null, outPoint: null });
+  });
+});

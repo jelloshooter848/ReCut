@@ -317,6 +317,15 @@ textarea.input { height: auto; min-height: 60px; padding: 4px 6px; resize: verti
 .splitter::after { content: ''; position: absolute; inset: 0; }
 .splitter.h::after { left: -3px; right: -3px; }
 .splitter.v::after { top: -3px; bottom: -3px; }
+/* Visible 1 px centre line at rest, 3-dot grip on hover (UX-11). */
+.splitter::before { content: ''; position: absolute; pointer-events: none; background: var(--border-strong); }
+.splitter.h::before { top: 0; bottom: 0; left: 50%; width: 1px; transform: translateX(-50%); }
+.splitter.v::before { left: 0; right: 0; top: 50%; height: 1px; transform: translateY(-50%); }
+.splitter:hover::before, .splitter.dragging::before {
+  background: radial-gradient(circle, var(--text-bright) 1.2px, transparent 1.6px);
+}
+.splitter.h:hover::before, .splitter.h.dragging::before { width: 6px; height: 18px; top: 50%; bottom: auto; transform: translate(-50%, -50%); background-size: 6px 6px; }
+.splitter.v:hover::before, .splitter.v.dragging::before { height: 6px; width: 18px; left: 50%; right: auto; transform: translate(-50%, -50%); background-size: 6px 6px; }
 .splitter:hover, .splitter.dragging { background: var(--accent); }
 body.resizing-h, body.resizing-h * { cursor: col-resize !important; }
 body.resizing-v, body.resizing-v * { cursor: row-resize !important; }
@@ -355,7 +364,7 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; }
 
 /* zone */
 .zone { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; position: relative; flex: 1; }
-.zone.focused { border-color: var(--border-strong); }
+.zone.focused { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
 .zone.focused .zone-tabs { box-shadow: inset 0 -1px 0 var(--border-strong); }
 .zone.focused .zone-tab.active::after { background: var(--accent); }
 .zone-tab.active::after { background: var(--text-faint); }

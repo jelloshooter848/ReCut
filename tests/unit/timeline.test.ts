@@ -6,7 +6,7 @@ import {
   liftRange, extractRange, trimLimits, trimStart, trimEnd, rippleTrimStart, rippleTrimEnd, rollEdit, slipClip, slideClip,
   moveClips, addTransition, removeTransition, reconcileTransitions, transitionsForClip, addTrack, removeTrack, renameTracks,
   editPoints, nextEdit, prevEdit, addMarker, resolveSubtitleCues, rippleShift, sequenceDuration, maxDurationFrom, mediaFrames,
-  clipEnd, clipSourceOut, sourceTimeAt, clipAt, clipsInRange, findClip, linkedClips, sortTrack, clearRange,
+  clipEnd, clipSourceOut, sourceTimeAt, clipAt, clipsInRange, findClip, linkedClips, sortTrack, clearRange, followClipMarkers,
 } from '../../shared/timeline';
 
 // ------------------------------------------------------------------
@@ -979,7 +979,10 @@ describe('rippleShift', () => {
       { id: '6', name: 'startsInside', start: 150, end: 300, color: '', notes: '' },
     );
     rippleShift(s2, 200, -100); // remove [100,200)
-    expect(s2.storyBlocks.map((b) => [b.start, b.end])).toEqual([[0, 100], [0, 100], [100, 101], [50, 200], [100, 200], [100, 200]]);
+    // 'inside' lay entirely in the removed region: it collapses to nothing and is dropped (QA-27).
+    expect(s2.storyBlocks.map((b) => [b.name, b.start, b.end])).toEqual([
+      ['before', 0, 100], ['endsInside', 0, 100], ['span', 50, 200], ['after', 100, 200], ['startsInside', 100, 200],
+    ]);
   });
 });
 
@@ -1032,14 +1035,168 @@ describe('resolveSubtitleCues', () => {
     expect(resolveSubtitleCues(s)).toEqual([]);
   });
 
-  it('after a razor, cues resolve at the same timeline position via the tail; a cue straddling the cut is clipped to its clip', () => {
+  it('after a razor, cues resolve at the same timeline position via the tail; a cue straddling the cut is duplicated onto the tail', () => {
     const { s, c } = fixture();
     s.subtitleTracks[0].cues.push(cue({ id: 'straddle', clipId: c.id, srcStart: 3.5, srcEnd: 5 })); // [84, 120] before the cut
     const before = byId(s);
     expect(before.straddle).toEqual([84, 120]);
-    razorAt(s, 100);
-    expect(byId(s)).toEqual({ ...before, straddle: [84, 100] });
+    const [tail] = razorAt(s, 100);
+    const after = byId(s);
+    const copy = s.subtitleTracks[0].cues.find((x) => x.text === 'straddle' && x.id !== 'straddle')!;
+    expect(copy).toMatchObject({ clipId: tail.id, srcStart: c.sourceIn + 52 / 24, srcEnd: 5 });
+    expect(after[copy.id]).toEqual([100, 120]);
+    delete after[copy.id];
+    expect(after).toEqual({ ...before, straddle: [84, 100] });
     expect(s.subtitleTracks[0].cues.find((x) => x.id === 'tailclip')!.clipId).not.toBe(c.id);
-    expect(s.subtitleTracks[0].cues.find((x) => x.id === 'straddle')!.clipId).toBe(c.id);
+    expect(s.subtitleTracks[0].cues.find((x) => x.id === 'straddle')).toMatchObject({ clipId: c.id, srcEnd: c.sourceIn + 52 / 24 });
+  });
+});
+
+// ------------------------------------------------------------------
+describe('attack fixes (QA-11/12/14/15/17, E-18)', () => {
+  it('splitClip duplicates a straddling cue: head keeps [srcStart, split), tail gets [split, srcEnd)', () => {
+    const s = S();
+    const a = put(V(s), 0, 96);
+    s.subtitleTracks.push({ id: 'st', name: 'st', language: 'en', enabled: true, cues: [cue({ id: 'x', clipId: a.id, srcStart: 1, srcEnd: 3 })] });
+    const tail = splitClip(s, V(s), a, 48)!;
+    const cues = s.subtitleTracks[0].cues;
+    expect(cues).toHaveLength(2);
+    expect(cues.find((c) => c.id === 'x')).toMatchObject({ clipId: a.id, srcStart: 1, srcEnd: 2 });
+    expect(cues.find((c) => c.id !== 'x')).toMatchObject({ clipId: tail.id, srcStart: 2, srcEnd: 3, text: 'x' });
+    expect(resolveSubtitleCues(s).map((r) => [r.start, r.end])).toEqual([[24, 48], [48, 72]]);
+  });
+
+  it('insert into the middle of a clip duplicates the straddling cue onto the tail', () => {
+    const s = S();
+    const a = put(V(s), 0, 96);
+    s.subtitleTracks.push({ id: 'st', name: 'st', language: 'en', enabled: true, cues: [cue({ id: 'x', clipId: a.id, srcStart: 1, srcEnd: 3 })] });
+    insertClip(s, V(s).id, makeClip({ mediaId: 'n', name: 'ins', sourceIn: 0, duration: 10, kind: 'video' }, 48));
+    expect(resolveSubtitleCues(s).map((r) => [r.start, r.end])).toEqual([[24, 48], [58, 82]]);
+  });
+
+  it('overwrite / lift / removeTrack drop the cues of clips they delete; an overwrite inside a clip moves later cues to the tail', () => {
+    const s = S();
+    const a = put(V(s), 0, 48); const b = put(V(s), 48, 96);
+    s.subtitleTracks.push({ id: 'st', name: 'st', language: 'en', enabled: true, cues: [
+      cue({ id: 'ca', clipId: a.id, srcStart: 0, srcEnd: 1 }),
+      cue({ id: 'cb1', clipId: b.id, srcStart: 0.5, srcEnd: 1 }),       // frames 60..72 (inside the overwrite)
+      cue({ id: 'cb2', clipId: b.id, srcStart: 0.5, srcEnd: 2.5 }),     // 60..108 straddles the overwrite end (96)
+      cue({ id: 'cb3', clipId: b.id, srcStart: 3, srcEnd: 3.5 }),       // 120..132 after it
+      cue({ id: 'free', start: 0 }),
+    ] });
+    overwriteClip(s, V(s).id, makeClip({ mediaId: 'n', name: 'ow', sourceIn: 0, duration: 108, kind: 'video' }, -12 + 12)); // covers a entirely + b head
+    // a is gone with its cue; b keeps id (tail) → cues before its new sourceIn are invisible but attached
+    expect(s.subtitleTracks[0].cues.map((c) => c.id)).not.toContain('ca');
+    const s2 = S();
+    const c = put(V(s2), 0, 144);
+    s2.subtitleTracks.push({ id: 'st', name: 'st', language: 'en', enabled: true, cues: [
+      cue({ id: 'early', clipId: c.id, srcStart: 0, srcEnd: 1 }),       // 0..24 head
+      cue({ id: 'cross', clipId: c.id, srcStart: 1.5, srcEnd: 3 }),     // 36..72 straddles cleared [48,60)... and tail start 60
+      cue({ id: 'late', clipId: c.id, srcStart: 4, srcEnd: 5 }),        // 96..120 tail
+    ] });
+    overwriteClip(s2, V(s2).id, makeClip({ mediaId: 'n', name: 'ow', sourceIn: 0, duration: 12, kind: 'video' }, 48));
+    const tail = V(s2).clips[2];
+    const byText = (t: string) => s2.subtitleTracks[0].cues.filter((x) => x.text === t);
+    expect(byText('late')[0].clipId).toBe(tail.id);
+    expect(byText('early')[0].clipId).toBe(c.id);
+    expect(byText('cross').map((x) => [x.clipId, x.srcStart, x.srcEnd])).toEqual([[c.id, 1.5, 2], [tail.id, 2.5, 3]]);
+    expect(resolveSubtitleCues(s2).filter((r) => r.text === 'cross').map((r) => [r.start, r.end])).toEqual([[36, 48], [60, 72]]);
+    // lift the whole thing: no cue left behind
+    liftRange(s2, 0, 1000);
+    expect(s2.subtitleTracks[0].cues).toEqual([]);
+    // removeTrack
+    const s3 = S();
+    const d = put(V(s3, 1), 0, 48);
+    s3.subtitleTracks.push({ id: 'st', name: 'st', language: 'en', enabled: true, cues: [cue({ id: 'cd', clipId: d.id, srcStart: 0, srcEnd: 1 }), cue({ id: 'free', start: 0 })] });
+    expect(removeTrack(s3, V(s3, 1).id)).toBe(true);
+    expect(s3.subtitleTracks[0].cues.map((x) => x.id)).toEqual(['free']);
+  });
+
+  it('moveClips clamps the delta once: a multi-clip move past 0 keeps spacing', () => {
+    const s = S();
+    const a = put(V(s), 10, 20); const b = put(V(s), 40, 20);
+    expect(moveClips(s, [{ clipId: a.id, toTrackId: V(s).id, toStart: -20 }, { clipId: b.id, toTrackId: V(s).id, toStart: 10 }], 'overwrite')).toBe(true);
+    expect(lay(V(s))).toEqual([[0, 20], [30, 50]]);
+  });
+
+  it('insert-move closes the vacated gap on the source track and adjusts a later destination', () => {
+    const s = S();
+    const a = put(V(s), 0, 96); const b = put(V(s), 96, 96); const c = put(V(s), 192, 96);
+    const x = put(A(s), 300, 10);
+    // drag a to just before c (pre-move frame 192): result b, a, c with no gaps
+    expect(moveClips(s, [{ clipId: a.id, toTrackId: V(s).id, toStart: 192 }], 'insert')).toBe(true);
+    expect(ids(V(s))).toEqual([b.id, a.id, c.id]);
+    expect(lay(V(s))).toEqual([[0, 96], [96, 192], [192, 288]]);
+    expect(x.start).toBe(300); // closing the gap pulls x back by 96, the insert pushes it forward again: sync kept
+  });
+
+  it('insert-move to an earlier point (E-18 repro): no gaps left behind', () => {
+    const s = S();
+    const a = put(V(s), 0, 96); const b = put(V(s), 96, 96); const c = put(V(s), 192, 96);
+    expect(moveClips(s, [{ clipId: c.id, toTrackId: V(s).id, toStart: 96 }], 'insert')).toBe(true);
+    expect(ids(V(s))).toEqual([a.id, c.id, b.id]);
+    expect(lay(V(s))).toEqual([[0, 96], [96, 192], [192, 288]]);
+  });
+
+  it('insert-move of a linked pair closes the gap on both source tracks', () => {
+    const s = S();
+    const v = put(V(s), 0, 50, { linkId: 'L' }); const a = put(A(s), 0, 50, { linkId: 'L' });
+    const v2 = put(V(s), 50, 50, { linkId: 'M' }); const a2 = put(A(s), 50, 50, { linkId: 'M' });
+    moveClips(s, [{ clipId: v.id, toTrackId: V(s).id, toStart: 100 }, { clipId: a.id, toTrackId: A(s).id, toStart: 100 }], 'insert');
+    expect(ids(V(s))).toEqual([v2.id, v.id]); expect(ids(A(s))).toEqual([a2.id, a.id]);
+    expect(lay(V(s))).toEqual([[0, 50], [50, 100]]); expect(lay(A(s))).toEqual([[0, 50], [50, 100]]);
+  });
+
+  it('slipClip on a clip longer than its media never moves the source backwards', () => {
+    const s = S();
+    const a = put(V(s), 0, 240, { sourceIn: 5, mediaId: 'short' }); // media is 6 s: clip asks for 10 s
+    expect(slipClip(s, a.id, 10, media({ short: 6 }))).toBe(0);
+    expect(a.sourceIn).toBe(5);
+    expect(slipClip(s, a.id, -24, media({ short: 6 }))).toBe(-24);
+    expect(a.sourceIn).toBe(4);
+  });
+
+  it('transitions on both edges of a clip never overlap (add / reconcile)', () => {
+    const s = S();
+    const a = put(V(s), 0, 100); const b = put(V(s), 100, 12); const c = put(V(s), 112, 100);
+    addTransition(s, V(s).id, 100, 'crossDissolve', 8);
+    const t2 = addTransition(s, V(s).id, 112, 'crossDissolve', 12)!;
+    expect(t2.duration).toBe(4); // 12 - 8 already used by b's in-transition
+    // a full clip is shared when the other edge used every frame
+    const s2 = S();
+    put(V(s2), 0, 100); const m = put(V(s2), 100, 12); put(V(s2), 112, 100);
+    const first = addTransition(s2, V(s2).id, 100, 'crossDissolve', 12)!;
+    const second = addTransition(s2, V(s2).id, 112, 'crossDissolve', 12)!;
+    expect(first.duration + second.duration).toBeLessThanOrEqual(m.duration);
+    expect(V(s2).transitions).toHaveLength(2);
+    // reconcile shrinks the out-transition when the sum exceeds the clip
+    const tin = transitionsForClip(V(s), b.id).in!;
+    tin.duration = 10;
+    reconcileTransitions(V(s));
+    expect(transitionsForClip(V(s), b.id).out!.duration).toBe(2);
+    tin.duration = 12;
+    reconcileTransitions(V(s));
+    expect(transitionsForClip(V(s), b.id).out).toBeUndefined();
+    expect(a.id && c.id).toBeTruthy();
+  });
+
+  it('followClipMarkers: clip-linked markers follow a move, stay on head trims, lose clipId when the clip vanishes', () => {
+    const prev = S();
+    const a = put(V(prev), 0, 100, { sourceIn: 2 });
+    prev.markers.push({ id: 'm', time: 30, duration: 0, name: 'n', note: '', color: '', kind: 'continuity', clipId: a.id },
+      { id: 'free', time: 31, duration: 0, name: 'f', note: '', color: '', kind: 'marker' });
+    const next = structuredClone(prev);
+    V(next).clips[0].start = 200;
+    followClipMarkers(prev, next);
+    expect(next.markers.map((m) => [m.id, m.time])).toEqual([['free', 31], ['m', 230]]);
+    const trimmed = structuredClone(prev);
+    trimStart(trimmed, a.id, 10, INF);
+    followClipMarkers(prev, trimmed);
+    expect(trimmed.markers.find((m) => m.id === 'm')!.time).toBe(30);
+    const gone = structuredClone(prev);
+    V(gone).clips = [];
+    followClipMarkers(prev, gone);
+    expect(gone.markers.find((m) => m.id === 'm')).toMatchObject({ time: 30 });
+    expect(gone.markers.find((m) => m.id === 'm')!.clipId).toBeUndefined();
   });
 });

@@ -1,22 +1,23 @@
 /**
  * Panel-level operations that combine store actions with window.recut (IPC). Every IPC access is guarded.
  */
-import type { DetectedScene, ID, MediaItem, SceneRecord } from '@shared/model';
+import type { DetectedScene, ID, MediaItem, MediaProbe, SceneRecord } from '@shared/model';
 import type { FileFilter } from '@shared/ipc';
 import { uid } from '@shared/ids';
-import { allTracks } from '@shared/timeline';
+import { allTracks, clipSourceOut } from '@shared/timeline';
+import { AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS } from '@/state/parseIdentity';
 import { toast } from '@/components/ui/toastStore';
 import { invalidateMediaPath } from '@/app/media';
 import { useLayoutStore } from '@/components/layout/layoutStore';
 import {
-  useStore, recutApi, importMediaFiles, probeMedia, startProxy, startSceneDetect, importSubtitleFile, importEmbeddedSubtitles,
+  useStore, recutApi, importMedia, probeMedia, startProxy, startSceneDetect, importSubtitleFile, importEmbeddedSubtitles,
   activeSequence, fileNameOf,
 } from '@/state';
 import { activeJobFor, useJobsStore } from '@/app/jobsStore';
 
-export const VIDEO_EXT = ['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'ts', 'm2ts', 'mts', 'mpg', 'mpeg', 'flv', 'ogv', '3gp'];
-export const AUDIO_EXT = ['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'ac3', 'eac3', 'dts', 'wma', 'opus', 'aiff', 'aif'];
-export const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tif', 'tiff'];
+export const VIDEO_EXT = VIDEO_EXTS;
+export const AUDIO_EXT = AUDIO_EXTS;
+export const IMAGE_EXT = IMAGE_EXTS;
 export const SUB_EXT = ['srt', 'vtt'];
 export const IMPORT_FILTERS: FileFilter[] = [
   { name: 'All media', extensions: [...VIDEO_EXT, ...AUDIO_EXT, ...IMAGE_EXT, ...SUB_EXT] },
@@ -33,18 +34,24 @@ export const isSubtitlePath = (p: string) => SUB_EXT.includes(ext(p));
 export const isMediaPath = (p: string) => { const e = ext(p); return VIDEO_EXT.includes(e) || AUDIO_EXT.includes(e) || IMAGE_EXT.includes(e); };
 
 /**
- * Import a mixed list of paths: media files become MediaItems in `binId`; subtitle files attach to the single
- * selected (or given) media item when there is one, otherwise are skipped with a hint.
+ * Import a mixed list of paths: media files become MediaItems (routed into default bins unless `binId` is given);
+ * subtitle files next to imported videos are attached automatically; any other subtitle files attach to the single
+ * selected (or given / just imported) media item when there is one, otherwise are skipped with a hint.
  */
 export async function importPaths(paths: string[], binId: ID | null, attachTo?: ID | null): Promise<ID[]> {
-  const subs = paths.filter(isSubtitlePath);
-  const media = paths.filter((p) => !isSubtitlePath(p));
-  const ids = media.length ? await importMediaFiles(media, binId) : [];
-  if (media.length && ids.length === 0) toast('info', media.length === 1 ? 'Already in project' : 'All files are already in the project');
-  else if (ids.length) toast('ok', `Imported ${ids.length} file${ids.length === 1 ? '' : 's'}`);
+  const r = await importMedia(paths, binId, { rejectSubtitles: false });
+  const ids = r.added;
+  const mediaCount = paths.length - r.subtitlePaths.length;
+  if (ids.length) {
+    const st = useStore.getState();
+    const topBin = (b: ID | null): string | null => { let id = b; let name: string | null = null; while (id && st.project.bins[id]) { name = st.project.bins[id].name; id = st.project.bins[id].parentId; } return name; };
+    const where = [...new Set(r.binIds.map(topBin).filter((n): n is string => !!n))];
+    toast('ok', `Imported ${ids.length} file${ids.length === 1 ? '' : 's'}${where.length ? ` into ${where.join(', ')}` : ''}`);
+  } else if (mediaCount > 0 && r.existing.length === 0) toast('info', 'Nothing imported');
+  const subs = r.subtitlePaths.filter((p) => !r.sidecarsUsed.includes(p));
   if (subs.length) {
     const target = attachTo ?? (ids.length === 1 ? ids[0] : null);
-    if (!target) toast('warn', 'Select one media item before importing subtitles to attach them');
+    if (!target) toast('warn', 'Subtitles attach to a media item: select one item, then use "Import subtitles…"');
     else for (const p of subs) await attachSubtitleFile(target, p);
   }
   return ids;
@@ -159,19 +166,48 @@ export async function deleteSequenceConfirmed(id: ID): Promise<boolean> {
 
 // ---------------------------------------------------------------- relink / offline
 
-export async function relinkWithPath(mediaId: ID, newPath: string): Promise<void> {
+/** Clips (all sequences) of `mediaId` whose source range runs past `durationSec`. */
+export function clipsPastEnd(mediaId: ID, durationSec: number): number {
+  const st = useStore.getState();
+  let n = 0;
+  for (const seq of Object.values(st.project.sequences)) {
+    const tol = seq.fps.den / seq.fps.num;   // one frame
+    for (const t of allTracks(seq)) for (const c of t.clips) if (c.mediaId === mediaId && clipSourceOut(c, seq.fps) > durationSec + tol) n++;
+  }
+  return n;
+}
+
+/** Relink `mediaId` to `newPath` and re-probe. Asks first when a video would be relinked to a file without video. */
+export async function relinkWithPath(mediaId: ID, newPath: string): Promise<boolean> {
   const api = recutApi();
   const st = useStore.getState();
   const m = st.project.media[mediaId];
-  if (!m) return;
+  if (!m) return false;
   const oldPath = m.path;
+  let probe: MediaProbe | null = null;
+  if (api) { try { probe = await api.probe(newPath); } catch { probe = null; } }
+  if (probe && m.kind === 'video' && !probe.video) {
+    const used = clipUsage([mediaId]);
+    const detail = `"${m.name}" is a video, but ${fileNameOf(newPath)} has no video stream.${used ? ` ${used} clip${used === 1 ? '' : 's'} using it will show black.` : ''}`;
+    const choice = api
+      ? await api.message({ type: 'warning', title: 'Relink to audio-only file?', message: `Relink a video to an audio-only file?`, detail, buttons: ['Relink anyway', 'Cancel'], defaultId: 1, cancelId: 1 })
+      : (window.confirm(detail) ? 0 : 1);
+    if (choice !== 0) return false;
+  }
   let stat: { size?: number; mtimeMs?: number } | undefined;
   if (api) { try { const s = await api.stat(newPath); if (s.exists) stat = { size: s.size, mtimeMs: s.mtimeMs }; } catch { /* ignore */ } }
   st.relinkMedia(mediaId, newPath, stat);
   invalidateMediaPath(oldPath);
   invalidateMediaPath(newPath);
-  await probeMedia(mediaId);
+  if (probe) useStore.getState().setMediaProbe(mediaId, probe);
+  else probe = await probeMedia(mediaId);
   toast('ok', `Relinked ${fileNameOf(newPath)}`);
+  const after = useStore.getState().project.media[mediaId];
+  if (probe && after && after.kind !== 'image' && Number.isFinite(probe.duration) && probe.duration > 0) {
+    const past = clipsPastEnd(mediaId, probe.duration);
+    if (past) toast('warn', `${past} clip${past === 1 ? '' : 's'} extend${past === 1 ? 's' : ''} past the new media and will freeze on the last frame`);
+  }
+  return true;
 }
 
 export async function locateMedia(mediaId: ID): Promise<boolean> {
@@ -196,7 +232,7 @@ export function revealInFolder(path: string): void {
 export async function generateProxy(mediaId: ID): Promise<void> {
   const m = useStore.getState().project.media[mediaId];
   if (!m || m.offline) return;
-  if (m.kind !== 'video') { toast('info', 'Proxies are only generated for video'); return; }
+  if (m.kind !== 'video' && m.kind !== 'audio') { toast('info', 'Proxies are only generated for video and audio'); return; }
   try { await startProxy(mediaId); } catch (e) { useStore.getState().setProxy(mediaId, { status: 'failed', error: String(e) }); toast('error', `Proxy failed to start: ${e instanceof Error ? e.message : String(e)}`); }
 }
 

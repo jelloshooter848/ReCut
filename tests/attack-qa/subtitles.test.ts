@@ -94,7 +94,8 @@ describe('parseSubtitles', () => {
     const cues = [{ start: 1, end: 2, text: 'para one\n\npara two' }];
     const back = parseSubtitles(serializeSrt(cues));
     expect(back.cues.length, 'blank line inside a cue splits it into a cue + an orphan block').toBe(1);
-    expect(back.cues[0]?.text).toBe('para one\n\npara two');
+    // SRT cannot represent an empty line inside a cue: blank lines are collapsed on export (QA-23 fix).
+    expect(back.cues[0]?.text).toBe('para one\npara two');
   });
 
   it('a cue whose text line looks like a timing line is not mis-parsed', () => {

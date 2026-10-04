@@ -1,7 +1,7 @@
 import { PROJECT_FORMAT_VERSION } from './model';
 import type { Project, Sequence, Rational, MediaItem, ProjectSettings, Bin, ID, TagVocabulary } from './model';
 import { uid } from './ids';
-import { makeTrack, defaultTransform, defaultAudio } from './timeline';
+import { makeTrack, defaultTransform, defaultAudio, reconcileTransitions } from './timeline';
 
 export function defaultSettings(): ProjectSettings {
   return {
@@ -101,22 +101,26 @@ export function normalizeProject(raw: unknown): Project {
       markers: Array.isArray(s.markers) ? s.markers : [],
       storyBlocks: Array.isArray(s.storyBlocks) ? s.storyBlocks : [],
       snapshots: Array.isArray(s.snapshots) ? s.snapshots : [],
-      view: { ...template.view, ...(s.view ?? {}) },
+      view: repairView({ ...template.view, ...(s.view ?? {}) }, template.view),
     };
     for (const t of [...out.sequences[id].videoTracks, ...out.sequences[id].audioTracks]) {
-      t.clips = Array.isArray(t.clips) ? t.clips.filter((c) => c && typeof c.start === 'number' && typeof c.duration === 'number' && c.duration > 0) : [];
+      t.clips = Array.isArray(t.clips) ? t.clips.filter(isValidClip) : [];
       t.transitions = Array.isArray(t.transitions) ? t.transitions : [];
       for (const c of t.clips) {
         c.transform = { ...defaultTransform(), ...(c.transform ?? {}) };
         c.transform.crop = { ...defaultTransform().crop, ...(c.transform.crop ?? {}) };
         c.audio = { ...defaultAudio(), ...(c.audio ?? {}) };
         c.tags ??= []; c.characters ??= []; c.plotlines ??= []; c.locations ??= []; c.notes ??= '';
-        c.speed ||= 1; c.enabled ??= true; c.kind ??= t.kind;
+        if (!Number.isFinite(c.speed) || !(c.speed > 0)) c.speed = 1;
+        c.enabled ??= true; c.kind ??= t.kind;
       }
       t.clips.sort((a, b) => a.start - b.start);
+      // Drop transitions whose clips are gone / no longer adjacent; clamp durations so none overlap.
+      t.transitions = t.transitions.filter((tr) => tr && typeof tr === 'object');
+      reconcileTransitions(t);
     }
   }
-  out.sequenceOrder = out.sequenceOrder.filter((id) => out.sequences[id]);
+  out.sequenceOrder = [...new Set(out.sequenceOrder)].filter((id) => out.sequences[id]);
   for (const id of Object.keys(out.sequences)) if (!out.sequenceOrder.includes(id)) out.sequenceOrder.push(id);
   if (!out.activeSequenceId || !out.sequences[out.activeSequenceId]) out.activeSequenceId = out.sequenceOrder[0] ?? null;
   if (out.sequenceOrder.length === 0) {
@@ -132,9 +136,63 @@ export function normalizeProject(raw: unknown): Project {
     if (m.sceneDetectStatus === 'running') m.sceneDetectStatus = 'none';
     if (m.waveformStatus === 'running') m.waveformStatus = 'none';
   }
+  repairBins(out);
   for (const s of Object.values(out.scenes)) { s.characters ??= []; s.tags ??= []; s.notes ??= ''; s.rating ??= 0; s.color ??= '#4d7cfe'; s.location ??= ''; s.arc ??= ''; }
   for (const st of Object.values(out.subtitleTracks)) { st.cues ??= []; st.origin ??= 'srt'; st.language ??= 'und'; }
   return out;
+}
+
+function isFiniteNum(v: unknown): v is number { return typeof v === 'number' && Number.isFinite(v); }
+
+/** A clip survives load only with a finite, non-negative position/source in and at least one frame. */
+function isValidClip(c: unknown): boolean {
+  if (!c || typeof c !== 'object') return false;
+  const x = c as { start?: unknown; duration?: unknown; sourceIn?: unknown };
+  if (x.sourceIn === undefined) x.sourceIn = 0; // older files may omit it (null = NaN/Infinity after JSON: dropped)
+  return isFiniteNum(x.start) && x.start >= 0
+    && isFiniteNum(x.duration) && x.duration >= 1
+    && isFiniteNum(x.sourceIn) && x.sourceIn >= 0;
+}
+
+function repairView(v: Sequence['view'], defaults: Sequence['view']): Sequence['view'] {
+  const inOut = (x: unknown) => (isFiniteNum(x) && x >= 0 ? x : null);
+  return {
+    ...v,
+    zoom: isFiniteNum(v.zoom) && v.zoom > 0 ? v.zoom : defaults.zoom,
+    scroll: isFiniteNum(v.scroll) && v.scroll >= 0 ? v.scroll : 0,
+    playhead: isFiniteNum(v.playhead) && v.playhead >= 0 ? v.playhead : 0,
+    inPoint: inOut(v.inPoint),
+    outPoint: inOut(v.outPoint),
+  };
+}
+
+/**
+ * Bins: drop junk entries, re-root bins whose parent is unknown, themselves, or part of a cycle (so every
+ * bin is reachable from the root), and clear media/sequence binIds that point at unknown bins.
+ */
+function repairBins(p: Project): void {
+  if (!p.bins || typeof p.bins !== 'object' || Array.isArray(p.bins)) {
+    p.bins = {};
+    for (const b of DEFAULT_BINS) p.bins[b.id] = { id: b.id, name: b.name, parentId: null, kind: 'bin' };
+  }
+  for (const id of Object.keys(p.bins)) {
+    const b = p.bins[id];
+    if (!b || typeof b !== 'object') { delete p.bins[id]; continue; }
+    b.id = id;
+    if (b.parentId === undefined || (b.parentId !== null && (b.parentId === id || !p.bins[b.parentId]))) b.parentId = null;
+  }
+  // Break cycles: walk each bin's ancestor chain; the edge that leads back into the chain is cut.
+  for (const id of Object.keys(p.bins)) {
+    const seen = new Set<ID>([id]);
+    let node = p.bins[id];
+    while (node.parentId) {
+      if (seen.has(node.parentId)) { node.parentId = null; break; } // cut the edge that closes the cycle
+      seen.add(node.parentId);
+      node = p.bins[node.parentId];
+    }
+  }
+  for (const m of Object.values(p.media)) if (m.binId == null || !p.bins[m.binId]) m.binId = null;
+  for (const s of Object.values(p.sequences)) if (s.binId == null || !p.bins[s.binId]) s.binId = null;
 }
 
 export function serializeProject(p: Project): string {

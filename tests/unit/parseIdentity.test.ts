@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { parseEpisodeInfo, episodeLabel } from '../../src/panels/project/parseIdentity';
+import { parseEpisodeInfo, episodeLabel, classifyPath, importIdentity, sidecarLanguage } from '../../src/state/parseIdentity';
+import * as compat from '../../src/panels/project/parseIdentity';
 
 describe('parseEpisodeInfo', () => {
   it('parses SxxEyy release names and strips quality junk from the title', () => {
@@ -70,5 +71,60 @@ describe('episodeLabel', () => {
     expect(episodeLabel({ episode: 7 })).toBe('E07');
     expect(episodeLabel({ season: 1, episode: 1, episodeEnd: 2 })).toBe('S01E01-E02');
     expect(episodeLabel({})).toBe('');
+  });
+});
+
+describe('import-time identity', () => {
+  it('keeps the panel re-export working', () => {
+    expect(compat.parseEpisodeInfo).toBe(parseEpisodeInfo);
+    expect(compat.episodeLabel).toBe(episodeLabel);
+  });
+
+  it('classifies paths by extension', () => {
+    expect(classifyPath('/a/Show S01E01.MKV')).toBe('video');
+    expect(classifyPath('/a/score.m4a')).toBe('audio');
+    expect(classifyPath('C:\\x\\card.PNG')).toBe('image');
+    expect(classifyPath('/a/Show S01E01.en.srt')).toBe('subtitle');
+    expect(classifyPath('/a/b.vtt')).toBe('subtitle');
+    expect(classifyPath('/a/proj.recut')).toBe('unknown');
+    expect(classifyPath('/a/noext')).toBe('unknown');
+  });
+
+  it('SxxEyy → Episode in TV with series/season/episode/title', () => {
+    expect(importIdentity('/tv/Station.Eleven.S01E03.Hurricane.1080p.WEB.mkv')).toEqual({
+      identity: { series: 'Station Eleven', season: 1, episode: 3, title: 'Hurricane' }, category: 'Episode', bin: 'tv',
+    });
+    expect(importIdentity('/tv/Station Eleven S01E01.mp4')).toEqual({ identity: { series: 'Station Eleven', season: 1, episode: 1 }, category: 'Episode', bin: 'tv' });
+    // Multi-episode end is not part of the stored identity
+    expect(importIdentity('/tv/Show S01E01E02.mkv').identity).toEqual({ series: 'Show', season: 1, episode: 1 });
+    // Episode marker without a series name: Episode, but no series bin
+    expect(importIdentity('/tv/E05.mkv')).toEqual({ identity: { episode: 5 }, category: 'Episode', bin: null });
+  });
+
+  it('year without an episode → Movie; nothing recognisable → Other with empty identity', () => {
+    expect(importIdentity('/m/Blade.Runner.1982.Final.Cut.2160p.UHD.mkv')).toEqual({ identity: { title: 'Blade Runner', year: 1982 }, category: 'Movie', bin: 'movies' });
+    expect(importIdentity('/m/Galaxy Saga 1 - A New Dawn.mp4')).toEqual({ identity: {}, category: 'Other', bin: null });
+    expect(importIdentity('/m/clip-001.mp4')).toEqual({ identity: {}, category: 'Other', bin: null });
+  });
+
+  it('audio → Music, images → Other in Graphics, regardless of the name', () => {
+    expect(importIdentity('/a/Soundtrack (2001) S01E01.flac')).toEqual({ identity: {}, category: 'Music', bin: 'audio' });
+    expect(importIdentity('/a/title-card.png')).toEqual({ identity: {}, category: 'Other', bin: 'graphics' });
+    expect(importIdentity('/a/anything.bin', 'audio').category).toBe('Music');
+  });
+
+  it('sidecar subtitle matching and language suffixes', () => {
+    const v = 'Station Eleven S01E01.mkv';
+    expect(sidecarLanguage(v, 'Station Eleven S01E01.srt')).toBe('und');
+    expect(sidecarLanguage(v, 'Station Eleven S01E01.vtt')).toBe('und');
+    expect(sidecarLanguage(v, 'station eleven s01e01.EN.srt')).toBe('en');
+    expect(sidecarLanguage(v, 'Station Eleven S01E01.pt-BR.srt')).toBe('pt-br');
+    expect(sidecarLanguage(v, 'Station Eleven S01E01.eng.forced.srt')).toBe('eng');
+    expect(sidecarLanguage(v, 'Station Eleven S01E01.sdh.srt')).toBe('und');
+    expect(sidecarLanguage(v, 'Station Eleven S01E01.forced.srt')).toBe('und');
+    expect(sidecarLanguage(v, 'Station Eleven S01E012.srt')).toBeNull();   // different file
+    expect(sidecarLanguage(v, 'Station Eleven S01E02.srt')).toBeNull();
+    expect(sidecarLanguage(v, 'Station Eleven S01E01.ass')).toBeNull();
+    expect(sidecarLanguage(v, 'Station Eleven S01E01.mkv')).toBeNull();
   });
 });

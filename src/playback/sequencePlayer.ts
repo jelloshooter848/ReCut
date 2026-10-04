@@ -189,6 +189,13 @@ export class SequencePlayer {
     this.emitState();
   }
 
+  /**
+   * The master output node (all tracks are mixed into it before the destination), or null without an
+   * AudioContext. Attach an AnalyserNode to it for metering: `getMasterGain()?.connect(analyser)`.
+   * Do not disconnect it from the destination.
+   */
+  getMasterGain(): GainNode | null { return this.master; }
+
   setMasterVolume(v: number): void {
     if (!this.master || !this.audioContext) return;
     this.master.gain.setTargetAtTime(Math.max(0, v), this.audioContext.currentTime, 0.01);

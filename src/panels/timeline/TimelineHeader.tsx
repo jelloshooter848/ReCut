@@ -28,9 +28,9 @@ function PlayheadTimecode({ seqId, fps }: { seqId: string; fps: Rational }) {
   return <TimecodeField value={playhead} fps={fps} min={0} onChange={(f) => useStore.getState().setView(seqId, { playhead: f })} title="Playhead (click to type, drag to scrub)" />;
 }
 
-export interface TimelineHeaderProps { seqId: string; fps: Rational; zoom: number; scroll: number; viewWidth: number }
+export interface TimelineHeaderProps { seqId: string; fps: Rational; zoom: number; scroll: number; viewWidth: number; /** Dynamic lower zoom bound (long sequences). */ minZoom?: number }
 
-export function TimelineHeader({ seqId, fps, zoom, scroll, viewWidth }: TimelineHeaderProps) {
+export function TimelineHeader({ seqId, fps, zoom, scroll, viewWidth, minZoom }: TimelineHeaderProps) {
   // Primitives only: useShallow compares array items with Object.is, so fresh objects would re-render forever.
   const order = useStore((s) => s.project.sequenceOrder);
   const names = useStore(useShallow((s) => s.project.sequenceOrder.map((id) => s.project.sequences[id]?.name ?? id)));
@@ -47,7 +47,7 @@ export function TimelineHeader({ seqId, fps, zoom, scroll, viewWidth }: Timeline
     if (!seq) return;
     const phX = frameToX(seq.view.playhead, zoom, scroll);
     const anchorX = phX >= 0 && phX <= viewWidth ? phX : viewWidth / 2;
-    st.setView(seqId, zoomAround(zoom, scroll, anchorX, newZoom));
+    st.setView(seqId, zoomAround(zoom, scroll, anchorX, newZoom, minZoom));
   };
 
   return (
@@ -70,7 +70,7 @@ export function TimelineHeader({ seqId, fps, zoom, scroll, viewWidth }: Timeline
             <button key={t.id} type="button" data-tool={t.id} aria-pressed={tool === t.id}
               className={['btn-icon', 'btn-sm', 'tl-tool', tool === t.id ? 'active' : ''].join(' ')} title={`${t.label} (${t.key})`}
               onClick={() => useStore.getState().setTool(t.id)}>
-              <Icon /><span className="tl-tool-key">{t.key}</span>
+              <Icon />
             </button>
           );
         })}
@@ -91,7 +91,7 @@ export function TimelineHeader({ seqId, fps, zoom, scroll, viewWidth }: Timeline
       ) : null}
       <div className="tl-zoom" title={`${zoom.toFixed(2)} px/frame`}>
         <button type="button" className="btn-icon btn-sm" title="Zoom out (-)" onClick={() => applyZoom(zoom / 1.25)}><ZoomOut /></button>
-        <Slider value={zoomToSlider(zoom)} min={0} max={1} onChange={(t) => applyZoom(sliderToZoom(t))} title="Zoom" />
+        <Slider value={zoomToSlider(zoom, minZoom)} min={0} max={1} onChange={(t) => applyZoom(sliderToZoom(t, minZoom))} title="Zoom" />
         <button type="button" className="btn-icon btn-sm" title="Zoom in (=)" onClick={() => applyZoom(zoom * 1.25)}><ZoomIn /></button>
       </div>
     </div>

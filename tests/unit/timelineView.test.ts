@@ -3,7 +3,15 @@ import {
   MIN_ZOOM, MAX_ZOOM, clampZoom, frameToX, xToFrame, xToFrameInt, zoomToFit, zoomAround, zoomByFactor, zoomToSlider, sliderToZoom,
   tickCandidates, rulerSpacing, rulerTicks, snapFrame, snapDelta, snapThresholdFrames, layoutTracks, rowAtY, pageFlipScroll,
   scrollContentFrames, visibleRange, clipOverlaps, formatDelta, linearToDb, dbToLinear, clipVisiblePx, SUBTITLE_LANE_PX, TRACK_DIVIDER_PX,
+  ZOOM_FLOOR, minZoomFor,
 } from '../../src/panels/timeline/viewMath';
+import { clipSyncAnchor, formatSyncOffset, linkedSyncOffsets, mediaNeedsProxy } from '../../src/panels/timeline/clipBadges';
+import { expandTimecodeDigits, parseTimecodeEntry } from '../../src/components/ui/TimecodeField';
+import { classifyMissing } from '../../src/panels/program/missing';
+import { dbToPos, peakToDb, METER_FLOOR_DB } from '../../src/panels/program/AudioMeter';
+import { describeDecodeProblem } from '../../src/panels/source/SourcePanel';
+import { createMediaItem } from '../../shared/project';
+import type { Clip, MediaItem, Track } from '../../shared/model';
 
 const FPS24 = { num: 24, den: 1 };
 const NTSC = { num: 24000, den: 1001 };
@@ -34,7 +42,7 @@ describe('coordinates', () => {
     expect(1000 * z).toBeLessThanOrEqual(1040);
     expect(1000 * z).toBeGreaterThan(900);
     expect(zoomToFit(0, 500)).toBe(MAX_ZOOM);
-    expect(zoomToFit(10_000_000, 500)).toBe(MIN_ZOOM);
+    expect(zoomToFit(10_000_000, 500)).toBe(ZOOM_FLOOR);
   });
 
   it('zoomAround keeps the frame under the pointer stationary', () => {
@@ -218,5 +226,130 @@ describe('formatting', () => {
     expect(linearToDb(0)).toBe(-Infinity);
     expect(dbToLinear(-6)).toBeCloseTo(0.501, 2);
     expect(dbToLinear(linearToDb(0.25))).toBeCloseTo(0.25);
+  });
+});
+
+describe('dynamic minimum zoom (E-06)', () => {
+  it('zoom-to-fit always fits a 2+ hour sequence', () => {
+    for (const [frames, width] of [[173_580, 1500], [24 * 3600 * 3, 900], [30 * 3600 * 2.5, 1200]] as const) {
+      const z = zoomToFit(frames, width);
+      expect(frames * z).toBeLessThanOrEqual(width);
+      expect(frames * z).toBeGreaterThan(width * 0.9);
+      expect(z).toBeLessThan(MIN_ZOOM);
+    }
+  });
+  it('minZoomFor lowers the bound only for long sequences, floored at ZOOM_FLOOR', () => {
+    expect(minZoomFor(2400, 1200)).toBe(MIN_ZOOM);
+    expect(minZoomFor(173_580, 1500)).toBeLessThan(zoomToFit(173_580, 1500));
+    expect(minZoomFor(1e9, 500)).toBe(ZOOM_FLOOR);
+    expect(clampZoom(0.001, minZoomFor(173_580, 1500))).toBeCloseTo(Math.max(0.001, minZoomFor(173_580, 1500)), 10);
+    // zooming out around a pointer honours the dynamic bound
+    const min = minZoomFor(173_580, 1500);
+    expect(zoomAround(0.01, 0, 0, 0.0001, min).zoom).toBeCloseTo(min, 12);
+    expect(sliderToZoom(0, min)).toBeCloseTo(min, 12);
+    expect(zoomToSlider(min, min)).toBeCloseTo(0, 10);
+  });
+});
+
+function clip(p: Partial<Clip> & Pick<Clip, 'id' | 'kind' | 'start'>): Clip {
+  return {
+    mediaId: 'm1', name: p.id, duration: 48, sourceIn: 0, speed: 1, linkId: 'L1', enabled: true,
+    transform: { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1 } as Clip['transform'], audio: { volume: 1, muted: false, fadeIn: 0, fadeOut: 0 } as Clip['audio'],
+    tags: [], characters: [], plotlines: [], locations: [], notes: '', ...p,
+  };
+}
+const track = (kind: 'video' | 'audio', clips: Clip[]): Track => ({ id: `${kind}-t`, name: kind, kind, clips, transitions: [] } as unknown as Track);
+
+describe('out-of-sync badge (E-05)', () => {
+  it('in-sync linked partners have no offset', () => {
+    const v = clip({ id: 'v', kind: 'video', start: 100, sourceIn: 2 });
+    const a = clip({ id: 'a', kind: 'audio', start: 100, sourceIn: 2 });
+    expect(linkedSyncOffsets([track('video', [v]), track('audio', [a])], FPS24).size).toBe(0);
+    // a trim that moves start and sourceIn together keeps sync
+    const vt = clip({ id: 'v', kind: 'video', start: 124, sourceIn: 3 });
+    expect(linkedSyncOffsets([track('video', [vt]), track('audio', [a])], FPS24).size).toBe(0);
+  });
+  it('moved / slipped partners get +N on one side and −N on the other', () => {
+    const v = clip({ id: 'v', kind: 'video', start: 400, sourceIn: 2 });
+    const a = clip({ id: 'a', kind: 'audio', start: 100, sourceIn: 2 });
+    const m = linkedSyncOffsets([track('video', [v]), track('audio', [a])], FPS24);
+    expect(m.get('v')).toBe(300);
+    expect(m.get('a')).toBe(-300);
+    expect(formatSyncOffset(300)).toBe('+300');
+    expect(formatSyncOffset(-12)).toBe('\u221212');
+    const slipped = clip({ id: 'a', kind: 'audio', start: 400, sourceIn: 2.5 });
+    expect(linkedSyncOffsets([track('video', [v]), track('audio', [slipped])], FPS24).get('v')).toBe(12);
+  });
+  it('ignores unlinked clips and partners from other media', () => {
+    const v = clip({ id: 'v', kind: 'video', start: 0, linkId: null });
+    const a = clip({ id: 'a', kind: 'audio', start: 50, linkId: null });
+    const other = clip({ id: 'o', kind: 'audio', start: 90, mediaId: 'm2' });
+    const v2 = clip({ id: 'v2', kind: 'video', start: 0 });
+    expect(linkedSyncOffsets([track('video', [v, v2]), track('audio', [a, other])], FPS24).size).toBe(0);
+    expect(clipSyncAnchor({ start: 48, sourceIn: 1, speed: 2 }, FPS24)).toBe(36);
+  });
+});
+
+function media(p: Partial<MediaItem> = {}, playable = true, reason?: string): MediaItem {
+  return {
+    ...createMediaItem('/m/a.mp4', 'a.mp4'), kind: 'video',
+    probe: { container: 'mov,mp4', duration: 10, size: 1, startTime: 0, browserPlayable: playable, playabilityReason: reason, audio: [{ index: 1, codec: 'ac3', channels: 6, layout: '5.1', sampleRate: 48000 }], subtitles: [],
+      video: { index: 0, codec: 'h264', width: 1920, height: 1080, fps: FPS24, avgFps: FPS24, isVfr: false } } as MediaItem['probe'],
+    ...p,
+  };
+}
+
+describe('needs-proxy / missing-media classification (E-03, E-07, UX-06)', () => {
+  it('mediaNeedsProxy: undecodable, present, no ready proxy', () => {
+    expect(mediaNeedsProxy(media({}, false))).toBe(true);
+    expect(mediaNeedsProxy(media({}, true))).toBe(false);
+    expect(mediaNeedsProxy(media({ offline: true }, false))).toBe(false);
+    expect(mediaNeedsProxy(media({ proxy: { status: 'ready', path: '/p.mp4' } }, false))).toBe(false);
+    expect(mediaNeedsProxy(undefined)).toBe(false);
+  });
+  it('classifyMissing splits offline from needs-proxy and lists media to generate once', () => {
+    const off = { ...media({ offline: true }), id: 'off' };
+    const np = { ...media({}, false), id: 'np' };
+    const busy = { ...media({ proxy: { status: 'running' } }, false), id: 'busy' };
+    const ok = { ...media(), id: 'ok' };
+    const split = classifyMissing([
+      { clipId: 'c1', mediaId: 'off', reason: '' }, { clipId: 'c2', mediaId: 'np', reason: '' }, { clipId: 'c3', mediaId: 'np', reason: '' },
+      { clipId: 'c4', mediaId: 'busy', reason: '' }, { clipId: 'c5', mediaId: 'ok', reason: 'decode error' }, { clipId: 'c6', mediaId: 'gone', reason: '' },
+    ], { off, np, busy, ok });
+    expect(split).toEqual({ offline: 2, needsProxy: 3, other: 1, proxyMediaIds: ['np'], proxyBusy: true });
+  });
+  it('Source error card names the real reason (E-08)', () => {
+    expect(describeDecodeProblem(media({}, false, 'audio codec ac3 not supported by Chromium'))).toBe("AC-3 audio can't be decoded for preview");
+    expect(describeDecodeProblem(media({}, false, 'video codec hevc not supported by Chromium'))).toBe("HEVC video can't be decoded for preview");
+    expect(describeDecodeProblem(media({}, false, 'h264 4:2:2 not supported by Chromium'))).toBe("h264 4:2:2 can't be decoded for preview");
+    expect(describeDecodeProblem(media({}, false))).toBe('Cannot decode h264');
+  });
+});
+
+describe('timecode entry (E-21)', () => {
+  it('bare digits fill FF, SS, MM, HH from the right', () => {
+    expect(expandTimecodeDigits('1512')).toBe('15:12');
+    expect(expandTimecodeDigits('500')).toBe('5:00');
+    expect(expandTimecodeDigits('11500')).toBe('1:15:00');
+    expect(expandTimecodeDigits('1000000')).toBe('1:00:00:00');
+    expect(expandTimecodeDigits('+24')).toBe('+24');
+    expect(parseTimecodeEntry('1512', FPS24)).toBe(15 * 24 + 12);
+    expect(parseTimecodeEntry('500', FPS24)).toBe(120);
+    expect(parseTimecodeEntry('12', FPS24)).toBe(12);
+    expect(parseTimecodeEntry('+24', FPS24, 48)).toBe(72);
+    expect(parseTimecodeEntry('-12', FPS24, 48)).toBe(36);
+    expect(parseTimecodeEntry('00:00:02:00', FPS24)).toBe(48);
+    expect(parseTimecodeEntry('1.10', FPS24)).toBe(34);
+  });
+});
+
+describe('audio meter scale (E-10)', () => {
+  it('maps peaks to dBFS and the bar position', () => {
+    expect(peakToDb(1)).toBe(0);
+    expect(peakToDb(0.5)).toBeCloseTo(-6.02, 2);
+    expect(peakToDb(0)).toBe(METER_FLOOR_DB);
+    expect(dbToPos(0)).toBe(1);
+    expect(dbToPos(METER_FLOOR_DB)).toBe(0);
+    expect(dbToPos(-30)).toBeCloseTo(0.5, 10);
   });
 });

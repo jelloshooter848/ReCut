@@ -147,3 +147,35 @@ test('recovery: a newer autosave is offered on relaunch and can be recovered', a
   expect(await app.page.evaluate(() => (window as unknown as W).__recut.store.getState().dirty)).toBe(true);
   await expect.poll(() => app.page.evaluate(() => document.title)).toContain('Recovered Cut *');
 });
+
+test('opening a damaged project falls back to the backup, says so, and names an untitled project after its file', async () => {
+  const damaged = path.join(tmp, 'My Damaged Cut.recut');
+  const good = JSON.parse(fs.readFileSync(projectPath, 'utf8'));
+  good.name = 'Untitled Project';
+  fs.writeFileSync(`${damaged}.bak`, JSON.stringify(good));
+  fs.writeFileSync(damaged, '{ "formatVersion": 1, truncated');
+  await app.page.evaluate(() => (window as unknown as W).__recut.store.setState({ dirty: false }));
+  // Same path as an OS "open with" / second instance: main -> ev:openProjectPath -> requestOpenProject.
+  await app.app.evaluate(({ BrowserWindow }, p) => { BrowserWindow.getAllWindows()[0].webContents.send('ev:openProjectPath', p); }, damaged);
+  await expect.poll(() => app.page.evaluate(() => (window as unknown as W).__recut.store.getState().projectPath), { timeout: 10_000 }).toBe(damaged);
+  await expect(app.page.getByText(/Opened the backup from .*; the project file was damaged/)).toBeVisible();
+  expect(await app.page.evaluate(() => (window as unknown as W).__recut.store.getState().project.name)).toBe('My Damaged Cut');
+  expect(fs.readdirSync(tmp).some((f) => f.startsWith('My Damaged Cut.recut.corrupt-'))).toBe(true);
+});
+
+test('quit prompt: Cancel keeps the app open past the fallback timeout; a never-answered prompt does too', async () => {
+  const alive = () => app.app.process().exitCode === null && !app.page.isClosed();
+  await app.page.evaluate(() => {
+    const st = (window as unknown as W).__recut.store.getState();
+    st.addMarker(st.project.activeSequenceId, { time: 1, name: 'unsaved' });
+  });
+  expect(await app.page.evaluate(() => (window as unknown as W).__recut.store.getState().dirty)).toBe(true);
+  await app.app.evaluate(({ dialog }) => {
+    (dialog as unknown as { showMessageBox: unknown }).showMessageBox = () => Promise.resolve({ response: 2, checkboxChecked: false });
+  });
+  await app.page.evaluate(() => { void (window as unknown as { recut: { quit(f: boolean): Promise<void> } }).recut.quit(false); });
+  await app.page.waitForTimeout(4000);
+  expect(alive()).toBe(true);
+  // After a cancel, a new quit request prompts again (the pending state was cleared): answer Don't Save.
+  await app.page.evaluate(() => (window as unknown as W).__recut.store.setState({ dirty: false }));
+});

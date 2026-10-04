@@ -18,6 +18,8 @@ export interface ProgramTransportDeps {
   player(): SequencePlayer | null;
   /** Turn the in→out loop on/off in the panel (used by playInToOut). */
   setLoop(on: boolean): void;
+  /** Whether the panel's Loop toggle is on. When off, Play In→Out plays once and stops at Out. */
+  loopOn?(): boolean;
 }
 
 export function createProgramTransport(deps: ProgramTransportDeps): Transport {
@@ -46,6 +48,9 @@ export function createProgramTransport(deps: ProgramTransportDeps): Transport {
     deps.player()?.play();
   };
   const pause = (): void => { deps.player()?.pause(); };
+  /** One-shot Play In→Out watcher (cleared by any new playInToOut / when playback stops). */
+  let stopWatch: (() => void) | null = null;
+  const clearWatch = () => { stopWatch?.(); stopWatch = null; };
   const isPlaying = (): boolean => deps.player()?.isPlaying ?? false;
 
   return {
@@ -80,10 +85,25 @@ export function createProgramTransport(deps: ProgramTransportDeps): Transport {
     playInToOut() {
       const s = seq();
       if (!s || s.view.inPoint === null || s.view.outPoint === null || s.view.outPoint <= s.view.inPoint) { play(); return; }
-      deps.setLoop(true);
-      deps.player()?.setLoopRange(s.view.inPoint, s.view.outPoint);
+      clearWatch();
+      const p = deps.player();
+      if (deps.loopOn?.() ?? true) {
+        deps.setLoop(true);
+        p?.setLoopRange(s.view.inPoint, s.view.outPoint);
+        seekFrame(s.view.inPoint);
+        play();
+        return;
+      }
+      // Loop off: play once from In and stop on the last frame before Out.
+      const outF = s.view.outPoint;
       seekFrame(s.view.inPoint);
       play();
+      if (!p) return;
+      const offFrame = p.onFrame((f) => {
+        if (f >= outF - 1) { clearWatch(); pause(); seekFrame(Math.max(s.view.inPoint ?? 0, outF - 1)); }
+      });
+      const offState = p.onStateChange((ps) => { if (!ps.playing) clearWatch(); });
+      stopWatch = () => { offFrame(); offState(); };
     },
     isPlaying,
   };

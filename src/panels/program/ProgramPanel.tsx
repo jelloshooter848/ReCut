@@ -11,7 +11,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftToLine, ArrowRightToLine, ArrowUpFromLine, BookmarkPlus, Captions, CaptionsOff, ChevronFirst, ChevronLast, Ellipsis, Expand, FoldHorizontal,
-  Frame, Maximize2, Minimize2, Monitor, Pause, Play, Repeat, SkipBack, SkipForward, StepBack, StepForward, TriangleAlert, Volume2, VolumeX, X,
+  Film, Frame, Maximize2, Minimize2, Monitor, Pause, Play, Repeat, SkipBack, SkipForward, StepBack, StepForward, TriangleAlert, Volume2, VolumeX, WifiOff, X,
 } from 'lucide-react';
 import type { Clip, ID, Marker, MediaItem, Rational, Sequence } from '@shared/model';
 import { formatTimecode } from '@shared/time';
@@ -22,7 +22,7 @@ import { activeSequence, originalTimecode } from '@/state/selectors';
 import type { StoreState } from '@/state/types';
 import { startProxy } from '@/state/mediaActions';
 import { getAudioContext, getPool, resumeAudio } from '@/app/media';
-import { registerTransport, setActiveTransport, shuttle, type Transport } from '@/app/transport';
+import { registerTransport, setActiveTransport, shuttle, useActiveTransportId, type Transport } from '@/app/transport';
 import { useLayoutStore } from '@/components/layout/layoutStore';
 import { IconButton, Select, Slider, TimecodeField, openContextMenu, type MenuItem } from '@/components/ui';
 import { isEditableTarget } from '@/keyboard/useShortcuts';
@@ -32,6 +32,8 @@ import type { PanelProps } from '../registry';
 import { createFrameSignal, useFrame, type FrameSignal } from './frameSignal';
 import { createProgramTransport } from './programTransport';
 import { ScrubBar } from './ScrubBar';
+import { AudioMeter } from './AudioMeter';
+import { classifyMissing } from './missing';
 import './program.css';
 
 const DEFAULT_FPS: Rational = { num: 24000, den: 1001 };
@@ -132,6 +134,8 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
   const rate = useStore((s) => s.playback.rate);
   const resolution = useStore((s) => s.project.settings.playbackResolution);
   const maximized = useLayoutStore((s) => s.maximized === zoneId);
+  const transportActive = useActiveTransportId() === 'program';
+  const mediaMap = useStore((s) => s.project.media);
 
   // ---- local UI state (rarely changing) ----
   const [tcMode, setTcMode] = useState(prefs.tcMode);
@@ -228,7 +232,7 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
 
   // ---- transport registration ----
   useEffect(() => {
-    const t = createProgramTransport({ player: () => playerRef.current, setLoop: (on) => setLoopOn(on) });
+    const t = createProgramTransport({ player: () => playerRef.current, setLoop: (on) => setLoopOn(on), loopOn: () => prefs.loop });
     transportRef.current = t;
     const unregister = registerTransport(t);
     return () => { unregister(); transportRef.current = null; };
@@ -303,6 +307,8 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
     else if (!fs && l.maximized === zoneId) l.toggleMaximize();
   };
 
+  const missingSplit = classifyMissing(status.missing, mediaMap);
+  const generateProxies = () => { for (const id of missingSplit.proxyMediaIds) void startProxy(id); };
   const missingMenu = (): MenuItem[] => {
     const st = store();
     const seq = activeSequence(st);
@@ -339,17 +345,18 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
     if (isEditableTarget(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
     const t = transport(); if (!t) return;
     let handled = true;
-    switch (e.key) {
-      case ' ': if (!e.repeat) t.toggle(); break;
-      case 'j': case 'J': if (!e.repeat) shuttle(t, -1); break;
-      case 'k': case 'K': t.setRate(0); break;
-      case 'l': case 'L': if (!e.repeat) shuttle(t, 1); break;
+    // Physical keys (e.code) + Shift, like the global dispatcher: CapsLock cannot flip mark / go-to.
+    switch (e.code) {
+      case 'Space': if (!e.repeat) t.toggle(); break;
+      case 'KeyJ': if (!e.repeat) shuttle(t, -1); break;
+      case 'KeyK': t.setRate(0); break;
+      case 'KeyL': if (!e.repeat) shuttle(t, 1); break;
       case 'ArrowLeft': t.stepFrames(e.shiftKey ? -5 : -1); break;
       case 'ArrowRight': t.stepFrames(e.shiftKey ? 5 : 1); break;
       case 'Home': t.goToStart(); break;
       case 'End': t.goToEnd(); break;
-      case 'i': case 'I': if (!e.repeat) t.markIn(); break;
-      case 'o': case 'O': if (!e.repeat) t.markOut(); break;
+      case 'KeyI': if (!e.repeat) { if (e.shiftKey) t.goToIn(); else t.markIn(); } break;
+      case 'KeyO': if (!e.repeat) { if (e.shiftKey) t.goToOut(); else t.markOut(); } break;
       default: handled = false;
     }
     if (handled) { e.preventDefault(); e.stopPropagation(); }
@@ -361,7 +368,8 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
 
   return (
     <div
-      ref={rootRef} className="pm-root" tabIndex={0} data-testid="program-panel" aria-label="Program Monitor"
+      ref={rootRef} className={['pm-root', transportActive ? 'transport-active' : ''].filter(Boolean).join(' ')} tabIndex={0} data-testid="program-panel" aria-label="Program Monitor"
+      data-transport-active={transportActive ? 'true' : 'false'}
       onPointerDownCapture={() => setActiveTransport('program')}
       onFocus={() => setActiveTransport('program')}
       onKeyDown={onKeyDown}
@@ -377,12 +385,35 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
           ) : null}
         </div>
         {!seqId ? <div className="pm-empty"><Monitor /><span>No sequence open</span></div> : null}
+        {seqId && duration === 0 ? (
+          <div className="pm-empty" data-testid="program-empty-hint">
+            <Film />
+            <span className="pm-empty-title">Sequence is empty</span>
+            <span>Insert from the Source monitor (<kbd>{getShortcutLabel(COMMAND_IDS.insert) || ','}</kbd> / <kbd>{getShortcutLabel(COMMAND_IDS.overwrite) || '.'}</kbd>) or drag media onto the Timeline.</span>
+          </div>
+        ) : null}
         <div className="pm-overlay tl">
           <TimecodeOverlay frame={frameSig} fps={fps} mode={tcMode} onToggle={() => setTcMode((m) => (m === 'sequence' ? 'source' : 'sequence'))} />
-          {status.missing.length ? (
-            <button type="button" className="pm-chip warn" data-testid="program-missing" title="Some clips cannot be decoded — click for details"
+          {missingSplit.offline ? (
+            <button type="button" className="pm-chip danger" data-testid="program-offline" title="Media files are offline — click for details"
               onClick={(e) => openContextMenu(missingMenu(), e.currentTarget)}>
-              <TriangleAlert /> Missing media <span className="badge warn" style={{ marginLeft: 2 }}>{status.missing.length}</span>
+              <WifiOff /> Offline: {missingSplit.offline}
+            </button>
+          ) : null}
+          {missingSplit.needsProxy ? (
+            <span className="pm-chip warn pm-chip-group" data-testid="program-needs-proxy">
+              <button type="button" className="pm-chip-main" title="These files can't be decoded for preview — click for details" onClick={(e) => openContextMenu(missingMenu(), e.currentTarget)}>
+                <TriangleAlert /> Needs proxy: {missingSplit.needsProxy}
+              </button>
+              {missingSplit.proxyMediaIds.length ? (
+                <button type="button" className="pm-chip-action" data-testid="program-generate-proxies" title="Generate proxies for these files" onClick={generateProxies}>Generate proxies</button>
+              ) : missingSplit.proxyBusy ? <span className="pm-chip-note">generating…</span> : null}
+            </span>
+          ) : null}
+          {missingSplit.other ? (
+            <button type="button" className="pm-chip warn" data-testid="program-missing" title="Some clips cannot be played — click for details"
+              onClick={(e) => openContextMenu(missingMenu(), e.currentTarget)}>
+              <TriangleAlert /> Can't play: {missingSplit.other}
             </button>
           ) : null}
         </div>
@@ -429,6 +460,7 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
             <span className={hasInOut ? 'set' : ''}><b>Dur</b>{hasInOut ? tcTitle(ioDuration) : '—'}</span>
           </div>
           <div className="pm-group pm-right">
+            <AudioMeter player={() => playerRef.current as unknown as { getMasterGain?: () => AudioNode | null } | null} playing={playing} />
             <div className="pm-volume pm-wide">
               <IconButton icon={muted || volume === 0 ? VolumeX : Volume2} label={muted ? 'Unmute' : 'Mute'} toggled={muted} data-testid="program-mute" onClick={() => setMuted((m) => !m)} />
               <Slider value={muted ? 0 : volume} min={0} max={1} step={0.01} defaultValue={1} title="Master volume"

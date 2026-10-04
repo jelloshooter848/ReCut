@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createProject, createSequence, normalizeProject, serializeProject, PROJECT_FORMAT_VERSION } from '../../shared/project';
+import { createProject, createSequence, normalizeProject, serializeProject } from '../../shared/project';
+import { PROJECT_FORMAT_VERSION } from '../../shared/model';
 import { makeClip, sequenceDuration, resolveSubtitleCues, allTracks } from '../../shared/timeline';
 import {
   saveProjectFile, loadProjectFile, writeAutosave, checkRecovery, atomicWriteFile, BACKUP_EXT, autosavePathFor,

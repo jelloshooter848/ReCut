@@ -11,6 +11,13 @@ import { pathToMediaUrl } from '../../shared/ipc';
 import { PlaybackClock } from './clock';
 import { resolvePlaybackPath, mediaFps, mediaDurationSeconds, type PlaybackPathResolution } from './mediaSource';
 
+const loadErrorListeners = new Set<(path: string) => void>();
+/** Subscribe to load/decode errors of any SourcePlayer element (path = the file that failed). */
+export function onSourceLoadError(cb: (path: string) => void): () => void {
+  loadErrorListeners.add(cb);
+  return () => { loadErrorListeners.delete(cb); };
+}
+
 export type SourcePlayerState = 'empty' | 'loading' | 'ready' | 'playing' | 'error';
 
 export interface SourcePlayerStatus {
@@ -75,6 +82,8 @@ export class SourcePlayer {
     });
     on('error', () => {
       const msg = el.error?.message || 'media failed to load';
+      const failedPath = this.resolution.path;
+      if (failedPath) for (const cb of loadErrorListeners) { try { cb(failedPath); } catch { /* ignore listener failures */ } }
       this.resolution = { ...this.resolution, reason: msg };
       this.stopLoop();
       this.playing = false;

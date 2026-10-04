@@ -3,7 +3,7 @@
  * The store keeps previous `Project` objects; immer's structural sharing makes this cheap.
  */
 import { produce } from 'immer';
-import type { ID, Project } from '../../shared/model';
+import type { ID, MediaItem, Project } from '../../shared/model';
 import type { HistoryState } from './types';
 
 export const DEFAULT_HISTORY_LIMIT = 200;
@@ -20,6 +20,8 @@ export function pushHistory(h: HistoryState, previous: Project, label: string): 
   return { ...h, past, pastLabels, future: [], futureLabels: [] };
 }
 
+const MEDIA_MIRROR_FIELDS = ['probe', 'probeError', 'kind', 'proxy', 'offline', 'path', 'fileSize', 'fileMtime', 'sceneDetectStatus', 'waveformStatus'] as const satisfies readonly (keyof MediaItem)[];
+
 /**
  * Carry the *current* non-undoable editor state into the project being restored:
  *  - `view` of every sequence that exists in both (playhead/zoom/scroll/in/out are not undoable)
@@ -30,6 +32,18 @@ export function carryViewState(restored: Project, current: Project): Project {
     for (const id of Object.keys(draft.sequences)) {
       const cur = current.sequences[id];
       if (cur) draft.sequences[id].view = { ...cur.view };
+    }
+    // Job/status mirrors (probe, proxy, offline/relink, scene-detect status) are applied quietly and are not
+    // undoable, so they may have arrived after the snapshot being restored was taken: keep the current values.
+    for (const id of Object.keys(draft.media)) {
+      const cur = current.media[id];
+      if (!cur) continue;
+      const m = draft.media[id];
+      for (const k of MEDIA_MIRROR_FIELDS) {
+        if (m[k] === cur[k]) continue;
+        if (cur[k] === undefined) delete m[k];
+        else (m as unknown as Record<string, unknown>)[k] = cur[k];
+      }
     }
     if (current.activeSequenceId && draft.sequences[current.activeSequenceId]) {
       draft.activeSequenceId = current.activeSequenceId;

@@ -86,7 +86,7 @@ function MediaBadges({ m, onRelink }: { m: MediaItem; onRelink: (id: ID) => void
   const sceneJob = useMediaJob(m.id, 'sceneDetect');
   const out: React.ReactNode[] = [];
   if (m.offline) out.push(<span key="off" className="pp-badge danger link" title="File not found — click to relink" onClick={(e) => { e.stopPropagation(); onRelink(m.id); }}>Offline · Relink</span>);
-  else if (m.probeError) out.push(<span key="err" className="pp-badge danger" title={m.probeError}>Error</span>);
+  else if (m.probeError) out.push(<span key="err" className="pp-badge danger" title={`Cannot read this file: ${m.probeError}`} aria-label={`Error: ${m.probeError}`} data-testid="probe-error-badge">Error</span>);
   const p = m.proxy;
   if (p.status === 'queued') out.push(<span key="pq" className="pp-badge running" title="Proxy queued">Proxy ⋯</span>);
   else if (p.status === 'running') {
@@ -94,7 +94,7 @@ function MediaBadges({ m, onRelink }: { m: MediaItem; onRelink: (id: ID) => void
     out.push(<span key="pr" className="pp-badge running" title={`Proxy ${Math.round(pr * 100)}%`}>Proxy {Math.round(pr * 100)}%<ProgressBar value={pr} /></span>);
   } else if (p.status === 'ready') out.push(<span key="pok" className="pp-badge ok" title={p.path}>Proxy</span>);
   else if (p.status === 'failed') out.push(<span key="pf" className="pp-badge danger" title={p.error}>Proxy failed</span>);
-  else if (m.probe && !m.probe.browserPlayable && m.kind === 'video') out.push(<span key="np" className="pp-badge warn" title={m.probe.playabilityReason ?? 'Not directly playable; generate a proxy'}>Needs proxy</span>);
+  else if (m.probe && !m.probe.browserPlayable && (m.kind === 'video' || m.kind === 'audio')) out.push(<span key="np" className="pp-badge warn" title={m.probe.playabilityReason ?? 'Not directly playable; generate a proxy'}>Needs proxy</span>);
   const sd = m.sceneDetectStatus;
   if (sd === 'running') {
     const pr = sceneJob?.progress ?? 0;

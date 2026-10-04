@@ -11,7 +11,19 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ExportRequest, ExportStartResult } from '@shared/ipc';
 import type { ID, JobInfo } from '@shared/model';
-import { buildRenderGraph, buildSubtitleSrt, FILTER_SCRIPT_TOKEN, type RenderGraph } from './renderGraph';
+import {
+  buildRenderGraph, buildSubtitleSrt, exportPartPath, exportSidecarPath, FILTER_SCRIPT_TOKEN, type RenderGraph,
+} from './renderGraph';
+
+/**
+ * Canonical form of a path for comparisons: realpath when it exists, else realpath(dir)/basename,
+ * else path.resolve (renderGraph folds case on win32/darwin).
+ */
+export function canonicalPath(p: string): string {
+  const abs = path.resolve(p);
+  try { return fs.realpathSync.native(abs); } catch { /* does not exist (yet) */ }
+  try { return path.join(fs.realpathSync.native(path.dirname(abs)), path.basename(abs)); } catch { return abs; }
+}
 
 // ---------------------------------------------------------------------------------------------------
 // Job queue contract (structural; electron/jobs/jobQueue.ts is owned by another agent)
@@ -91,7 +103,7 @@ function inlineFilter(graph: RenderGraph): string[] {
 export async function startExportJob(queue: ExportJobQueue, req: ExportRequest): Promise<ExportStartResult> {
   let graph: RenderGraph;
   try {
-    graph = buildRenderGraph(req);
+    graph = buildRenderGraph(req, { canonicalPath });
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -126,17 +138,16 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
   const tmpDir = path.join(os.tmpdir(), `recut-export-${id}`);
   fs.mkdirSync(tmpDir, { recursive: true });
   const subtitleFilePath = path.join(tmpDir, 'subtitles.srt');
-  const partSuffix = '.part.mp4';
   let partPath: string | null = null;
   try {
     if (signal?.aborted) throw new Error('Export canceled');
-    const graph = buildRenderGraph(req, { subtitleFilePath });
+    const graph = buildRenderGraph(req, { subtitleFilePath, canonicalPath });
     if (graph.subtitleContent) fs.writeFileSync(subtitleFilePath, graph.subtitleContent, 'utf8');
     const scriptPath = path.join(tmpDir, 'filter.txt');
     fs.writeFileSync(scriptPath, graph.filterGraph, 'utf8');
 
     fs.mkdirSync(path.dirname(graph.outputPath), { recursive: true });
-    partPath = graph.outputPath.replace(/\.mp4$/i, '') + partSuffix;
+    partPath = exportPartPath(graph.outputPath);
     const args = graph.args.map((a) => (a === FILTER_SCRIPT_TOKEN ? scriptPath : a));
     args[args.length - 1] = partPath;
 
@@ -152,7 +163,7 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
     if (req.settings.exportSubtitleSidecar && req.subtitles?.length) {
       const srt = buildSubtitleSrt(req);
       if (srt) {
-        sidecarPath = graph.outputPath.replace(/\.mp4$/i, '') + '.srt';
+        sidecarPath = exportSidecarPath(graph.outputPath);
         fs.writeFileSync(sidecarPath, srt, 'utf8');
       }
     }

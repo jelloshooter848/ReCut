@@ -65,6 +65,9 @@ const resetTimeline = (mediaId: string) => app.page.evaluate((id) => {
 
 // ------------------------------------------------------------------ proxies
 
+/** Proxy temp files: `<out>.part-<jobId>` (per job, QA-06); legacy `<out>.part`. */
+const isPart = (f: string) => /\.part(-[^.]*)?$/.test(f);
+
 test('starting the same proxy twice must not run two ffmpeg jobs on the same .part file', async () => {
   const [id] = await importMedia(app.page, [path.join(mediaDir, MEDIA.movie1)]);
   const [j1, j2] = await Promise.all([startProxy(id), startProxy(id)]);
@@ -78,7 +81,9 @@ test('starting the same proxy twice must not run two ffmpeg jobs on the same .pa
   const p = (await media(id)).proxy.path as string;
   expect(fs.existsSync(p)).toBe(true);
   const info = ffprobeJson(p);
-  expect(Math.abs(Number(info.format.duration) - 12)).toBeLessThan(0.5);
+  // compare with the source (the movie1 fixture is 24 s, not 12 s)
+  const srcDur = Number(ffprobeJson(path.join(mediaDir, MEDIA.movie1)).format.duration);
+  expect(Math.abs(Number(info.format.duration) - srcDur)).toBeLessThan(0.5);
   void m; void b;
 });
 
@@ -92,7 +97,7 @@ test('cancel a running proxy, then start it again: no .part left behind and the 
   expect(done.status).toBe('canceled');
   await expect.poll(async () => (await media(id)).proxy.status, { timeout: 10_000 }).toMatch(/none|failed/);
   const proxiesDir = path.join(app.cacheDir, 'proxies');
-  await expect.poll(() => fs.readdirSync(proxiesDir).filter((f) => f.endsWith('.part')), { timeout: 10_000 }).toEqual([]);
+  await expect.poll(() => fs.readdirSync(proxiesDir).filter(isPart), { timeout: 10_000 }).toEqual([]);
   const j2 = await startProxy(id);
   const d2 = await waitJob(j2.id, 180_000);
   expect(d2.status).toBe('done');
@@ -205,15 +210,15 @@ test('kill the app mid-proxy: no finished proxy is left behind, relaunch shows s
   const j = await startProxy(id);
   await expect.poll(async () => (await jobsOf()).find((x) => x.id === j.id)?.status, { timeout: 30_000 }).toBe('running');
   const proxiesDir = path.join(app.cacheDir, 'proxies');
-  await expect.poll(() => fs.readdirSync(proxiesDir).some((f) => f.endsWith('.part')), { timeout: 20_000 }).toBe(true);
+  await expect.poll(() => fs.readdirSync(proxiesDir).some(isPart), { timeout: 20_000 }).toBe(true);
   await app.page.evaluate(async (p) => (window as unknown as W).__recut.actions.saveProject(p), projectPath); // persist 'running' status
   app.app.process().kill('SIGKILL');
   await new Promise((r) => setTimeout(r, 1500));
   const files = fs.readdirSync(proxiesDir);
-  const finals = files.filter((f) => f.endsWith('.mp4') && !f.endsWith('.part'));
-  const parts = files.filter((f) => f.endsWith('.part'));
+  const finals = files.filter((f) => f.endsWith('.mp4') && !isPart(f));
+  const parts = files.filter(isPart);
   // earlier tests produced finished proxies for other media; the killed one must only exist as .part
-  const key = parts[0]?.replace(/\.part$/, '');
+  const key = parts[0]?.replace(/\.part(-.*)?$/, '');
   expect(parts.length).toBeGreaterThan(0);
   expect(finals, `a finished proxy exists for the killed job (${key})`).not.toContain(key);
   // relaunch, open, check normalized status and that a retry succeeds
@@ -223,6 +228,6 @@ test('kill the app mid-proxy: no finished proxy is left behind, relaunch shows s
   expect((await media(id)).proxy.status).toBe('none');
   const j2 = await startProxy(id);
   expect((await waitJob(j2.id, 180_000)).status).toBe('done');
-  expect(fs.readdirSync(proxiesDir).filter((f) => f.endsWith('.part'))).toEqual([]);
+  expect(fs.readdirSync(proxiesDir).filter(isPart)).toEqual([]);
   expect(pageErrors).toEqual([]);
 });

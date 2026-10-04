@@ -123,3 +123,7 @@
 
 /* ---------- empty ---------- */
 .source-panel .empty { background: var(--bg-1); }
+
+/* Active transport monitor (UX-03) — frame drawn by program.css's shared rule; tint the transport bar. */
+.source-panel { position: relative; }
+.source-panel.transport-active .source-transport, .source-panel.transport-active .source-tc-row { background: color-mix(in srgb, var(--accent) 12%, var(--bg-2)); }

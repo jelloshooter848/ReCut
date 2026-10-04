@@ -518,3 +518,109 @@ describe('selectors + ui', () => {
     expect(S().project.scenes[id]).toMatchObject({ name: 'Cantina', mediaId: media.id, in: 12.5, out: 20 });
   });
 });
+
+describe('attack fixes (store)', () => {
+  it('setMediaProbe is quiet: no undo entry, marks dirty, import stays one undo step', () => {
+    const items = [1, 2, 3].map((i) => createMediaItem(`/m/${i}.mp4`, `${i}.mp4`));
+    S().addMedia(items);
+    const n = S().history.past.length;
+    useStore.setState({ dirty: false });
+    for (const it of items) S().setMediaProbe(it.id, fakeProbe(10));
+    expect(S().history.past.length).toBe(n);
+    expect(S().dirty).toBe(true);
+    expect(S().project.media[items[0].id].probe).toBeTruthy();
+    S().undo();
+    expect(items.some((it) => S().project.media[it.id])).toBe(false);
+  });
+
+  it('a probe that arrives after a later edit survives undoing that edit', () => {
+    const m = createMediaItem('/late.mp4', 'late.mp4');
+    S().addMedia([m]);
+    S().addMarker(seqId, { time: 5 });
+    S().setMediaProbe(m.id, fakeProbe(10));
+    S().undo(); // undo the marker
+    expect(seq().markers).toHaveLength(0);
+    expect(S().project.media[m.id].probe?.duration).toBe(10);
+    expect(S().project.media[m.id].kind).toBe('video');
+  });
+
+  it('invalidateProxy resets a ready proxy quietly', () => {
+    S().setProxy(media.id, { status: 'ready', path: '/p.mp4' });
+    const n = S().history.past.length;
+    useStore.setState({ dirty: false });
+    S().invalidateProxy(media.id);
+    expect(S().project.media[media.id].proxy).toEqual({ status: 'none' });
+    expect(S().history.past.length).toBe(n);
+    expect(S().dirty).toBe(true);
+  });
+
+  it('updateMarker clamps time and duration to >= 0', () => {
+    const id = S().addMarker(seqId, { time: 10 })!;
+    S().updateMarker(seqId, id, { time: -40, duration: -3 });
+    expect(seq().markers[0]).toMatchObject({ time: 0, duration: 0 });
+  });
+
+  it('setTransitionDuration never overlaps the transition on the other edge of a clip', () => {
+    S().insertFromSource(seqId, { mediaId: media.id, in: 0, out: 5, atFrame: 0, mode: 'overwrite' });
+    S().insertFromSource(seqId, { mediaId: media.id, in: 0, out: 0.5, atFrame: 120, mode: 'overwrite' });
+    S().insertFromSource(seqId, { mediaId: media.id, in: 0, out: 5, atFrame: 132, mode: 'overwrite' });
+    const v1 = () => seq().videoTracks[0];
+    const t1 = S().addTransitionAtCut(seqId, v1().id, 120, 'crossDissolve', 4)!;
+    const t2 = S().addTransitionAtCut(seqId, v1().id, 132, 'crossDissolve', 4)!;
+    S().setTransitionDuration(seqId, t1.id, 24);
+    const dur = (id: string) => v1().transitions.find((t) => t.id === id)!.duration;
+    expect(dur(t1.id)).toBe(8);
+    expect(dur(t1.id) + dur(t2.id)).toBeLessThanOrEqual(12);
+  });
+
+  it('markers / continuity notes linked to a clip follow it; a deleted clip leaves the marker in place unlinked', () => {
+    const [v] = S().insertFromSource(seqId, { mediaId: media.id, in: 0, out: 4, atFrame: 0, mode: 'overwrite' });
+    const note = S().addContinuityNote(seqId, { time: 20, name: 'shirt', note: '', clipId: v })!;
+    const plain = S().addMarker(seqId, { time: 21 })!;
+    S().moveClips(seqId, [{ clipId: v, toTrackId: seq().videoTracks[1].id, toStart: 500 }], 'overwrite');
+    const mk = (id: string) => seq().markers.find((m) => m.id === id)!;
+    expect(mk(note).time).toBe(520);
+    expect(mk(plain).time).toBe(21);
+    S().undo();
+    expect(mk(note).time).toBe(20);
+    S().redo();
+    S().select([v]);
+    S().deleteSelected(seqId);
+    expect(mk(note).time).toBe(520);
+    expect(mk(note).clipId).toBeUndefined();
+  });
+
+  it('insertFromSource honours patching: only patched kinds are placed; nothing patched → [] + toast', () => {
+    const s0 = seq();
+    S().setTrackFlags(seqId, s0.videoTracks[0].id, { patched: false });
+    const ids = S().insertFromSource(seqId, { mediaId: media.id, in: 0, out: 1, atFrame: 0, mode: 'overwrite' });
+    expect(ids).toHaveLength(1);
+    const a = findClip(seq(), ids[0])!;
+    expect(a.track.id).toBe(seq().audioTracks[0].id);
+    expect(a.clip.linkId).toBeNull();
+    expect(seq().videoTracks.every((t) => t.clips.length === 0)).toBe(true);
+    // explicit includeVideo still falls back to the first unlocked track
+    expect(S().insertFromSource(seqId, { mediaId: media.id, in: 0, out: 1, atFrame: 100, mode: 'overwrite', includeVideo: true, includeAudio: false })).toHaveLength(1);
+    expect(seq().videoTracks[0].clips).toHaveLength(1);
+    S().setTrackFlags(seqId, seq().audioTracks[0].id, { patched: false });
+    const toasts = S().ui.toasts.length;
+    const h = S().history.past.length;
+    expect(S().insertFromSource(seqId, { mediaId: media.id, in: 0, out: 1, atFrame: 200, mode: 'overwrite' })).toEqual([]);
+    expect(S().history.past.length).toBe(h);
+    expect(S().ui.toasts.slice(toasts).map((t) => t.text)).toEqual(['No source tracks patched']);
+    // an explicit track id needs no patch
+    expect(S().insertFromSource(seqId, { mediaId: media.id, in: 0, out: 1, atFrame: 200, mode: 'overwrite', videoTrackId: seq().videoTracks[2].id })).toHaveLength(1);
+  });
+});
+
+describe('attack fixes (store) — snapshots', () => {
+  it('restoring a snapshot keeps its own marker times (no double shift of clip-linked markers)', () => {
+    const [v] = S().insertFromSource(seqId, { mediaId: media.id, in: 0, out: 4, atFrame: 0, mode: 'overwrite' });
+    const note = S().addContinuityNote(seqId, { time: 20, name: 'n', note: '', clipId: v })!;
+    const snap = S().takeSnapshot(seqId, 'before move');
+    S().moveClips(seqId, [{ clipId: v, toTrackId: seq().videoTracks[0].id, toStart: 300 }], 'overwrite');
+    expect(seq().markers.find((m) => m.id === note)!.time).toBe(320);
+    S().restoreSnapshot(seqId, snap!);
+    expect(seq().markers.find((m) => m.id === note)!.time).toBe(20);
+  });
+});

@@ -76,7 +76,7 @@ export function SpeedDialog({ seqId, clip, fps, onClose }: { seqId: string; clip
   const newDur = Math.max(1, Math.round(clip.duration * clip.speed / Math.max(0.01, pct / 100)));
   const apply = () => { useStore.getState().setClipSpeed(seqId, clip.id, Math.max(0.01, pct / 100), { ripple }); onClose(); };
   return (
-    <Dialog open title={`Speed / Duration — ${clip.name}`} onClose={onClose} width={360}
+    <Dialog open title={`Speed / Duration — ${clip.name}`} onClose={onClose} width={360} onSubmit={apply}
       footer={<><Button size="sm" onClick={onClose}>Cancel</Button><Button size="sm" variant="primary" onClick={apply}>Apply</Button></>}>
       <div className="tl-form-row"><label>Speed</label><NumberField value={pct} min={1} max={1000} step={1} precision={1} unit="%" defaultValue={100} onChange={setPct} onCommit={setPct} /></div>
       <div className="tl-form-row"><label>Duration</label><span className="mono text-dim">{formatTimecode(clip.duration, fps)} → <span className="text-bright">{formatTimecode(newDur, fps)}</span></span></div>
@@ -90,9 +90,9 @@ export function RenameDialog({ title, value, onClose, onCommit }: { title: strin
   const [name, setName] = useState(value);
   const commit = () => { const v = name.trim(); if (v && v !== value) onCommit(v); onClose(); };
   return (
-    <Dialog open title={title} onClose={onClose} width={360}
+    <Dialog open title={title} onClose={onClose} width={360} onSubmit={commit}
       footer={<><Button size="sm" onClick={onClose}>Cancel</Button><Button size="sm" variant="primary" onClick={commit}>Rename</Button></>}>
-      <TextField value={name} onChange={setName} autoFocus selectOnFocus onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
+      <TextField value={name} onChange={setName} autoFocus selectOnFocus data-testid="rename-input" />
     </Dialog>
   );
 }
@@ -106,7 +106,7 @@ export function TagsDialog({ seqId, clip, onClose }: { seqId: string; clip: Clip
   const [tags, setTags] = useState(clip.tags);
   const apply = () => { useStore.getState().setClipTags(seqId, clip.id, { characters, plotlines, locations, tags }); onClose(); };
   return (
-    <Dialog open title={`Tags — ${clip.name}`} onClose={onClose} width={420}
+    <Dialog open title={`Tags — ${clip.name}`} onClose={onClose} width={420} onSubmit={apply}
       footer={<><Button size="sm" onClick={onClose}>Cancel</Button><Button size="sm" variant="primary" onClick={apply}>Apply</Button></>}>
       <div className="tl-form-row"><label>Characters</label><TagInput value={characters} onChange={setCharacters} suggestions={vocab.characters} placeholder="Add character…" /></div>
       <div className="tl-form-row"><label>Plotlines</label><TagInput value={plotlines} onChange={setPlotlines} suggestions={vocab.plotlines} placeholder="Add plotline…" /></div>

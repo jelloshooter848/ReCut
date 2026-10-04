@@ -5,9 +5,9 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { Clip, ID, Marker, Sequence, Track, TransitionType } from '@shared/model';
-import { formatSecondsTimecode, formatTimecode, fpsLabel, secondsToFrames } from '@shared/time';
+import { formatSecondsTimecode, formatTimecode, fpsLabel } from '@shared/time';
 import { clipEnd, clipSourceOut, editPoints, findClip, resolveSubtitleCues, sequenceDuration, sourceTimeAt } from '@shared/timeline';
-import { useStore, filterMatches, filtersActive, mediaDuration } from '@/state';
+import { useStore, filterMatches, filtersActive } from '@/state';
 import { hasClipDrag, readClipDrag } from '@/app/dnd';
 import { openContextMenu, type MenuItem } from '@/components/ui/ContextMenu';
 import { Splitter } from '@/components/ui/Splitter';
@@ -27,10 +27,15 @@ import { useTimelineDrag, snapTargets, type InteractionCtx } from './interaction
 import { useTimelineUi } from './timelineStore';
 import { clipboardHasClips, copyClipsToClipboard, pasteClipboardAt } from '@/app/clipboard';
 import { setTimelineViewportWidth } from '@/app/commands';
+import { setActiveTransport } from '@/app/transport';
+import { getShortcutLabel, runCommand } from '@/keyboard/shortcuts';
+import { COMMAND_IDS } from '@/keyboard/commandIds';
+import { maybeConformSequence, performSourceEdit } from '@/panels/source/insert';
+import { linkedSyncOffsets } from './clipBadges';
 import type { DialogState, DragPreview } from './types';
 import { RULER_H } from './types';
 import {
-  clipOverlaps, clipVisiblePx, frameToX, layoutTracks, rowAtY, scrollContentFrames, snapFrame, snapThresholdFrames, visibleRange,
+  clipOverlaps, clipVisiblePx, frameToX, layoutTracks, minZoomFor, rowAtY, scrollContentFrames, snapFrame, snapThresholdFrames, visibleRange,
   xToFrame, xToFrameInt, zoomAround, zoomToFit, type TrackLayout,
 } from './viewMath';
 
@@ -104,6 +109,10 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const rowById = useMemo(() => new Map(layout.rows.map((r) => [r.id, r])), [layout]);
   const cues = useMemo(() => (seq && hasSubs ? resolveSubtitleCues(seq as unknown as Sequence) : []), [seq?.videoTracks, seq?.audioTracks, seq?.subtitleTracks, seq?.fps, hasSubs]); // eslint-disable-line react-hooks/exhaustive-deps
   const filterOn = filtersActive(filters);
+  const syncOffsets = useMemo(() => linkedSyncOffsets([...(seq?.videoTracks ?? []), ...(seq?.audioTracks ?? [])], fps), [seq?.videoTracks, seq?.audioTracks, fps]);
+  const minZoom = minZoomFor(duration, width);
+  const minZoomRef = useRef(minZoom);
+  minZoomRef.current = minZoom;
 
   // ---- interactions ---------------------------------------------------------------------------
   const ctxRef = useRef<InteractionCtx>({ seqId, zoom, scroll, layout, tool, snapping, linkedSelection, contentEl: null });
@@ -141,7 +150,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
         e.preventDefault();
         const r = el.getBoundingClientRect();
         const factor = Math.exp(-e.deltaY * 0.002);
-        st.setView(seqId, zoomAround(s.view.zoom, s.view.scroll, e.clientX - r.left, s.view.zoom * factor));
+        st.setView(seqId, zoomAround(s.view.zoom, s.view.scroll, e.clientX - r.left, s.view.zoom * factor, minZoomRef.current));
         return;
       }
       const horizontal = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY);
@@ -161,6 +170,55 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     const r = el.getBoundingClientRect();
     useTimelineUi.getState().setHoverFrame(xToFrameInt(e.clientX - r.left, ctxRef.current.zoom, ctxRef.current.scroll));
   };
+
+  // ---- match frame / marker editor requests --------------------------------------------------
+  /** Premiere double-click: load the clip's media in the Source with In/Out = the clip's source range (E-17). */
+  const openClipInSource = (clip: Clip) => {
+    const st = useStore.getState();
+    if (!st.project.media[clip.mediaId]) { toast('warn', 'Clip media is missing from the project'); return; }
+    const ph = fullSeq()?.view.playhead ?? clip.start;
+    const inside = ph >= clip.start && ph < clipEnd(clip);
+    st.setSourceClip(clip.mediaId, sourceTimeAt(clip, inside ? ph : clip.start, fps));
+    st.setSourceIn(clip.sourceIn);
+    st.setSourceOut(clipSourceOut(clip, fps));
+    focusPanel('source');
+    setActiveTransport('source');
+  };
+  useEffect(() => {
+    if (!active) return;
+    useTimelineUi.getState().setMarkerEditorHost(1);
+    return () => useTimelineUi.getState().setMarkerEditorHost(-1);
+  }, [active]);
+  const markerReq = useTimelineUi((s) => s.markerEditRequest);
+  useEffect(() => {
+    if (!markerReq || !active) return;
+    useTimelineUi.getState().requestMarkerEdit(null);
+    const s = fullSeq(); const m = s?.markers.find((x) => x.id === markerReq.markerId);
+    const r = tracksColRef.current?.getBoundingClientRect();
+    if (!s || !m || !r) return;
+    const px = (m.time - s.view.scroll) * s.view.zoom;
+    setDialog({ kind: 'marker', markerId: m.id, x: r.left + Math.max(0, Math.min(r.width - 20, px)), y: r.top + RULER_H });
+  }, [markerReq, active]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- razor preview (UX-20) -------------------------------------------------------------------
+  const [razorLine, setRazorLine] = useState<{ frame: number; top: number; height: number } | null>(null);
+  const updateRazorLine = (e: React.PointerEvent) => {
+    const ctx = ctxRef.current;
+    if (ctx.tool !== 'razor') { if (razorLine) setRazorLine(null); return; }
+    const el = contentRef.current; if (!el) return;
+    const clipEl = (e.target as HTMLElement).closest<HTMLElement>('[data-clip-id]');
+    const s = fullSeq();
+    const loc = clipEl && s ? findClip(s, clipEl.dataset.clipId!) : undefined;
+    const row = loc ? ctx.layout.rows.find((x) => x.id === loc.track.id) : undefined;
+    if (!loc || !row || loc.track.locked || !s) { if (razorLine) setRazorLine(null); return; }
+    const r = el.getBoundingClientRect();
+    let f = Math.round(xToFrame(e.clientX - r.left, ctx.zoom, ctx.scroll));
+    if (ctx.snapping && !e.altKey) f = snapFrame(f, snapTargets(s), snapThresholdFrames(ctx.zoom)).frame;
+    if (f <= loc.clip.start || f >= clipEnd(loc.clip)) { if (razorLine) setRazorLine(null); return; }
+    const next = e.shiftKey ? { frame: f, top: 0, height: ctx.layout.total } : { frame: f, top: row.top, height: row.height };
+    if (!razorLine || razorLine.frame !== next.frame || razorLine.top !== next.top || razorLine.height !== next.height) setRazorLine(next);
+  };
+  useEffect(() => { if (tool !== 'razor') setRazorLine(null); }, [tool]);
 
   // ---- clipboard ------------------------------------------------------------------------------
   const copySelection = () => { const s = fullSeq(); if (!s) return 0; return copyClipsToClipboard(s, useStore.getState().ui.selectedClipIds); };
@@ -237,7 +295,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
       ...cutItems,
       { label: clip.enabled ? 'Disable' : 'Enable', shortcut: 'Shift+E', onSelect: () => st.setClipEnabled(seqId, clip.id, !clip.enabled) },
       { label: clip.linkId ? 'Unlink' : 'Link', shortcut: 'Ctrl+L', disabled: !clip.linkId && sel.length < 2, onSelect: () => (clip.linkId ? st.unlinkSelected(seqId) : st.linkSelected(seqId)) },
-      { label: 'Speed / Duration…', onSelect: () => setDialog({ kind: 'speed', clipId: clip.id }) },
+      { label: 'Speed / Duration…', shortcut: getShortcutLabel('clip.speedDuration') || undefined, onSelect: () => setDialog({ kind: 'speed', clipId: clip.id }) },
       { label: 'Rename…', onSelect: () => setDialog({ kind: 'rename', clipId: clip.id }) },
       { label: 'Color Label', submenu: colorItems },
       { label: 'Tag…', onSelect: () => setDialog({ kind: 'tags', clipId: clip.id }) },
@@ -248,7 +306,12 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
       { label: 'Add Continuity Note…', onSelect: () => addContinuityAt(inside ? ph : clip.start, clip, at) },
       { label: 'Add to Scene Library', onSelect: () => { if (st.sceneFromClip(seqId, clip.id)) toast('ok', `Added “${clip.name}” to the scene library`); } },
       { label: 'Reveal in Project', onSelect: () => { st.selectMedia([clip.mediaId], 'set'); focusPanel('project'); } },
-      { label: 'Match Frame', shortcut: 'F', onSelect: () => { st.setSourceClip(clip.mediaId, sourceTimeAt(clip, inside ? ph : clip.start, fps)); focusPanel('source'); } },
+      { label: 'Match Frame', shortcut: getShortcutLabel(COMMAND_IDS.matchFrame) || 'F', onSelect: () => { st.setSourceClip(clip.mediaId, sourceTimeAt(clip, inside ? ph : clip.start, fps)); focusPanel('source'); } },
+      { separator: true },
+      { label: 'Ripple Trim Start to Playhead', shortcut: getShortcutLabel(COMMAND_IDS.rippleTrimPrev) || 'Q', disabled: !(ph > clip.start && ph < clipEnd(clip)) || track.locked,
+        onSelect: () => { if (!st.ui.selectedClipIds.includes(clip.id)) st.select([clip.id], 'set'); runCommand(COMMAND_IDS.rippleTrimPrev); } },
+      { label: 'Ripple Trim End to Playhead', shortcut: getShortcutLabel(COMMAND_IDS.rippleTrimNext) || 'W', disabled: !(ph > clip.start && ph < clipEnd(clip)) || track.locked,
+        onSelect: () => { if (!st.ui.selectedClipIds.includes(clip.id)) st.select([clip.id], 'set'); runCommand(COMMAND_IDS.rippleTrimNext); } },
       { separator: true },
       { label: 'Cut', shortcut: 'Ctrl+X', onSelect: cutSelection },
       { label: 'Copy', shortcut: 'Ctrl+C', onSelect: () => { copySelection(); } },
@@ -346,39 +409,49 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     const payloads = readClipDrag(e.dataTransfer);
     if (!payloads?.length) return;
     e.preventDefault();
-    const st = useStore.getState();
-    const dur = mediaDuration(st);
     const { row, frame } = dropTarget(e);
-    let at = frame;
-    const created: ID[] = [];
-    for (const p of payloads) {
-      if (!st.project.media[p.mediaId]) continue;
-      const total = dur(p.mediaId);
-      const inS = Math.max(0, p.in ?? 0);
-      const outS = p.out ?? (Number.isFinite(total) ? total : inS + 5);
-      if (outS <= inS) continue;
-      const extra: NonNullable<Parameters<typeof st.insertFromSource>[1]['extra']> = {};
-      if (p.name) extra.name = p.name;
-      if (p.characters?.length) extra.characters = p.characters;
-      if (p.tags?.length) extra.tags = p.tags;
-      if (p.origin) extra.originLabel = p.origin;
-      if (p.sceneRecordId) extra.sceneRecordId = p.sceneRecordId;
-      const ids = st.insertFromSource(seqId, {
-        mediaId: p.mediaId, in: inS, out: outS, atFrame: at,
-        videoTrackId: row?.kind === 'video' ? row.id : undefined, audioTrackId: row?.kind === 'audio' ? row.id : undefined,
-        mode: e.ctrlKey ? 'insert' : 'overwrite', includeVideo: p.includeVideo, includeAudio: p.includeAudio, extra,
-      });
-      created.push(...ids);
-      at += Math.max(1, secondsToFrames(outS - inS, fps));
-    }
-    if (created.length) st.select(created, 'set');
-    rootRef.current?.focus({ preventScroll: true });
+    const insertMode = e.ctrlKey;
+    const st = useStore.getState();
+    const valid = payloads.filter((p) => !!st.project.media[p.mediaId]);
+    if (!valid.length) return;
+    // Same edit path as `,` / `.` and the Source buttons (three-point resolution, conform prompt), at the drop frame.
+    const run = () => {
+      let at = frame;
+      const created: ID[] = [];
+      for (const p of valid) {
+        const extra: NonNullable<Parameters<typeof st.insertFromSource>[1]['extra']> = {};
+        if (p.name) extra.name = p.name;
+        if (p.characters?.length) extra.characters = p.characters;
+        if (p.tags?.length) extra.tags = p.tags;
+        if (p.origin) extra.originLabel = p.origin;
+        if (p.sceneRecordId) extra.sceneRecordId = p.sceneRecordId;
+        const res = performSourceEdit({
+          mode: insertMode ? 'insert' : 'overwrite', mediaId: p.mediaId, srcIn: p.in ?? null, srcOut: p.out ?? null, at,
+          videoTrackId: row?.kind === 'video' ? row.id : undefined, audioTrackId: row?.kind === 'audio' ? row.id : undefined,
+          includeVideo: p.includeVideo, includeAudio: p.includeAudio, extra, quiet: true,
+        }, seqId);
+        if (!res.ok || res.endFrame === null) continue;
+        created.push(...res.clipIds);
+        at = Math.max(at + 1, res.endFrame);
+      }
+      if (created.length) useStore.getState().select(created, 'set');
+      else toast('warn', 'Could not place the clip here (target tracks locked?)');
+      rootRef.current?.focus({ preventScroll: true });
+    };
+    const pending = maybeConformSequence(seqId, valid[0].mediaId);
+    if (pending) void pending.then(run); else run();
   };
 
   // ---- focus -----------------------------------------------------------------------------------
-  const onFocus = () => { setHasFocus(true); useStore.getState().setTimelineFocus(true); };
+  /** The Timeline drives the sequence: focusing / clicking it hands the transport keys to the Program side (E-01). */
+  const claimTransport = () => {
+    setActiveTransport('program');
+    const st = useStore.getState();
+    if (st.ui.activePanel !== 'timeline') st.setActivePanel('timeline');
+  };
+  const onFocus = () => { setHasFocus(true); useStore.getState().setTimelineFocus(true); claimTransport(); };
   const onBlur = (e: React.FocusEvent) => { if (!rootRef.current?.contains(e.relatedTarget as Node | null)) { setHasFocus(false); useStore.getState().setTimelineFocus(false); } };
-  const focusSelf = (e: React.PointerEvent) => { if (!isEditableTarget(e.target) && document.activeElement !== rootRef.current && !rootRef.current?.contains(document.activeElement as Node | null)) rootRef.current?.focus({ preventScroll: true }); };
+  const focusSelf = (e: React.PointerEvent) => { claimTransport(); if (!isEditableTarget(e.target) && document.activeElement !== rootRef.current && !rootRef.current?.contains(document.activeElement as Node | null)) rootRef.current?.focus({ preventScroll: true }); };
 
   if (!seq) return <div className="panel"><div className="panel-placeholder">Sequence not found</div></div>;
 
@@ -421,7 +494,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
       data-tool={tool} data-timeline tabIndex={0}
       onKeyDown={onKeyDown} onFocus={onFocus} onBlur={onBlur} onPointerDownCapture={focusSelf}
     >
-      <TimelineHeader seqId={seqId} fps={fps} zoom={zoom} scroll={scroll} viewWidth={width} />
+      <TimelineHeader seqId={seqId} fps={fps} zoom={zoom} scroll={scroll} viewWidth={width} minZoom={minZoom} />
 
       <div className="tl-body">
         {/* ---- track headers ---- */}
@@ -464,17 +537,20 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
           <div className="tl-tracks-scroll" ref={scrollRef} onScroll={onVScroll}>
             <div
               ref={contentRef} className="tl-tracks-content" style={{ height: totalH }}
-              onPointerDown={drag.onPointerDown} onPointerMove={(e) => { drag.onPointerMove(e); onHover(e); }} onPointerUp={drag.onPointerUp} onPointerCancel={drag.onPointerUp}
-              onPointerLeave={() => useTimelineUi.getState().setHoverFrame(null)}
+              onPointerDown={drag.onPointerDown} onPointerMove={(e) => { drag.onPointerMove(e); onHover(e); if (!drag.dragging) updateRazorLine(e); }} onPointerUp={drag.onPointerUp} onPointerCancel={drag.onPointerUp}
+              onPointerLeave={() => { useTimelineUi.getState().setHoverFrame(null); if (razorLine) setRazorLine(null); }}
               onContextMenu={onContentContextMenu}
               onDragOver={onDragOver} onDragEnter={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
               onDoubleClick={(e) => {
-                const clipEl = (e.target as HTMLElement).closest<HTMLElement>('[data-clip-id]');
-                if (!clipEl || tool !== 'select') return;
-                const loc = findClip(fullSeq()!, clipEl.dataset.clipId!);
-                if (!loc) return;
-                useStore.getState().setSourceClip(loc.clip.mediaId, loc.clip.sourceIn);
-                focusPanel('source');
+                if (tool !== 'select') return;
+                // Hit-test by position: pointer capture from the click-drag retargets dblclick to the content element.
+                const el = contentRef.current; if (!el) return;
+                const r = el.getBoundingClientRect();
+                const row = rowAtY(layout, e.clientY - r.top);
+                const track = row ? trackById.get(row.id) : undefined;
+                const f = xToFrame(e.clientX - r.left, zoom, scroll);
+                const clip = track?.clips.find((c) => c.start <= f && f < clipEnd(c));
+                if (clip) openClipInSource(clip);
               }}
             >
               {/* lane backgrounds (static) */}
@@ -510,7 +586,8 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
                     nodes.push(
                       <ClipView key={clip.id} clip={clip} trackId={track.id} trackKind={track.kind} trackLocked={track.locked} height={row.height} zoom={zoom}
                         selected={selectedIds.includes(clip.id)} filter={lookFor(clip)} media={media[clip.mediaId]} fps={fps} showSourceTc={showSourceTc}
-                        visFrom={vis.visFrom} visTo={vis.visTo} cutAtStart={!!prev && clipEnd(prev) === clip.start} cutAtEnd={!!next && next.start === clipEnd(clip)} />,
+                        visFrom={vis.visFrom} visTo={vis.visTo} cutAtStart={!!prev && clipEnd(prev) === clip.start} cutAtEnd={!!next && next.start === clipEnd(clip)}
+                        syncOffset={syncOffsets.get(clip.id)} />,
                     );
                   });
                   for (const tr of track.transitions) {
@@ -522,6 +599,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
                   return <div key={row.id} className="tl-track-clips" data-track-id={row.id} style={{ top: row.top, height: row.height, width: contentPx }}>{nodes}</div>;
                 })}
                 {ghosts}
+                {razorLine ? <div className="tl-razor-line" data-razor-preview style={{ left: razorLine.frame * zoom, top: razorLine.top, height: razorLine.height }} /> : null}
               </div>
 
               {/* static overlays */}

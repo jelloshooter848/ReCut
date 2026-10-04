@@ -42,7 +42,8 @@ export function TagInput({ value, onChange, suggestions = [], placeholder = 'Add
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 120)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add(open && matches[hi] && text ? matches[hi] : text); }
+          // Enter on an empty field is left to the surrounding form/dialog (Enter = Apply).
+          if ((e.key === 'Enter' && text.trim()) || e.key === ',') { e.preventDefault(); add(open && matches[hi] && text ? matches[hi] : text); }
           else if (e.key === 'Backspace' && !text && value.length) remove(value[value.length - 1]);
           else if (e.key === 'ArrowDown') { e.preventDefault(); setHi((h) => Math.min(h + 1, matches.length - 1)); }
           else if (e.key === 'ArrowUp') { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); }

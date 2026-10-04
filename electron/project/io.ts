@@ -92,18 +92,50 @@ export async function readProjectJson(filePath: string): Promise<Project> {
   return normalizeProject(raw);
 }
 
+/** Thrown for content that cannot be a project at all (unreadable / not JSON / not an object). */
+class DamagedProjectError extends Error {}
+
+/** Read + parse; damaged content throws DamagedProjectError, a valid-but-refused project (e.g. newer format) throws Error. */
+async function readProjectStrict(filePath: string): Promise<Project> {
+  let text: string;
+  try { text = await fsp.readFile(filePath, 'utf8'); } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw e;
+    throw new DamagedProjectError(errMsg(e));
+  }
+  let raw: unknown;
+  try { raw = JSON.parse(text); } catch (e) { throw new DamagedProjectError(`Not valid JSON: ${errMsg(e)}`); }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new DamagedProjectError('Project file is not a JSON object');
+  return normalizeProject(raw);
+}
+
+/** Path the damaged project file is copied to before a backup is used: `<path>.corrupt-<timestamp>`. */
+export function corruptCopyPath(filePath: string, now = Date.now()): string {
+  return `${filePath}.corrupt-${now}`;
+}
+
+/**
+ * Load a project. Falls back to `<path>.bak` only when the main file is damaged (unreadable / not
+ * JSON); a project refused by `normalizeProject` (e.g. saved by a newer ReCut) is reported as an
+ * error so a stale backup never silently replaces it. On fallback the damaged file is copied aside
+ * (it would otherwise become the next `.bak` on save) and the result says `fromBackup`.
+ */
 export async function loadProjectFile(filePath: string): Promise<LoadResult> {
   const resolved = path.resolve(filePath);
   try {
-    const project = await readProjectJson(resolved);
+    const project = await readProjectStrict(resolved);
     return { ok: true, path: resolved, project };
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return { ok: false, error: `Project file not found: ${resolved}` };
-    // Fall back to the .bak if the main file is corrupt
+    if (!(e instanceof DamagedProjectError)) return { ok: false, error: `Could not open project: ${errMsg(e)}` };
+    const bak = resolved + BACKUP_EXT;
     try {
-      const project = await readProjectJson(resolved + BACKUP_EXT);
-      return { ok: true, path: resolved, project };
+      const project = await readProjectJson(bak);
+      const st = await statOrNull(bak);
+      try { await fsp.copyFile(resolved, corruptCopyPath(resolved)); } catch (ce) {
+        console.warn(`could not keep a copy of the damaged project ${resolved}:`, ce);
+      }
+      return { ok: true, path: resolved, project, fromBackup: true, backupMtime: st?.mtimeMs ?? undefined };
     } catch { /* no usable backup */ }
     return { ok: false, error: `Could not open project: ${errMsg(e)}` };
   }
@@ -149,7 +181,8 @@ async function recoveryFrom(autosavePath: string, projectPath: string | null): P
   try {
     const project = await readProjectJson(autosavePath);
     return { autosavePath, projectPath, savedAt: st.mtimeMs, project };
-  } catch {
+  } catch (e) {
+    console.warn(`[recovery] ignoring unreadable autosave ${autosavePath}: ${errMsg(e)}`);
     return null; // corrupt autosave: nothing to recover
   }
 }
@@ -169,13 +202,17 @@ export async function checkRecovery(userData: string, candidateProjects: string[
     const resolved = path.resolve(p);
     if (seen.has(resolved)) continue;
     seen.add(resolved);
-    const auto = autosavePathFor(resolved, userData);
-    const [autoSt, projSt] = await Promise.all([statOrNull(auto), statOrNull(resolved)]);
-    if (!autoSt) continue;
-    // Allow a small slack so an autosave written just before the save isn't flagged.
-    if (projSt && autoSt.mtimeMs <= projSt.mtimeMs + 1000) continue;
-    const info = await recoveryFrom(auto, resolved);
-    if (info) found.push(info);
+    try {
+      const auto = autosavePathFor(resolved, userData);
+      const [autoSt, projSt] = await Promise.all([statOrNull(auto), statOrNull(resolved)]);
+      if (!autoSt) continue;
+      // Allow a small slack so an autosave written just before the save isn't flagged.
+      if (projSt && autoSt.mtimeMs <= projSt.mtimeMs + 1000) continue;
+      const info = await recoveryFrom(auto, resolved);
+      if (info) found.push(info);
+    } catch (e) {
+      console.warn(`[recovery] skipping ${resolved}: ${errMsg(e)}`);
+    }
   }
   if (found.length === 0) return null;
   found.sort((a, b) => b.savedAt - a.savedAt);

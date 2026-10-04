@@ -321,8 +321,9 @@ describe('subtitle cues follow edits', () => {
     S().razor(f.seqId, 40); // inside cue A (24..48) and A2 (36..60)
     const t = texts(f);
     expect(t).toContain('B@72-96');
-    expect(t.some((x) => x.startsWith('A@24-48')), 'cue A truncated at the razor point').toBe(true);
-    expect(t.some((x) => x.startsWith('A2@36-60')), 'cue A2 truncated at the razor point').toBe(true);
+    // The straddling cue is duplicated across head and tail (QA-11 fix): both halves render back to back.
+    expect(t.filter((x) => x.startsWith('A@')), 'cue A truncated at the razor point').toEqual(['A@24-40', 'A@40-48']);
+    expect(t.filter((x) => x.startsWith('A2@')), 'cue A2 truncated at the razor point').toEqual(['A2@36-40', 'A2@40-60']);
   });
 
   it('cues follow a moved clip, a ripple delete and a speed change', () => {

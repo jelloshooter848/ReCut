@@ -150,6 +150,8 @@ export interface StoreActions {
   removeMedia(ids: ID[]): void;
   setMediaProbe(id: ID, result: MediaProbe | { error: string }): void;
   setProxy(id: ID, proxy: ProxyInfo): void;
+  /** Quiet (non-undoable, marks dirty): forget a proxy whose file failed to load → `{status:'none'}`. */
+  invalidateProxy(id: ID): void;
   setSceneDetectStatus(id: ID, status: NonNullable<MediaItem['sceneDetectStatus']>): void;
   setDetectedScenes(id: ID, boundaries: number[], duration: number): void;
   renameDetectedScene(mediaId: ID, sceneId: ID, name: string): void;

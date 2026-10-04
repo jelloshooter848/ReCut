@@ -16,10 +16,12 @@ import { activeSequence, selectedClips } from '@/state/selectors';
 import { importMediaFiles, importSubtitleFile, recutApi } from '@/state/mediaActions';
 import { useLayoutStore } from '@/components/layout/layoutStore';
 import { toast } from '@/components/ui/toastStore';
-import type { Clip, ID, Sequence, Track } from '@shared/model';
+import type { Clip, ID, Sequence, Track, TransitionType } from '@shared/model';
 import { secondsToFrames } from '@shared/time';
-import { allTracks, clipAt, clipEnd, findClip, nextEdit, prevEdit, sequenceDuration, sourceTimeAt } from '@shared/timeline';
-import { MAX_ZOOM, MIN_ZOOM, zoomAround, zoomToFit } from '@/panels/timeline/viewMath';
+import { addTransition, allTracks, clipAt, clipEnd, findClip, nextEdit, prevEdit, sequenceDuration, sourceTimeAt } from '@shared/timeline';
+import { MAX_ZOOM, MIN_ZOOM, minZoomFor, zoomAround, zoomToFit } from '@/panels/timeline/viewMath';
+import { useTimelineUi } from '@/panels/timeline/timelineStore';
+import { insertSourceIntoSequence } from '@/panels/source/insert';
 import { clipboardHasClips, copyClipsToClipboard, pasteClipboardAt } from './clipboard';
 import { getActiveTransport, shuttle, type Transport } from './transport';
 import { requestNewProject, requestOpenProject, requestSave, requestSaveAs } from './project';
@@ -106,7 +108,7 @@ export function zoomToFitValue(durationFrames: number, widthPx = getTimelineView
 /** Multiply the zoom keeping the playhead at the same screen x (and visible). */
 export function zoomAroundPlayhead(seq: Sequence, factor: number): void {
   const { zoom, scroll, playhead } = seq.view;
-  const next = zoomAround(zoom, scroll, (playhead - scroll) * zoom, zoom * factor);
+  const next = zoomAround(zoom, scroll, (playhead - scroll) * zoom, zoom * factor, minZoomFor(sequenceDuration(seq), getTimelineViewportWidth()));
   if (next.zoom === zoom) return;
   const visible = getTimelineViewportWidth() / next.zoom;
   if (playhead < next.scroll || playhead > next.scroll + visible) next.scroll = Math.max(0, playhead - visible / 2);
@@ -148,7 +150,10 @@ export function programFallbackTransport(): Transport | null {
 /** Active transport, else the store fallback. */
 export function transport(): Transport | null { return getActiveTransport() ?? programFallbackTransport(); }
 /** True when the program side (timeline / program monitor) is the keyboard target rather than the source monitor. */
-export function isProgramContext(): boolean { const t = getActiveTransport(); return !t || t.id !== 'source'; }
+export function isProgramContext(): boolean {
+  if (S().ui.timelineFocus) return true;
+  const t = getActiveTransport(); return !t || t.id !== 'source';
+}
 
 export interface ClipHit { track: Track; clip: Clip }
 /** Topmost clip under `frame`: highest video track first, then audio tracks. */
@@ -185,12 +190,21 @@ function seekSource(seconds: number, fps: { num: number; den: number }): void {
   else S().setSourceTime(seconds);
 }
 
+/**
+ * Next / previous scene boundary for a source position, compared in frames (the player reports frame-centre
+ * times, so a seconds comparison sticks just after a boundary).
+ */
+export function sceneBoundaryTarget(boundaries: number[], timeSeconds: number, fps: { num: number; den: number }, dir: -1 | 1): number | undefined {
+  const cur = Math.floor(timeSeconds * fps.num / fps.den + 1e-6);
+  const frameOf = (b: number) => Math.round(b * fps.num / fps.den);
+  return dir > 0 ? boundaries.find((x) => frameOf(x) > cur) : [...boundaries].reverse().find((x) => frameOf(x) < cur);
+}
+
 function goToEditPoint(dir: -1 | 1): void {
   if (!isProgramContext()) {
     const b = sourceSceneBoundaries();
     if (!b) return;
-    const eps = 1e-3;
-    const target = dir > 0 ? b.seconds.find((x) => x > b.time + eps) : [...b.seconds].reverse().find((x) => x < b.time - eps);
+    const target = sceneBoundaryTarget(b.seconds, b.time, b.fps, dir);
     if (target !== undefined) seekSource(target, b.fps);
     return;
   }
@@ -272,6 +286,47 @@ function cmd(id: string, run: () => void | Promise<void>, when?: () => boolean):
   return { id, title: meta?.title ?? id, category: meta?.category ?? 'Editing', when, run: wrap(id, run), ...(extra ? { defaultKeys: extra.keys } : {}) };
 }
 
+const MARK_IN_OUT_FIRST = 'Mark In and Out first (I / O)';
+
+/**
+ * Cuts a default transition goes on (Ctrl+D video tracks only, Ctrl+Shift+D audio only): selected adjacent
+ * pairs, else the selected clips' edge nearest the playhead, else the edit point nearest the playhead.
+ */
+export function defaultTransitionCuts(seq: Sequence, selectedIds: readonly ID[], kind: 'video' | 'audio'): { trackId: ID; frame: number }[] {
+  const tracks = (kind === 'video' ? seq.videoTracks : seq.audioTracks).filter((t) => !t.locked);
+  const cuts: { trackId: ID; frame: number }[] = [];
+  const ph = seq.view.playhead;
+  if (selectedIds.length) {
+    const sel = new Set(selectedIds);
+    for (const t of tracks) for (let i = 0; i < t.clips.length - 1; i++) {
+      const a = t.clips[i], b = t.clips[i + 1];
+      if (sel.has(a.id) && sel.has(b.id) && clipEnd(a) === b.start) cuts.push({ trackId: t.id, frame: b.start });
+    }
+    if (cuts.length) return cuts;
+    for (const t of tracks) for (const c of t.clips) {
+      if (!sel.has(c.id)) continue;
+      cuts.push({ trackId: t.id, frame: Math.abs(ph - c.start) <= Math.abs(clipEnd(c) - ph) ? c.start : clipEnd(c) });
+    }
+    if (cuts.length) return cuts;
+  }
+  let best: number | null = null;
+  for (const t of tracks) for (const c of t.clips) for (const f of [c.start, clipEnd(c)]) if (best === null || Math.abs(f - ph) < Math.abs(best - ph)) best = f;
+  if (best === null) return [];
+  for (const t of tracks) if (t.clips.some((c) => c.start === best || clipEnd(c) === best)) cuts.push({ trackId: t.id, frame: best });
+  return cuts;
+}
+
+function addDefaultTransitionsOfKind(seq: Sequence, kind: 'video' | 'audio'): void {
+  const cuts = defaultTransitionCuts(seq, S().ui.selectedClipIds, kind);
+  if (!cuts.length) { toast('info', `No ${kind} cut to add a transition to`); return; }
+  const type: TransitionType = kind === 'audio' ? 'audioCrossfade' : 'crossDissolve';
+  const frames = Math.max(1, S().project.settings.defaultTransitionFrames);
+  // One undo step: a transient transaction around the pure timeline op.
+  S().beginTransaction();
+  S().updateTransient((d) => { const s = d.sequences[seq.id]; if (s) for (const c of cuts) addTransition(s, c.trackId, c.frame, type, frames); });
+  if (!S().endTransaction(kind === 'audio' ? 'Add audio transition' : 'Add video transition')) toast('info', 'No room for a transition there');
+}
+
 const hasSeq = () => !!seqNow();
 const hasClipSelection = () => S().ui.selectedClipIds.length > 0;
 const hasSelection = () => { const u = S().ui; return u.selectedClipIds.length > 0 || !!u.selectedTransitionId || !!u.selectedMarkerId; };
@@ -319,7 +374,13 @@ export function buildEditingCommands(): CommandInput[] {
       const seq = seqNow(); if (!seq) return;
       const frame = seq.view.playhead;
       const existing = seq.markers.find((m) => m.time === frame || (m.duration > 0 && m.time <= frame && m.time + m.duration > frame));
-      if (existing) { S().selectMarker(existing.id); layout().focusPanel('markers'); return; }
+      if (existing) {
+        S().selectMarker(existing.id);
+        // Premiere: M on an existing marker opens its editor (in the Timeline), else the Markers panel.
+        if (useTimelineUi.getState().markerEditorHosts > 0) useTimelineUi.getState().requestMarkerEdit(existing.id);
+        else layout().focusPanel('markers');
+        return;
+      }
       const id = S().addMarker(seq.id, { time: frame });
       if (id) S().selectMarker(id);
     }, hasSeq),
@@ -354,10 +415,10 @@ export function buildEditingCommands(): CommandInput[] {
       const ids = allTracks(seq).filter((t) => !t.locked).map((t) => t.id);
       if (!S().razor(seq.id, seq.view.playhead, ids).length) toast('info', 'No clip to cut at the playhead');
     }, hasSeq),
-    cmd(C.insert, () => insertFromSourceMonitor('insert'), hasSeq),
-    cmd(C.overwrite, () => insertFromSourceMonitor('overwrite'), hasSeq),
-    cmd(C.lift, () => { const seq = seqNow(); if (seq) S().liftInOut(seq.id); }, () => hasSeq() && hasInOut()),
-    cmd(C.extract, () => { const seq = seqNow(); if (seq) S().extractInOut(seq.id); }, () => hasSeq() && hasInOut()),
+    cmd(C.insert, () => { insertSourceIntoSequence('insert'); }, hasSeq),
+    cmd(C.overwrite, () => { insertSourceIntoSequence('overwrite'); }, hasSeq),
+    cmd(C.lift, () => { const seq = seqNow(); if (!seq) return; if (!hasInOut()) { toast('info', MARK_IN_OUT_FIRST); return; } S().liftInOut(seq.id); }, hasSeq),
+    cmd(C.extract, () => { const seq = seqNow(); if (!seq) return; if (!hasInOut()) { toast('info', MARK_IN_OUT_FIRST); return; } S().extractInOut(seq.id); }, hasSeq),
     cmd(C.rippleTrimPrev, () => {
       const seq = seqNow(); if (!seq) return;
       const targets = trimTargets(seq, seq.view.playhead);
@@ -370,8 +431,8 @@ export function buildEditingCommands(): CommandInput[] {
       if (!targets.length) { toast('info', 'No clip under the playhead'); return; }
       for (const c of targets) S().trimClipEdge(seq.id, c.id, 'end', seq.view.playhead, true);
     }, hasSeq),
-    cmd(C.defaultVideoTransition, () => { const seq = seqNow(); if (seq) S().addDefaultTransitionAtSelection(seq.id); }, hasSeq),
-    cmd(C.defaultAudioTransition, () => { const seq = seqNow(); if (seq) S().addDefaultTransitionAtSelection(seq.id); }, hasSeq),
+    cmd(C.defaultVideoTransition, () => { const seq = seqNow(); if (seq) addDefaultTransitionsOfKind(seq, 'video'); }, hasSeq),
+    cmd(C.defaultAudioTransition, () => { const seq = seqNow(); if (seq) addDefaultTransitionsOfKind(seq, 'audio'); }, hasSeq),
     cmd(C.toggleClipEnabled, () => { const seq = seqNow(); if (seq) S().toggleClipEnabledSelected(seq.id); }, () => hasSeq() && hasClipSelection()),
     cmd(C.linkUnlink, () => {
       const seq = seqNow(); if (!seq) return;
@@ -466,26 +527,6 @@ export function buildEditingCommands(): CommandInput[] {
       await api.message({ type: 'info', title: 'About ReCut', message: `ReCut ${info.version}`, detail: `FFmpeg: ${info.ffmpegVersion ?? 'not found'}\n${info.ffmpegPath ?? ''}\nCache: ${info.cacheDir}`, buttons: ['OK'] });
     }),
   ];
-}
-
-function insertFromSourceMonitor(mode: 'insert' | 'overwrite'): void {
-  const st = S();
-  const seq = activeSequence(st);
-  const sc = st.ui.sourceClip;
-  if (!seq) return;
-  if (!sc) { toast('info', 'Open a clip in the Source monitor first'); return; }
-  const media = st.project.media[sc.mediaId];
-  if (!media) return;
-  const inS = sc.inPoint ?? 0;
-  const outS = sc.outPoint ?? media.probe?.duration ?? inS;
-  if (!(outS > inS)) { toast('info', 'Set In and Out points in the Source monitor first'); return; }
-  const ids = st.insertFromSource(seq.id, { mediaId: media.id, in: inS, out: outS, atFrame: seq.view.playhead, mode });
-  if (!ids.length) { toast('warn', 'Could not place the clip (target tracks locked?)'); return; }
-  const after = activeSequence(S());
-  if (after) {
-    const end = Math.max(...ids.map((id) => { const loc = findClip(after, id); return loc ? clipEnd(loc.clip) : seq.view.playhead; }));
-    S().setView(seq.id, { playhead: end });
-  }
 }
 
 /** Register (or re-register) every editing command. Idempotent. */

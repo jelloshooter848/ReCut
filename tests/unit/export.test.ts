@@ -12,7 +12,7 @@ import type { Clip, ExportSettings, MediaItem, MediaProbe, Sequence, Transition 
 import type { ExportRequest } from '@shared/ipc';
 import { createSequence } from '@shared/project';
 import { makeClip } from '@shared/timeline';
-import { buildRenderGraph, escapeFilterPath, FILTER_SCRIPT_TOKEN } from '../../electron/export/renderGraph';
+import { buildRenderGraph, escapeFilterPath, exportOutputPath, FILTER_SCRIPT_TOKEN, sanitizeExportFileName } from '../../electron/export/renderGraph';
 import { runExport, buildExportCommand, startExportJob, type ExportJobQueue, type ExportJobSpec } from '../../electron/export/exporter';
 
 const exec = promisify(execFile);
@@ -382,4 +382,88 @@ describe('export pipeline', () => {
     expect(fs.existsSync(path.join(dir, r.settings.fileName))).toBe(false);
     expect(fs.existsSync(path.join(dir, r.settings.fileName.replace(/\.mp4$/, '.part.mp4')))).toBe(false);
   }, 30000);
+});
+
+describe('export request validation', () => {
+  const fakeQueue = (): ExportJobQueue & { added: number } => {
+    const q = { added: 0, add: (spec: ExportJobSpec) => { q.added++; return { id: 'j', kind: 'export' as const, title: spec.title, status: 'queued' as const, progress: 0 }; }, cancel: () => {} };
+    return q;
+  };
+
+  it('refuses an output (or its .part / sidecar) that is a source or proxy of the sequence (QA-03)', async () => {
+    const s = seq();
+    vclip(s, mediaA, 0, 24, 0);
+    const srcDir = path.dirname(mediaA.path);
+    const base = path.basename(mediaA.path);
+    expect(() => buildRenderGraph(req(s, { outputDir: srcDir, fileName: base }))).toThrow(/used by the sequence/);
+    const q = fakeQueue();
+    const r = await startExportJob(q, req(s, { outputDir: srcDir, fileName: base }));
+    expect(r.ok).toBe(false);
+    expect(q.added).toBe(0);
+    // .part temp equal to a source
+    const partVictim = path.join(dir, 'victim.part.mp4');
+    fs.copyFileSync(mediaA.path, partVictim);
+    const m2 = { ...mediaA, id: 'pv', path: partVictim };
+    const s2 = seq(); vclip(s2, m2, 0, 24, 0);
+    expect(() => buildRenderGraph({ sequence: s2, media: { pv: m2 }, settings: settings({ fileName: 'victim.mp4' }) })).toThrow(/used by the sequence/);
+    // sidecar .srt / proxy path
+    const m3 = { ...mediaA, id: 'px', proxy: { status: 'ready' as const, path: path.join(dir, 'prx.mp4') } };
+    const s3 = seq(); vclip(s3, m3, 0, 24, 0);
+    expect(() => buildRenderGraph({ sequence: s3, media: { px: m3 }, settings: settings({ fileName: 'prx.mp4' }) })).toThrow(/used by the sequence/);
+    const m4 = { ...mediaA, id: 'sc', path: path.join(dir, 'cap.srt') };
+    const s4 = seq(); vclip(s4, m4, 0, 24, 0);
+    expect(() => buildRenderGraph({ sequence: s4, media: { sc: m4 }, settings: settings({ fileName: 'cap.mp4', exportSubtitleSidecar: true }) })).toThrow(/used by the sequence/);
+    expect(() => buildRenderGraph({ sequence: s4, media: { sc: m4 }, settings: settings({ fileName: 'cap.mp4' }) })).not.toThrow();
+  });
+
+  it('compares case-insensitively on win32/darwin and through symlinks via realpath', async () => {
+    const s = seq();
+    vclip(s, mediaA, 0, 24, 0);
+    const upper = path.basename(mediaA.path).toUpperCase();
+    const r = req(s, { outputDir: path.dirname(mediaA.path), fileName: upper });
+    expect(() => buildRenderGraph(r, { platform: 'darwin' })).toThrow(/used by the sequence/);
+    expect(() => buildRenderGraph(r, { platform: 'linux' })).not.toThrow();
+    const link = path.join(dir, 'linkdir');
+    try { fs.symlinkSync(path.dirname(mediaA.path), link, 'dir'); } catch { return; }
+    const res = await startExportJob(fakeQueue(), req(s, { outputDir: link, fileName: path.basename(mediaA.path) }));
+    expect(res.ok).toBe(false);
+  });
+
+  it('sanitizes the file name to a basename server-side (QA-19)', () => {
+    expect(sanitizeExportFileName('../../escape.mp4')).toBe('escape.mp4');
+    expect(sanitizeExportFileName('a\\b\\c:d*e?f"g<h>i|j\u0001.mp4')).toBe('cdefghij.mp4');
+    expect(sanitizeExportFileName('..')).toBe('export');
+    expect(path.dirname(exportOutputPath(settings({ fileName: 'sub/dir/x.mp4' })))).toBe(dir);
+  });
+
+  it('validates dimensions 16..8192 and even (QA-20)', async () => {
+    const s = seq();
+    vclip(s, mediaA, 0, 24, 0);
+    expect(() => buildRenderGraph(req(s, { width: 16000, height: 9000 }))).toThrow(/between 16 and 8192/);
+    expect(() => buildRenderGraph(req(s, { width: 8, height: 240 }))).toThrow(/between 16 and 8192/);
+    expect(() => buildRenderGraph(req(s, { width: 321, height: 240 }))).toThrow(/even/);
+    expect(() => buildRenderGraph(req(s, { width: 8192, height: 16 }))).not.toThrow();
+    const r = await startExportJob(fakeQueue(), req(s, { width: 16000, height: 9000 }));
+    expect(r.ok).toBe(false);
+  });
+
+  it('refuses a range with no enabled clips (QA-21)', () => {
+    const s = seq();
+    vclip(s, mediaA, 0, 24, 0).enabled = false;
+    expect(() => buildRenderGraph(req(s))).toThrow('Nothing enabled to export in the selected range');
+    vclip(s, mediaA, 48, 24, 0);
+    s.view.inPoint = 0; s.view.outPoint = 24;
+    expect(() => buildRenderGraph(req(s, { rangeMode: 'inOut' }))).toThrow(/Nothing enabled/);
+    expect(() => buildRenderGraph(req(s))).not.toThrow();
+  });
+
+  it('warns when a clip needs more source than the media has (QA-22)', () => {
+    const s = seq();
+    vclip(s, mediaA, 0, 24 * 4, 8); // 8s..12s of a 10s file
+    const g = buildRenderGraph(req(s));
+    expect(g.warnings.some((w) => /extends past the end of its media/.test(w))).toBe(true);
+    const ok = seq();
+    vclip(ok, mediaA, 0, 24 * 2, 8); // 8s..10s: exactly fits
+    expect(buildRenderGraph(req(ok)).warnings.some((w) => /extends past/.test(w))).toBe(false);
+  });
 });

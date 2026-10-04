@@ -99,3 +99,8 @@
 .pp-relink-row .path { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; -webkit-user-select: text; }
 .pp-relink-row .cand { color: var(--ok); }
 .pp-relink-row .actions { display: flex; gap: 4px; }
+/* First-run call to action (empty project) */
+.pp-body > .empty.pp-first-run { height: auto; flex: 0 0 auto; margin: 8px; padding: 20px 16px; border: 1px dashed var(--accent); border-radius: var(--radius-lg); background: var(--accent-soft); }
+.pp-body > .empty.pp-first-run > svg { color: var(--accent); }
+.pp-body > .empty.pp-first-run .empty-title { font-size: 14px; color: var(--text-bright); }
+.pp-body > .empty.pp-first-run .empty-desc { max-width: 320px; color: var(--text); }

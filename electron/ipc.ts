@@ -94,6 +94,10 @@ export interface IpcDeps {
   getWindow(): BrowserWindow | null;
   /** Begin the quit flow; `force` skips the renderer confirmation round-trip. */
   requestQuit(force: boolean): void;
+  /** The renderer acknowledged ev:beforeQuit (cancels the hung-renderer fallback). */
+  ackQuit?(): void;
+  /** The renderer chose to stay open (Cancel / failed save). */
+  cancelQuit?(): void;
   userData: string;
   isDev: boolean;
   /** Called whenever the recent-projects list changes (menu rebuild). */
@@ -173,6 +177,8 @@ export function registerIpc(deps: IpcDeps): void {
     };
   });
   ipcMain.handle(IPC.appQuit, (_e, force?: boolean) => { deps.requestQuit(Boolean(force)); });
+  ipcMain.handle(IPC.appQuitAck, () => { deps.ackQuit?.(); });
+  ipcMain.handle(IPC.appQuitCancel, () => { deps.cancelQuit?.(); });
   ipcMain.handle(IPC.openExternal, async (_e, url: string) => {
     assertString(url, 'url');
     if (!/^(https?|mailto):/i.test(url)) throw new Error('Only http(s) and mailto URLs can be opened');

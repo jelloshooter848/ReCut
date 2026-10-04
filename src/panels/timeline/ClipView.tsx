@@ -11,6 +11,7 @@ import { thumbs, waves } from '@/app/media';
 import { peaksForRange } from '@/playback/thumbnails';
 import { labelColorHex } from '@/components/ui/ColorSwatch';
 import { CLIP_BAR_H, COMPACT_ROW_H } from './types';
+import { formatSyncOffset, mediaNeedsProxy } from './clipBadges';
 
 export type FilterLook = 'none' | 'dim' | 'hide';
 
@@ -32,6 +33,8 @@ export interface ClipViewProps {
   /** Whether the clip's start / end edge is a cut shared with an adjacent clip (rolling-edit affordance). */
   cutAtStart: boolean;
   cutAtEnd: boolean;
+  /** Frames this clip is out of sync with its linked partner (0 / undefined = in sync). */
+  syncOffset?: number;
 }
 
 const MAX_TILES_PER_REQUEST = 48;
@@ -57,6 +60,8 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   const frameSec = fps.den / fps.num;
   const path = media?.path ?? '';
   const offline = !media || media.offline;
+  const needsProxy = !offline && mediaNeedsProxy(media);
+  const syncOffset = p.syncOffset ?? 0;
   const isVideo = trackKind === 'video';
   const isImage = media?.kind === 'image';
 
@@ -134,9 +139,9 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   const fadeOutW = clip.audio.fadeOut * zoom;
 
   const cls = useMemo(() => [
-    'tl-clip', trackKind, p.selected ? 'selected' : '', clip.enabled ? '' : 'disabled', offline ? 'offline' : '',
+    'tl-clip', trackKind, p.selected ? 'selected' : '', clip.enabled ? '' : 'disabled', offline ? 'offline' : '', needsProxy ? 'needs-proxy' : '',
     p.filter === 'dim' ? 'dim' : p.filter === 'hide' ? 'hide' : '', compact ? 'compact' : '', p.trackLocked ? 'locked' : '',
-  ].filter(Boolean).join(' '), [trackKind, p.selected, clip.enabled, offline, p.filter, compact, p.trackLocked]);
+  ].filter(Boolean).join(' '), [trackKind, p.selected, clip.enabled, offline, needsProxy, p.filter, compact, p.trackLocked]);
 
   const tileEls: React.ReactNode[] = [];
   if (isVideo && !offline) {
@@ -155,11 +160,15 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
     >
       {stripe ? <div className="tl-clip-stripe" style={{ background: stripe }} /> : null}
       <div className="tl-clip-bar">
+        {syncOffset !== 0 ? (
+          <span className="tl-badge sync" data-sync-offset={syncOffset} title={`Out of sync with its linked ${isVideo ? 'audio' : 'video'} by ${formatSyncOffset(syncOffset)} frames`}>{formatSyncOffset(syncOffset)}</span>
+        ) : null}
         {clip.linkId ? <Link2 /> : null}
         <span className="tl-clip-name">{clip.name}</span>
         {srcTc ? <span className="tl-clip-tc">{srcTc}</span> : null}
         {clip.speed !== 1 ? <span className="tl-badge speed">{Math.round(clip.speed * 100)}%</span> : null}
         {offline ? <span className="tl-badge offline">OFFLINE</span> : null}
+        {needsProxy ? <span className="tl-badge needs-proxy" title={media?.probe?.playabilityReason ? `Needs a proxy to preview: ${media.probe.playabilityReason}` : 'Needs a proxy to preview'}>PROXY</span> : null}
         {characters.map((c) => <span key={c} className="tl-badge" title={c}>{c}</span>)}
       </div>
       <div className="tl-clip-body" style={{ top: bodyTop }}>

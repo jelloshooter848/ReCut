@@ -7,15 +7,31 @@
 import type { Rational } from '../../../shared/model';
 import { formatTimecode, fpsValue } from '../../../shared/time';
 
+/** Default lower zoom bound (px per frame); long sequences lower it dynamically (see minZoomFor). */
 export const MIN_ZOOM = 0.01;
+/** Absolute lower bound: ~2.3 days @24 fps in a 500 px lane. */
+export const ZOOM_FLOOR = 1e-4;
 export const MAX_ZOOM = 50;
 /** Pixels within which an edge/snap target grabs the pointer. */
 export const EDGE_PX = 6;
 export const SNAP_PX = 8;
 
-export function clampZoom(zoom: number): number {
+/** Zoom-to-fit padding (fraction of the lane width kept free on the right). */
+export const FIT_PADDING = 0.04;
+
+/**
+ * Lowest zoom allowed for a sequence of `durationFrames` in a `widthPx` lane: MIN_ZOOM, lowered so zoom-to-fit
+ * always shows the whole sequence (with some slack to zoom out a bit further), never below ZOOM_FLOOR.
+ */
+export function minZoomFor(durationFrames: number, widthPx: number): number {
+  if (!(durationFrames > 0) || !(widthPx > 0)) return MIN_ZOOM;
+  const fit = (widthPx * (1 - FIT_PADDING)) / durationFrames;
+  return Math.max(ZOOM_FLOOR, Math.min(MIN_ZOOM, fit / 1.05));
+}
+
+export function clampZoom(zoom: number, minZoom = MIN_ZOOM): number {
   if (!Number.isFinite(zoom)) return 1;
-  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+  return Math.min(MAX_ZOOM, Math.max(Math.max(ZOOM_FLOOR, Math.min(MIN_ZOOM, minZoom)), zoom));
 }
 
 export function frameToX(frame: number, zoom: number, scroll: number): number {
@@ -37,30 +53,31 @@ export function visibleFrames(widthPx: number, zoom: number): number {
 }
 
 /** Zoom that fits `durationFrames` into `widthPx` with a little breathing room on the right. */
-export function zoomToFit(durationFrames: number, widthPx: number, padding = 0.04): number {
+export function zoomToFit(durationFrames: number, widthPx: number, padding = FIT_PADDING): number {
   const usable = Math.max(1, widthPx * (1 - padding));
-  return clampZoom(usable / Math.max(1, durationFrames));
+  const d = Math.max(1, durationFrames);
+  return clampZoom(usable / d, minZoomFor(d, widthPx));
 }
 
 /** Change zoom keeping the frame under `anchorX` (px from the left edge of the view) stationary. */
-export function zoomAround(zoom: number, scroll: number, anchorX: number, newZoom: number): { zoom: number; scroll: number } {
-  const z = clampZoom(newZoom);
+export function zoomAround(zoom: number, scroll: number, anchorX: number, newZoom: number, minZoom = MIN_ZOOM): { zoom: number; scroll: number } {
+  const z = clampZoom(newZoom, minZoom);
   const anchorFrame = xToFrame(anchorX, zoom, scroll);
   return { zoom: z, scroll: Math.max(0, anchorFrame - anchorX / z) };
 }
 
-export function zoomByFactor(zoom: number, scroll: number, anchorX: number, factor: number) {
-  return zoomAround(zoom, scroll, anchorX, zoom * factor);
+export function zoomByFactor(zoom: number, scroll: number, anchorX: number, factor: number, minZoom = MIN_ZOOM) {
+  return zoomAround(zoom, scroll, anchorX, zoom * factor, minZoom);
 }
 
-/** Logarithmic slider mapping 0..1 <-> MIN_ZOOM..MAX_ZOOM. */
-export function zoomToSlider(zoom: number): number {
-  const lo = Math.log(MIN_ZOOM), hi = Math.log(MAX_ZOOM);
-  return (Math.log(clampZoom(zoom)) - lo) / (hi - lo);
+/** Logarithmic slider mapping 0..1 <-> minZoom..MAX_ZOOM. */
+export function zoomToSlider(zoom: number, minZoom = MIN_ZOOM): number {
+  const lo = Math.log(clampZoom(minZoom, minZoom)), hi = Math.log(MAX_ZOOM);
+  return (Math.log(clampZoom(zoom, minZoom)) - lo) / (hi - lo);
 }
-export function sliderToZoom(t: number): number {
-  const lo = Math.log(MIN_ZOOM), hi = Math.log(MAX_ZOOM);
-  return clampZoom(Math.exp(lo + Math.min(1, Math.max(0, t)) * (hi - lo)));
+export function sliderToZoom(t: number, minZoom = MIN_ZOOM): number {
+  const lo = Math.log(clampZoom(minZoom, minZoom)), hi = Math.log(MAX_ZOOM);
+  return clampZoom(Math.exp(lo + Math.min(1, Math.max(0, t)) * (hi - lo)), minZoom);
 }
 
 // ------------------------------------------------------------------

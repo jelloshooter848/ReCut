@@ -24,7 +24,7 @@ import {
   rippleTrimStart, rippleTrimEnd, rollEdit as tlRollEdit, slipClip, slideClip, moveClips as tlMoveClips,
   addTransition as tlAddTransition, removeTransition as tlRemoveTransition, addTrack as tlAddTrack,
   removeTrack as tlRemoveTrack, reconcileTransitions, reconcileAll, rippleShift, addMarker as tlAddMarker,
-  type NewClipSpec, type MediaDurationLookup,
+  followClipMarkers, transitionLimit, type NewClipSpec, type MediaDurationLookup,
 } from '../../shared/timeline';
 import { emptyHistory, pushHistory, undoHistory, redoHistory, changedSequenceIds, undoLabel, redoLabel } from './history';
 import type {
@@ -203,21 +203,30 @@ function initialState(): StoreState {
 }
 
 export const useStore = create<RecutStore>()((set, get) => {
-  /** Stamp modifiedAt on the project and on sequences whose identity changed. */
-  const stamp = (prev: Project, next: Project): Project => {
+  /**
+   * Stamp modifiedAt on the project and on sequences whose identity changed; clip-anchored markers /
+   * continuity notes in those sequences follow their clip (see followClipMarkers).
+   */
+  const stamp = (prev: Project, next: Project, followMarkers = true): Project => {
     const changed = changedSequenceIds(prev, next);
     const now = Date.now();
     return produce(next, (d) => {
       d.modifiedAt = now;
-      for (const id of changed) if (d.sequences[id]) d.sequences[id].modifiedAt = now;
+      for (const id of changed) {
+        const seq = d.sequences[id];
+        if (!seq) continue;
+        seq.modifiedAt = now;
+        if (followMarkers && prev.sequences[id]) followClipMarkers(prev.sequences[id], seq);
+      }
     });
   };
 
-  const commit = (label: string, recipe: Recipe): boolean => {
+  /** `followMarkers: false` for recipes that replace a sequence wholesale (its markers are already right). */
+  const commit = (label: string, recipe: Recipe, opts: { followMarkers?: boolean } = {}): boolean => {
     const prev = get().project;
     const produced = produce(prev, recipe);
     if (produced === prev) return false;
-    const next = stamp(prev, produced);
+    const next = stamp(prev, produced, opts.followMarkers ?? true);
     set((s) => ({ project: next, dirty: true, history: pushHistory(s.history, prev, label), ui: pruneUi(next, s.ui) }));
     return true;
   };
@@ -425,7 +434,8 @@ export const useStore = create<RecutStore>()((set, get) => {
       });
     },
     setMediaProbe(id, result) {
-      commit('Probe media', (d) => {
+      // Probe results arrive asynchronously after the import step: a job mirror, not an undo step.
+      quiet((d) => {
         const m = d.media[id];
         if (!m) return;
         if ('error' in result) { m.probeError = result.error; m.probe = undefined; return; }
@@ -434,10 +444,14 @@ export const useStore = create<RecutStore>()((set, get) => {
         m.offline = false;
         m.kind = kindFromProbe(result, m.path);
         if (m.preferredAudioStream === undefined && result.audio.length) m.preferredAudioStream = result.audio[0].index;
-      });
+      }, { dirty: true });
     },
     // Job/status mirrors are quiet: they arrive asynchronously and must not become undo steps (nor clear redo).
     setProxy(id, proxy) { quiet((d) => { const m = d.media[id]; if (m) m.proxy = proxy; }, { dirty: true }); },
+    invalidateProxy(id) {
+      // A "ready" proxy whose file is gone/unreadable: forget it so playback falls back to the original.
+      quiet((d) => { const m = d.media[id]; if (m && m.proxy.status !== 'none') m.proxy = { status: 'none' }; }, { dirty: true });
+    },
     setSceneDetectStatus(id, status) { quiet((d) => { const m = d.media[id]; if (m) m.sceneDetectStatus = status; }, { dirty: true }); },
     setDetectedScenes(id, boundaries, duration) {
       // Detection results also arrive from a background job; edits to the scenes (rename/merge/split) stay undoable.
@@ -583,7 +597,7 @@ export const useStore = create<RecutStore>()((set, get) => {
         if (!seq || !snap) return;
         const live = current(seq);
         d.sequences[seqId] = { ...plainClone(snap.data), id: seqId, snapshots: live.snapshots, view: live.view } as Sequence;
-      });
+      }, { followMarkers: false });
     },
     deleteSnapshot(seqId, snapshotId) {
       commit('Delete snapshot', (d) => { const seq = d.sequences[seqId]; if (seq) seq.snapshots = seq.snapshots.filter((s) => s.id !== snapshotId); });
@@ -595,6 +609,7 @@ export const useStore = create<RecutStore>()((set, get) => {
     // ---------------------------------------------------------------- timeline
     insertFromSource(seqId, o) {
       let created: ID[] = [];
+      let unpatched = false;
       commit(o.mode === 'insert' ? 'Insert' : 'Overwrite', (d) => {
         const seq = d.sequences[seqId];
         const media = d.media[o.mediaId];
@@ -608,10 +623,19 @@ export const useStore = create<RecutStore>()((set, get) => {
         const hasAudio = media.kind === 'audio' || (media.probe?.audio.length ?? 0) > 0 || unprobed;
         const includeVideo = (o.includeVideo ?? true) && hasVideo;
         const includeAudio = (o.includeAudio ?? true) && hasAudio;
-        const pick = (tracks: Track[], id?: ID) => (id ? tracks.find((t) => t.id === id) : tracks.find((t) => t.patched && !t.locked) ?? tracks.find((t) => !t.locked));
-        const vTrack = includeVideo ? pick(seq.videoTracks, o.videoTrackId) : undefined;
-        const aTrack = includeAudio ? pick(seq.audioTracks, o.audioTrackId) : undefined;
-        if (!vTrack && !aTrack) return;
+        // Source patching (Premiere): unless the caller asks for a kind explicitly (includeX: true) or names
+        // its track, a kind is only placed when one of its tracks is patched.
+        const pick = (tracks: Track[], id: ID | undefined, explicit: boolean) => {
+          if (id) return tracks.find((t) => t.id === id);
+          const patched = tracks.find((t) => t.patched && !t.locked);
+          return patched ?? (explicit ? tracks.find((t) => !t.locked) : undefined);
+        };
+        const vTrack = includeVideo ? pick(seq.videoTracks, o.videoTrackId, o.includeVideo === true) : undefined;
+        const aTrack = includeAudio ? pick(seq.audioTracks, o.audioTrackId, o.includeAudio === true) : undefined;
+        if (!vTrack && !aTrack) {
+          if ((includeVideo && o.includeVideo === undefined && !o.videoTrackId) || (includeAudio && o.includeAudio === undefined && !o.audioTrackId)) unpatched = true;
+          return;
+        }
         const linkId = vTrack && aTrack ? uid('link') : null;
         const base: NewClipSpec = {
           mediaId: o.mediaId, name: media.name, sourceIn: inS, duration, kind: 'video',
@@ -657,6 +681,7 @@ export const useStore = create<RecutStore>()((set, get) => {
           }
         }
       });
+      if (unpatched) get().toast('warning', 'No source tracks patched');
       return created;
     },
     placeClipsAction(seqId, placements, mode) {
@@ -936,7 +961,11 @@ export const useStore = create<RecutStore>()((set, get) => {
         if (!seq) return;
         const found = findTransition(seq, transitionId);
         if (!found) return;
-        found.transition.duration = Math.max(1, Math.round(frames));
+        const tr = found.transition;
+        const out = tr.outClipId ? found.track.clips.find((c) => c.id === tr.outClipId) : null;
+        const inn = tr.inClipId ? found.track.clips.find((c) => c.id === tr.inClipId) : null;
+        // Never overlap the transition on the other edge of either clip.
+        tr.duration = Math.max(1, Math.min(Math.round(frames), transitionLimit(found.track, out, inn, tr.id)));
         reconcileTransitions(found.track);
       });
     },
@@ -982,6 +1011,8 @@ export const useStore = create<RecutStore>()((set, get) => {
         const m = seq?.markers.find((x) => x.id === markerId);
         if (!seq || !m) return;
         Object.assign(m, patch);
+        if (patch.time !== undefined) m.time = Number.isFinite(patch.time) ? Math.max(0, Math.round(patch.time)) : 0;
+        if (patch.duration !== undefined) m.duration = Number.isFinite(patch.duration) ? Math.max(0, Math.round(patch.duration)) : 0;
         seq.markers.sort((a, b) => a.time - b.time);
       });
     },

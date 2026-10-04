@@ -96,9 +96,39 @@ export function reconcileTransitions(track: Track): void {
     if (a && b && clipEnd(a) !== b.start) return false;
     if (!a && !b) return false;
     const limit = Math.min(a ? a.duration : Infinity, b ? b.duration : Infinity);
+    if (!Number.isFinite(tr.duration) || tr.duration < 1) tr.duration = 1;
     if (tr.duration > limit) tr.duration = Math.max(1, limit);
     return true;
   });
+  // Two transitions on one clip (its in- and out-transition) must not overlap: in + out <= clip.duration.
+  // The out-transition gives way; if nothing is left of it, it is dropped.
+  const drop = new Set<ID>();
+  for (const c of track.clips) {
+    const tin = track.transitions.find((t) => t.inClipId === c.id && !drop.has(t.id));
+    const tout = track.transitions.find((t) => t.outClipId === c.id && !drop.has(t.id));
+    if (!tin || !tout || tin === tout) continue;
+    if (tin.duration + tout.duration <= c.duration) continue;
+    const room = c.duration - tin.duration;
+    if (room >= 1) tout.duration = room; else drop.add(tout.id);
+  }
+  if (drop.size) track.transitions = track.transitions.filter((t) => !drop.has(t.id));
+}
+
+/** Frames of `clip` already used by its transition on the other edge (excluding `exceptId`). */
+function otherEdgeUse(track: Track, clip: Clip, edge: 'in' | 'out', exceptId?: ID): number {
+  const t = track.transitions.find((x) => x.id !== exceptId && (edge === 'in' ? x.inClipId === clip.id : x.outClipId === clip.id));
+  return t ? t.duration : 0;
+}
+
+/**
+ * Longest duration a transition between `outClip` and `inClip` may have so that no clip carries
+ * overlapping in- and out-transitions. `exceptId` is the transition being resized (ignored).
+ */
+export function transitionLimit(track: Track, outClip: Clip | undefined | null, inClip: Clip | undefined | null, exceptId?: ID): number {
+  // outClip's other edge is its in-transition; inClip's other edge is its out-transition.
+  const a = outClip ? outClip.duration - otherEdgeUse(track, outClip, 'in', exceptId) : Infinity;
+  const b = inClip ? inClip.duration - otherEdgeUse(track, inClip, 'out', exceptId) : Infinity;
+  return Math.min(a, b);
 }
 
 export function reconcileAll(seq: Sequence): void {
@@ -128,9 +158,24 @@ export function addTransition(seq: Sequence, trackId: ID, frame: number, type: T
   track.transitions = track.transitions.filter((t) => !(
     (outClip && t.outClipId === outClip.id) || (inClip && t.inClipId === inClip.id)
   ));
-  const limit = Math.min(outClip ? outClip.duration : Infinity, inClip ? inClip.duration : Infinity);
+  let dur = Math.max(1, Math.min(duration, transitionLimit(track, outClip, inClip)));
+  if (transitionLimit(track, outClip, inClip) < 1) {
+    // A clip's other edge already uses every frame: share the clip between both transitions instead
+    // (the existing one is shortened; on a 1-frame clip it gives way entirely).
+    const sides = [
+      { clip: outClip, other: outClip && track.transitions.find((t) => t.inClipId === outClip.id) },
+      { clip: inClip, other: inClip && track.transitions.find((t) => t.outClipId === inClip.id) },
+    ];
+    dur = Math.max(1, duration);
+    for (const { clip, other } of sides) if (clip) dur = Math.min(dur, other ? Math.max(1, Math.floor(clip.duration / 2)) : clip.duration);
+    for (const { clip, other } of sides) {
+      if (!clip || !other || other.duration + dur <= clip.duration) continue;
+      other.duration = clip.duration - dur;
+      if (other.duration < 1) track.transitions = track.transitions.filter((t) => t !== other);
+    }
+  }
   const tr: Transition = {
-    id: uid('tr'), type, duration: Math.max(1, Math.min(duration, limit)),
+    id: uid('tr'), type, duration: dur,
     outClipId: outClip?.id ?? null, inClipId: inClip?.id ?? null,
   };
   track.transitions.push(tr);
@@ -176,24 +221,38 @@ export function rippleShift(seq: Sequence, fromFrame: number, delta: number, opt
   const lo = Math.min(fromFrame, fromFrame + delta);
   const mapStart = (f: number) => (f >= fromFrame ? f + delta : f > lo ? lo : f);
   const mapEnd = (f: number) => (f > fromFrame ? f + delta : f > lo ? lo : f);
-  for (const b of seq.storyBlocks) {
-    b.start = Math.max(0, mapStart(b.start));
-    b.end = Math.max(b.start + 1, mapEnd(b.end));
-  }
+  // A block that falls entirely inside the removed region collapses to nothing and is dropped.
+  seq.storyBlocks = seq.storyBlocks.filter((b) => {
+    const start = Math.max(0, mapStart(b.start));
+    const end = mapEnd(b.end);
+    if (end <= start) return false;
+    b.start = start; b.end = end;
+    return true;
+  });
   return shifted;
 }
 
+export interface ClearRangeResult {
+  /** Clips that were removed entirely. */
+  removed: ID[];
+  /** Clips cut in two: `head` kept its id, `tail` is a new clip. */
+  splits: { head: Clip; tail: Clip }[];
+}
+
 /** Remove the [start,end) range from a track's clips (splitting clips that straddle boundaries). */
-export function clearRange(track: Track, start: number, end: number, except: Set<ID> = new Set()): void {
-  if (end <= start) return;
+export function clearRange(track: Track, start: number, end: number, except: Set<ID> = new Set()): ClearRangeResult {
+  const res: ClearRangeResult = { removed: [], splits: [] };
+  if (end <= start) return res;
   const result: Clip[] = [];
   const fps = track._fps as Rational | undefined; // injected by callers via withFps
   for (const c of track.clips) {
     if (except.has(c.id) || clipEnd(c) <= start || c.start >= end) { result.push(c); continue; }
     const cEnd = clipEnd(c);
+    if (c.start >= start && cEnd <= end) { res.removed.push(c.id); continue; }
+    let head: Clip | null = null;
     if (c.start < start) {
       // keep head
-      const head = { ...c, duration: start - c.start };
+      head = { ...c, duration: start - c.start };
       result.push(head);
     }
     if (cEnd > end) {
@@ -210,6 +269,7 @@ export function clearRange(track: Track, start: number, end: number, except: Set
         // Cut in two: the tail is a new clip, so the out-transition (if any) must follow it.
         tail.audio = { ...c.audio, fadeIn: 0 };
         for (const tr of track.transitions) if (tr.outClipId === c.id) tr.outClipId = tail.id;
+        if (head) res.splits.push({ head, tail });
       }
       result.push(tail);
     }
@@ -217,6 +277,47 @@ export function clearRange(track: Track, start: number, end: number, except: Set
   track.clips = result;
   sortTrack(track);
   reconcileTransitions(track);
+  return res;
+}
+
+/** Remove subtitle cues attached to any of `clipIds` (sequence cue tracks). */
+export function dropCuesForClips(seq: Sequence, clipIds: Iterable<ID>): void {
+  const ids = clipIds instanceof Set ? clipIds as Set<ID> : new Set(clipIds);
+  if (ids.size === 0) return;
+  for (const st of seq.subtitleTracks) st.cues = st.cues.filter((c) => !(c.clipId && ids.has(c.clipId)));
+}
+
+/**
+ * A clip `headId` was cut so that it now ends at source time `headEndSrc` and a new clip `tail` starts at
+ * source time `tailStartSrc` (equal for a plain split; larger when a range was cleared out of the middle).
+ * Cues after the cut move to the tail; a cue straddling it is duplicated so both halves keep rendering.
+ */
+export function splitCuesAt(seq: Sequence, headId: ID, headEndSrc: number, tail: Clip, tailStartSrc: number): void {
+  for (const st of seq.subtitleTracks) {
+    const extra: typeof st.cues = [];
+    for (const cue of st.cues) {
+      if (cue.clipId !== headId || cue.srcStart === undefined || cue.srcEnd === undefined) continue;
+      if (cue.srcStart >= tailStartSrc - 1e-9) { cue.clipId = tail.id; continue; }
+      if (cue.srcEnd <= tailStartSrc + 1e-9) continue; // entirely before the tail: stays on the head
+      if (cue.srcStart >= headEndSrc - 1e-9) {
+        // starts inside the removed region, ends inside the tail: move what is left of it
+        cue.clipId = tail.id; cue.srcStart = tailStartSrc; continue;
+      }
+      extra.push({ ...cue, id: uid('scue'), clipId: tail.id, srcStart: tailStartSrc });
+      cue.srcEnd = headEndSrc;
+    }
+    if (extra.length) st.cues.push(...extra);
+  }
+}
+
+/** clearRange on a track of `seq`, keeping attached subtitle cues consistent. */
+function clearRangeIn(seq: Sequence, track: Track, start: number, end: number, except?: Set<ID>): void {
+  withFps(seq);
+  const res = clearRange(track, start, end, except);
+  stripFps(seq);
+  dropCuesForClips(seq, res.removed);
+  const spf = seq.fps.den / seq.fps.num;
+  for (const { head, tail } of res.splits) splitCuesAt(seq, head.id, head.sourceIn + head.duration * spf * head.speed, tail, tail.sourceIn);
 }
 
 // Tracks need the sequence fps for source math in clearRange; we attach it transiently.
@@ -277,9 +378,7 @@ export function makeClip(spec: NewClipSpec, start: number): Clip {
 export function overwriteClip(seq: Sequence, trackId: ID, clip: Clip): boolean {
   const track = findTrack(seq, trackId);
   if (!track || track.locked) return false;
-  withFps(seq);
-  clearRange(track, clip.start, clipEnd(clip), new Set([clip.id]));
-  stripFps(seq);
+  clearRangeIn(seq, track, clip.start, clipEnd(clip), new Set([clip.id]));
   track.clips.push(clip);
   sortTrack(track);
   reconcileTransitions(track);
@@ -317,7 +416,7 @@ export function placeClips(seq: Sequence, placements: { trackId: ID; clip: Clip 
   for (const p of placements) {
     const t = findTrack(seq, p.trackId)!;
     // Guard against anything still overlapping on tracks that could not ripple
-    withFps(seq); clearRange(t, p.clip.start, clipEnd(p.clip), new Set([p.clip.id])); stripFps(seq);
+    clearRangeIn(seq, t, p.clip.start, clipEnd(p.clip), new Set([p.clip.id]));
     t.clips.push(p.clip); sortTrack(t); reconcileTransitions(t);
   }
   return true;
@@ -346,10 +445,8 @@ export function splitClip(seq: Sequence, track: Track, clip: Clip, frame: number
   for (const tr of track.transitions) if (tr.outClipId === clip.id) tr.outClipId = tail.id;
   track.clips.push(tail);
   sortTrack(track);
-  // subtitle cues attached to this clip: reassign those after the split point to the tail
-  for (const st of seq.subtitleTracks) for (const cue of st.cues) {
-    if (cue.clipId === clip.id && cue.srcStart !== undefined && cue.srcStart >= tail.sourceIn) cue.clipId = tail.id;
-  }
+  // subtitle cues attached to this clip: those after the split point move to the tail, straddlers are duplicated
+  splitCuesAt(seq, clip.id, tail.sourceIn, tail, tail.sourceIn);
   return tail;
 }
 
@@ -408,7 +505,7 @@ export function removeClips(seq: Sequence, clipIds: ID[]): void {
     reconcileTransitions(t);
   }
   // Only cues attached to clips that were actually removed (clips on locked tracks keep theirs).
-  for (const st of seq.subtitleTracks) st.cues = st.cues.filter((c) => !(c.clipId && removed.has(c.clipId)));
+  dropCuesForClips(seq, removed);
 }
 
 /** Ripple delete: remove the clips and close the gaps they leave. Processes gaps right-to-left. */
@@ -434,13 +531,11 @@ export function rippleDeleteClips(seq: Sequence, clipIds: ID[]): void {
 
 /** Lift: remove the in/out range on the given tracks (no shift). */
 export function liftRange(seq: Sequence, inF: number, outF: number, trackIds?: ID[]): void {
-  withFps(seq);
   for (const t of allTracks(seq)) {
     if (t.locked) continue;
     if (trackIds && !trackIds.includes(t.id)) continue;
-    clearRange(t, inF, outF);
+    clearRangeIn(seq, t, inF, outF);
   }
-  stripFps(seq);
 }
 
 /** Extract: remove the in/out range and close the gap. */
@@ -576,7 +671,7 @@ export function slipClip(seq: Sequence, clipId: ID, deltaFrames: number, mediaDu
   for (const g of group) {
     const handleBefore = Math.floor((g.sourceIn / g.speed) * seq.fps.num / seq.fps.den + 1e-6);
     const maxDur = maxDurationFrom(g.sourceIn, g.speed, mediaDur(g.mediaId), seq.fps);
-    const handleAfter = maxDur - g.duration;
+    const handleAfter = Math.max(0, maxDur - g.duration); // a clip longer than its media cannot slip later, but never backwards
     d = Math.max(-handleBefore, Math.min(handleAfter, d));
   }
   for (const g of group) g.sourceIn = Math.max(0, g.sourceIn + d * seq.fps.den / seq.fps.num * g.speed);
@@ -626,19 +721,55 @@ export function slideClip(seq: Sequence, clipId: ID, deltaFrames: number, mediaD
 
 export interface MoveSpec { clipId: ID; toTrackId: ID; toStart: number }
 
-/** Move clips to new positions/tracks. In overwrite mode, destinations are cleared; in insert mode, destinations ripple. */
+/**
+ * Move clips to new positions/tracks. `toStart` values are in the pre-move timeline.
+ * - overwrite: the clips are lifted (leaving gaps) and destinations are cleared.
+ * - insert (Premiere insert-move / rearrange): the clips are extracted — the gap each leaves on its source
+ *   track is closed — and then inserted at the destination, rippling everything after it on all unlocked
+ *   tracks. A destination after the vacated range is pulled back by the closed gap.
+ * The delta is clamped once so the earliest clip lands at >= 0 and relative spacing is kept.
+ */
 export function moveClips(seq: Sequence, moves: MoveSpec[], mode: 'overwrite' | 'insert'): boolean {
-  const lifted: { clip: Clip; toTrackId: ID; toStart: number; fromTrackId: ID }[] = [];
+  if (moves.length === 0) return false;
+  const lifted: { clip: Clip; toTrackId: ID; toStart: number; fromTrackId: ID; fromStart: number }[] = [];
+  const shift = Math.max(0, -Math.min(...moves.map((m) => m.toStart)));
   for (const m of moves) {
     const loc = findClip(seq, m.clipId);
     const dest = findTrack(seq, m.toTrackId);
     if (!loc || loc.track.locked || !dest || dest.locked || dest.kind !== loc.track.kind) return false;
-    lifted.push({ clip: loc.clip, toTrackId: m.toTrackId, toStart: Math.max(0, m.toStart), fromTrackId: loc.track.id });
+    lifted.push({ clip: loc.clip, toTrackId: m.toTrackId, toStart: m.toStart + shift, fromTrackId: loc.track.id, fromStart: loc.clip.start });
   }
   // remove from source tracks
   const ids = new Set(lifted.map((l) => l.clip.id));
   for (const t of allTracks(seq)) t.clips = t.clips.filter((c) => !ids.has(c.id));
   if (mode === 'insert') {
+    // Close the vacated ranges like a ripple delete (all unlocked tracks, so tracks that were not touched
+    // stay in sync; a track with a clip spanning a gap is left alone). Right-to-left so earlier ranges
+    // stay at their original positions. Remember which tracks each gap closed on.
+    const ranges = lifted.map((l) => ({ start: l.fromStart, end: l.fromStart + l.clip.duration })).sort((a, b) => a.start - b.start);
+    const gaps: { start: number; end: number; tracks: Set<ID> }[] = [];
+    for (const r of ranges) {
+      const last = gaps[gaps.length - 1];
+      if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
+      else gaps.push({ start: r.start, end: r.end, tracks: new Set() });
+    }
+    for (let i = gaps.length - 1; i >= 0; i--) {
+      const g = gaps[i];
+      // A track with nothing after the gap has nothing to shift but counts as closed.
+      const idle = allTracks(seq).filter((t) => !t.locked && !t.clips.some((c) => c.start >= g.end)).map((t) => t.id);
+      for (const id of [...rippleShift(seq, g.end, -(g.end - g.start)), ...idle]) g.tracks.add(id);
+    }
+    // Destinations are given in the pre-move timeline: map them through the gaps that closed on the
+    // earliest clip's destination track (a destination inside a vacated range lands at its start).
+    const first = lifted.reduce((a, b) => (b.toStart < a.toStart ? b : a));
+    let mapped = first.toStart;
+    for (const g of gaps) {
+      if (!g.tracks.has(first.toTrackId)) continue;
+      if (first.toStart >= g.end) mapped -= g.end - g.start;
+      else if (first.toStart > g.start) mapped -= first.toStart - g.start;
+    }
+    const adj = first.toStart - mapped;
+    for (const l of lifted) l.toStart = Math.max(0, l.toStart - adj);
     const start = Math.min(...lifted.map((l) => l.toStart));
     const end = Math.max(...lifted.map((l) => l.toStart + l.clip.duration));
     splitTracksAt(seq, allTracks(seq).filter((t) => !t.locked), start);
@@ -647,7 +778,7 @@ export function moveClips(seq: Sequence, moves: MoveSpec[], mode: 'overwrite' | 
   for (const l of lifted) {
     const t = findTrack(seq, l.toTrackId)!;
     l.clip.start = l.toStart;
-    withFps(seq); clearRange(t, l.clip.start, clipEnd(l.clip)); stripFps(seq);
+    clearRangeIn(seq, t, l.clip.start, clipEnd(l.clip));
     t.clips.push(l.clip);
     sortTrack(t);
   }
@@ -680,10 +811,15 @@ export function addTrack(seq: Sequence, kind: 'video' | 'audio', index?: number)
 }
 
 export function removeTrack(seq: Sequence, trackId: ID): boolean {
-  const vi = seq.videoTracks.findIndex((t) => t.id === trackId);
-  if (vi >= 0) { if (seq.videoTracks.length <= 1) return false; seq.videoTracks.splice(vi, 1); renameTracks(seq); return true; }
-  const ai = seq.audioTracks.findIndex((t) => t.id === trackId);
-  if (ai >= 0) { if (seq.audioTracks.length <= 1) return false; seq.audioTracks.splice(ai, 1); renameTracks(seq); return true; }
+  for (const list of [seq.videoTracks, seq.audioTracks]) {
+    const i = list.findIndex((t) => t.id === trackId);
+    if (i < 0) continue;
+    if (list.length <= 1) return false;
+    const [gone] = list.splice(i, 1);
+    dropCuesForClips(seq, gone.clips.map((c) => c.id));
+    renameTracks(seq);
+    return true;
+  }
   return false;
 }
 
@@ -753,4 +889,39 @@ export function resolveSubtitleCues(seq: Sequence): ResolvedCue[] {
   }
   out.sort((a, b) => a.start - b.start);
   return out;
+}
+
+// ------------------------------------------------------------------
+// Clip-anchored markers
+// ------------------------------------------------------------------
+
+/**
+ * Markers (and continuity notes) with a `clipId` follow their clip, like clip-anchored subtitle cues: the
+ * source time under the marker in `prev` is kept under it in `next`. A pure move shifts the marker by the
+ * move delta; a head trim (select tool) leaves it in place; a split keeps it where it is. When the clip no
+ * longer exists the marker keeps its time and loses its `clipId`. Mutates `next` (an immer draft).
+ */
+export function followClipMarkers(prev: Sequence, next: Sequence): void {
+  if (!next.markers.some((m) => m.clipId)) return;
+  const index = (seq: Sequence) => {
+    const map = new Map<ID, Clip>();
+    for (const t of allTracks(seq)) for (const c of t.clips) map.set(c.id, c);
+    return map;
+  };
+  const before = index(prev);
+  const after = index(next);
+  let moved = false;
+  for (const m of next.markers) {
+    if (!m.clipId) continue;
+    const a = before.get(m.clipId);
+    if (!a) continue; // the clip did not exist before this edit (e.g. marker just linked): nothing to follow
+    const b = after.get(m.clipId);
+    if (!b) { delete m.clipId; continue; }
+    if (a === b || (a.start === b.start && a.sourceIn === b.sourceIn && a.speed === b.speed && prev.fps.num * next.fps.den === next.fps.num * prev.fps.den)) continue;
+    const src = a.sourceIn + ((m.time - a.start) * prev.fps.den / prev.fps.num) * a.speed;
+    const t = b.start + Math.round(((src - b.sourceIn) / b.speed) * next.fps.num / next.fps.den);
+    const time = Math.max(0, t);
+    if (time !== m.time) { m.time = time; moved = true; }
+  }
+  if (moved) next.markers.sort((x, y) => x.time - y.time);
 }

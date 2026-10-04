@@ -5,7 +5,7 @@ import { Button, EmptyState, IconButton, SearchField, Select, Toggle, useContext
 import { toast } from '@/components/ui/toastStore';
 import { pathOfDroppedFile, setClipDrag, type ClipDragPayload } from '@/app/dnd';
 import { isEditableTarget } from '@/keyboard/useShortcuts';
-import { useStore, seriesTree, verifyMediaOnline } from '@/state';
+import { useStore, seriesTree, verifyMediaOnline, onMediaImported } from '@/state';
 import type { PanelProps } from '../registry';
 import { VirtualList, type VirtualListHandle } from './VirtualList';
 import { ITEMS_DND_TYPE, RowView, type ItemsDragPayload, type RowCallbacks } from './rows';
@@ -87,6 +87,37 @@ export function ProjectPanel(_props: PanelProps) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  // After an import: open the bins (or series groups) that received files and scroll the first new item into view.
+  const revealRef = useRef<ID[] | null>(null);
+  useEffect(() => onMediaImported((r) => {
+    const ids = r.added.length ? r.added : r.existing;
+    if (!ids.length) return;
+    const { media: med, bins: bs } = useStore.getState().project;
+    setExpanded((m) => {
+      const next: ExpandedMap = { ...m, [expandKey.group('root')]: true };
+      for (const id of ids) {
+        const it = med[id];
+        if (!it) continue;
+        for (let b = it.binId, guard = 0; b && guard < 64; b = bs[b]?.parentId ?? null, guard++) next[expandKey.bin(b)] = true;
+        const { series, season } = it.identity;
+        if (series) { next[expandKey.group(`series:${series}`)] = true; next[expandKey.group(`season:${series}:${season ?? 0}`)] = true; }
+        else next[expandKey.group('loose')] = true;
+      }
+      return next;
+    });
+    revealRef.current = ids;
+  }), []);
+  useEffect(() => {
+    const ids = revealRef.current;
+    if (!ids) return;
+    const want = new Set(ids);
+    const i = rows.findIndex((r) => (r.kind === 'media' && want.has(r.media.id)) || (r.kind === 'cards' && r.items.some((x) => x.kind === 'media' && want.has(x.media.id))));
+    if (i < 0) return;
+    revealRef.current = null;
+    anchorRef.current = rows[i].kind === 'media' ? rows[i].key : anchorRef.current;
+    requestAnimationFrame(() => listRef.current?.scrollToIndex(i, 'center'));
+  }, [rows]);
+
   // Offline check once per mount (cheap stat per file).
   useEffect(() => { if (Object.keys(useStore.getState().project.media).length) void verifyMediaOnline(); }, []);
 
@@ -336,6 +367,11 @@ export function ProjectPanel(_props: PanelProps) {
         </div>
       ) : null}
       <div className={['pp-body', fileDrag ? 'drop-files' : ''].filter(Boolean).join(' ')}>
+        {mediaCount === 0 && !query ? (
+          <EmptyState icon={Import} className="pp-first-run" title="Import media to start"
+            description="Import movies or episodes, or drop files here — subtitles next to media are picked up automatically."
+            action={<Button variant="primary" icon={Import} onClick={() => { void importViaDialog(selectedBinId); }} data-testid="empty-import">Import media… <span className="text-dim">Ctrl+I</span></Button>} />
+        ) : null}
         <VirtualList
           ref={listRef}
           rows={rows}
@@ -343,10 +379,7 @@ export function ProjectPanel(_props: PanelProps) {
           keyOf={(r) => r.key}
           render={(row) => <RowView row={row} selected={selected} renamingKey={renamingKey} dropKey={dropKey} sort={sort} cb={cb} />}
           containerProps={{ 'data-testid': 'project-list', role: 'tree' } as React.HTMLAttributes<HTMLDivElement>}
-          footer={mediaCount === 0 && !query ? (
-            <EmptyState title="No media yet" description="Import movies, episodes, audio or subtitles — or drop files from your file manager."
-              action={<Button icon={Import} onClick={() => { void importViaDialog(selectedBinId); }}>Import…</Button>} />
-          ) : rows.length <= 1 && query ? <EmptyState title="No matches" description={`Nothing matches "${query}".`} /> : null}
+          footer={rows.length <= 1 && query ? <EmptyState title="No matches" description={`Nothing matches "${query}".`} /> : null}
         />
       </div>
       <InfoFooter mediaId={infoMediaId} sequenceId={infoSeqId} open={infoOpen} onToggle={() => setInfoOpen((v) => !v)} />

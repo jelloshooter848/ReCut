@@ -315,6 +315,37 @@ describe('jobs', () => {
     expect(snapshots.length).toBeGreaterThan(0);
   }, 60_000);
 
+  it('starting the same proxy twice returns the in-flight job (QA-06)', async () => {
+    const q = new JobQueue();
+    const [a, b] = await Promise.all([
+      startProxyJob(q, { mediaId: 'dup', path: files.long, height: 144 }),
+      startProxyJob(q, { mediaId: 'dup', path: files.long, height: 144 }),
+    ]);
+    expect(b.job.id).toBe(a.job.id);
+    expect(b.outputPath).toBe(a.outputPath);
+    expect(q.list().filter((j) => j.kind === 'proxy')).toHaveLength(1);
+    q.cancel(a.job.id);
+    await q.waitFor(a.job.id);
+    // settled: a new request starts a new job
+    const c = await startProxyJob(q, { mediaId: 'dup', path: files.long, height: 144 });
+    expect(c.job.id).not.toBe(a.job.id);
+    q.cancel(c.job.id);
+    await q.waitFor(c.job.id);
+    expect(fs.readdirSync(path.dirname(a.outputPath)).filter((f) => f.includes('.part'))).toEqual([]);
+  }, 60_000);
+
+  it('scene detection is de-duplicated by media + threshold (QA-06)', async () => {
+    const q = new JobQueue();
+    const req = { mediaId: 'sd', path: files.long, threshold: 0.3, duration: 40 };
+    const a = startSceneDetectJob(q, req);
+    const b = startSceneDetectJob(q, req);
+    const c = startSceneDetectJob(q, { ...req, threshold: 0.5 });
+    expect(b.id).toBe(a.id);
+    expect(c.id).not.toBe(a.id);
+    q.cancel(a.id); q.cancel(c.id);
+    await Promise.all([q.waitFor(a.id), q.waitFor(c.id)]);
+  }, 60_000);
+
   it('audio-only proxy produces an audio mp4', async () => {
     const q = new JobQueue();
     const { job, outputPath } = await startProxyJob(q, { mediaId: 'a', path: files.audioOnly, height: 540 });

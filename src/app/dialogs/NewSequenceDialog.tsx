@@ -110,7 +110,7 @@ export function NewSequenceDialog() {
     </div>
   );
   return (
-    <Dialog open title={editSeq ? 'Sequence Settings' : 'New Sequence'} onClose={close} width={460} className="new-sequence-dialog"
+    <Dialog open title={editSeq ? 'Sequence Settings' : 'New Sequence'} onClose={close} width={460} className="new-sequence-dialog" onSubmit={submit}
       footer={<>
         <Button onClick={matchMedia} title="Fill settings from the selected media item">Match Media</Button>
         <span className="grow" />

@@ -50,9 +50,21 @@ export function NumberField({
     return signed && v > 0 ? `+${s}` : s;
   };
 
-  useEffect(() => { if (editing) { inputRef.current?.focus(); inputRef.current?.select(); } }, [editing]);
+  /** Set when editing started from a typed character: keep the caret after it instead of selecting all. */
+  const typedStart = useRef(false);
+  useEffect(() => {
+    if (!editing) return;
+    const el = inputRef.current; if (!el) return;
+    el.focus();
+    if (typedStart.current) { typedStart.current = false; const n = el.value.length; el.setSelectionRange(n, n); } else el.select();
+  }, [editing]);
 
-  const startEdit = () => { if (disabled) return; setText(precision > 0 ? value.toFixed(precision) : String(round(value))); setEditing(true); };
+  const startEdit = (initial?: string) => {
+    if (disabled) return;
+    typedStart.current = initial !== undefined;
+    setText(initial ?? (precision > 0 ? value.toFixed(precision) : String(round(value))));
+    setEditing(true);
+  };
   const commitText = () => {
     setEditing(false);
     let v: number | null;
@@ -95,7 +107,8 @@ export function NumberField({
   };
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (editing) {
-      if (e.key === 'Enter') { e.preventDefault(); commitText(); }
+      // No preventDefault: a surrounding Dialog runs its primary action after the commit (Enter = Apply).
+      if (e.key === 'Enter') commitText();
       else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setEditing(false); }
       else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         e.preventDefault();
@@ -108,6 +121,10 @@ export function NumberField({
       return;
     }
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startEdit(); }
+    else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1 && /[0-9.+\-]/.test(e.key)) {
+      // Typing a number on a focused field starts editing with that character (keyboard-first dialogs).
+      e.preventDefault(); e.stopPropagation(); startEdit(e.key);
+    }
     else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault();
       const mul = e.shiftKey ? 10 : 1;

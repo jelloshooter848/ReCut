@@ -5,7 +5,7 @@ export interface ParseResult { cues: SubtitleCue[]; warnings: string[]; format: 
 
 function parseTime(s: string): number | null {
   // 00:01:02,345  |  00:01:02.345  |  01:02.345
-  const m = s.trim().match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{1,2})[,.](\d{1,3})$/);
+  const m = s.trim().match(/^(?:(\d{1,3}):)?(\d{1,2}):(\d{1,2})[,.](\d{1,3})$/);
   if (!m) return null;
   const h = m[1] ? parseInt(m[1], 10) : 0;
   const mi = parseInt(m[2], 10); const se = parseInt(m[3], 10);
@@ -28,7 +28,7 @@ export function parseSubtitles(content: string): ParseResult {
     const blocks = text.split(/\n\n+/);
     blocks.shift();
     text = blocks.filter((b) => !/^(NOTE|STYLE|REGION)\b/.test(b.trim())).join('\n\n');
-  } else if (/\d{1,2}:\d{2}:\d{2},\d{1,3}\s*-->/.test(text)) format = 'srt';
+  } else if (/\d{1,3}:\d{2}:\d{2},\d{1,3}\s*-->/.test(text)) format = 'srt';
 
   const cues: SubtitleCue[] = [];
   const blocks = text.split(/\n\n+/);
@@ -53,6 +53,7 @@ export function parseSubtitles(content: string): ParseResult {
   }
   cues.sort((x, y) => x.start - y.start);
   if (cues.length === 0 && format === 'unknown') warnings.unshift('No subtitle cues recognised; expected SRT or WebVTT.');
+  else if (cues.length === 0 && warnings.length === 0) warnings.push('The file contains no subtitle cues.');
   return { cues, warnings, format };
 }
 
@@ -63,12 +64,17 @@ function fmtSrt(t: number): string {
   return `${p(h)}:${p(m)}:${p(s)},${p(r, 3)}`;
 }
 
+/** SRT/VTT blocks end at the first blank line, so cue text cannot contain one: collapse them (and trim). */
+function cueBody(text: string): string {
+  return text.replace(/\r\n?/g, '\n').replace(/\n[ \t]*(?:\n[ \t]*)+/g, '\n').trim();
+}
+
 export function serializeSrt(cues: { start: number; end: number; text: string }[]): string {
-  return cues.map((c, i) => `${i + 1}\n${fmtSrt(c.start)} --> ${fmtSrt(c.end)}\n${c.text}\n`).join('\n');
+  return cues.map((c, i) => `${i + 1}\n${fmtSrt(c.start)} --> ${fmtSrt(c.end)}\n${cueBody(c.text)}\n`).join('\n');
 }
 
 export function serializeVtt(cues: { start: number; end: number; text: string }[]): string {
-  return 'WEBVTT\n\n' + cues.map((c) => `${fmtSrt(c.start).replace(',', '.')} --> ${fmtSrt(c.end).replace(',', '.')}\n${c.text}\n`).join('\n');
+  return 'WEBVTT\n\n' + cues.map((c) => `${fmtSrt(c.start).replace(',', '.')} --> ${fmtSrt(c.end).replace(',', '.')}\n${cueBody(c.text)}\n`).join('\n');
 }
 
 /** Simple case-insensitive search with surrounding context. */

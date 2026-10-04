@@ -87,3 +87,34 @@
 @container (max-width: 560px) { .pm-wide { display: none !important; } .pm-more { display: inline-flex; } }
 @container (max-width: 380px) { .pm-row.main .pm-dur { display: none; } }
 @container (max-width: 300px) { .pm-row.main .pm-tcfield { display: none; } }
+
+/* Active transport monitor (UX-03): accent inset frame + tinted transport bar. */
+.pm-root.transport-active::after, .source-panel.transport-active::after {
+  content: ''; position: absolute; inset: 0; box-shadow: inset 0 0 0 2px var(--accent); pointer-events: none; z-index: 6; border-radius: 2px;
+}
+.pm-root.transport-active .pm-bar { background: color-mix(in srgb, var(--accent) 12%, var(--bg-2)); }
+.pm-root.transport-active .pm-tcfield { color: var(--text-bright); }
+
+/* Empty-sequence hint (UX-04) */
+.pm-empty .pm-empty-title { color: var(--text); font-weight: 600; }
+.pm-empty kbd { font-family: var(--font-mono); font-size: 11px; padding: 0 4px; border: 1px solid var(--border-strong); border-radius: 3px; color: var(--text); background: var(--bg-3); }
+.pm-empty > span:last-child { max-width: 320px; text-align: center; line-height: 1.5; padding: 0 12px; }
+
+/* Missing-media chips split by cause (E-07) */
+.pm-chip.danger { color: #ff8a8a; border-color: rgba(224, 82, 82, 0.6); }
+.pm-chip.danger:hover { background: rgba(224, 82, 82, 0.18); }
+.pm-chip-group { padding: 0; gap: 0; overflow: hidden; }
+.pm-chip-group > button { all: unset; display: inline-flex; align-items: center; gap: 4px; height: 100%; padding: 0 7px; cursor: pointer; }
+.pm-chip-group > button > svg { width: 11px; height: 11px; }
+.pm-chip-group > button:hover { background: rgba(232, 163, 61, 0.18); }
+.pm-chip-group > button:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+.pm-chip-group .pm-chip-action { border-left: 1px solid rgba(232, 163, 61, 0.55); color: var(--text-bright); }
+.pm-chip-group .pm-chip-note { padding: 0 7px; color: var(--text-dim); text-transform: none; letter-spacing: 0; font-weight: 500; }
+
+/* Program audio meter (E-10) */
+.pm-meter { display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; margin-right: 4px; }
+.pm-meter canvas { display: block; }
+.pm-meter.unavailable { opacity: 0.4; }
+.pm-clip-led { width: 8px; height: 12px; padding: 0; border-radius: 2px; border: 1px solid var(--border-strong); background: #2a1515; cursor: pointer; }
+.pm-clip-led.on { background: var(--danger); box-shadow: 0 0 5px var(--danger); }
+@container (max-width: 520px) { .pm-meter canvas { width: 80px !important; } }

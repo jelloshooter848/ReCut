@@ -23,7 +23,13 @@ test.beforeEach(async () => {
 });
 test.afterEach(async () => {
   try { await app.page.evaluate(() => (window as unknown as W).__recut.store.setState({ dirty: false })); } catch { /* gone */ }
-  await app.app.close().catch(() => undefined);
+  // A quit prompt the test left unanswered (stubbed to never resolve) keeps the app open by design
+  // (QA-01): close() would wait forever, so fall back to killing the process.
+  const closed = app.app.close().then(() => 'closed', () => 'closed');
+  const timedOut = new Promise((r) => setTimeout(() => r('timeout'), 5000));
+  if ((await Promise.race([closed, timedOut])) === 'timeout') {
+    try { app.app.process().kill('SIGKILL'); } catch { /* gone */ }
+  }
 });
 
 const makeDirty = () => app.page.evaluate(() => {

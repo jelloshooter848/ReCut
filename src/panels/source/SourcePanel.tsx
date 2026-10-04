@@ -14,7 +14,7 @@ import { useStore, identityLabel, startProxy } from '@/state';
 import type { StoreState } from '@/state';
 import { SourcePlayer, resolvePlaybackPath, mediaFps, mediaSize, type SourcePlayerStatus } from '@/playback';
 import { resumeAudio } from '@/app/media';
-import { registerTransport, setActiveTransport, shuttle, type Transport } from '@/app/transport';
+import { registerTransport, setActiveTransport, shuttle, useActiveTransportId, type Transport } from '@/app/transport';
 import { setClipDrag } from '@/app/dnd';
 import { Button, Dialog, EmptyState, IconButton, Select, Slider, TextField, TimecodeField, toast } from '@/components/ui';
 import { isEditableTarget } from '@/keyboard/useShortcuts';
@@ -42,6 +42,29 @@ function selectLoadKey(s: StoreState): string {
   return [m.id, m.path, m.kind, m.offline ? 1 : 0, m.probe ? 1 : 0, m.probe?.browserPlayable ? 1 : 0, m.proxy.status, m.proxy.path ?? '', s.project.settings.useProxies ? 1 : 0].join('|');
 }
 
+/**
+ * Error-card title for media that cannot be previewed: the probe's real reason (e.g. AC-3 audio) rather than the
+ * video codec, which is usually fine (E-08).
+ */
+export function describeDecodeProblem(media: MediaItem | undefined): string {
+  const p = media?.probe;
+  if (!p) return 'Cannot decode this file';
+  const reason = p.playabilityReason?.trim();
+  if (reason) {
+    const audio = /audio codec\s+([\w.-]+)/i.exec(reason);
+    if (audio) return `${codecName(audio[1])} audio can't be decoded for preview`;
+    const video = /video codec\s+([\w.-]+)/i.exec(reason);
+    if (video) return `${codecName(video[1])} video can't be decoded for preview`;
+    const container = /container\s+([\w.,-]+)/i.exec(reason);
+    if (container) return `${container[1].split(',')[0].toUpperCase()} container can't be played for preview`;
+    return `${reason.replace(/\s*not supported by Chromium\s*$/i, '')} can't be decoded for preview`;
+  }
+  return `Cannot decode ${p.video?.codec ?? p.audio[0]?.codec ?? p.container ?? 'this file'}`;
+}
+
+const CODEC_NAMES: Record<string, string> = { ac3: 'AC-3', eac3: 'E-AC-3', dts: 'DTS', truehd: 'TrueHD', hevc: 'HEVC', h265: 'HEVC', h264: 'H.264', mpeg2video: 'MPEG-2', vc1: 'VC-1', pcm_s16le: 'PCM', mp2: 'MP2', mp3: 'MP3', aac: 'AAC', opus: 'Opus', vorbis: 'Vorbis', flac: 'FLAC', av1: 'AV1', vp9: 'VP9', prores: 'ProRes' };
+function codecName(c: string): string { return CODEC_NAMES[c.toLowerCase()] ?? c.toUpperCase(); }
+
 export function SourcePanel({ focused, active }: PanelProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -56,6 +79,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
   const useProxies = useStore((s) => s.project.settings.useProxies);
   const subtitleTracks = useStore((s) => s.project.subtitleTracks);
   const activeSequenceId = useStore((s) => s.project.activeSequenceId);
+  const transportActive = useActiveTransportId() === 'source';
 
   const [status, setStatus] = useState<SourcePlayerStatus>(() => getPlayer().status());
   const [time, setTime] = useState(0);
@@ -258,21 +282,20 @@ export function SourcePanel({ focused, active }: PanelProps) {
     if (isEditableTarget(e.target) || (e.target as HTMLElement).closest?.('.numfield, .slider, select')) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     let handled = true;
-    switch (e.key) {
-      case ' ': transport.toggle(); break;
-      case 'j': case 'J': shuttle(transport, -1); break;
-      case 'k': case 'K': transport.setRate(0); break;
-      case 'l': case 'L': shuttle(transport, 1); break;
+    // Physical keys (e.code) + Shift, like the global dispatcher: CapsLock cannot flip mark / go-to (E-25).
+    switch (e.code) {
+      case 'Space': transport.toggle(); break;
+      case 'KeyJ': shuttle(transport, -1); break;
+      case 'KeyK': transport.setRate(0); break;
+      case 'KeyL': shuttle(transport, 1); break;
       case 'ArrowLeft': transport.stepFrames(e.shiftKey ? -5 : -1); break;
       case 'ArrowRight': transport.stepFrames(e.shiftKey ? 5 : 1); break;
       case 'Home': transport.goToStart(); break;
       case 'End': transport.goToEnd(); break;
-      case 'i': transport.markIn(); break;
-      case 'I': transport.goToIn(); break;
-      case 'o': transport.markOut(); break;
-      case 'O': transport.goToOut(); break;
-      case ',': insertAt('insert'); break;
-      case '.': insertAt('overwrite'); break;
+      case 'KeyI': if (e.shiftKey) transport.goToIn(); else transport.markIn(); break;
+      case 'KeyO': if (e.shiftKey) transport.goToOut(); else transport.markOut(); break;
+      case 'Comma': if (e.shiftKey) handled = false; else insertAt('insert'); break;
+      case 'Period': if (e.shiftKey) handled = false; else insertAt('overwrite'); break;
       default: handled = false;
     }
     if (handled) { e.preventDefault(); e.stopPropagation(); }
@@ -287,7 +310,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
   const inFrame = inPoint !== null ? secondsToFrames(inPoint, fps) : null;
   const outFrame = outPoint !== null ? secondsToFrames(outPoint, fps) : null;
   const rangeFrames = (outFrame ?? durationFrames) - (inFrame ?? 0);
-  const codec = media?.probe?.video?.codec ?? media?.probe?.audio[0]?.codec ?? media?.probe?.container ?? 'this file';
+  const decodeError = describeDecodeProblem(media);
   const proxyBusy = media?.proxy.status === 'queued' || media?.proxy.status === 'running';
 
   const zoomStyle = (): React.CSSProperties | undefined => {
@@ -305,7 +328,8 @@ export function SourcePanel({ focused, active }: PanelProps) {
   }
 
   return (
-    <div ref={rootRef} className="panel source-panel" tabIndex={0} onPointerDownCapture={activate} onKeyDown={onKeyDown} data-state={status.state} data-media-id={media.id}>
+    <div ref={rootRef} className={['panel', 'source-panel', transportActive ? 'transport-active' : ''].filter(Boolean).join(' ')} tabIndex={0} onPointerDownCapture={activate} onKeyDown={onKeyDown}
+      data-state={status.state} data-media-id={media.id} data-transport-active={transportActive ? 'true' : 'false'}>
       <div ref={stageRef} className={['source-stage', zoom !== 'fit' ? 'zoomed' : ''].filter(Boolean).join(' ')}>
         {isImage ? (
           <img className={['source-image', zoom !== 'fit' ? 'zoomed' : ''].filter(Boolean).join(' ')} style={zoomStyle()} src={pathToMediaUrl(media.path)} alt={media.name} draggable={false} />
@@ -340,7 +364,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
                 </>
               ) : (
                 <>
-                  <div className="title">Cannot decode {codec}</div>
+                  <div className="title" data-testid="source-error-title">{decodeError}</div>
                   <div className="desc">{proxyBusy ? `Generating proxy… ${Math.round((media.proxy.progress ?? 0) * 100)}%` : 'Generate a proxy to preview this file.'}</div>
                   {!proxyBusy ? <Button size="sm" variant="primary" onClick={() => { void startProxy(media.id); }}>Generate proxy</Button> : null}
                   {media.proxy.status === 'failed' && media.proxy.error ? <div className="desc text-danger">{media.proxy.error}</div> : null}
@@ -412,11 +436,11 @@ export function SourcePanel({ focused, active }: PanelProps) {
         </div>
       </div>
 
-      <Dialog open={subclipOpen} title="Make Subclip" onClose={() => setSubclipOpen(false)} width={360}
+      <Dialog open={subclipOpen} title="Make Subclip" onClose={() => setSubclipOpen(false)} width={360} onSubmit={makeSubclip}
         footer={<><Button onClick={() => setSubclipOpen(false)}>Cancel</Button><Button variant="primary" onClick={makeSubclip}>Add to Library</Button></>}>
         <div className="col gap-6">
           <label className="text-dim text-sm">Name</label>
-          <TextField value={subclipName} onChange={setSubclipName} selectOnFocus autoFocus onKeyDown={(e) => { if (e.key === 'Enter') makeSubclip(); }} />
+          <TextField value={subclipName} onChange={setSubclipName} selectOnFocus autoFocus />
           <div className="text-dim text-xs mono">{formatTimecode(inFrame ?? 0, fps)} → {formatTimecode(outFrame ?? durationFrames, fps)} ({formatTimecode(Math.max(0, rangeFrames), fps)})</div>
         </div>
       </Dialog>

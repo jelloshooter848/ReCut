@@ -185,3 +185,24 @@ describe('searchCues', () => {
     expect(searchCues(cues, 'the', 1)).toHaveLength(1);
   });
 });
+
+describe('attack fixes (QA-23/24/30)', () => {
+  it('serializeSrt / serializeVtt collapse blank lines inside a cue so it survives a round trip', () => {
+    const cues = [{ start: 1, end: 2, text: 'para one\n\n \npara two' }, { start: 3, end: 4, text: 'next' }];
+    for (const out of [serializeSrt(cues), serializeVtt(cues)]) {
+      const back = parseSubtitles(out);
+      expect(back.cues.map((c) => c.text)).toEqual(['para one\npara two', 'next']);
+    }
+  });
+
+  it('accepts 1–3 digit hours', () => {
+    const r = parseSubtitles('1\n5:00:00,000 --> 5:00:01,000\na\n\n2\n100:00:00,000 --> 100:00:01,500\nb\n');
+    expect(r.format).toBe('srt');
+    expect(r.cues.map((c) => [c.text, c.start, c.end])).toEqual([['a', 18000, 18001], ['b', 360000, 360001.5]]);
+    expect(parseSubtitles('1\n1000:00:00,000 --> 1000:00:01,000\nx\n').cues).toEqual([]);
+  });
+
+  it('a header-only WebVTT yields a warning', () => {
+    expect(parseSubtitles('WEBVTT\n').warnings.length).toBeGreaterThan(0);
+  });
+});

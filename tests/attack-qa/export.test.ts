@@ -77,26 +77,25 @@ describe('render graph validation', () => {
   });
 
   it('quotes / unicode / spaces in the file name are kept and resolvable', () => {
+    // `"` is illegal on Windows and stripped (same as the dialog's sanitizeFileName); the rest is kept.
     const name = `Ünïcödé 🎬 "quoted" it's.mp4`;
     const p = exportOutputPath(settings({ fileName: name }));
-    expect(path.basename(p)).toBe(name);
+    expect(path.basename(p)).toBe(name.replace(/"/g, ''));
   });
 
   it('absurd dimensions (16000x9000) are not capped by the main-process graph builder', () => {
     const seq = seqWith([{ start: 0, duration: 24 }]);
-    const g = buildRenderGraph({ sequence: seq, media: { [media.id]: media }, settings: settings({ width: 16000, height: 9000 }) });
-    // The dialog caps at 8192 but the IPC surface accepts anything; document and assert the desired cap.
-    expect(g.filterGraph).toContain('16000x9000');
-    expect(g.warnings.some((w) => /dimension|large|cap/i.test(w)), 'no warning for 16000x9000').toBe(true);
+    // The dialog caps at 8192; the main process now refuses too (clear error instead of a warning).
+    expect(() => buildRenderGraph({ sequence: seq, media: { [media.id]: media }, settings: settings({ width: 16000, height: 9000 }) })).toThrow(/dimensions must be between 16 and 8192/);
   });
 
   it('an export whose output path equals one of its own source files must be refused', () => {
     const seq = seqWith([{ start: 0, duration: 24 }]);
     const s = settings({ outputDir: path.dirname(src), fileName: path.basename(src) });
     const req = { sequence: seq, media: { [media.id]: media }, settings: s };
-    const g = buildRenderGraph(req);
-    expect(g.outputPath).toBe(src);
-    // no graph-level refusal:
+    // Refused at graph level too (runExport goes through buildRenderGraph) ...
+    expect(() => buildRenderGraph(req)).toThrow(/used by the sequence/);
+    // ... and by startExportJob:
     let refused = false;
     const queue: ExportJobQueue = { add: (spec: ExportJobSpec) => ({ id: 'j', kind: 'export', title: spec.title, status: 'queued', progress: 0 }), cancel: () => {} };
     return startExportJob(queue, req).then((r) => { refused = !r.ok; expect(refused, 'startExportJob accepted output == source').toBe(true); });

@@ -7,6 +7,7 @@ import path from 'node:path';
 import type { JobInfo } from '@shared/model';
 import type { SceneDetectRequest, SceneDetectResult } from '@shared/ipc';
 import type { JobQueue, JobRunContext } from '../jobs/jobQueue';
+import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
 import { cacheKeyForPath, cacheSubdir, fileExists, removeQuietly } from './cache';
 import { FfmpegError, runFfmpeg } from './ffmpeg';
 import { probeMedia } from './probe';
@@ -101,17 +102,24 @@ export async function runSceneDetect(req: SceneDetectRequest, ctx: JobRunContext
   return { boundaries: enforceMinSceneGap(result.boundaries, minGap), duration };
 }
 
+const inFlightSceneDetects: InFlight = new WeakMap();
+
 export function startSceneDetectJob(
   queue: JobQueue,
   req: SceneDetectRequest,
   onDone?: (job: JobInfo, result: SceneDetectResult | null, error: string | null) => void,
 ): JobInfo {
+  // De-dupe: the same detection (media + threshold) already queued/running -> return that job.
+  const key = `${req.mediaId}|${req.threshold}`;
+  const existing = inFlightJob(queue, inFlightSceneDetects, key);
+  if (existing) return existing;
   const job = queue.add<SceneDetectResult>({
     kind: 'sceneDetect',
     title: `Scene detection · ${path.basename(req.path)}`,
     mediaId: req.mediaId,
     run: (ctx) => runSceneDetect(req, ctx),
   });
+  trackInFlight(queue, inFlightSceneDetects, key, job.id);
   if (onDone) {
     queue.waitFor(job.id).then((final) => {
       onDone(

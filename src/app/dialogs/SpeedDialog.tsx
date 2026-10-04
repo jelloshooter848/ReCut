@@ -41,7 +41,7 @@ export function SpeedDialog() {
     closeSpeedDialog();
   };
   return (
-    <Dialog open title="Clip Speed / Duration" onClose={closeSpeedDialog} width={380}
+    <Dialog open title="Clip Speed / Duration" onClose={closeSpeedDialog} width={380} onSubmit={apply} submitDisabled={!clips.length}
       footer={<><Button onClick={closeSpeedDialog}>Cancel</Button><Button variant="primary" onClick={apply} disabled={!clips.length}>Apply</Button></>}>
       <div className="col" style={{ gap: 10 }}>
         {!clips.length ? <div className="text-dim">Select one or more clips first.</div> : null}

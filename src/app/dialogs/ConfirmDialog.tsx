@@ -26,6 +26,8 @@ export interface ConfirmOptions {
   type?: 'none' | 'info' | 'error' | 'question' | 'warning';
   /** Test id for the in-app dialog root. */
   testId?: string;
+  /** Per-button test ids for the in-app dialog (default `confirm-button-<i>`). */
+  buttonTestIds?: string[];
 }
 
 export interface PromptOptions {
@@ -92,9 +94,9 @@ function ConfirmView({ req }: { req: ConfirmRequest }) {
   const defaultId = req.opts.defaultId ?? 0;
   const finish = (i: number) => { useDialogQueue.getState().shift(); req.resolve(i); };
   return (
-    <Dialog open title={req.opts.title ?? 'ReCut'} onClose={() => finish(cancelId)} width={440} closeOnBackdrop={false}
+    <Dialog open title={req.opts.title ?? 'ReCut'} onClose={() => finish(cancelId)} width={440} closeOnBackdrop={false} onSubmit={() => finish(defaultId)}
       footer={buttons.map((b, i) => (
-        <Button key={b} variant={i === defaultId ? 'primary' : 'default'} onClick={() => finish(i)} data-testid={`confirm-button-${i}`} autoFocus={i === defaultId}>{b}</Button>
+        <Button key={b} variant={i === defaultId ? 'primary' : 'default'} onClick={() => finish(i)} data-testid={req.opts.buttonTestIds?.[i] ?? `confirm-button-${i}`} autoFocus={i === defaultId}>{b}</Button>
       ))}>
       <div className="col" style={{ gap: 6 }} data-testid={req.opts.testId ?? 'confirm-dialog'}>
         <div>{req.opts.message}</div>
@@ -109,7 +111,7 @@ function PromptView({ req }: { req: PromptRequest }) {
   useEffect(() => { setValue(req.opts.initial ?? ''); }, [req.id, req.opts.initial]);
   const finish = (v: string | null) => { useDialogQueue.getState().shift(); req.resolve(v); };
   return (
-    <Dialog open title={req.opts.title} onClose={() => finish(null)} width={420} closeOnBackdrop={false}
+    <Dialog open title={req.opts.title} onClose={() => finish(null)} width={420} closeOnBackdrop={false} onSubmit={() => finish(value)}
       footer={<>
         <Button onClick={() => finish(null)}>Cancel</Button>
         <Button variant="primary" onClick={() => finish(value)} data-testid="prompt-ok">{req.opts.okLabel ?? 'OK'}</Button>

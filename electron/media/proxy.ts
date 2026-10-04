@@ -8,6 +8,7 @@ import path from 'node:path';
 import type { JobInfo } from '@shared/model';
 import type { ProxyRequest } from '@shared/ipc';
 import type { JobQueue, JobRunContext } from '../jobs/jobQueue';
+import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
 import { cacheKeyForPath, cacheSubdir, fileExists, removeQuietly } from './cache';
 import { FfmpegError, runFfmpeg } from './ffmpeg';
 import { probeMedia } from './probe';
@@ -57,6 +58,18 @@ export function buildProxyArgs(req: ProxyRequest, opts: { targetHeight: number; 
   return args;
 }
 
+/**
+ * Remove leftovers of earlier interrupted runs for `out` (`<out>.part`, `<out>.part-<jobId>`). Safe:
+ * startProxyJob de-dupes in-flight jobs by output path, so no live job is writing one of these.
+ */
+async function removeStaleParts(out: string): Promise<void> {
+  const dir = path.dirname(out);
+  const prefix = `${path.basename(out)}.part`;
+  let names: string[] = [];
+  try { names = await fsp.readdir(dir); } catch { return; }
+  await Promise.all(names.filter((n) => n === prefix || n.startsWith(`${prefix}-`)).map((n) => removeQuietly(path.join(dir, n))));
+}
+
 /** The actual transcode. Exposed so other job kinds can reuse it; prefer `startProxyJob`. */
 export async function runProxy(req: ProxyRequest, ctx: JobRunContext): Promise<ProxyResult> {
   const probe = await probeMedia(req.path);
@@ -79,8 +92,9 @@ export async function runProxy(req: ProxyRequest, ctx: JobRunContext): Promise<P
     await removeQuietly(out); // corrupt leftover
   }
 
-  const outPart = `${out}.part`;
-  await removeQuietly(outPart);
+  // Per-job temp name: even if two jobs ever target the same proxy they never share a `.part`.
+  const outPart = `${out}.part-${ctx.jobId}`;
+  await removeStaleParts(out);
   const args = buildProxyArgs(req, { targetHeight, hasVideo, hasAudio, outPart });
 
   ctx.setProgress(0, hasVideo ? `Encoding ${targetHeight}p proxy` : 'Encoding audio proxy');
@@ -120,7 +134,10 @@ export async function startProxyJob(
   onDone?: (job: JobInfo, result: ProxyResult | null, error: string | null) => void,
 ): Promise<{ job: JobInfo; outputPath: string }> {
   const key = await cacheKeyForPath(req.path);
-  const outputPath = proxyOutputPath(key, req.height);
+  const outputPath = proxyOutputPath(key, evenDown(req.height > 0 ? req.height : 540));
+  // De-dupe: a proxy for this output is already queued/running -> hand back that job.
+  const existing = inFlightJob(queue, inFlightProxies, outputPath);
+  if (existing) return { job: existing, outputPath };
   const title = `Proxy ${req.height}p · ${path.basename(req.path)}`;
   const job = queue.add<ProxyResult>({
     kind: 'proxy',
@@ -128,6 +145,7 @@ export async function startProxyJob(
     mediaId: req.mediaId,
     run: (ctx) => runProxy(req, ctx),
   });
+  trackInFlight(queue, inFlightProxies, outputPath, job.id);
   if (onDone) {
     queue.waitFor(job.id).then((final) => {
       const result = final.status === 'done' ? (final.result as ProxyResult) : null;
@@ -136,3 +154,5 @@ export async function startProxyJob(
   }
   return { job, outputPath };
 }
+
+const inFlightProxies: InFlight = new WeakMap();

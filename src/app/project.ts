@@ -5,9 +5,10 @@
  * Every `window.recut` access is guarded so this module is importable under vitest/node.
  */
 import { useStore } from '@/state/store';
-import { autosaveProject, openProject, recutApi, saveProject, verifyMediaOnline } from '@/state/mediaActions';
+import { autosaveProject, recutApi, saveProject, verifyMediaOnline } from '@/state/mediaActions';
 import { activeSequence } from '@/state/selectors';
 import { normalizeProject } from '@shared/project';
+import type { Project } from '@shared/model';
 import { useShellStore } from './shellStore';
 import { setBeforeQuitHandler, setOpenProjectPathHandler } from './bootstrap';
 import { registerCommand } from '@/keyboard/shortcuts';
@@ -24,6 +25,20 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 function fileName(p: string): string {
   const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
   return i >= 0 ? p.slice(i + 1) : p;
+}
+
+export const DEFAULT_PROJECT_NAME = 'Untitled Project';
+
+/** `/a/b/My Edit.recut` -> `My Edit` (empty when nothing is left). */
+export function projectNameFromPath(p: string): string {
+  return fileName(p).replace(/\.recut$/i, '').trim();
+}
+
+/** A still-default project name is replaced by the file's basename (first save / Save As / open). */
+function adoptFileName(target: string): void {
+  const st = useStore.getState();
+  const name = projectNameFromPath(target);
+  if (name && st.project.name === DEFAULT_PROJECT_NAME) st.renameProject(name);
 }
 
 // ------------------------------------------------------------------
@@ -53,6 +68,7 @@ export async function requestSaveAs(): Promise<boolean> {
       defaultPath: st.projectPath ?? `${st.project.name.replace(/[\\/:*?"<>|]+/g, '_') || 'Untitled'}.recut`,
     });
     if (!target) return false;
+    adoptFileName(target);
     const res = await saveProject(target);
     if (!res.ok) { toast('error', res.error); return false; }
     toast('ok', `Saved ${fileName(res.path)}`);
@@ -107,9 +123,21 @@ export async function requestOpenProject(path?: string): Promise<boolean> {
       target = picked[0];
     }
     if (!target) return false;
-    const res = await openProject(target);
+    const res = await api.loadProject(target);
     if (!res.ok) { toast('error', res.error); return false; }
-    toast('ok', `Opened ${res.project.name}`);
+    let project: Project;
+    try { project = normalizeProject(res.project); } catch (e) { toast('error', errText(e)); return false; }
+    if (project.name === DEFAULT_PROJECT_NAME) {
+      const name = projectNameFromPath(res.path);
+      if (name) project = { ...project, name };
+    }
+    useStore.getState().loadProjectData(project, res.path);
+    if (res.fromBackup) {
+      const when = res.backupMtime ? new Date(res.backupMtime).toLocaleString() : 'an earlier save';
+      toast('warn', `Opened the backup from ${when}; the project file was damaged`);
+    } else {
+      toast('ok', `Opened ${project.name}`);
+    }
     void checkMissingMedia();
     return true;
   } catch (e) { toast('error', `Open failed: ${errText(e)}`); return false; }
@@ -202,20 +230,26 @@ export async function checkStartupRecovery(): Promise<boolean> {
 
 async function handleBeforeQuit(): Promise<void> {
   const api = recutApi();
-  const st = useStore.getState();
-  if (!st.dirty) { await api?.quit(true); return; }
   if (!api) return;
-  const i = await api.message({
-    type: 'question', title: 'Quit ReCut', message: `Save changes to "${st.project.name}" before quitting?`,
-    buttons: ['Save', "Don't Save", 'Cancel'], defaultId: 0, cancelId: 2,
-  });
+  // Tell main we are alive and handling the request: it drops its hung-renderer fallback timer.
+  try { await api.quitAck?.(); } catch { /* older main: falls back to its timer */ }
+  const st = useStore.getState();
+  if (!st.dirty) { await api.quit(true); return; }
+  let i = 2;
+  try {
+    i = await api.message({
+      type: 'question', title: 'Quit ReCut', message: `Save changes to "${st.project.name}" before quitting?`,
+      buttons: ['Save', "Don't Save", 'Cancel'], defaultId: 0, cancelId: 2,
+    });
+  } catch (e) { console.error('[quit] prompt failed', e); }
   if (i === 0) {
-    const ok = await requestSave();
-    if (ok) await api.quit(true);
-    // Save cancelled/failed: stay open (the main process only quits on quit(true)).
+    if (await requestSave()) { await api.quit(true); return; }
   } else if (i === 1) {
     await api.quit(true);
+    return;
   }
+  // Cancel, or the save was cancelled/failed: stay open.
+  await api.quitCancel?.();
 }
 
 // ------------------------------------------------------------------

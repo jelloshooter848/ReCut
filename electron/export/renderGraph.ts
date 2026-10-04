@@ -39,7 +39,18 @@ export interface RenderGraph {
 export interface RenderGraphOptions {
   /** Path of the SRT file the caller wrote `subtitleContent` to; enables the `subtitles=` filter. */
   subtitleFilePath?: string;
+  /**
+   * Canonicalize a path for the "output overwrites a source" check (exporter passes an fs.realpath
+   * based resolver). Defaults to path.resolve, keeping this module free of file-system I/O.
+   */
+  canonicalPath?: (p: string) => string;
+  /** Platform for case-insensitive path comparison (defaults to process.platform). */
+  platform?: NodeJS.Platform;
 }
+
+/** Output dimension limits (mirror src/panels/export/settings.ts MIN_DIMENSION / MAX_DIMENSION). */
+export const MIN_EXPORT_DIMENSION = 16;
+export const MAX_EXPORT_DIMENSION = 8192;
 
 // ---------------------------------------------------------------------------------------------------
 // Helpers
@@ -149,6 +160,13 @@ function collectTrackSegments(
     const segEndAbs = Math.min(clipEnd(clip), endF);
     if (segEndAbs <= segStartAbs) continue;
     if (segStartAbs > Math.max(clip.start, startF)) warnings.push(`Clip "${clip.name}" overlaps the previous clip on ${track.name}; the overlap is trimmed.`);
+    const mediaDur = mediaDurationSec(m);
+    if (Number.isFinite(mediaDur)) {
+      const srcEnd = sourceTimeAt({ ...clip, speed }, segEndAbs, fps);
+      if (srcEnd > mediaDur + fd / 2 + 1e-6) {
+        warnings.push(`Clip "${clip.name}" on ${track.name} extends past the end of its media "${m.name}" (needs ${srcEnd.toFixed(2)}s, media is ${mediaDur.toFixed(2)}s); ${need === 'video' ? 'the last frame is held' : 'the rest is silent'}.`);
+      }
+    }
     clipSegs.push({
       kind: 'clip', clip, media: m,
       start: segStartAbs - startF, frames: segEndAbs - segStartAbs,
@@ -484,11 +502,82 @@ export function buildSubtitleSrt(req: ExportRequest): string | null {
 // Main
 // ---------------------------------------------------------------------------------------------------
 
-/** Output path for a request: outputDir/fileName with a .mp4 extension. */
+/**
+ * Server-side file-name sanitizer (the dialog sanitizes too, but IPC callers may not): keep only the
+ * last path component and strip characters illegal on common file systems (/ \\ : * ? " < > |,
+ * control characters) and leading dots.
+ */
+export function sanitizeExportFileName(name: string): string {
+  const base = String(name ?? '').split(/[\\/]/).pop() ?? '';
+  const cleaned = base
+    .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+/, '')
+    .trim();
+  return cleaned || 'export';
+}
+
+/** Temp file ffmpeg writes to before the rename: `<out>.part.mp4`. */
+export function exportPartPath(outputPath: string): string {
+  return outputPath.replace(/\.mp4$/i, '') + '.part.mp4';
+}
+
+/** Sidecar subtitle path next to the output: `<out>.srt`. */
+export function exportSidecarPath(outputPath: string): string {
+  return outputPath.replace(/\.mp4$/i, '') + '.srt';
+}
+
+/** Output path for a request: outputDir/fileName with a .mp4 extension (file name sanitized to a basename). */
 export function exportOutputPath(settings: ExportSettings): string {
-  let name = (settings.fileName || 'export').trim();
+  let name = sanitizeExportFileName(settings.fileName || 'export');
   if (!/\.mp4$/i.test(name)) name = name.replace(/\.(mov|mkv|m4v|avi)$/i, '') + '.mp4';
   return path.join(settings.outputDir, name);
+}
+
+function validateDimensions(W: number, H: number): void {
+  if (!Number.isFinite(W) || !Number.isFinite(H)) throw new Error('Output dimensions are not valid numbers.');
+  for (const [label, v] of [['width', W], ['height', H]] as const) {
+    if (v < MIN_EXPORT_DIMENSION || v > MAX_EXPORT_DIMENSION) {
+      throw new Error(`Output ${label} ${v} is out of range: dimensions must be between ${MIN_EXPORT_DIMENSION} and ${MAX_EXPORT_DIMENSION} pixels.`);
+    }
+    if (v % 2 !== 0) throw new Error(`Output ${label} ${v} must be an even number (required for yuv420p).`);
+  }
+}
+
+/** True when an enabled clip on a rendered (non-muted / soloed) track overlaps [startF, endF). */
+function hasEnabledClipInRange(seq: Sequence, startF: number, endF: number): boolean {
+  return [...activeTracks(seq.videoTracks), ...activeTracks(seq.audioTracks)]
+    .some((t) => t.clips.some((c) => c.enabled && c.start < endF && clipEnd(c) > startF));
+}
+
+/**
+ * Refuse an export whose output (or its `.part` temp / sidecar `.srt`) is one of the files the
+ * sequence reads from: ffmpeg would truncate the source, and the final rename replaces it.
+ */
+function assertOutputNotASource(req: ExportRequest, outputPath: string, opts: RenderGraphOptions): void {
+  const platform = opts.platform ?? process.platform;
+  const fold = platform === 'win32' || platform === 'darwin';
+  const canon = (p: string) => {
+    let c: string;
+    try { c = opts.canonicalPath ? opts.canonicalPath(p) : path.resolve(p); } catch { c = path.resolve(p); }
+    return fold ? c.toLowerCase() : c;
+  };
+  const sources = new Map<string, string>();
+  const tracks = [...req.sequence.videoTracks, ...req.sequence.audioTracks];
+  for (const t of tracks) {
+    for (const c of t.clips) {
+      const m = req.media[c.mediaId];
+      if (!m) continue;
+      for (const p of [m.path, m.proxy?.path]) if (p) sources.set(canon(p), p);
+    }
+  }
+  const outputs = [outputPath, exportPartPath(outputPath)];
+  if (req.settings.exportSubtitleSidecar) outputs.push(exportSidecarPath(outputPath));
+  for (const o of outputs) {
+    const hit = sources.get(canon(o));
+    if (hit) throw new Error(`Refusing to export to "${o}": that file is used by the sequence (${hit}). Choose a different file name or folder.`);
+  }
 }
 
 export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = {}): RenderGraph {
@@ -496,9 +585,9 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   const warnings: string[] = [];
   const fps = settings.fps && settings.fps.num > 0 && settings.fps.den > 0 ? settings.fps : seq.fps;
   if (fps.num * seq.fps.den !== seq.fps.num * fps.den) warnings.push(`Export frame rate ${fpsStr(fps)} differs from the sequence frame rate ${fpsStr(seq.fps)}; timing is computed at the sequence rate.`);
-  let W = Math.max(2, Math.round(settings.width || seq.width));
-  let H = Math.max(2, Math.round(settings.height || seq.height));
-  if (W % 2 || H % 2) { W -= W % 2; H -= H % 2; warnings.push(`Output size adjusted to ${W}x${H} (even dimensions required for yuv420p).`); }
+  const W = Math.round(Number(settings.width) || seq.width);
+  const H = Math.round(Number(settings.height) || seq.height);
+  validateDimensions(W, H);
   const SR = settings.sampleRate > 0 ? Math.round(settings.sampleRate) : seq.sampleRate || 48000;
   const channels = settings.audioChannels === 6 ? 6 : 2;
   const layout = channels === 6 ? '5.1' : 'stereo';
@@ -506,6 +595,8 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   const { startF, endF } = resolveRange(seq, settings, warnings);
   const frameCount = endF - startF;
   if (frameCount <= 0) throw new Error('Nothing to export: the range is empty.');
+  if (!hasEnabledClipInRange(seq, startF, endF)) throw new Error('Nothing enabled to export in the selected range');
+  assertOutputNotASource(req, exportOutputPath(settings), opts);
   const seqFd = seq.fps.den / seq.fps.num;
   const durationSec = frameCount * seqFd;
 

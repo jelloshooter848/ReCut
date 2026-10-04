@@ -191,7 +191,13 @@ export function useTimelineDrag(ctxRef: React.MutableRefObject<InteractionCtx>, 
       const f = frameAt(x);
       const tracks = e.shiftKey ? [...seq.videoTracks, ...seq.audioTracks] : [...seq.videoTracks, ...seq.audioTracks].filter((t) => t.id === trackId);
       const ids: ID[] = [];
-      for (const t of tracks) for (const c of t.clips) if (clipEnd(c) > f) ids.push(c.id);
+      const seen = new Set<ID>();
+      for (const t of tracks) for (const c of t.clips) {
+        if (clipEnd(c) <= f) continue;
+        // Linked selection (default on, Alt bypasses): include the linked partners so a drag keeps sync.
+        const group = ctx.linkedSelection && !e.altKey ? linkedClips(seq, c) : [c];
+        for (const g of group) if (!seen.has(g.id)) { seen.add(g.id); ids.push(g.id); }
+      }
       st.select(ids, e.ctrlKey ? 'toggle' : 'set');
       return;
     }
