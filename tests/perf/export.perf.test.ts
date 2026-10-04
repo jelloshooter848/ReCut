@@ -44,8 +44,8 @@ function settings(): ExportSettings {
   };
 }
 
-/** Run ffmpeg to validate graph parsing/init only. Child is capped at `memMB` of address space and killed after `timeoutMs`. */
-function validateGraph(args: string[], filterGraph: string, tag: string, memMB = 8192, timeoutMs = 240_000): Promise<{ code: number | null; signal: string | null; ms: number; peakRssMB: number; tail: string; timedOut: boolean }> {
+/** Run ffmpeg to validate graph parsing/init only. A watchdog kills the child when its RSS exceeds `memMB` or after `timeoutMs`. */
+function validateGraph(args: string[], filterGraph: string, tag: string, memMB = 6144, timeoutMs = 180_000): Promise<{ code: number | null; signal: string | null; ms: number; peakRssMB: number; tail: string; timedOut: boolean; memKilled: boolean }> {
   const script = path.join(SCRATCH, `filter-${tag}.txt`);
   fs.writeFileSync(script, filterGraph);
   const a = args.map((x) => (x === FILTER_SCRIPT_TOKEN ? script : x));
@@ -53,24 +53,23 @@ function validateGraph(args: string[], filterGraph: string, tag: string, memMB =
   const ti = a.lastIndexOf('-t'); if (ti >= 0) a[ti + 1] = '0.5';
   const fi = a.lastIndexOf('-f'); if (fi >= 0) a[fi + 1] = 'null';
   a[a.length - 1] = '-';
-  const cmd = `ulimit -v ${memMB * 1024}; exec ${FFMPEG} -hide_banner -nostdin -loglevel error ${a.slice(3).map((x) => `'${x.replace(/'/g, `'\\''`)}'`).join(' ')}`;
   return new Promise((resolve) => {
     const t0 = now();
-    const child = spawn('bash', ['-c', cmd], { stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(FFMPEG, ['-hide_banner', '-nostdin', '-loglevel', 'error', ...a.slice(3)], { stdio: ['ignore', 'ignore', 'pipe'] });
     let err = '';
     child.stderr.on('data', (d) => { err += String(d); if (err.length > 20000) err = err.slice(-20000); });
-    let peak = 0; let timedOut = false;
+    let peak = 0; let timedOut = false; let memKilled = false;
     const poll = setInterval(() => {
       try {
-        // bash -c exec => the pid is ffmpeg itself
         const st = fs.readFileSync(`/proc/${child.pid}/status`, 'utf8');
         const m = /VmHWM:\s+(\d+) kB/.exec(st); if (m) peak = Math.max(peak, Number(m[1]) / 1024);
+        if (peak > memMB) { memKilled = true; child.kill('SIGKILL'); }
       } catch { /* gone */ }
     }, 200);
     const killer = setTimeout(() => { timedOut = true; try { child.kill('SIGKILL'); } catch { /* ignore */ } }, timeoutMs);
     child.on('close', (code, signal) => {
       clearInterval(poll); clearTimeout(killer);
-      resolve({ code, signal, ms: round(now() - t0), peakRssMB: round(peak), tail: err.trim().split('\n').slice(-6).join(' | ').slice(0, 600), timedOut });
+      resolve({ code, signal, ms: round(now() - t0), peakRssMB: round(peak), tail: err.trim().split('\n').slice(-6).join(' | ').slice(0, 600), timedOut, memKilled });
     });
   });
 }
@@ -138,10 +137,10 @@ describe('export graph @ 2500 clips', () => {
       if (!lastOk) { record({ section: 'ffmpeg', metric: `validate @ ${n} clips`, value: 'skipped (smaller graph already failed)', unit: '' }); continue; }
       const seq = n >= 2500 ? S().project.sequences[big.seqId] : trimmed(n);
       const g = buildRenderGraph(requestFor(seq));
-      const r = await validateGraph(g.args, g.filterGraph, `n${n}`, n >= 2500 ? 10240 : 6144);
+      const r = await validateGraph(g.args, g.filterGraph, `n${n}`);
       const ok = r.code === 0;
       lastOk = ok;
-      record({ section: 'ffmpeg', metric: `ffmpeg exit @ ${n} clips (${g.inputCount} inputs)`, value: r.timedOut ? 'TIMEOUT (killed)' : `${r.code ?? r.signal}`, unit: '', threshold: '0', pass: ok, note: ok ? '' : r.tail });
+      record({ section: 'ffmpeg', metric: `ffmpeg exit @ ${n} clips (${g.inputCount} inputs)`, value: r.timedOut ? 'TIMEOUT (killed)' : r.memKilled ? `KILLED: RSS > 6 GB` : `${r.code ?? r.signal}`, unit: '', threshold: '0', pass: ok, note: ok ? '' : r.tail });
       ms('ffmpeg', `ffmpeg wall time @ ${n} clips (0.5 s output)`, r.ms, 60_000);
       record({ section: 'ffmpeg', metric: `ffmpeg peak RSS @ ${n} clips (MB)`, value: r.peakRssMB, unit: 'MB', threshold: '<= 4096 MB', pass: r.peakRssMB <= 4096 });
     }

@@ -82,20 +82,42 @@ test('opening a project while the Export dialog is open: dialog state survives t
   expect(dialogs.export, 'export dialog stayed open across a project load').toBe(false);
 });
 
-test('second instance with a project path forwards it to the running instance', async () => {
-  const projectPath = path.join(tmp, 'second.recut');
-  const saved = await app.page.evaluate((p) => (window as unknown as W).__recut.actions.saveProject(p), projectPath);
-  expect(saved.ok).toBe(true);
-  await app.page.evaluate(() => { (window as unknown as W).__recut.store.getState().newProject('Scratch'); });
+async function spawnSecondInstance(args: string[], label: string): Promise<{ exitCode: number | null; forwardedArgv: string | null }> {
+  // Hook the main process so we can see exactly what Chromium hands to the 'second-instance' event.
+  const argvPromise = app.app.evaluate(({ app: a }) => new Promise<string | null>((r) => {
+    const t = setTimeout(() => r(null), 15_000);
+    a.once('second-instance', (_e, argv) => { clearTimeout(t); r(JSON.stringify(argv)); });
+  }));
   const electronBin = require('electron') as unknown as string;
-  const childLog = fs.openSync(path.join(tmp, 'second-instance.log'), 'w');
-  const child = spawn(electronBin, [path.join(ROOT, 'dist/electron/main.js'), '--no-sandbox', '--project', projectPath], {
-    cwd: ROOT, env: { ...process.env, RECUT_USER_DATA: app.userData, RECUT_CACHE_DIR: app.cacheDir, RECUT_DISABLE_GPU: '1' }, stdio: ['ignore', childLog, childLog],
+  const child = spawn(electronBin, [path.join(ROOT, 'dist/electron/main.js'), '--no-sandbox', ...args], {
+    cwd: ROOT, env: { ...process.env, RECUT_USER_DATA: app.userData, RECUT_CACHE_DIR: app.cacheDir, RECUT_DISABLE_GPU: '1' }, stdio: 'ignore',
   });
-  const exited = new Promise<number | null>((r) => child.on('exit', (c) => { fs.closeSync(childLog); r(c); }));
-  exited.then(() => console.log('[attack] second instance output:\n' + fs.readFileSync(path.join(tmp, 'second-instance.log'), 'utf8').slice(0, 2000))).catch(() => undefined);
-  await expect.poll(() => app.page.evaluate(() => (window as unknown as W).__recut.store.getState().projectPath), { timeout: 20_000 }).toBe(projectPath);
-  const code = await Promise.race([exited, new Promise<string>((r) => setTimeout(() => r('still running'), 10_000))]);
-  expect(code, 'second instance did not exit').not.toBe('still running');
-  child.kill('SIGKILL');
+  const exitCode = await Promise.race([
+    new Promise<number | null>((r) => child.on('exit', (c) => r(c))),
+    new Promise<number | null>((r) => setTimeout(() => { child.kill('SIGKILL'); r(-1); }, 15_000)),
+  ]);
+  const forwardedArgv = await argvPromise;
+  console.log(`[attack] ${label}: second instance exit=${exitCode} forwarded argv=${forwardedArgv}`);
+  return { exitCode, forwardedArgv };
+}
+
+test('second instance launched with "--project <path>" forwards the project to the running instance', async () => {
+  const projectPath = path.join(tmp, 'second.recut');
+  expect((await app.page.evaluate((p) => (window as unknown as W).__recut.actions.saveProject(p), projectPath)).ok).toBe(true);
+  await app.page.evaluate(() => { (window as unknown as W).__recut.store.getState().newProject('Scratch'); });
+  const r = await spawnSecondInstance(['--project', projectPath], '--project <path>');
+  expect(r.exitCode, 'second instance did not exit (single-instance lock)').toBe(0);
+  expect(r.forwardedArgv).not.toBeNull();
+  // Chromium re-orders argv for 'second-instance' (switches first, positionals last), so projectPathFromArgv()
+  // sees "--project --allow-file-access-from-files" and resolves a bogus path; the real .recut is never reached.
+  await expect.poll(() => app.page.evaluate(() => (window as unknown as W).__recut.store.getState().projectPath), { timeout: 8_000 }).toBe(projectPath);
+});
+
+test('second instance launched with a bare .recut path (OS double-click) forwards the project', async () => {
+  const projectPath = path.join(tmp, 'bare.recut');
+  expect((await app.page.evaluate((p) => (window as unknown as W).__recut.actions.saveProject(p), projectPath)).ok).toBe(true);
+  await app.page.evaluate(() => { (window as unknown as W).__recut.store.getState().newProject('Scratch'); });
+  const r = await spawnSecondInstance([projectPath], 'bare path');
+  expect(r.exitCode).toBe(0);
+  await expect.poll(() => app.page.evaluate(() => (window as unknown as W).__recut.store.getState().projectPath), { timeout: 8_000 }).toBe(projectPath);
 });
