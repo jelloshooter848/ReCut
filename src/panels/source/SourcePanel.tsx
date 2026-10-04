@@ -21,10 +21,9 @@ import { isEditableTarget } from '@/keyboard/useShortcuts';
 import type { PanelProps } from '../registry';
 import { ScrubBar } from './ScrubBar';
 import { WaveformView } from './WaveformView';
+import { insertSourceIntoSequence, IMAGE_DURATION } from './insert';
 import './source.css';
 
-/** Still images get a nominal duration so in/out and insert have something to work with (Premiere default). */
-const IMAGE_DURATION = 5;
 /** Max rate at which playback time is written back to the store. */
 const REPORT_INTERVAL_MS = 1000 / 30;
 
@@ -211,24 +210,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
     sp.play();
   }, []);
 
-  const insertAt = useCallback((mode: 'insert' | 'overwrite') => {
-    const st = useStore.getState();
-    const sc = st.ui.sourceClip; const m = sc ? st.project.media[sc.mediaId] : undefined;
-    const seqId = st.project.activeSequenceId; const seq = seqId ? st.project.sequences[seqId] : undefined;
-    if (!sc || !m) { toast('warn', 'No source clip loaded'); return; }
-    if (!seq || !seqId) { toast('warn', 'No active sequence'); return; }
-    const d = live.current.duration;
-    const inS = sc.inPoint ?? 0;
-    const outS = sc.outPoint ?? (Number.isFinite(d) && d > 0 ? d : inS + IMAGE_DURATION);
-    if (!(outS > inS)) { toast('warn', 'In/Out range is empty'); return; }
-    const at = seq.view.playhead;
-    const ids = st.insertFromSource(seqId, { mediaId: m.id, in: inS, out: outS, atFrame: at, mode });
-    if (ids.length === 0) { toast('error', `${mode === 'insert' ? 'Insert' : 'Overwrite'} failed — target tracks may be locked`); return; }
-    const after = useStore.getState().project.sequences[seqId];
-    let end = at;
-    if (after) for (const t of [...after.videoTracks, ...after.audioTracks]) for (const c of t.clips) if (ids.includes(c.id)) end = Math.max(end, c.start + c.duration);
-    useStore.getState().setView(seqId, { playhead: end });
-  }, []);
+  const insertAt = useCallback((mode: 'insert' | 'overwrite') => { insertSourceIntoSequence(mode, { duration: live.current.duration }); }, []);
 
   const openSubclip = useCallback(() => {
     const m = media; if (!m) return;

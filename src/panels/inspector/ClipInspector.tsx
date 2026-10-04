@@ -12,7 +12,7 @@ import { formatSecondsTimecode, fpsEquals, fpsLabel } from '@shared/time';
 import { activeSequence, identityLabel, originalTimecode, selectedClips, useStore } from '@/state';
 import type { StoreState } from '@/state';
 import { Button, ColorSwatchPicker, IconButton, NumberField, Slider, TagInput, TextField, Toggle, labelColorHex } from '@/components/ui';
-import { MIXED, Row, Section, Value, allSame, copyText, finish, framesLabel, openInFolder, secondsLabel, tc, transient } from './primitives';
+import { MIXED, Range, Row, Section, Value, allSame, copyText, finish, framesLabel, openInFolder, secondsLabel, tc, transient } from './primitives';
 
 export const TRANSITION_LABEL: Record<TransitionType, string> = { crossDissolve: 'Cross Dissolve', dipToBlack: 'Dip to Black', audioCrossfade: 'Audio Crossfade' };
 const SCRUB_HINT = 'Drag to scrub · Shift ×10 · Alt ×0.1 · Double-click or Alt-click resets';
@@ -160,7 +160,7 @@ function SourceSection({ seqId: _seqId, fps, clips, media }: { seqId: ID; fps: R
   if (!single) {
     return (
       <Section id="source" title="Source" badge={`${clips.length} clips`}>
-        <Row label="Sequence range"><Value copy={`${tc(start, fps)} → ${tc(end, fps)}`}>{tc(start, fps)}<span className="arrow">→</span>{tc(end, fps)}</Value></Row>
+        <Row label="Sequence range"><Range a={tc(start, fps)} b={tc(end, fps)} /></Row>
         <Row label="Span"><Value>{framesLabel(end - start, fps)}</Value></Row>
         <Row label="Total duration"><Value>{framesLabel(clips.reduce((a, c) => a + c.duration, 0), fps)}</Value></Row>
         <Row label="Media"><Value dim>{new Set(clips.map((c) => c.mediaId)).size} source file(s)</Value></Row>
@@ -176,10 +176,10 @@ function SourceSection({ seqId: _seqId, fps, clips, media }: { seqId: ID; fps: R
   return (
     <Section id="source" title="Source" badge={media ? fpsLabel(mediaFps) + ' fps' : undefined}>
       <SourceAtPlayhead clip={single} fps={fps} media={media} />
-      <Row label="Sequence" title="Clip position in the sequence"><Value copy={`${tc(single.start, fps)} → ${tc(clipEnd(single), fps)}`}>{tc(single.start, fps)}<span className="arrow">→</span>{tc(clipEnd(single), fps)}</Value></Row>
+      <Row label="Sequence" title="Clip position in the sequence"><Range a={tc(single.start, fps)} b={tc(clipEnd(single), fps)} /></Row>
       <Row label="Source at start" title="Original source timecode at the first frame of the clip"><Value copy={tcStart}>{tcStart}</Value></Row>
-      <Row label="Source range" title="Source in → out (media timecode)"><Value copy={`${tcIn} → ${tcOut}`} testId="source-range">{tcIn}<span className="arrow">→</span>{tcOut}</Value></Row>
-      <Row label=""><Value dim copy={`${srcIn.toFixed(3)} → ${srcOut.toFixed(3)}`}>{secondsLabel(srcIn)}<span className="arrow">→</span>{secondsLabel(srcOut)}</Value></Row>
+      <Row label="Source range" title="Source in → out (media timecode)"><Range a={tcIn} b={tcOut} testId="source-range" /></Row>
+      <Row label=""><Range a={secondsLabel(srcIn)} b={secondsLabel(srcOut)} dim /></Row>
       <Row label="Duration"><Value copy={String(single.duration)}>{framesLabel(single.duration, fps)}</Value></Row>
       <Row label="Speed"><Value>{Math.round(single.speed * 1000) / 10}%{single.speed !== 1 ? <span className="text-faint"> · {secondsLabel(srcOut - srcIn)} of source</span> : null}</Value></Row>
       {media ? <Row label="File" title={media.path}><Value onClick={() => openInFolder(media.path)} title="Reveal in file manager">{originalTimecode(single, single.start, fps, media).fileName}</Value></Row> : null}

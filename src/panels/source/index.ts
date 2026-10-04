@@ -12,3 +12,4 @@ registerPanel({
 });
 
 export { SourcePanel };
+export { insertSourceIntoSequence } from './insert';

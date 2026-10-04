@@ -7,7 +7,7 @@ import { addTransition as tlAddTransition, allTracks, clipEnd, findClip, removeT
 import { activeSequence, useStore } from '@/state';
 import type { StoreState } from '@/state';
 import { Button, NumberField, Select } from '@/components/ui';
-import { Row, Section, Value, finish, framesLabel, tc, transient } from './primitives';
+import { Range, Row, Section, Value, finish, framesLabel, tc, transient } from './primitives';
 import { TRANSITION_LABEL } from './ClipInspector';
 
 const VIDEO_TYPES: { value: TransitionType; label: string }[] = [
@@ -67,7 +67,7 @@ export function TransitionInspector({ seqId, fps, id }: { seqId: ID; fps: Ration
         </Row>
         <Row label="Alignment"><Value dim>Centered on cut</Value></Row>
         <Row label="Cut at"><Value copy={tc(cut, fps)}>{tc(cut, fps)}</Value></Row>
-        <Row label="Range"><Value copy={`${tc(cut - half, fps)} → ${tc(cut - half + tr.duration, fps)}`}>{tc(cut - half, fps)}<span className="arrow">→</span>{tc(cut - half + tr.duration, fps)}</Value></Row>
+        <Row label="Range"><Range a={tc(cut - half, fps)} b={tc(cut - half + tr.duration, fps)} /></Row>
         <Row label="Length"><Value>{framesLabel(tr.duration, fps)}</Value></Row>
       </Section>
       <Section id="transition-clips" title="Clips">

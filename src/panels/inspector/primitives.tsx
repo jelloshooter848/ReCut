@@ -94,6 +94,8 @@ export interface ValueProps {
   dim?: boolean;
   className?: string;
   testId?: string;
+  /** Allow wrapping onto several lines instead of truncating with an ellipsis. */
+  wrap?: boolean;
 }
 
 export function copyText(text: string): void {
@@ -104,19 +106,28 @@ export function copyText(text: string): void {
   } catch { /* clipboard unavailable */ }
 }
 
-export function Value({ children, copy, onClick, title, dim, className = '', testId }: ValueProps) {
+export function Value({ children, copy, onClick, title, dim, className = '', testId, wrap }: ValueProps) {
   const clickable = !!copy || !!onClick;
   return (
     <span
       data-testid={testId}
-      className={['insp-val', copy ? 'copy' : '', onClick ? 'link' : '', dim ? 'dim' : '', className].filter(Boolean).join(' ')}
+      className={['insp-val', copy ? 'copy' : '', onClick ? 'link' : '', dim ? 'dim' : '', wrap ? 'wrap' : '', className].filter(Boolean).join(' ')}
       title={title ?? (copy ? 'Click to copy' : undefined)}
       role={clickable ? 'button' : undefined}
       onClick={clickable ? () => { if (onClick) onClick(); else if (copy) copyText(copy); } : undefined}
     >
-      {children}
+      <span className="insp-val-text">{children}</span>
       {copy && !onClick ? <Copy /> : null}
     </span>
+  );
+}
+
+/** "a → b" range that wraps at the arrow when the column is narrow (never clips). */
+export function Range({ a, b, copy = true, dim, testId }: { a: string; b: string; copy?: boolean; dim?: boolean; testId?: string }) {
+  return (
+    <Value copy={copy ? `${a} → ${b}` : undefined} dim={dim} testId={testId} wrap>
+      <span className="nowrap">{a}</span>{' '}<span className="nowrap"><span className="arrow">→ </span>{b}</span>
+    </Value>
   );
 }
 
