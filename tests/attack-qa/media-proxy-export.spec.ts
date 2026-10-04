@@ -54,6 +54,15 @@ const startExport = (settings: Record<string, unknown>) => app.page.evaluate(asy
   return w.recut.startExport({ sequence: seq, media: s.project.media, settings: { ...settings, fps: seq.fps } });
 }, settings);
 
+/** Clear the active sequence and insert [0,3) s of the given media at frame 0 (known-good timeline for export tests). */
+const resetTimeline = (mediaId: string) => app.page.evaluate((id) => {
+  const st = (window as unknown as W).__recut.store.getState(); const seqId = st.project.activeSequenceId;
+  const seq = st.project.sequences[seqId];
+  const ids = [...seq.videoTracks, ...seq.audioTracks].flatMap((t: any) => t.clips.map((c: any) => c.id));
+  if (ids.length) { st.select(ids); st.deleteSelected(seqId); }
+  return st.insertFromSource(seqId, { mediaId: id, in: 0, out: 3, atFrame: 0, mode: 'overwrite' });
+}, mediaId);
+
 // ------------------------------------------------------------------ proxies
 
 test('starting the same proxy twice must not run two ffmpeg jobs on the same .part file', async () => {
@@ -158,9 +167,11 @@ test('relink to a shorter file: clips that now extend past the media must be fla
 });
 
 test('two exports started back to back both complete (serialized by the queue)', async () => {
+  const [id] = await importMedia(app.page, [path.join(mediaDir, MEDIA.movie2ac3)]);
+  expect((await resetTimeline(id)).length).toBe(2);
   const r1 = await startExport(exportSettings(scratch, 'two-a.mp4'));
   const r2 = await startExport(exportSettings(scratch, 'two-b.mp4'));
-  expect(r1.ok && r2.ok).toBe(true);
+  expect(r1.ok && r2.ok, JSON.stringify([r1, r2])).toBe(true);
   const a = await waitJob(r1.jobId); const b = await waitJob(r2.jobId);
   expect([a.status, b.status], `${a.error ?? ''} ${b.error ?? ''}`).toEqual(['done', 'done']);
   expect(fs.existsSync(path.join(scratch, 'two-a.mp4')) && fs.existsSync(path.join(scratch, 'two-b.mp4'))).toBe(true);
@@ -168,7 +179,7 @@ test('two exports started back to back both complete (serialized by the queue)',
 
 test('cancel an export at ~1%: job canceled, no output and no .part', async () => {
   const r = await startExport(exportSettings(scratch, 'cancel-me.mp4', { width: 1920, height: 1080, preset: 'veryslow', crf: 12 }));
-  expect(r.ok).toBe(true);
+  expect(r.ok, JSON.stringify(r)).toBe(true);
   await expect.poll(async () => (await jobsOf()).find((j) => j.id === r.jobId)?.progress ?? 0, { timeout: 60_000 }).toBeGreaterThan(0);
   await app.page.evaluate((jid) => (window as unknown as W).recut.cancelExport(jid), r.jobId);
   const j = await waitJob(r.jobId, 30_000);
@@ -180,7 +191,7 @@ test('cancel an export at ~1%: job canceled, no output and no .part', async () =
 
 test('export with a path-traversal file name through IPC lands outside the chosen folder', async () => {
   const r = await startExport(exportSettings(scratch, '../escaped.mp4'));
-  expect(r.ok).toBe(true);
+  expect(r.ok, JSON.stringify(r)).toBe(true);
   const j = await waitJob(r.jobId);
   expect(j.status).toBe('done');
   expect(path.resolve(r.outputPath).startsWith(scratch + path.sep), `wrote ${r.outputPath}`).toBe(true);

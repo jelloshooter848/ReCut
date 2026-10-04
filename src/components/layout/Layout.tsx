@@ -14,10 +14,10 @@ export interface LayoutProps extends TopBarProps {
 }
 
 /** One zone in its layout slot. Every zone stays mounted in place when another is maximized (panels never remount). */
-function ZoneSlot({ zoneId, style, slotRef }: { zoneId: ZoneId; style?: React.CSSProperties; slotRef?: React.Ref<HTMLDivElement> }) {
+function ZoneSlot({ zoneId, style }: { zoneId: ZoneId; style?: React.CSSProperties }) {
   const isMax = useLayoutStore((s) => s.maximized === zoneId);
   return (
-    <div ref={slotRef} className={['layout-col', 'layout-zone-slot', isMax ? 'layout-maximized' : ''].filter(Boolean).join(' ')} style={isMax ? undefined : style} data-zone-slot={zoneId}>
+    <div className={['layout-col', 'layout-zone-slot', isMax ? 'layout-maximized' : ''].filter(Boolean).join(' ')} style={isMax ? undefined : style} data-zone-slot={zoneId}>
       <TabbedZone zoneId={zoneId} />
     </div>
   );
