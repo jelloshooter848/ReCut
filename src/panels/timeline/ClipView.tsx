@@ -39,6 +39,14 @@ const MAX_WAVE_CANVAS_PX = 4096;
 
 function quantizeTime(t: number): number { return Math.round(t * 10) / 10; }
 
+const waveMaxCache = new WeakMap<WaveformData, number>();
+/** Loudest peak of a waveform (cached per data object) used to normalise the drawing. */
+function waveMax(w: WaveformData): number {
+  let m = waveMaxCache.get(w);
+  if (m === undefined) { m = 1; for (let i = 0; i < w.peaks.length; i++) if (w.peaks[i] > m) m = w.peaks[i]; waveMaxCache.set(w, m); }
+  return m;
+}
+
 export const ClipView = memo(function ClipView(p: ClipViewProps) {
   const { clip, trackKind, height, zoom, media, fps, visFrom, visTo } = p;
   const x = clip.start * zoom;
@@ -107,10 +115,12 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
     const t1 = clip.sourceIn + ((waveX + cw) / zoom) * frameSec * clip.speed;
     const peaks = peaksForRange(wave, t0, t1, cw);
     const mid = ch / 2;
-    const gain = Math.max(0, Math.min(2, clip.audio.volume)) * (clip.audio.muted ? 0.25 : 1);
+    // Display normalisation: quiet sources are boosted (up to ~6x) so the shape stays readable, like most NLEs.
+    const scale = 1 / Math.max(0.16, waveMax(wave) / 255);
+    const gain = Math.max(0, Math.min(2, clip.audio.volume)) * (clip.audio.muted ? 0.25 : 1) * scale;
     ctx.fillStyle = p.selected ? 'rgba(230, 245, 236, 0.95)' : 'rgba(175, 232, 200, 0.85)';
     for (let i = 0; i < cw; i++) {
-      const v = Math.max(0.5, (peaks[i] / 255) * mid * gain);
+      const v = Math.max(0.5, Math.min(mid, (peaks[i] / 255) * mid * gain));
       ctx.fillRect(i, mid - v, 1, v * 2);
     }
   }, [wave, waveX, waveW, bodyH, zoom, clip.sourceIn, clip.speed, clip.audio.volume, clip.audio.muted, frameSec, isVideo, p.selected]);

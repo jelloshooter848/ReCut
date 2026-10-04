@@ -108,6 +108,7 @@ test('compare two cuts, play in sync, build storyline blocks and run what-if fil
   expect(middleFrames).toBe(Math.round(4 * fps.num / fps.den));
 
   // Clicking the onlyA row seeks both players to that clip.
+  await onlyA.scrollIntoViewIfNeeded();
   await onlyA.click();
   await expect.poll(async () => Number(await page.getByTestId('compare-tc-a').getAttribute('data-frame'))).toBe(middle.start);
 
@@ -127,6 +128,7 @@ test('compare two cuts, play in sync, build storyline blocks and run what-if fil
 
   // Lineage list shows the copy under the original.
   await expect(page.locator('[data-testid="cut-row"]')).toHaveCount(2);
+  await page.getByTestId('compare-monitor-a').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(SCREENSHOTS, 'compare.png') });
 
   // ---- Storyline: block from In/Out on the original ----

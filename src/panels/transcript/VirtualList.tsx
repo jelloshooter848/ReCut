@@ -91,13 +91,13 @@ function VirtualListInner<T>(props: VirtualListProps<T>, ref: React.Ref<VirtualL
     const key = itemKey ? itemKey(item, i) : i;
     const h = offsets ? offsets[i + 1] - offsets[i] : (itemHeight as number);
     rows.push(
-      <div key={key} data-index={i} className="vl-row" style={windowed ? { position: 'absolute', top: offsetOf(i), left: 0, right: 0, height: h } : { height: h }}>
+      <div key={key} data-index={i} className="tx-vl-row" style={windowed ? { position: 'absolute', top: offsetOf(i), left: 0, right: 0, height: h } : { height: h }}>
         {render(item, i)}
       </div>,
     );
   }
   return (
-    <div ref={el} className={['vl', className].filter(Boolean).join(' ')} style={{ overflowY: 'auto', overflowX: 'hidden', position: 'relative', ...style }} tabIndex={tabIndex} onKeyDown={onKeyDown} onScroll={onScroll} data-testid={props['data-testid']}>
+    <div ref={el} className={['tx-vl', className].filter(Boolean).join(' ')} style={{ overflowY: 'auto', overflowX: 'hidden', position: 'relative', ...style }} tabIndex={tabIndex} onKeyDown={onKeyDown} onScroll={onScroll} data-testid={props['data-testid']}>
       {windowed ? <div style={{ height: total, position: 'relative' }}>{rows}</div> : rows}
     </div>
   );

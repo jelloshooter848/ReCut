@@ -16,7 +16,7 @@ import { clipColor, clipsOverlapping, contrastText, formatHMS, formatMS, snapFra
 
 export const MIN_ZOOM = 1;
 export const MAX_ZOOM = 64;
-const RULER_H = 18;
+const RULER_H = 20;
 const BLOCK_ROW_H = 22;
 const DENSITY_ROW_H = 6;
 const MARKER_H = 10;

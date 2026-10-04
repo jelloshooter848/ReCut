@@ -16,6 +16,9 @@ let movieId: string;
 let videoClipId: string;
 let audioClipId: string;
 
+/** All locators are scoped to the inspector panel root: other (hidden) panels reuse generic test ids. */
+const insp = () => page.getByTestId('inspector');
+
 const evalStore = <T,>(p: Page, fn: string, arg?: unknown): Promise<T> =>
   p.evaluate(({ src, arg }) => {
     const w = window as unknown as { __recut: { store: { getState(): unknown } } };
@@ -25,7 +28,7 @@ const evalStore = <T,>(p: Page, fn: string, arg?: unknown): Promise<T> =>
 
 /** Click a scrubbable NumberField (enters edit mode), type a value and press Enter. */
 async function typeNumber(p: Page, selector: string, value: string) {
-  const field = p.locator(selector).first();
+  const field = p.getByTestId('inspector').locator(selector).first();
   await field.scrollIntoViewIfNeeded();
   await field.click();
   await expect(field.locator('input')).toBeVisible();
@@ -45,17 +48,17 @@ test.beforeAll(async () => {
 test.afterAll(async () => { await ctx?.app.close(); });
 
 test('shows the sequence inspector when nothing is selected', async () => {
-  const inspector = page.getByTestId('inspector');
+  const inspector = insp();
   await expect(inspector).toHaveAttribute('data-mode', 'sequence');
-  await expect(page.getByTestId('sequence-header')).toBeVisible();
-  const name = page.locator('[data-prop="sequence-name"]');
+  await expect(insp().getByTestId('sequence-header')).toBeVisible();
+  const name = insp().locator('[data-prop="sequence-name"]');
   await name.fill('Inspector Cut');
   await name.press('Enter');
   expect(await getState<string>(page, 's => s.project.sequences[s.project.activeSequenceId].name')).toBe('Inspector Cut');
-  await page.getByTestId('take-snapshot').click();
-  await page.getByTestId('inline-form').getByRole('button', { name: 'Save' }).click();
+  await insp().getByTestId('take-snapshot').click();
+  await insp().getByTestId('inline-form').getByRole('button', { name: 'Save' }).click();
   expect(await getState<number>(page, 's => s.project.sequences[s.project.activeSequenceId].snapshots.length')).toBe(1);
-  await expect(page.getByTestId('snapshot')).toHaveCount(1);
+  await expect(insp().getByTestId('snapshot')).toHaveCount(1);
 });
 
 test('clip inspector shows the original source timecode and filename', async () => {
@@ -68,17 +71,17 @@ test('clip inspector shows the original source timecode and filename', async () 
   expect(audioClipId).toBeTruthy();
 
   await evalStore(page, `(st, id) => st.select([id])`, videoClipId);
-  await expect(page.getByTestId('inspector')).toHaveAttribute('data-mode', 'clip');
+  await expect(insp()).toHaveAttribute('data-mode', 'clip');
   // source in = 2s at the media's 24 fps → 00:00:02:00; playhead (frame 0) is inside the clip, so "at playhead" == clip start
-  await expect(page.getByTestId('source-tc')).toHaveText('00:00:02:00');
-  await expect(page.getByTestId('source-file')).toContainText('Galaxy Saga 1 - A New Dawn.mp4');
-  await expect(page.getByTestId('source-range')).toContainText('00:00:02:00');
-  await expect(page.getByTestId('source-range')).toContainText('00:00:06:00');
+  await expect(insp().getByTestId('source-tc')).toHaveText('00:00:02:00');
+  await expect(insp().getByTestId('source-file')).toContainText('Galaxy Saga 1 - A New Dawn.mp4');
+  await expect(insp().getByTestId('source-range')).toContainText('00:00:02:00');
+  await expect(insp().getByTestId('source-range')).toContainText('00:00:06:00');
 
   // move the playhead 24 sequence frames in (23.976 fps → ~1.001s) and check the timecode follows
   await evalStore(page, `(st) => st.setView(st.project.activeSequenceId, { playhead: 24 })`);
-  await expect(page.getByTestId('source-tc')).toHaveText('00:00:03:00');
-  await expect(page.getByTestId('source-card')).toContainText('at playhead');
+  await expect(insp().getByTestId('source-tc')).toHaveText('00:00:03:00');
+  await expect(insp().getByTestId('source-card')).toContainText('at playhead');
 });
 
 test('typing a Scale value updates the transform and undo reverts it in one step', async () => {
@@ -89,48 +92,48 @@ test('typing a Scale value updates the transform and undo reverts it in one step
   expect(label).toBe('Transform');
   await evalStore(page, `(st) => st.undo()`);
   expect(await scale()).toBe(1);
-  await expect(page.locator('[data-prop="scale"] .numfield')).toContainText('100');
+  await expect(insp().locator('[data-prop="scale"] .numfield')).toContainText('100');
 
   await typeNumber(page, '[data-prop="opacity"] .numfield', '50');
   const opacity = await evalStore<number>(page, `(st, id) => { const seq = st.project.sequences[st.project.activeSequenceId]; for (const t of seq.videoTracks) for (const c of t.clips) if (c.id === id) return c.transform.opacity; }`, videoClipId);
   expect(opacity).toBeCloseTo(0.5, 5);
   // reset button on the row restores the default
-  await page.locator('[data-prop="opacity"]').hover();
-  await page.locator('[data-prop="opacity"] .insp-reset').click();
+  await insp().locator('[data-prop="opacity"]').hover();
+  await insp().locator('[data-prop="opacity"] .insp-reset').click();
   const reset = await evalStore<number>(page, `(st, id) => { const seq = st.project.sequences[st.project.activeSequenceId]; for (const t of seq.videoTracks) for (const c of t.clips) if (c.id === id) return c.transform.opacity; }`, videoClipId);
   expect(reset).toBe(1);
 });
 
 test('audio clip: gain and fade in', async () => {
   await evalStore(page, `(st, id) => st.select([id])`, audioClipId);
-  await expect(page.getByTestId('clip-header')).toContainText('audio');
+  await expect(insp().getByTestId('clip-header')).toContainText('audio');
   await typeNumber(page, '[data-prop="gain"] .numfield', '-6');
   await typeNumber(page, '[data-prop="fade-in"] .numfield', '12');
   const audio = await evalStore<{ gain: number; fadeIn: number }>(page, `(st, id) => { const seq = st.project.sequences[st.project.activeSequenceId]; for (const t of seq.audioTracks) for (const c of t.clips) if (c.id === id) return c.audio; }`, audioClipId);
   expect(audio.gain).toBe(-6);
   expect(audio.fadeIn).toBe(12);
-  await expect(page.locator('[data-prop="fade-in"]')).toContainText('00:00:00:12');
+  await expect(insp().locator('[data-prop="fade-in"]')).toContainText('00:00:00:12');
   // the video clip's inspector edits its linked audio: mute through the linked clip
   await evalStore(page, `(st, id) => st.select([id])`, videoClipId);
-  await expect(page.locator('[data-section="audio"]')).toContainText('linked audio');
-  await expect(page.locator('[data-prop="gain"] .numfield')).toContainText('-6.0');
+  await expect(insp().locator('[data-section="audio"]')).toContainText('linked audio');
+  await expect(insp().locator('[data-prop="gain"] .numfield')).toContainText('-6.0');
 });
 
 test('transition: add from the clip, inspect, change duration, remove', async () => {
-  await page.getByTestId('add-transition-start').click();
+  await insp().getByTestId('add-transition-start').click();
   const trId = await evalStore<string | null>(page, `(st) => { const seq = st.project.sequences[st.project.activeSequenceId]; for (const t of seq.videoTracks) if (t.transitions.length) return t.transitions[0].id; return null; }`);
   expect(trId).toBeTruthy();
-  await expect(page.getByTestId('transition-start')).toBeVisible();
-  await page.getByTestId('transition-start').locator('.insp-tr-name').click();
-  await expect(page.getByTestId('inspector')).toHaveAttribute('data-mode', 'transition');
-  await expect(page.getByTestId('transition-header')).toContainText('Cross Dissolve');
+  await expect(insp().getByTestId('transition-start')).toBeVisible();
+  await insp().getByTestId('transition-start').locator('.insp-tr-name').click();
+  await expect(insp()).toHaveAttribute('data-mode', 'transition');
+  await expect(insp().getByTestId('transition-header')).toContainText('Cross Dissolve');
   await typeNumber(page, '[data-prop="transition-duration"] .numfield', '12');
   const dur = await evalStore<number>(page, `(st, id) => { const seq = st.project.sequences[st.project.activeSequenceId]; for (const t of seq.videoTracks) for (const tr of t.transitions) if (tr.id === id) return tr.duration; }`, trId);
   expect(dur).toBe(12);
-  await page.selectOption('[data-prop="transition-type"] select', 'dipToBlack');
+  await insp().locator('[data-prop="transition-type"] select').selectOption('dipToBlack');
   const type = await evalStore<string>(page, `(st) => { const seq = st.project.sequences[st.project.activeSequenceId]; for (const t of seq.videoTracks) if (t.transitions.length) return t.transitions[0].type; }`);
   expect(type).toBe('dipToBlack');
-  await page.getByTestId('remove-transition').click();
+  await insp().getByTestId('remove-transition').click();
   const count = await evalStore<number>(page, `(st) => { const seq = st.project.sequences[st.project.activeSequenceId]; return seq.videoTracks.reduce((n, t) => n + t.transitions.length, 0); }`);
   expect(count).toBe(0);
 });
@@ -138,31 +141,31 @@ test('transition: add from the clip, inspect, change duration, remove', async ()
 test('media inspector: category and identity', async () => {
   await evalStore(page, `(st) => { st.selectTransition(null); st.select([], 'clear'); }`);
   await evalStore(page, `(st, id) => st.selectMedia([id])`, movieId);
-  await expect(page.getByTestId('inspector')).toHaveAttribute('data-mode', 'media');
-  await expect(page.getByTestId('media-header')).toContainText('video');
-  await page.selectOption('[data-prop="category"] select', 'Episode');
-  const series = page.locator('[data-prop="series"] input');
+  await expect(insp()).toHaveAttribute('data-mode', 'media');
+  await expect(insp().getByTestId('media-header')).toContainText('video');
+  await insp().locator('[data-prop="category"] select').selectOption('Episode');
+  const series = insp().locator('[data-prop="series"] input');
   await series.fill('Station Eleven');
   await series.press('Enter');
-  const season = page.locator('input[data-prop="season"]');
+  const season = insp().locator('input[data-prop="season"]');
   await season.fill('1');
   await season.press('Enter');
-  const episode = page.locator('input[data-prop="episode"]');
+  const episode = insp().locator('input[data-prop="episode"]');
   await episode.fill('3');
   await episode.press('Enter');
   const m = await getState<{ category: string; identity: { series?: string; season?: number; episode?: number } }>(page, `s => s.project.media['${movieId}']`);
   expect(m.category).toBe('Episode');
   expect(m.identity).toMatchObject({ series: 'Station Eleven', season: 1, episode: 3 });
-  await expect(page.getByTestId('media-header')).toContainText('Station Eleven S01E03');
+  await expect(insp().getByTestId('media-header')).toContainText('Station Eleven S01E03');
   // probe summary is rendered
-  await expect(page.locator('[data-section="media-probe"]')).toContainText('640×360');
-  await expect(page.locator('[data-section="media-probe"]')).toContainText('24 fps');
+  await expect(insp().locator('[data-section="media-probe"]')).toContainText('640×360');
+  await expect(insp().locator('[data-section="media-probe"]')).toContainText('24 fps');
 
   // multi-select batch: season for both items
   const allIds = await getState<string[]>(page, 's => Object.keys(s.project.media)');
   await evalStore(page, `(st, ids) => st.selectMedia(ids)`, allIds);
-  await expect(page.getByTestId('media-header')).toContainText(`${allIds.length} media items`);
-  const batchSeason = page.locator('input[data-prop="season"]');
+  await expect(insp().getByTestId('media-header')).toContainText(`${allIds.length} media items`);
+  const batchSeason = insp().locator('input[data-prop="season"]');
   await batchSeason.fill('2');
   await batchSeason.press('Enter');
   const seasons = await getState<number[]>(page, 's => Object.values(s.project.media).map(m => m.identity.season)');
@@ -171,7 +174,7 @@ test('media inspector: category and identity', async () => {
 
 test('screenshot', async () => {
   await evalStore(page, `(st, id) => { st.selectMedia([], 'clear'); st.select([id]); st.setView(st.project.activeSequenceId, { playhead: 30 }); }`, videoClipId);
-  await expect(page.getByTestId('inspector')).toHaveAttribute('data-mode', 'clip');
+  await expect(insp()).toHaveAttribute('data-mode', 'clip');
   await page.waitForTimeout(300);
   const out = path.join(ROOT, 'docs/screenshots/inspector.png');
   fs.mkdirSync(path.dirname(out), { recursive: true });

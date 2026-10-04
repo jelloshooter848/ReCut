@@ -242,7 +242,7 @@ export function buildSeriesRows(tree: SeriesTree, input: BuildInput): Row[] {
     group(`collection:${c.name}`, c.name, 'collection', 0, () => { for (const m of list) pushMedia(out, m, 1, input, terms); }, list.length);
   }
   const loose = sorted(visible(tree.loose));
-  if (loose.length || !filtering) group('loose', 'Loose media', 'loose', 0, () => { for (const m of loose) pushMedia(out, m, 1, input, terms); }, loose.length);
+  if (loose.length) group('loose', 'Loose media', 'loose', 0, () => { for (const m of loose) pushMedia(out, m, 1, input, terms); }, loose.length);
   const seqs = input.sequenceOrder.map((id) => input.sequences[id]).filter((s): s is Sequence => !!s && (!filtering || textMatches(s.name, terms)))
     .sort((a, b) => compareSequences(a, b, input.sort));
   if (seqs.length) group('sequences', 'Sequences', 'sequences', 0, () => { for (const s of seqs) pushSequence(out, s, 1, input); }, seqs.length);

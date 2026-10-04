@@ -31,7 +31,7 @@
 .sl-ruler { background: var(--bg-1); border-bottom: 1px solid var(--border); cursor: ew-resize; }
 .sl-tick { position: absolute; bottom: 0; width: 1px; height: 4px; background: var(--border-strong); }
 .sl-tick.major { height: 7px; background: var(--text-faint); }
-.sl-tick.major span { position: absolute; left: 3px; top: -13px; font-family: var(--font-mono); font-size: 9px; color: var(--text-dim); white-space: nowrap; }
+.sl-tick.major span { position: absolute; left: 3px; bottom: 8px; font-family: var(--font-mono); font-size: 9px; line-height: 1; color: var(--text-dim); white-space: nowrap; }
 .sl-inout { position: absolute; top: 0; bottom: 0; background: var(--accent-2-soft); border-left: 1px solid var(--accent-2); border-right: 1px solid var(--accent-2); }
 .sl-duration-end { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text-dim); }
 .sl-blocks { background: repeating-linear-gradient(90deg, transparent 0 7px, rgba(255,255,255,0.015) 7px 8px); cursor: crosshair; }

@@ -72,6 +72,7 @@ export function ComparePanel({ active, focused }: PanelProps) {
   const [frameB, setFrameB] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [narrow, setNarrow] = useState(false);
+  const [rootH, setRootH] = useState(0);
   const [selectedClip, setSelectedClip] = useState<ID | null>(null);
   const [ready, setReady] = useState(0);
 
@@ -98,9 +99,10 @@ export function ComparePanel({ active, focused }: PanelProps) {
   // Width → stacked monitors.
   useEffect(() => {
     const el = rootRef.current; if (!el) return;
-    const ro = new ResizeObserver(() => setNarrow(el.clientWidth < 560));
+    const measure = () => { setNarrow(el.clientWidth < 300); setRootH(el.clientHeight); };
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setNarrow(el.clientWidth < 560);
+    measure();
     return () => ro.disconnect();
   }, []);
 
@@ -283,9 +285,15 @@ export function ComparePanel({ active, focused }: PanelProps) {
     );
   }
 
-  const monitor = (side: 'A' | 'B', seq: Sequence | null, ref: React.RefObject<HTMLCanvasElement>, frame: number, muted: boolean, setMuted: (v: boolean) => void, label: string) => (
+  // Keep the monitors from starving the comparison lists: cap each box at a share of the panel height.
+  const stacked = narrow || mode !== 'side';
+  const visibleMonitors = mode === 'side' ? 2 : 1;
+  const maxBoxH = Math.max(64, Math.floor((rootH || 600) * (stacked && visibleMonitors === 2 ? 0.18 : 0.34)));
+  const monitor = (side: 'A' | 'B', seq: Sequence | null, ref: React.RefObject<HTMLCanvasElement>, frame: number, muted: boolean, setMuted: (v: boolean) => void, label: string) => {
+    const ratio = seq ? seq.width / Math.max(1, seq.height) : 16 / 9;
+    return (
     <div className={`cmp-monitor ${mode === 'side' || mode === side.toLowerCase() ? '' : 'hidden'}`} data-testid={`compare-monitor-${side.toLowerCase()}`}>
-      <div className="cmp-canvas-box" style={{ aspectRatio: seq ? `${seq.width} / ${seq.height}` : '16 / 9' }}>
+      <div className="cmp-canvas-box" style={{ aspectRatio: `${ratio}`, maxHeight: maxBoxH, maxWidth: Math.round(maxBoxH * ratio) }}>
         <canvas ref={ref} className="cmp-canvas" />
         {!seq ? <div className="cmp-canvas-empty">Select a sequence for {side}</div> : null}
       </div>
@@ -296,7 +304,8 @@ export function ComparePanel({ active, focused }: PanelProps) {
         <IconButton size="sm" icon={muted ? VolumeX : Volume2} label={muted ? `Unmute ${side}` : `Mute ${side}`} toggled={!muted} data-testid={`compare-mute-${side.toLowerCase()}`} onClick={() => setMuted(!muted)} />
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div className={`panel compare-panel ${narrow ? 'narrow' : ''}`} ref={rootRef} data-testid="compare-panel">
@@ -320,7 +329,7 @@ export function ComparePanel({ active, focused }: PanelProps) {
         </div>
       </div>
 
-      <div className={`cmp-monitors ${narrow || mode !== 'side' ? 'stacked' : ''}`}>
+      <div className={`cmp-monitors ${stacked ? 'stacked' : ''}`}>
         {monitor('A', seqA, canvasA, frameA, mutedA, setMutedA, seqA.name)}
         {monitor('B', seqB, canvasB, frameB, mutedB, setMutedB, nameB)}
       </div>

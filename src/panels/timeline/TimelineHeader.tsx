@@ -31,7 +31,10 @@ function PlayheadTimecode({ seqId, fps }: { seqId: string; fps: Rational }) {
 export interface TimelineHeaderProps { seqId: string; fps: Rational; zoom: number; scroll: number; viewWidth: number }
 
 export function TimelineHeader({ seqId, fps, zoom, scroll, viewWidth }: TimelineHeaderProps) {
-  const tabs = useStore(useShallow((s) => s.project.sequenceOrder.map((id) => ({ id, name: s.project.sequences[id]?.name ?? id }))));
+  // Primitives only: useShallow compares array items with Object.is, so fresh objects would re-render forever.
+  const order = useStore((s) => s.project.sequenceOrder);
+  const names = useStore(useShallow((s) => s.project.sequenceOrder.map((id) => s.project.sequences[id]?.name ?? id)));
+  const tabs = order.map((id, i) => ({ id, name: names[i] }));
   const tool = useStore((s) => s.ui.tool);
   const snapping = useStore((s) => s.project.settings.snapping);
   const filters = useStore((s) => s.ui.filters);

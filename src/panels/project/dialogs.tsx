@@ -7,6 +7,18 @@ import { formatClock } from '@shared/time';
 import { parseEpisodeInfo } from './parseIdentity';
 import { detectScenes } from './actions';
 
+/**
+ * Merge an identity patch over the media's CURRENT identity. (store.updateMedia assigns the patch before merging,
+ * so a partial `identity` would otherwise drop the fields it does not mention.)
+ */
+function patchIdentity(id: ID, patch: Partial<MediaItem['identity']>): void {
+  const st = useStore.getState();
+  const cur = st.project.media[id]?.identity ?? {};
+  const next = { ...cur } as Record<string, unknown>;
+  for (const [k, v] of Object.entries(patch)) { if (v === undefined) delete next[k]; else next[k] = v; }
+  st.updateMedia(id, { identity: next as MediaItem['identity'] });
+}
+
 export type PanelDialog =
   | { type: 'series'; ids: ID[] }
   | { type: 'collection'; ids: ID[] }
@@ -45,7 +57,7 @@ export function OrganizeSeriesDialog({ items, onClose }: { items: MediaItem[]; o
     for (const r of rows) { const l = bySeason.get(r.season) ?? []; l.push(r); bySeason.set(r.season, l); }
     for (const [s, list] of bySeason) {
       st.organizeAsSeries(list.map((r) => r.id), name, s);
-      for (const r of list) st.updateMedia(r.id, { identity: { episode: r.episode, title: r.title.trim() || undefined } });
+      for (const r of list) patchIdentity(r.id, { episode: r.episode, title: r.title.trim() || undefined });
     }
     toast('ok', `Organized ${rows.length} item${rows.length === 1 ? '' : 's'} as ${name}`);
     onClose();
@@ -88,8 +100,7 @@ export function CollectionDialog({ items, onClose }: { items: MediaItem[]; onClo
   const [collection, setCollection] = useState(first?.identity.collection ?? '');
   const [franchise, setFranchise] = useState(first?.identity.franchise ?? '');
   const apply = () => {
-    const st = useStore.getState();
-    for (const m of items) st.updateMedia(m.id, { identity: { collection: collection.trim() || undefined, franchise: franchise.trim() || undefined } });
+    for (const m of items) patchIdentity(m.id, { collection: collection.trim() || undefined, franchise: franchise.trim() || undefined });
     toast('ok', `Updated ${items.length} item${items.length === 1 ? '' : 's'}`);
     onClose();
   };

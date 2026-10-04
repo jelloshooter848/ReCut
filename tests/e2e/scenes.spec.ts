@@ -188,7 +188,7 @@ test('adds a continuity note at the playhead, jumps to it on click and toggles r
   expect(marker.clipId).toBe(clipId);
   expect(marker.resolved).toBe(false);
 
-  const row = page.locator(`[data-marker-id="${marker.id}"]`);
+  const row = page.locator(`.cty-row[data-marker-id="${marker.id}"]`);
   await expect(row).toBeVisible();
   await expect(row.locator('.cty-cat')).toHaveText('wardrobe');
   await expect(row.locator('.cty-clip')).toBeVisible();
@@ -229,12 +229,12 @@ test('adds a continuity note at the playhead, jumps to it on click and toggles r
   await page.locator('[data-testid="continuity-name"]').fill('Score jumps');
   await page.locator('[data-testid="continuity-category"]').selectOption('music');
   await page.locator('[data-testid="continuity-dialog-add"]').click();
-  await expect(page.locator('[data-marker-id]')).toHaveCount(2);
+  await expect(page.locator('.cty-row[data-marker-id]')).toHaveCount(2);
   await row.locator('.cty-check').check();
   await page.locator('.cty-panel .toggle').click();
-  await expect(page.locator('[data-marker-id]')).toHaveCount(1);
+  await expect(page.locator('.cty-row[data-marker-id]')).toHaveCount(1);
   await page.locator('.cty-panel .toggle').click();
-  await expect(page.locator('[data-marker-id]')).toHaveCount(2);
+  await expect(page.locator('.cty-row[data-marker-id]')).toHaveCount(2);
 });
 
 test('screenshots', async () => {
@@ -244,7 +244,7 @@ test('screenshots', async () => {
   await page.waitForTimeout(800);
   await page.screenshot({ path: path.join(SHOTS, 'scenes.png') });
   await showPanel(page, 'continuity');
-  await page.locator('[data-marker-id]').first().locator('.cty-expand').click();
+  await page.locator('.cty-row[data-marker-id]').first().locator('.cty-expand').click();
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(SHOTS, 'continuity.png') });
 });
