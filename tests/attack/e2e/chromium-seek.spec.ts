@@ -91,18 +91,23 @@ test.describe('Chromium <video> seek semantics', () => {
   });
 
   for (const name of ['counter24_ts10.mp4', 'counter24_start.mkv']) {
-    test(`${name} (container start_time != 0): the editor seeks with 0-based source time, Chromium's timeline is NOT 0-based`, async () => {
+    test(`${name} (container start_time): the editor adds the container start, so preview shows the intended frame`, async () => {
       const file = path.join(MEDIA_DIR, name);
       const start = Number(JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', file]).toString()).format.start_time);
-      const r = await probe(file, [0, (100 + 0.5) / 24, start + (100 + 0.5) / 24, start + (300 + 0.5) / 24]);
+      const r = await probe(file, [0, (100 + 0.5) / 24, start + (100 + 0.5) / 24, start + (200 + 0.5) / 24]);
       const lines = r.results.map((x) => `seek t=${x.t.toFixed(4)} -> currentTime=${x.currentTime.toFixed(4)} frame=${x.counter} mediaTime=${x.mediaTime === null ? 'n/a' : x.mediaTime.toFixed(4)}`);
       console.log(`[chromium ${name}] ffprobe start_time=${start} video.duration=${r.duration}\n  ${lines.join('\n  ')}`);
-      // What SourcePlayer/SequencePlayer actually do (currentTime = 0-based source time, no start offset added) must show frame 100
-      // (the export, which seeks relative to the container start, shows frame 100 there):
-      expect(r.results[1].counter, `0-based seek to ${r.results[1].t} landed at currentTime ${r.results[1].currentTime}`).toBe(100);
-      // With the container start added Chromium shows the intended frames (+-1: video starts 22 ms after the container):
+      // Platform fact (M-11): when the container start is non-zero, Chromium's timeline is absolute, so a 0-based seek
+      // does NOT land on source frame 100. When the start is 0 the two coincide.
+      if (start > 0) expect(r.results[1].counter, 'raw 0-based seek is expected to miss on an offset container').not.toBe(100);
+      else expect(r.results[1].counter).toBe(100);
+      // What SourcePlayer/SequencePlayer do since the M-11 fix: element time = source time + mediaTimeOffset(media)
+      // (src/playback/mediaSource.ts), i.e. + probe.startTime for originals. That must show the intended frames
+      // (+-1: video starts 22 ms after the container):
+      const offset = start > 0 ? start : 0;
+      expect(Math.abs(r.results[2].t - ((100 + 0.5) / 24 + offset))).toBeLessThan(1e-9);
       expect([99, 100]).toContain(r.results[2].counter);
-      expect([299, 300]).toContain(r.results[3].counter);
+      expect([199, 200]).toContain(r.results[3].counter);
     });
   }
 });

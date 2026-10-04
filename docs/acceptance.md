@@ -20,7 +20,25 @@ xvfb-run -a npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/gaun
   the store API runs and is marked as one. Step logs are written to `test-results/gauntlet/*.json` and echoed to stdout. Playwright clears `test-results/` at the start of each run.
 - Each step has a 240 s watchdog. This keeps a hung app from consuming the whole test budget.
 
-## Results (final run, 2026-10-04)
+## Results after the fix waves (current)
+
+All four acceptance tests pass on the current code, with no workarounds taken. The full e2e suite
+(`xvfb-run -a npx playwright test -c tests/e2e/playwright.config.ts`, 51 tests including this gauntlet) passes.
+
+| Test | Verdict | Steps passed |
+|------|---------|--------------|
+| TEST 1 — Basic Movie Edit | **PASS** | 17 / 17 |
+| TEST 2 — TV Fan Edit | **PASS** | 21 / 21 |
+| TEST 3 — Large-Media Workflow | **PASS** | 22 / 22 |
+| TEST 4 — Failure Recovery | **PASS** | 11 / 11 (the `/proc` export is now refused with "Cannot create output folder", no fallback) |
+
+BUG-1 to BUG-6 below are fixed: safe folder creation in `electron/safeMkdir.ts` (BUG-1), Transcript insert through
+the shared three-point/conform edit path (BUG-2), title-like video names routed to Movies plus a ≥ 40 min post-probe
+reclassification (BUG-3), Program chips counting distinct files (BUG-4), backup-open warning on every open path (BUG-5),
+and Program redraw when a proxy becomes ready (BUG-6). NOTE-1 is kept by design: with proxies off, media Chromium cannot
+decode still previews from its proxy rather than showing black (see docs/LIMITATIONS.md).
+
+## Results of the first run (before the fix waves, kept for history)
 
 | Test | Verdict | Steps passed | Failed checks |
 |------|---------|--------------|---------------|
