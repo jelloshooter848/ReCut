@@ -161,7 +161,7 @@ test('detects scenes through the context menu and lists scene rows under the med
   expect(await page.locator('[data-row-kind="scene"]').count()).toBe(n);   // only this media was detected
   await expect(scenes.first()).toContainText('Scene 001');
   await expect(scenes.first()).toContainText('00:00–');
-  await expect(row).toContainText(`${n} scenes`);
+  await expect(row).toContainText(`${n} scene${n === 1 ? '' : 's'}`);
 
   // Inline rename of a scene via F2.
   await scenes.first().click();

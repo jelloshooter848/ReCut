@@ -99,7 +99,7 @@ function MediaBadges({ m, onRelink }: { m: MediaItem; onRelink: (id: ID) => void
     const pr = sceneJob?.progress ?? 0;
     out.push(<span key="sr" className="pp-badge running" title="Detecting scenes…">Scenes {Math.round(pr * 100)}%<ProgressBar value={sceneJob ? pr : undefined} /></span>);
   } else if (sd === 'failed') out.push(<span key="sf" className="pp-badge danger">Scenes failed</span>);
-  else if (m.detectedScenes.length) out.push(<span key="sd" className="pp-badge accent" title="Detected scenes">{m.detectedScenes.length} scenes</span>);
+  else if (m.detectedScenes.length) out.push(<span key="sd" className="pp-badge accent" title="Detected scenes">{m.detectedScenes.length} scene{m.detectedScenes.length === 1 ? '' : 's'}</span>);
   if (m.subtitleTrackIds.length) out.push(<span key="cc" className="pp-badge" title={`${m.subtitleTrackIds.length} subtitle track(s)`}>CC{m.subtitleTrackIds.length > 1 ? ` ${m.subtitleTrackIds.length}` : ''}</span>);
   return <>{out}</>;
 }
@@ -184,7 +184,7 @@ const SequenceRowView = memo(function SequenceRowView({ row, selected, renaming,
       <Layers className="pp-icon" />
       {renaming ? <RenameField value={s.name} onCommit={(v) => cb.onRenameCommit(row, v)} onCancel={cb.onRenameCancel} /> : <span className="pp-name">{s.name}</span>}
       {lineage ? <span className="pp-badge accent" title="Alternate cut lineage">{lineage}</span> : null}
-      <span className="pp-meta" style={{ flex: '0 1 auto', marginLeft: 6 }}>{s.width}×{s.height}<span className="sep">·</span>{rationalLabel(s.fps)}</span>
+      <span className="pp-meta" style={{ flex: '0 4 auto', marginLeft: 6 }} title={`${s.width}×${s.height} @ ${rationalLabel(s.fps)} fps`}>{rationalLabel(s.fps)} fps</span>
       <div className="pp-right"><span className="pp-dur">{sequenceDurationLabel(s)}</span></div>
     </div>
   );
