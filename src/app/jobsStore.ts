@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { create } from 'zustand';
-import type { ID, JobInfo } from '@shared/model';
+import type { ID, JobInfo, JobKind } from '@shared/model';
 
 export interface JobsState {
   jobs: JobInfo[];
@@ -28,3 +28,13 @@ export function useActiveJobs(): JobInfo[] {
   return useMemo(() => jobs.filter(isJobActive), [jobs]);
 }
 export function useJob(id: ID | undefined): JobInfo | undefined { return useJobsStore((s) => (id ? s.jobs.find((j) => j.id === id) : undefined)); }
+
+/** The queued/running job of a kind for a media item, if any. */
+export function activeJobFor(jobs: JobInfo[], mediaId: ID, kind: JobKind): JobInfo | undefined {
+  return jobs.find((j) => j.mediaId === mediaId && j.kind === kind && isJobActive(j));
+}
+
+/** Live job (queued/running) for a media item, read from the jobs mirror (no store commits for progress). */
+export function useMediaJob(mediaId: ID, kind: JobKind): JobInfo | undefined {
+  return useJobsStore((s) => activeJobFor(s.jobs, mediaId, kind));
+}

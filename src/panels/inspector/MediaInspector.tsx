@@ -46,9 +46,7 @@ function SingleMedia({ m }: { m: MediaItem }) {
   const removeMediaSubtitleTrack = useStore((s) => s.removeMediaSubtitleTrack);
   const vocab = useStore((s) => s.project.tags.custom);
   const subs = useStore(useShallow((s: StoreState) => mediaSubtitleTracks(s, m.id)));
-  const storeJobs = useStore((s) => s.jobs);
-  const shellJobs = useJobsStore((s) => s.jobs);
-  const jobs = storeJobs.length ? storeJobs : shellJobs;
+  const jobs = useJobsStore((s) => s.jobs);
   const activeJob = (kind: JobInfo['kind']) => jobs.find((j) => j.kind === kind && j.mediaId === m.id && (j.status === 'queued' || j.status === 'running'));
   const proxyJob = activeJob('proxy');
   const sceneJob = activeJob('sceneDetect');

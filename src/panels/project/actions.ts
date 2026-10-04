@@ -13,7 +13,7 @@ import {
   useStore, recutApi, importMediaFiles, probeMedia, startProxy, startSceneDetect, importSubtitleFile, importEmbeddedSubtitles,
   activeSequence, fileNameOf,
 } from '@/state';
-import { activeJobFor } from './jobSync';
+import { activeJobFor } from '@/app/jobsStore';
 
 export const VIDEO_EXT = ['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'ts', 'm2ts', 'mts', 'mpg', 'mpeg', 'flv', 'ogv', '3gp'];
 export const AUDIO_EXT = ['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'ac3', 'eac3', 'dts', 'wma', 'opus', 'aiff', 'aif'];

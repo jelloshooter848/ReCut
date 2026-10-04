@@ -16,7 +16,6 @@ import {
 import { PanelDialogs, type PanelDialog } from './dialogs';
 import { RelinkDialog } from './RelinkDialog';
 import { InfoFooter } from './InfoFooter';
-import { useJobSync } from './jobSync';
 import { deleteSequenceConfirmed, importPaths, importViaDialog, loadInSource, locateMedia, openSequence, removeMediaConfirmed } from './actions';
 import { backgroundMenu, binMenu, groupMenu, mediaMenu, sceneMenu, sequenceMenu, type MenuEnv } from './menus';
 
@@ -33,7 +32,6 @@ function filePaths(dt: DataTransfer): string[] {
 }
 
 export function ProjectPanel(_props: PanelProps) {
-  useJobSync();
   const media = useStore((s) => s.project.media);
   const bins = useStore((s) => s.project.bins);
   const sequences = useStore((s) => s.project.sequences);

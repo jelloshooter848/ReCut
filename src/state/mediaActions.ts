@@ -133,11 +133,3 @@ export async function autosaveProject(): Promise<void> {
   if (!api || !st.dirty) return;
   await api.autosaveProject(st.projectPath, serializeForSave(st));
 }
-
-/** Subscribe the store's `jobs` to main-process job events. Returns an unsubscribe function. */
-export function bindJobEvents(): () => void {
-  const api = recutApi();
-  if (!api) return () => {};
-  api.listJobs().then((jobs) => useStore.getState().setJobs(jobs)).catch(() => {});
-  return api.onJobs((jobs) => useStore.getState().setJobs(jobs));
-}

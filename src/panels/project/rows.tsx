@@ -7,7 +7,7 @@ import type { ID, MediaItem } from '@shared/model';
 import { formatClock } from '@shared/time';
 import { ProgressBar, TextField } from '@/components/ui';
 import { useThumb } from './useThumb';
-import { useMediaJob } from './jobSync';
+import { useMediaJob } from '@/app/jobsStore';
 import { audioSummary, canThumb, dateLabel, mediaDurationLabel, mediaFpsLabel, posterTime, rationalLabel, resolutionLabel, sceneRangeLabel, sequenceDurationLabel, shortIdentity } from './format';
 import type { BinRow, CardsRow, GroupRow, ItemRow, MediaRow, Row, SceneRow, SequenceRow, SortKey } from './tree';
 import { expandKey } from './tree';
