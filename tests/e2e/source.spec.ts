@@ -180,7 +180,7 @@ test.describe('Source Monitor', () => {
     }, hevcId);
     const card = page.locator('.source-panel .source-error-card');
     await expect(card).toBeVisible();
-    await expect(card).toContainText(/Cannot decode/i);
+    await expect(card).toContainText(/HEVC video can't be decoded for preview/i);
     await expect(card.getByRole('button', { name: /Generate proxy/i })).toBeVisible();
   });
 
@@ -197,5 +197,67 @@ test.describe('Source Monitor', () => {
       w.__recut.store.getState().setSourceClip(id, 0);
     }, imageId);
     await expect(page.locator('.source-panel img.source-image')).toBeVisible();
+  });
+
+  test('names the real reason for AC-3 audio (E-08)', async () => {
+    const { page } = launched;
+    const [id] = await importMedia(page, [path.join(mediaDir, MEDIA.movie2ac3)]);
+    const playable = await getState<boolean | undefined>(page, `(s) => s.project.media[${JSON.stringify(id)}].probe?.browserPlayable`);
+    test.skip(playable !== false, 'AC-3 decodes natively in this Chromium build');
+    await page.evaluate((id) => {
+      const w = window as unknown as { __recut: { store: { getState(): { setSourceClip(id: string, t: number): void } } } };
+      w.__recut.store.getState().setSourceClip(id, 0);
+    }, id);
+    await expect(page.getByTestId('source-error-title')).toHaveText("AC-3 audio can't be decoded for preview");
+  });
+
+  test('first insert into an empty mismatching sequence offers to conform it (Change / Keep, remembered)', async () => {
+    const { page } = launched;
+    const [id] = await importMedia(page, [path.join(mediaDir, MEDIA.movie1)]);
+    const media = await getState<{ fps: { num: number; den: number }; width: number; height: number }>(page,
+      `(s) => { const v = s.project.media[${JSON.stringify(id)}].probe.video; return { fps: v.fps, width: v.width, height: v.height }; }`);
+    const makeEmpty = (name: string) => page.evaluate((name) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const st = (window as unknown as { __recut: { store: { getState(): any } } }).__recut.store.getState();
+      const cur = st.project.sequences[st.project.activeSequenceId];
+      const seq = JSON.parse(JSON.stringify(cur));
+      seq.id = `seq-${name}`; seq.name = name; seq.fps = { num: 25, den: 1 }; seq.width = 640; seq.height = 360;
+      for (const t of [...seq.videoTracks, ...seq.audioTracks]) { t.clips = []; t.transitions = []; }
+      seq.subtitleTracks = []; seq.markers = []; seq.snapshots = []; seq.view = { playhead: 0, zoom: 4, scroll: 0, inPoint: null, outPoint: null };
+      st.addSequence(seq, { activate: true });
+      st.setActiveSequence(seq.id);
+      return seq.id as string;
+    }, name);
+    const seqInfo = (sid: string) => getState<{ fps: { num: number; den: number }; width: number; clips: number }>(page,
+      `(s) => { const q = s.project.sequences[${JSON.stringify(sid)}]; return { fps: q.fps, width: q.width, clips: q.videoTracks[0].clips.length }; }`);
+    await page.evaluate((id) => {
+      const w = window as unknown as { __recut: { store: { getState(): { setSourceClip(id: string, t: number): void; setSourceIn(s: number): void; setSourceOut(s: number): void } } } };
+      const st = w.__recut.store.getState();
+      st.setSourceClip(id, 0); st.setSourceIn(1); st.setSourceOut(2);
+    }, id);
+
+    // Change → the sequence takes the clip's settings, then the edit happens.
+    const a = await makeEmpty('Conform A');
+    await page.locator('.source-transport .insert').click();
+    await expect(page.getByTestId('conform-dialog')).toContainText(/Change sequence to match clip/);
+    await page.getByTestId('conform-change').click();
+    await expect.poll(() => seqInfo(a)).toEqual({ fps: media.fps, width: media.width, clips: 1 });
+
+    // Keep → settings untouched; the answer is remembered for that sequence.
+    const b = await makeEmpty('Conform B');
+    await page.locator('.source-transport .overwrite').click();
+    await page.getByTestId('conform-keep').click();
+    await expect.poll(() => seqInfo(b)).toEqual({ fps: { num: 25, den: 1 }, width: 640, clips: 1 });
+    await page.evaluate((sid) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const st = (window as unknown as { __recut: { store: { getState(): any } } }).__recut.store.getState();
+      const q = st.project.sequences[sid];
+      st.select([...q.videoTracks, ...q.audioTracks].flatMap((t: { clips: { id: string }[] }) => t.clips.map((c) => c.id)), 'set');
+      st.deleteSelected(sid);
+    }, b);
+    await expect.poll(() => seqInfo(b)).toMatchObject({ clips: 0 });
+    await page.locator('.source-transport .overwrite').click();
+    await expect.poll(() => seqInfo(b)).toMatchObject({ clips: 1 });
+    await expect(page.getByTestId('conform-dialog')).toHaveCount(0);
   });
 });

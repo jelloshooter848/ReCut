@@ -56,6 +56,9 @@ test.describe('Program Monitor', () => {
     const probed = await getState<boolean>(page, `(s) => !!s.project.media[${JSON.stringify(mediaId)}].probe?.video`);
     expect(probed).toBeTruthy();
 
+    // Empty sequence → hint instead of a silent black rectangle (UX-04).
+    await expect(page.getByTestId('program-empty-hint')).toBeVisible();
+
     // Two ranges into the active sequence: 1–3 s at frame 0 and 5–7 s at frame 48.
     const seqId = await getState<string>(page, '(s) => s.project.activeSequenceId');
     expect(seqId).toBeTruthy();
@@ -74,6 +77,7 @@ test.describe('Program Monitor', () => {
       return end;
     });
     expect(duration).toBe(96);
+    await expect(page.getByTestId('program-empty-hint')).toHaveCount(0);
 
     // Program panel is mounted with its canvas sized to the sequence.
     await page.waitForSelector(CANVAS, { timeout: 30_000 });
@@ -108,8 +112,10 @@ test.describe('Program Monitor', () => {
     await page.click('[data-testid="program-go-end"]');
     await expect.poll(() => playhead(page)).toBe(96);
 
-    // Home via the panel's keyboard fallback.
+    // Home via the panel's keyboard fallback. Focusing the monitor makes it the visible transport owner (UX-03).
     await page.focus('[data-testid="program-panel"]');
+    await expect(page.getByTestId('program-panel')).toHaveAttribute('data-transport-active', 'true');
+    await expect(page.getByTestId('program-meter')).toBeVisible();
     await page.keyboard.press('Home');
     await expect.poll(() => playhead(page)).toBe(0);
 
@@ -167,5 +173,23 @@ test.describe('Program Monitor', () => {
     await page.click('[data-testid="program-maximize"]');
     await page.waitForTimeout(200);
     expect(await page.evaluate((sel) => document.querySelector(sel) === (window as any).__programCanvas, CANVAS)).toBe(true);
+  });
+
+  test('Play In to Out stops at Out when Loop is off (E-15)', async () => {
+    const { page } = launched;
+    test.setTimeout(60_000);
+    const seqId = await getState<string>(page, '(s) => s.project.activeSequenceId');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await page.evaluate(({ seqId }) => { (window as any).__recut.store.getState().setView(seqId, { playhead: 0, inPoint: 24, outPoint: 48 }); }, { seqId });
+    if ((await page.getByTestId('program-loop-toggle').getAttribute('aria-pressed')) === 'true') await page.click('[data-testid="program-loop-toggle"]');
+    await page.focus('[data-testid="program-panel"]');
+    await page.keyboard.press('Control+Shift+Space');
+    await expect.poll(() => getState<boolean>(page, '(s) => s.playback.playing')).toBe(true);
+    await expect.poll(() => getState<boolean>(page, '(s) => s.playback.playing'), { timeout: 10_000 }).toBe(false);
+    const ph = await playhead(page);
+    expect(ph).toBeGreaterThanOrEqual(40);
+    expect(ph).toBeLessThanOrEqual(48);
+    await page.waitForTimeout(500);
+    expect(await getState<boolean>(page, '(s) => s.playback.playing')).toBe(false);
   });
 });

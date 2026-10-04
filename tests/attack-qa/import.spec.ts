@@ -56,6 +56,10 @@ test('0-byte file, directory path, .recut file and a missing path all produce pr
   }
   const gone = items.find((i) => i.path === missing)!;
   expect(gone.offline, 'a file that is missing at probe time is not flagged offline (so the Relink flow never offers it)').toBe(true);
+  // Once the file appears, a re-probe clears offline.
+  fs.copyFileSync(path.join(mediaDir, MEDIA.movie1), missing);
+  const back = await app.page.evaluate(async (id) => { const w = window as unknown as W; await w.__recut.actions.probeMedia(id); const m = w.__recut.store.getState().project.media[id]; return { offline: m.offline, probeError: m.probeError, kind: m.kind }; }, gone.id);
+  expect(back).toEqual({ offline: false, probeError: undefined, kind: 'video' });
   const folder = items.find((i) => i.path === dir)!;
   expect(folder.probeError).toMatch(/director|EISDIR|Is a directory/i);
   expect(pageErrors).toEqual([]);
@@ -104,11 +108,12 @@ test('the same path twice in one import call must not create two media items', a
   expect(again).toEqual([]);
 });
 
-test('a subtitle file / a subtitle-only container imported as media become kind "subtitle" and cannot be inserted', async () => {
+test('a subtitle file is rejected as media; a subtitle-only container becomes kind "subtitle" and cannot be inserted', async () => {
   const srt = path.join(mediaDir, MEDIA.srt('Station Eleven S01E01'));
   const mkv = path.join(scratch, 'subs-only.mkv');
   execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', srt, '-c:s', 'srt', mkv]);
   const items = await imp([srt, mkv]);
+  expect(items.map((i) => i.path), '.srt files attach to media ("Import subtitles"), they are not media items').toEqual([mkv]);
   for (const it of items) expect(it.kind, `${it.name}: ${it.probeError ?? JSON.stringify(it.probe?.subtitles)}`).toBe('subtitle');
   const inserted = await app.page.evaluate((id) => { const st = (window as unknown as W).__recut.store.getState(); return st.insertFromSource(st.project.activeSequenceId, { mediaId: id, in: 0, out: 5, atFrame: 0, mode: 'overwrite' }); }, items[0].id);
   expect(inserted).toEqual([]);

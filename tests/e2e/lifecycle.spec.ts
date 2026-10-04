@@ -163,7 +163,22 @@ test('opening a damaged project falls back to the backup, says so, and names an 
   expect(fs.readdirSync(tmp).some((f) => f.startsWith('My Damaged Cut.recut.corrupt-'))).toBe(true);
 });
 
-test('quit prompt: Cancel keeps the app open past the fallback timeout; a never-answered prompt does too', async () => {
+test('Save As of an untitled project names it after the file', async () => {
+  await app.page.evaluate(() => (window as unknown as W).__recut.store.setState({ dirty: false }));
+  await app.page.evaluate(() => (window as unknown as W).__recut.store.getState().newProject());
+  expect(await app.page.evaluate(() => (window as unknown as W).__recut.store.getState().project.name)).toBe('Untitled Project');
+  const target = path.join(tmp, 'Trailer Recut.recut');
+  await app.app.evaluate(({ dialog }, p) => {
+    (dialog as unknown as { showSaveDialog: unknown }).showSaveDialog = () => Promise.resolve({ canceled: false, filePath: p });
+  }, target);
+  expect(await app.page.evaluate(() => (window as unknown as W).__recut.runCommand('file.saveAs'))).toBe(true);
+  await expect.poll(() => app.page.evaluate(() => (window as unknown as W).__recut.store.getState().projectPath)).toBe(target);
+  expect(await app.page.evaluate(() => (window as unknown as W).__recut.store.getState().project.name)).toBe('Trailer Recut');
+  expect(JSON.parse(fs.readFileSync(target, 'utf8')).name).toBe('Trailer Recut');
+  expect(await app.page.evaluate(() => (window as unknown as W).__recut.store.getState().dirty)).toBe(false);
+});
+
+test('quit prompt: Cancel keeps the app open past the 3 s fallback; the next quit prompts again', async () => {
   const alive = () => app.app.process().exitCode === null && !app.page.isClosed();
   await app.page.evaluate(() => {
     const st = (window as unknown as W).__recut.store.getState();
@@ -176,6 +191,11 @@ test('quit prompt: Cancel keeps the app open past the fallback timeout; a never-
   await app.page.evaluate(() => { void (window as unknown as { recut: { quit(f: boolean): Promise<void> } }).recut.quit(false); });
   await app.page.waitForTimeout(4000);
   expect(alive()).toBe(true);
-  // After a cancel, a new quit request prompts again (the pending state was cleared): answer Don't Save.
-  await app.page.evaluate(() => (window as unknown as W).__recut.store.setState({ dirty: false }));
+  // The pending-quit state was cleared: a new quit request prompts again; Don't Save quits.
+  await app.app.evaluate(({ dialog }) => {
+    (dialog as unknown as { showMessageBox: unknown }).showMessageBox = () => Promise.resolve({ response: 1, checkboxChecked: false });
+  });
+  const exited = new Promise<void>((r) => app.app.process().once('exit', () => r()));
+  await app.page.evaluate(() => { void (window as unknown as { recut: { quit(f: boolean): Promise<void> } }).recut.quit(false); }).catch(() => undefined);
+  await Promise.race([exited, new Promise((_r, rej) => setTimeout(() => rej(new Error('app did not quit after Don\'t Save')), 2500))]);
 });

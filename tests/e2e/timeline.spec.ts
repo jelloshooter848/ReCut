@@ -198,3 +198,128 @@ test.describe('timeline panel', () => {
     });
   });
 });
+
+// ------------------------------------------------------------------ keyboard target + dialogs (E-01, UX-01, UX-02)
+
+type AnyStore = { getState(): any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+const seqView = (page: Page) => page.evaluate(() => {
+  const s = (window as unknown as { __recut: { store: AnyStore } }).__recut.store.getState();
+  const q = s.project.sequences[s.project.activeSequenceId];
+  return { playhead: q.view.playhead as number, inPoint: q.view.inPoint as number | null, outPoint: q.view.outPoint as number | null, playing: s.playback.playing as boolean };
+});
+
+test.describe('timeline keyboard target and dialogs', () => {
+  let launched: LaunchedApp;
+  let mediaId: string;
+  test.beforeAll(async () => {
+    launched = await launchApp();
+    const { app, page, tmp } = launched;
+    await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setSize(1400, 900); w.center(); });
+    const mediaDir = makeTestMedia(tmp, 'short');
+    [mediaId] = await importMedia(page, [path.join(mediaDir, MEDIA.movie1)]);
+    await page.evaluate((mediaId) => {
+      const st = (window as unknown as { __recut: { store: AnyStore } }).__recut.store.getState();
+      const seqId = st.project.activeSequenceId;
+      for (let i = 0; i < 3; i++) st.insertFromSource(seqId, { mediaId, in: i * 4, out: i * 4 + 4, atFrame: i * 96, mode: 'overwrite' });
+      st.setView(seqId, { zoom: 2, scroll: 0, playhead: 10 });
+    }, mediaId);
+  });
+  test.afterAll(async () => { await launched?.app.close(); });
+
+  test('clicking the Timeline hands Space/JKL/Home/End/Up/Down/I/O to the sequence after using the Source (E-01)', async () => {
+    test.setTimeout(120_000);
+    const { page } = launched;
+    await page.evaluate((id) => (window as unknown as { __recut: { store: AnyStore } }).__recut.store.getState().setSourceClip(id, 1), mediaId);
+    const source = page.locator('.source-panel');
+    await source.locator('.source-stage').click();
+    await expect(source).toHaveAttribute('data-transport-active', 'true');
+    await page.keyboard.press('ArrowRight'); // drives the Source
+    expect((await seqView(page)).playhead).toBe(10);
+
+    // Click an empty part of the timeline (status strip): the Program side owns the keys now.
+    await page.locator('.tl-root .tl-status').click();
+    await expect(page.getByTestId('program-panel')).toHaveAttribute('data-transport-active', 'true');
+    await expect(source).toHaveAttribute('data-transport-active', 'false');
+
+    await page.keyboard.press('Home');
+    await expect.poll(async () => (await seqView(page)).playhead).toBe(0);
+    await page.keyboard.press('ArrowDown');
+    await expect.poll(async () => (await seqView(page)).playhead).toBe(96);
+    await page.keyboard.press('ArrowDown');
+    await expect.poll(async () => (await seqView(page)).playhead).toBe(192);
+    await page.keyboard.press('ArrowUp');
+    await expect.poll(async () => (await seqView(page)).playhead).toBe(96);
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(async () => (await seqView(page)).playhead).toBe(97);
+    await page.keyboard.press('i');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('o');
+    await expect.poll(async () => { const v = await seqView(page); return [v.inPoint, v.outPoint]; }).toEqual([97, 99]);
+    await page.keyboard.press('End');
+    await expect.poll(async () => (await seqView(page)).playhead).toBe(288);
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Space');
+    await expect.poll(async () => (await seqView(page)).playing).toBe(true);
+    await page.keyboard.press('Space');
+    await expect.poll(async () => (await seqView(page)).playing).toBe(false);
+    await page.keyboard.press('l');
+    await expect.poll(async () => (await seqView(page)).playing).toBe(true);
+    await page.keyboard.press('k');
+    await expect.poll(async () => (await seqView(page)).playing).toBe(false);
+    const ph = (await seqView(page)).playhead;
+    expect(ph).toBeGreaterThan(0);
+    await page.keyboard.press('j');
+    await expect.poll(async () => (await seqView(page)).playing).toBe(true);
+    await page.keyboard.press('k');
+    await expect.poll(async () => (await seqView(page)).playing).toBe(false);
+    // The Source monitor never moved while the timeline had the keys.
+    await expect(source).toHaveAttribute('data-transport-active', 'false');
+    await page.screenshot({ path: path.join(ROOT, 'docs/screenshots/timeline.png') });
+  });
+
+  test('dialogs: focus starts in the body, Enter applies, global shortcuts stay out (UX-01, UX-02)', async () => {
+    test.setTimeout(120_000);
+    const { page } = launched;
+    const clipId = await page.evaluate(() => {
+      const s = (window as unknown as { __recut: { store: AnyStore } }).__recut.store.getState();
+      const q = s.project.sequences[s.project.activeSequenceId];
+      s.select([], 'clear');
+      return q.videoTracks[0].clips[0].id as string;
+    });
+    const clip = page.locator(`.tl-clip[data-clip-id="${clipId}"]`);
+    await clip.click({ button: 'right' });
+    await page.locator('.menu-item', { hasText: 'Rename…' }).click();
+    const dialog = page.locator('[role="dialog"]');
+    await expect(dialog).toBeVisible();
+    const focused = await page.evaluate(() => ({ tag: document.activeElement?.tagName, label: document.activeElement?.getAttribute('aria-label') }));
+    expect(focused.tag).toBe('INPUT');
+    // Ctrl+A inside the field selects text, not every clip on the timeline.
+    const before = await page.evaluate(() => (window as unknown as { __recut: { store: AnyStore } }).__recut.store.getState().ui.selectedClipIds.length);
+    await page.keyboard.press('Control+a');
+    const after = await page.evaluate(() => (window as unknown as { __recut: { store: AnyStore } }).__recut.store.getState().ui.selectedClipIds.length);
+    expect(after).toBe(before);
+    await page.keyboard.type('Hero shot');
+    await page.keyboard.press('Enter');
+    await expect(dialog).toHaveCount(0);
+    await expect.poll(() => page.evaluate((id) => {
+      const s = (window as unknown as { __recut: { store: AnyStore } }).__recut.store.getState();
+      const q = s.project.sequences[s.project.activeSequenceId];
+      return q.videoTracks[0].clips.find((c: { id: string }) => c.id === id)?.name;
+    }, clipId)).toBe('Hero shot');
+
+    // Speed dialog: type the number straight away and press Enter → applied.
+    await clip.click();
+    await page.keyboard.press('Control+r');
+    await expect(dialog).toBeVisible();
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).not.toBe('Close');
+    await page.keyboard.type('200');
+    await page.keyboard.press('Enter');
+    await expect(dialog).toHaveCount(0);
+    await expect.poll(() => page.evaluate((id) => {
+      const s = (window as unknown as { __recut: { store: AnyStore } }).__recut.store.getState();
+      const q = s.project.sequences[s.project.activeSequenceId];
+      return q.videoTracks[0].clips.find((c: { id: string }) => c.id === id)?.speed;
+    }, clipId)).toBe(2);
+  });
+});

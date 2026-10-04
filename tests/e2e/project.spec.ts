@@ -67,10 +67,18 @@ async function setMaximized(on: boolean) {
 }
 
 test.afterAll(async () => {
+  // Unsaved edits would make the quit flow prompt to save and block close().
+  try { await page.evaluate(() => (window as any).__recut.store.setState({ dirty: false })); } catch { /* gone */ }
   await app?.close();
 });
 
 const episodePaths = () => EPISODES.map((n) => path.join(mediaDir, 'tv/Season 01', n));
+
+test('first run: an empty project shows a prominent Import call to action', async () => {
+  const cta = page.getByTestId('empty-import');
+  await expect(cta).toBeVisible();
+  await expect(page.getByTestId('project-panel')).toContainText('subtitles next to media are picked up automatically');
+});
 
 test('imports three episodes and shows probed rows', async () => {
   await page.evaluate((paths) => (window as any).__recut.actions.importMediaFiles(paths), episodePaths());
@@ -89,6 +97,19 @@ test('imports three episodes and shows probed rows', async () => {
     await expect(row).toContainText('24');          // fps
     await expect(row).toContainText('2ch aac');
   }
+  await expect(page.getByTestId('empty-import')).toHaveCount(0);
+  // Identity parsed at import: Episode category, routed into TV › Station Eleven › Season 1 and selected.
+  const placed = await page.evaluate(() => {
+    const s = (window as any).__recut.store.getState();
+    const bin = (id: string | null) => (id ? s.project.bins[id] : null);
+    return Object.values(s.project.media).map((m: any) => ({
+      category: m.category, identity: m.identity, bin: bin(m.binId)?.name, parent: bin(bin(m.binId)?.parentId)?.name,
+      top: bin(bin(bin(m.binId)?.parentId)?.parentId)?.id, selected: s.ui.selectedMediaIds.includes(m.id),
+    })).sort((a: any, b: any) => a.identity.episode - b.identity.episode);
+  });
+  expect(placed.map((p) => p.identity.episode)).toEqual([1, 2, 3]);
+  for (const p of placed) expect(p).toMatchObject({ category: 'Episode', bin: 'Season 1', parent: 'Station Eleven', top: 'bin-tv', selected: true, identity: { series: 'Station Eleven', season: 1 } });
+
   // Info footer (collapsed by default) shows read-only metadata for the selected item.
   await rows.first().click();
   const info = page.getByTestId('info-footer');
@@ -201,4 +222,92 @@ test('screenshot', async () => {
   await setMaximized(false);
   await page.waitForTimeout(800);
   await page.screenshot({ path: path.join(dir, 'project.png') });
+});
+
+test('import: routing by identity, sidecar subtitles, de-dupe, missing files, proxies and relink warnings', async () => {
+  const scratch = path.join(tmp, 'imp');
+  fs.mkdirSync(scratch, { recursive: true });
+  const ep = path.join(scratch, 'Night Shift S02E05.mp4');
+  fs.copyFileSync(path.join(mediaDir, 'tv/Season 01', EPISODES[0]), ep);
+  fs.copyFileSync(path.join(mediaDir, 'subs/Station Eleven S01E01.srt'), path.join(scratch, 'Night Shift S02E05.srt'));
+  fs.copyFileSync(path.join(mediaDir, 'subs/Station Eleven S01E02.srt'), path.join(scratch, 'Night Shift S02E05.fr.srt'));
+  const film = path.join(scratch, 'Some Film (1999).mp4');
+  fs.copyFileSync(path.join(mediaDir, 'movies/Galaxy Saga 1 - A New Dawn.mp4'), film);
+  const score = path.join(scratch, 'score.m4a'); fs.copyFileSync(path.join(mediaDir, 'score.m4a'), score);
+  const card = path.join(scratch, 'title-card.png'); fs.copyFileSync(path.join(mediaDir, 'title-card.png'), card);
+  const loose = path.join(scratch, 'loose.srt'); fs.copyFileSync(path.join(mediaDir, 'subs/Station Eleven S01E03.srt'), loose);
+  const missing = path.join(scratch, 'never-existed.mp4');
+
+  await page.evaluate(() => {
+    const w = window as any; w.__toastLog = [];
+    w.__recut.store.subscribe((s: any, p: any) => { if (s.ui.toasts !== p.ui.toasts) for (const t of s.ui.toasts) if (!w.__toastLog.some((x: any) => x.id === t.id)) w.__toastLog.push(t); });
+  });
+  const toasts = () => page.evaluate(() => ((window as any).__toastLog as { text: string }[]).map((t) => t.text));
+
+  const r = await page.evaluate((paths) => (window as any).__recut.actions.importMedia(paths, null), [ep, ep, film, score, card, loose, missing]);
+  expect(r.added).toHaveLength(5);                         // ep (once), film, score, card, missing
+  expect(r.existing).toEqual([]);
+  expect(r.sidecarsUsed.sort()).toEqual([path.join(scratch, 'Night Shift S02E05.fr.srt'), path.join(scratch, 'Night Shift S02E05.srt')]);
+  await page.waitForFunction((ids) => ids.every((id: string) => { const m = (window as any).__recut.store.getState().project.media[id]; return m && (m.probe || m.probeError); }), r.added, { timeout: 60_000 });
+
+  const byPath = await page.evaluate(() => {
+    const s = (window as any).__recut.store.getState();
+    const out: Record<string, any> = {};
+    for (const m of Object.values(s.project.media) as any[]) {
+      const b = m.binId ? s.project.bins[m.binId] : null;
+      const parent = b?.parentId ? s.project.bins[b.parentId] : null;
+      out[m.path] = { id: m.id, category: m.category, identity: m.identity, binId: m.binId, bin: b?.name, parent: parent?.name, grand: parent?.parentId ?? null, offline: m.offline, probeError: m.probeError, kind: m.kind,
+        subs: m.subtitleTrackIds.map((t: string) => s.project.subtitleTracks[t]?.language).sort() };
+    }
+    return out;
+  });
+  expect(byPath[ep]).toMatchObject({ category: 'Episode', identity: { series: 'Night Shift', season: 2, episode: 5 }, bin: 'Season 2', parent: 'Night Shift', grand: 'bin-tv', subs: ['fr', 'und'] });
+  expect(byPath[film]).toMatchObject({ category: 'Movie', identity: { title: 'Some Film', year: 1999 }, binId: 'bin-movies' });
+  expect(byPath[score]).toMatchObject({ category: 'Music', binId: 'bin-audio', kind: 'audio' });
+  expect(byPath[card]).toMatchObject({ category: 'Other', binId: 'bin-graphics', kind: 'image' });
+  expect(byPath[loose]).toBeUndefined();
+  expect(byPath[missing]).toMatchObject({ offline: true });
+  expect(byPath[missing].probeError).toBeTruthy();
+  await expect(page.getByTestId('offline-banner')).toBeVisible();
+  let log = await toasts();
+  expect(log.some((t) => /Imported 2 subtitle files found next to the media/.test(t))).toBe(true);
+  expect(log.some((t) => /Import subtitles/.test(t))).toBe(true);
+  // New items are selected and the panel scrolled to them.
+  const sel = await page.evaluate(() => (window as any).__recut.store.getState().ui.selectedMediaIds);
+  expect([...sel].sort()).toEqual([...r.added].sort());
+  await expect(page.locator(r.added.map((id: string) => `[data-row-kind="media"][data-media-id="${id}"]`).join(', ')).first()).toBeVisible();
+
+  // Same path again → no new item, toast, existing item selected.
+  const again = await page.evaluate((p) => (window as any).__recut.actions.importMedia([p], null), ep);
+  expect(again.added).toEqual([]);
+  expect(again.existing).toEqual([byPath[ep].id]);
+  log = await toasts();
+  expect(log).toContain('Already imported: 1');
+  expect(await page.evaluate(() => (window as any).__recut.store.getState().ui.selectedMediaIds)).toEqual([byPath[ep].id]);
+  // …and revealed: the panel scrolls down to TV › Night Shift › Season 2.
+  await expect(page.locator(`[data-row-kind="media"][data-media-id="${byPath[ep].id}"]`)).toBeInViewport();
+
+  // QA-13: a ready proxy whose file is gone is reset by "Check files" / project open.
+  await page.evaluate((id) => (window as any).__recut.store.getState().setProxy(id, { status: 'ready', path: '/nonexistent/recut-proxy.mp4' }), byPath[film].id);
+  await page.evaluate(() => (window as any).__recut.actions.verifyMediaOnline());
+  expect(await page.evaluate((id) => (window as any).__recut.store.getState().project.media[id].proxy.status, byPath[film].id)).toBe('none');
+
+  // E-03: with proxies on, undecodable media (AC-3 audio) gets a proxy queued automatically.
+  await page.evaluate(() => (window as any).__recut.store.getState().setSettings({ useProxies: true }));
+  const ac3 = path.join(scratch, 'Dark Tide (2002).mp4');
+  fs.copyFileSync(path.join(mediaDir, 'movies/Galaxy Saga 2 - Dark Tide.mp4'), ac3);
+  const [ac3Id] = await page.evaluate((p) => (window as any).__recut.actions.importMediaFiles([p]), ac3);
+  await expect.poll(() => page.evaluate((id) => (window as any).__recut.store.getState().project.media[id].proxy.status, ac3Id), { timeout: 60_000 }).not.toBe('none');
+  log = await toasts();
+  expect(log.some((t) => /Generating proxies for 1 file the preview can't decode/.test(t))).toBe(true);
+  await page.evaluate(() => (window as any).__recut.store.getState().setSettings({ useProxies: false }));
+
+  // QA-22: relink to a shorter file → clips past the end are reported.
+  const short = path.join(scratch, 'short.mp4');
+  execSync(`ffmpeg -hide_banner -loglevel error -y -i "${ep}" -t 2 -c copy "${short}"`);
+  await page.evaluate((id) => { const st = (window as any).__recut.store.getState(); st.insertFromSource(st.project.activeSequenceId, { mediaId: id, in: 0, out: 10, atFrame: 0, mode: 'overwrite' }); }, byPath[ep].id);
+  await expect.poll(() => page.evaluate(() => !!(window as any).__recut.projectActions)).toBe(true);
+  expect(await page.evaluate(({ id, p }) => (window as any).__recut.projectActions.relinkWithPath(id, p), { id: byPath[ep].id, p: short })).toBe(true);
+  expect(await page.evaluate((id) => (window as any).__recut.projectActions.clipsPastEnd(id, 2), byPath[ep].id)).toBeGreaterThan(0);
+  await expect(page.locator('.toast-host')).toContainText(/clips? extends? past the new media and will freeze on the last frame/);
 });
