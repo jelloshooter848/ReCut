@@ -44,6 +44,7 @@ const api: RecutApi = {
   saveProject: (path: string, project: Project) => ipcRenderer.invoke(IPC.projectSave, path, project),
   loadProject: (path: string) => ipcRenderer.invoke(IPC.projectLoad, path),
   autosaveProject: (path: string | null, project: Project) => ipcRenderer.invoke(IPC.projectAutosave, path, project),
+  autosaveProjectJson: (path: string | null, json: string) => ipcRenderer.invoke(IPC.projectAutosaveJson, path, json),
   checkRecovery: () => ipcRenderer.invoke(IPC.projectCheckRecovery),
   discardRecovery: (autosavePath: string) => ipcRenderer.invoke(IPC.projectDiscardRecovery, autosavePath),
   recentProjects: () => ipcRenderer.invoke(IPC.projectRecent),

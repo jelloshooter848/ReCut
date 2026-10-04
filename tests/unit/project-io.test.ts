@@ -7,7 +7,7 @@ import { createProject } from '../../shared/project';
 import {
   saveProjectFile, loadProjectFile, writeAutosave, checkRecovery, discardRecovery, autosavePathFor,
   untitledAutosavePath, clearUntitledAutosaveFor, defaultPrefs, readPrefs, updatePrefs, addRecentProject,
-  pushRecent, MAX_RECENT, atomicWriteFile, ensureProjectExt, projectPathForAutosave, serializeAutosave,
+  pushRecent, MAX_RECENT, atomicWriteFile, ensureProjectExt, projectPathForAutosave, serializeAutosave, writeAutosaveJson,
 } from '../../electron/project/io';
 import { ensureDirSafe } from '../../electron/safeMkdir';
 import { projectPathFromArgv } from '../../electron/project/argv';
@@ -366,6 +366,18 @@ describe('autosave format and safe folder creation (P-06, BUG-1)', () => {
     expect(JSON.parse(autoText)).toEqual(JSON.parse(manualText));
     const rec = await checkRecovery(userData, []);
     expect(rec).toBeNull(); // autosave not newer than the project by more than the slack
+  });
+
+  it('writeAutosaveJson writes a renderer-serialized project as-is and recovery loads it', async () => {
+    const project = createProject('From JSON');
+    const json = JSON.stringify(project);
+    const r = await writeAutosaveJson(null, json, userData);
+    expect(r.ok).toBe(true);
+    expect(await fsp.readFile(untitledAutosavePath(userData), 'utf8')).toBe(json);
+    const rec = await checkRecovery(userData, []);
+    expect(rec?.project.name).toBe('From JSON');
+    expect((await writeAutosaveJson(null, 'nope', userData)).ok).toBe(false);
+    expect((await writeAutosaveJson(null, 42 as unknown as string, userData)).ok).toBe(false);
   });
 
   it('atomicWriteFile writes large strings and buffers exactly', async () => {

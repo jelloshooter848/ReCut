@@ -9,6 +9,8 @@ registerPanel({
   defaultZone: 'center-bottom',
   icon: Layers,
   component: TimelinePanel,
+  // Remounting the 2,500-clip timeline when another tab of its zone is shown is costly: keep it mounted (hidden).
+  keepAlive: true,
   description: 'Sequence timeline — frame-accurate editing with Premiere-style tools',
 });
 

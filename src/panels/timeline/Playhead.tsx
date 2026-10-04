@@ -2,7 +2,7 @@
  * Playhead overlay. Subscribes to view.playhead only so moving it never re-renders the clip tree,
  * and page-flips the view when the playhead leaves it (playback, keyboard stepping).
  */
-import React, { useEffect } from 'react';
+import React, { useLayoutEffect } from 'react';
 import { useStore, usePlayhead } from '@/state';
 import { frameToX, pageFlipScroll } from './viewMath';
 import { RULER_H } from './types';
@@ -20,7 +20,8 @@ export function Playhead({ seqId, zoom, scroll, width, suppressFlip }: PlayheadP
   const playhead = usePlayhead(seqId);
   const playing = useStore((s) => s.playback.playing);
 
-  useEffect(() => {
+  // Layout effect: the page flip (a scroll) lands in the same frame as the playhead move, not one paint later.
+  useLayoutEffect(() => {
     if (width <= 0 || suppressFlip.current) return;
     const next = pageFlipScroll(playhead, scroll, width / zoom);
     if (next !== null && (playing || next !== scroll)) useStore.getState().setView(seqId, { scroll: next });

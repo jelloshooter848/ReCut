@@ -188,6 +188,24 @@ export async function writeAutosave(projectPath: string | null, project: Project
   }
 }
 
+/**
+ * Autosave from an already-serialized project (renderer-side JSON.stringify; avoids structured-cloning
+ * the project across IPC). The string is written as-is, atomically; it is not parsed or normalized here
+ * (recovery parses and normalizes it on load). Only a cheap shape check guards against garbage.
+ */
+export async function writeAutosaveJson(projectPath: string | null, json: string, userData: string): Promise<SaveResult> {
+  if (typeof json !== 'string' || json.length < 2 || json[0] !== '{' || json[json.length - 1] !== '}') {
+    return { ok: false, error: 'Autosave failed: not a serialized project (expected a JSON object string)' };
+  }
+  try {
+    const target = autosavePathFor(projectPath, userData);
+    await atomicWriteFile(target, json, { backup: false });
+    return { ok: true, path: target };
+  } catch (e) {
+    return { ok: false, error: `Autosave failed: ${errMsg(e)}` };
+  }
+}
+
 async function statOrNull(p: string): Promise<fs.Stats | null> {
   try { return await fsp.stat(p); } catch { return null; }
 }

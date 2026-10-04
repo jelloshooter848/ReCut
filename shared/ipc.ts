@@ -23,6 +23,7 @@ export const IPC = {
   projectSave: 'project:save',
   projectLoad: 'project:load',
   projectAutosave: 'project:autosave',
+  projectAutosaveJson: 'project:autosaveJson',
   projectCheckRecovery: 'project:checkRecovery',
   projectDiscardRecovery: 'project:discardRecovery',
   projectRecent: 'project:recent',
@@ -145,6 +146,12 @@ export interface RecutApi {
   loadProject(path: string): Promise<LoadResult>;
   /** Writes <projectPath>.autosave (or an app-data file when the project has never been saved). */
   autosaveProject(path: string | null, project: Project): Promise<SaveResult>;
+  /**
+   * Same as autosaveProject with the project already serialized (JSON.stringify in the renderer): a string
+   * crosses contextBridge/IPC without a structured clone of the whole object graph. Written as-is
+   * (atomically, no re-parse / normalize).
+   */
+  autosaveProjectJson(path: string | null, json: string): Promise<SaveResult>;
   checkRecovery(): Promise<RecoveryInfo | null>;
   discardRecovery(autosavePath: string): Promise<void>;
   recentProjects(): Promise<string[]>;

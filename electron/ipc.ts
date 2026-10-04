@@ -262,6 +262,7 @@ export function registerIpc(deps: IpcDeps): void {
     return res;
   });
   ipcMain.handle(IPC.projectAutosave, (_e, p: string | null, project: Project) => io.writeAutosave(typeof p === 'string' && p ? p : null, project, userData));
+  ipcMain.handle(IPC.projectAutosaveJson, (_e, p: string | null, json: string) => io.writeAutosaveJson(typeof p === 'string' && p ? p : null, json, userData));
   ipcMain.handle(IPC.projectCheckRecovery, async () => {
     const prefs = await io.readPrefs(userData);
     return io.checkRecovery(userData, prefs.recentProjects);
