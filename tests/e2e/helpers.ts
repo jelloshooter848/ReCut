@@ -22,6 +22,18 @@ export async function launchApp(opts: { tmp?: string; env?: Record<string, strin
     cwd: ROOT,
     env: { ...process.env, RECUT_USER_DATA: userData, RECUT_CACHE_DIR: cacheDir, RECUT_DISABLE_GPU: '1', ...(opts.env ?? {}) },
   });
+  // Closing a project with unsaved changes now (correctly) asks Save/Don't Save/Cancel, which would hang
+  // teardown. Tests that care about the prompt drive it explicitly; plain close() discards changes.
+  const rawClose = app.close.bind(app);
+  app.close = async () => {
+    try {
+      await app.windows()[0]?.evaluate(() => {
+        const w = window as unknown as { __recut?: { store: { setState(p: object): void } } };
+        w.__recut?.store.setState({ dirty: false });
+      });
+    } catch { /* window already gone */ }
+    await rawClose();
+  };
   const page = await app.firstWindow();
   await page.waitForSelector('#root .layout', { timeout: 60_000 });
   await page.waitForFunction(() => Boolean((window as unknown as { __recut?: unknown }).__recut));

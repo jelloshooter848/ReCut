@@ -147,8 +147,10 @@ test('a proxy job can be canceled from its row', async () => {
   const [id2] = await importMedia(page, [path.join(mediaDir, MEDIA.movie2ac3)]);
   const row = page.locator(`[data-testid="proxy-row"][data-media-id="${id2}"]`);
   await expect(row).toBeVisible();
-  await row.getByTestId('proxy-generate').click();
-  await row.getByTestId('proxy-cancel').click();
+  // Undecodable media (AC-3) now gets a proxy automatically on import; start one only if it didn't.
+  const cancel = row.getByTestId('proxy-cancel');
+  if (!(await cancel.isVisible().catch(() => false))) await row.getByTestId('proxy-generate').click();
+  await cancel.click();
 
   await page.waitForFunction((id) => {
     const w = window as unknown as { __recut: { store: { getState(): { project: { media: Record<string, { proxy: ProxyInfo }> } } }; jobsStore: { getState(): { jobs: JobInfo[] } } } };
