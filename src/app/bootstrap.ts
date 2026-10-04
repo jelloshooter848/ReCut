@@ -55,6 +55,12 @@ export const menuCommandMap: Record<string, string> = {
   'window.resetLayout': COMMAND_IDS.resetWorkspace,
   'help.shortcuts': COMMAND_IDS.openShortcuts,
   'help.keyboardShortcuts': COMMAND_IDS.openShortcuts,
+  // Names sent by electron/menu.ts whose ids are registered by src/app/commands.ts / project.ts (identity mappings kept explicit).
+  'file.clearRecent': 'file.clearRecent',
+  'file.importSubtitles': 'file.importSubtitles',
+  'sequence.duplicate': 'sequence.duplicate',
+  'app.preferences': 'app.preferences',
+  'help.about': 'help.about',
 };
 
 /** Dispatch a menu command string. Returns true when a command ran. */

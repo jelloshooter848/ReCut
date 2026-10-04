@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Keyboard, Loader2, Maximize } from 'lucide-react';
 import { Layout } from '@/components/layout';
 import { ContextMenuHost } from '@/components/ui/ContextMenu';
@@ -12,7 +12,46 @@ import { COMMAND_IDS } from '@/keyboard/commandIds';
 import { useActiveJobs } from '@/app/jobsStore';
 import { useShellStore } from '@/app/shellStore';
 import { useLayoutStore } from '@/components/layout/layoutStore';
+import { toast, type ToastKind as ShellToastKind } from '@/components/ui/toastStore';
+import { useStore } from '@/state/store';
+import type { ToastKind as StoreToastKind } from '@/state/types';
+import { registerEditingCommands } from '@/app/commands';
+import { initProjectLifecycle } from '@/app/project';
+import { initJobsRouter } from '@/app/jobsRouter';
+import { DialogHost } from '@/app/dialogs/ConfirmDialog';
+import { NewSequenceDialog } from '@/app/dialogs/NewSequenceDialog';
+import { PreferencesDialog } from '@/app/dialogs/PreferencesDialog';
+import { SpeedDialog } from '@/app/dialogs/SpeedDialog';
 import '@/panels';
+
+const TOAST_KIND: Record<StoreToastKind, ShellToastKind> = { info: 'info', success: 'ok', warning: 'warn', error: 'error' };
+const STORE_TOAST_MS = 5000;
+let appInitialized = false;
+const bridgedToasts = new Set<string>();
+
+/** Mirror store.ui.toasts into the shell toast host and dismiss them from the store after 5s. */
+function bridgeStoreToasts(): () => void {
+  const handle = (toasts: { id: string; kind: StoreToastKind; text: string }[]) => {
+    for (const t of toasts) {
+      if (bridgedToasts.has(t.id)) continue;
+      bridgedToasts.add(t.id);
+      toast(TOAST_KIND[t.kind] ?? 'info', t.text, STORE_TOAST_MS);
+      window.setTimeout(() => { useStore.getState().dismissToast(t.id); bridgedToasts.delete(t.id); }, STORE_TOAST_MS);
+    }
+  };
+  handle(useStore.getState().ui.toasts);
+  return useStore.subscribe((s, prev) => { if (s.ui.toasts !== prev.ui.toasts) handle(s.ui.toasts); });
+}
+
+/** One-time wiring of editing commands, project lifecycle and job routing (idempotent across StrictMode remounts). */
+function initApp(): void {
+  if (appInitialized) return;
+  appInitialized = true;
+  registerEditingCommands();
+  initProjectLifecycle();
+  initJobsRouter();
+  bridgeStoreToasts();
+}
 
 function ProjectTitle() {
   const name = useShellStore((s) => s.projectName);
@@ -55,12 +94,17 @@ function GlobalButtons() {
 
 export function App() {
   useShortcuts();
+  useEffect(() => { initApp(); }, []);
   return (
     <>
       <Layout projectSlot={<ProjectTitle />} rightSlot={<GlobalButtons />} />
       <ContextMenuHost />
       <ToastHost />
       <ShortcutsDialog />
+      <NewSequenceDialog />
+      <PreferencesDialog />
+      <SpeedDialog />
+      <DialogHost />
     </>
   );
 }

@@ -1,0 +1,59 @@
+/* Continuity panel */
+.cty-panel:focus { outline: none; }
+.cty-panel:focus-visible { box-shadow: none; }
+
+.cty-toolbar {
+  display: flex; align-items: center; gap: 4px; min-height: var(--panel-header-h); padding: 2px 4px;
+  background: var(--bg-2); border-bottom: 1px solid var(--border); flex-shrink: 0; min-width: 0;
+}
+.cty-toolbar .input-wrap { flex: 1 1 60px; min-width: 50px; }
+.cty-select { flex: 1 1 0; min-width: 0; max-width: 170px; }
+.cty-toolbar .toggle { margin-left: auto; flex-shrink: 0; }
+
+.cty-body { display: flex; flex-direction: column; }
+.cty-list { padding-bottom: 2px; }
+.cty-row {
+  display: flex; align-items: flex-start; gap: 6px; padding: 4px 4px 4px 8px; border-bottom: 1px solid var(--border); position: relative; min-width: 0;
+}
+.cty-row:hover { background: var(--bg-3); }
+.cty-row.focused { background: var(--accent-soft); }
+.cty-row.focused::before, .cty-row.selected::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+.cty-row.selected:not(.focused)::before { background: var(--text-faint); }
+.cty-row.resolved .cty-name { text-decoration: line-through; color: var(--text-dim); }
+.cty-row.resolved .cty-cat, .cty-row.resolved .cty-tc, .cty-row.resolved .cty-clip { opacity: 0.6; }
+.cty-check { margin: 4px 0 0; width: 13px; height: 13px; accent-color: var(--ok); flex-shrink: 0; cursor: default; }
+.cty-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.cty-line1 { min-height: 16px; }
+.cty-seq { color: var(--text-dim); font-size: var(--font-size-xs); text-transform: uppercase; letter-spacing: 0.05em; max-width: 90px; flex-shrink: 1; }
+.cty-tc { color: var(--accent-2); font-size: var(--font-size-sm); flex-shrink: 0; }
+.cty-cat {
+  display: inline-flex; align-items: center; height: 14px; padding: 0 5px; border-radius: 7px; font-size: var(--font-size-xs); text-transform: uppercase; letter-spacing: 0.05em;
+  border: 1px solid currentColor; flex-shrink: 0; line-height: 1;
+}
+.cty-cat-wardrobe { color: var(--label-rose); }
+.cty-cat-prop { color: var(--label-mango); }
+.cty-cat-dialogue { color: var(--label-iris); }
+.cty-cat-music { color: var(--label-violet); }
+.cty-cat-lighting { color: var(--label-caribbean); }
+.cty-cat-source { color: var(--label-forest); }
+.cty-cat-other { color: var(--text-dim); }
+.cty-clip { display: inline-flex; align-items: center; gap: 3px; color: var(--text-dim); font-size: var(--font-size-xs); min-width: 0; margin-left: auto; }
+.cty-clip > svg { flex-shrink: 0; }
+.cty-name { color: var(--text-bright); font-weight: 500; flex-shrink: 0; max-width: 100%; }
+.cty-expand { background: none; border: none; padding: 0; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-dim); border-radius: 2px; flex-shrink: 0; }
+.cty-expand:hover { background: var(--bg-5); color: var(--text-bright); }
+.cty-note-preview { font-size: var(--font-size-sm); min-width: 0; }
+.cty-note { white-space: pre-wrap; color: var(--text); font-size: var(--font-size-sm); line-height: 1.45; padding: 4px 6px; background: var(--bg-1); border-radius: var(--radius); border: 1px solid var(--border); margin-top: 2px; }
+.cty-del { position: absolute; right: 3px; top: 2px; opacity: 0; background: var(--bg-3); }
+.cty-row:hover .cty-del, .cty-row.focused .cty-del, .cty-del:focus-visible { opacity: 1; }
+.cty-row.focused .cty-del { background: transparent; }
+.cty-row:hover .cty-line1 { padding-right: 20px; }
+
+.cty-edit { display: flex; flex-direction: column; gap: 4px; padding: 2px 0; }
+.cty-edit textarea.cty-edit-note { min-height: 48px; font-size: var(--font-size-sm); }
+
+.cty-dialog-form { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: center; }
+.cty-dialog-form > label { color: var(--text-dim); font-size: var(--font-size-sm); text-align: right; }
+.cty-dialog-form textarea.input { min-height: 72px; }
+.cty-link { text-align: left !important; color: var(--text) !important; font-size: var(--font-size) !important; }
+.cty-link input { accent-color: var(--accent); }

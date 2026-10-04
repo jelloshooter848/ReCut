@@ -1,2 +1,14 @@
-// Panel module slot for "source". The owning agent replaces this file with registerPanel(...) calls.
-export {};
+import { Film } from 'lucide-react';
+import { registerPanel } from '../registry';
+import { SourcePanel } from './SourcePanel';
+
+registerPanel({
+  id: 'source',
+  title: 'Source',
+  defaultZone: 'monitor-left',
+  icon: Film,
+  component: SourcePanel,
+  description: 'Source Monitor — preview media, mark In/Out, insert into the sequence',
+});
+
+export { SourcePanel };
