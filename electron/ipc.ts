@@ -168,6 +168,7 @@ export function registerIpc(deps: IpcDeps): void {
       ffmpegVersion: await ffmpegVersion(ffmpegPath),
       cacheDir: await resolveCacheDir(userData),
       userDataDir: userData,
+      homeDir: app.getPath('home'),
       isDev: deps.isDev,
     };
   });

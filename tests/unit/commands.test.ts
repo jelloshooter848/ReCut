@@ -19,6 +19,7 @@ import {
   registerEditingCommands, getClipboard, setClipboard, setTimelineViewportWidth, zoomToFitValue, EXTRA_COMMAND_IDS, ZOOM_MAX, topmostClipAt,
 } from '../../src/app/commands';
 import { routeJobs, resetJobsRouter } from '../../src/app/jobsRouter';
+import { zoomToFit } from '../../src/panels/timeline/viewMath';
 import { registerShellCommands } from '../../src/keyboard/commands';
 
 const FPS = { num: 24, den: 1 };
@@ -378,13 +379,15 @@ describe('editing commands', () => {
 
 describe('view commands', () => {
   it('zoomToFit math', () => {
-    expect(zoomToFitValue(240, 1200)).toBe(5);
+    // Same math as the Timeline panel's own zoom-to-fit (viewMath: 4% breathing room, clamped to MAX_ZOOM).
+    expect(zoomToFitValue(240, 1200)).toBe(zoomToFit(240, 1200));
+    expect(zoomToFitValue(240, 1200)).toBeCloseTo(4.8, 10);
     expect(zoomToFitValue(0, 1200)).toBe(ZOOM_MAX);
     insert(0);
     setTimelineViewportWidth(960);
     S().setView(seqId, { zoom: 3, scroll: 40 });
     runCommand(COMMAND_IDS.zoomToFit);
-    expect(seq().view.zoom).toBe(960 / sequenceDuration(seq()));
+    expect(seq().view.zoom).toBe(zoomToFit(sequenceDuration(seq()), 960));
     expect(seq().view.scroll).toBe(0);
   });
 

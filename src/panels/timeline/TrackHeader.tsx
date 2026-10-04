@@ -37,10 +37,17 @@ export const TrackHeader = memo(function TrackHeader({ seqId, track, top, height
     else setName(track.name);
   };
 
+  // Video tracks stack upwards from the divider (V1 lowest), audio tracks downwards (A1 highest).
+  const index = number - 1;
+  const aboveIndex = isAudio ? index : index + 1;
+  const belowIndex = isAudio ? index + 1 : index;
+  const kindLabel = isAudio ? 'Audio' : 'Video';
   const menu = (): MenuItem[] => [
     { heading: `${label} · ${track.name}` },
     { label: 'Rename…', onSelect: onRename },
     { separator: true },
+    { label: `Add ${kindLabel} Track Above`, onSelect: () => useStore.getState().addTrack(seqId, track.kind, aboveIndex) },
+    { label: `Add ${kindLabel} Track Below`, onSelect: () => useStore.getState().addTrack(seqId, track.kind, belowIndex) },
     { label: 'Add Video Track', onSelect: () => useStore.getState().addTrack(seqId, 'video') },
     { label: 'Add Audio Track', onSelect: () => useStore.getState().addTrack(seqId, 'audio') },
     { separator: true },

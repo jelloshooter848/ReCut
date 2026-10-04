@@ -25,7 +25,8 @@ import { TimelineHeader } from './TimelineHeader';
 import { MarkerEditor, PropertiesPopover, RenameDialog, SpeedDialog, TagsDialog } from './dialogs';
 import { useTimelineDrag, snapTargets, type InteractionCtx } from './interactions';
 import { useTimelineUi } from './timelineStore';
-import { clipboardHasClips, clipboardPlacements, copyClipsToClipboard } from './clipboard';
+import { clipboardHasClips, copyClipsToClipboard, pasteClipboardAt } from '@/app/clipboard';
+import { setTimelineViewportWidth } from '@/app/commands';
 import type { DialogState, DragPreview } from './types';
 import { RULER_H } from './types';
 import {
@@ -85,6 +86,8 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     return () => ro.disconnect();
   }, []);
   useEffect(() => { if (active) setWidth(tracksColRef.current?.clientWidth ?? 0); }, [active]);
+  // Let the global View › Zoom commands use the real viewport width.
+  useEffect(() => { if (width > 0) setTimelineViewportWidth(width); }, [width]);
 
   const zoom = seq?.zoom ?? 4;
   const scroll = seq?.scroll ?? 0;
@@ -164,9 +167,8 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const cutSelection = () => { if (copySelection()) useStore.getState().deleteSelected(seqId); };
   const pasteAtPlayhead = () => {
     const st = useStore.getState(); const s = st.project.sequences[seqId]; if (!s) return;
-    const placements = clipboardPlacements(s, s.view.playhead);
-    if (!placements.length) return;
-    if (st.placeClipsAction(seqId, placements, 'overwrite')) st.select(placements.map((p) => p.clip.id), 'set');
+    const ids = pasteClipboardAt(s, s.view.playhead);
+    if (ids.length) st.select(ids, 'set');
   };
   const selectAll = () => { const s = fullSeq(); if (!s) return; useStore.getState().select([...s.videoTracks, ...s.audioTracks].flatMap((t) => t.clips.map((c) => c.id)), 'set'); };
 

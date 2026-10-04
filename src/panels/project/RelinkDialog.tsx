@@ -7,7 +7,7 @@ import { toast } from '@/components/ui/toastStore';
 import { useStore, recutApi, verifyMediaOnline, fileNameOf } from '@/state';
 import { locateMedia, relinkWithPath } from './actions';
 
-/** Bound to ui.dialogs.relink: lists offline media, lets the user locate files one by one or scan a folder. */
+/** Bound to ui.dialogs.relink (hosted by App so it works even when the Project panel is hidden): lists offline media, lets the user locate files one by one or scan a folder. */
 export function RelinkDialog() {
   const open = useStore((s) => s.ui.dialogs.relink);
   const media = useStore((s) => s.project.media);

@@ -668,11 +668,14 @@ export function makeTrack(kind: 'video' | 'audio', index: number): Track {
   };
 }
 
-export function addTrack(seq: Sequence, kind: 'video' | 'audio'): Track {
+/** Append a track of `kind`, or insert it at `index` (clamped to [0, length]); default-named tracks are renumbered. */
+export function addTrack(seq: Sequence, kind: 'video' | 'audio', index?: number): Track {
   const list = kind === 'video' ? seq.videoTracks : seq.audioTracks;
-  const t = makeTrack(kind, list.length + 1);
+  const at = index === undefined ? list.length : Math.max(0, Math.min(list.length, Math.round(index)));
+  const t = makeTrack(kind, at + 1);
   t.patched = false;
-  list.push(t);
+  list.splice(at, 0, t);
+  if (at < list.length - 1) renameTracks(seq);
   return t;
 }
 

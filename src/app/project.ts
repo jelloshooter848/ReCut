@@ -124,7 +124,8 @@ function syncTitle(): void {
   const seq = activeSequence(st);
   const name = st.project.name || 'Untitled Project';
   useShellStore.getState().setProjectTitle({ projectName: name, sequenceName: seq?.name ?? null, dirty: st.dirty });
-  if (typeof document !== 'undefined') document.title = `${name}${st.dirty ? ' *' : ''} — ReCut`;
+  // The Electron window title follows document.title (main does not override it).
+  if (typeof document !== 'undefined') document.title = `${name} — ReCut`;
 }
 
 // ------------------------------------------------------------------

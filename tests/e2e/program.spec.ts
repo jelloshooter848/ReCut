@@ -146,8 +146,17 @@ test.describe('Program Monitor', () => {
     await page.screenshot({ path: out });
 
     // Maximized monitor: wide transport bar (in/out readouts, volume, resolution, toggles).
+    // Maximize must not remount the panel: the canvas element stays the same node and playback keeps running.
+    await page.evaluate((sel) => { (window as any).__programCanvas = document.querySelector(sel); }, CANVAS);
+    await page.click('[data-testid="program-play"]');
+    await expect.poll(() => getState<boolean>(page, '(s) => s.playback.playing')).toBe(true);
     await page.click('[data-testid="program-maximize"]');
     await page.waitForTimeout(400);
+    expect(await page.evaluate((sel) => document.querySelector(sel) === (window as any).__programCanvas, CANVAS)).toBe(true);
+    expect(await getState<boolean>(page, '(s) => s.playback.playing')).toBe(true);
+    await page.click('[data-testid="program-play"]');
+    await expect.poll(() => getState<boolean>(page, '(s) => s.playback.playing')).toBe(false);
+    await page.evaluate(({ seqId }) => { (window as any).__recut.store.getState().setView(seqId, { playhead: 60 }); }, { seqId });
     await expect(page.locator('[data-testid="program-resolution"]')).toBeVisible();
     await page.click('[data-testid="program-safe-margins"]');
     await page.selectOption('[data-testid="program-resolution"]', '1/2');
@@ -156,5 +165,7 @@ test.describe('Program Monitor', () => {
     await page.waitForTimeout(300);
     await page.screenshot({ path: path.join(ROOT, 'docs/screenshots/program-maximized.png') });
     await page.click('[data-testid="program-maximize"]');
+    await page.waitForTimeout(200);
+    expect(await page.evaluate((sel) => document.querySelector(sel) === (window as any).__programCanvas, CANVAS)).toBe(true);
   });
 });

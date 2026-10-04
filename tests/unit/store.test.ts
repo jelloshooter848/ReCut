@@ -221,6 +221,42 @@ describe('media', () => {
     expect(S().project.media[m.id].probeError).toBe('boom');
   });
 
+  it('updateMedia merges a partial identity patch and clears fields set to undefined', () => {
+    S().updateMedia(media.id, { identity: { series: 'Firefly', season: 1, episode: 3, title: 'Bushwhacked' } });
+    S().updateMedia(media.id, { name: 'ep3.mkv', identity: { episode: 4 } });
+    expect(S().project.media[media.id].name).toBe('ep3.mkv');
+    expect(S().project.media[media.id].identity).toEqual({ series: 'Firefly', season: 1, episode: 4, title: 'Bushwhacked' });
+    S().updateMedia(media.id, { identity: { title: undefined } });
+    expect(S().project.media[media.id].identity).toEqual({ series: 'Firefly', season: 1, episode: 4 });
+    expect(S().project.media[media.id].id).toBe(media.id);
+  });
+
+  it('proxy / scene / offline / relink status writes are quiet (no history, redo kept)', () => {
+    S().renameProject('A');
+    S().renameProject('B');
+    S().undo();
+    expect(S().canRedo()).toBe(true);
+    const past = S().history.past.length;
+    S().markSaved('/tmp/p.recut');
+    S().setProxy(media.id, { status: 'running', progress: 0.5 });
+    S().setSceneDetectStatus(media.id, 'running');
+    S().setDetectedScenes(media.id, [10, 20], 100);
+    S().setOffline(media.id, true);
+    S().relinkMedia(media.id, '/media/new.mkv', { size: 5 });
+    const m = S().project.media[media.id];
+    expect(m.proxy.status).toBe('running');
+    expect(m.detectedScenes).toHaveLength(3);
+    expect(m.sceneDetectStatus).toBe('done');
+    expect(m.offline).toBe(false);
+    expect(m.path).toBe('/media/new.mkv');
+    expect(S().history.past.length).toBe(past);
+    expect(S().canRedo()).toBe(true);
+    expect(S().dirty).toBe(true); // proxies / paths are persisted
+    S().redo();
+    expect(S().project.name).toBe('B');
+    expect(S().canRedo()).toBe(false);
+  });
+
   it('detected scenes: build, merge, split, delete', () => {
     S().setDetectedScenes(media.id, [10, 20, 30], 100);
     let sc = S().project.media[media.id].detectedScenes;
@@ -408,9 +444,15 @@ describe('bins + organisation', () => {
     expect(bins[r.seriesBinId]).toMatchObject({ name: 'Firefly', kind: 'series', parentId: 'bin-tv' });
     expect(bins[r.seasonBinId]).toMatchObject({ name: 'Season 1', kind: 'season', parentId: r.seriesBinId });
     expect(S().project.media[media.id]).toMatchObject({ binId: r.seasonBinId, identity: { series: 'Firefly', season: 1 }, category: 'Episode' });
-    // re-running reuses the same bins
-    const r2 = S().organizeAsSeries([ep2.id], 'Firefly', 1);
+    // re-running reuses the same bins; per-item episode/title land in one commit
+    const past = S().history.past.length;
+    const r2 = S().organizeAsSeries([{ id: ep2.id, episode: 2, title: 'The Train Job' }], 'Firefly', 1);
     expect(r2).toEqual(r);
+    expect(S().history.past.length).toBe(past + 1);
+    expect(S().project.media[ep2.id].identity).toMatchObject({ series: 'Firefly', season: 1, episode: 2, title: 'The Train Job' });
+    S().organizeAsSeries([{ id: ep2.id, title: '' }], 'Firefly', 1);
+    expect(S().project.media[ep2.id].identity.title).toBeUndefined();
+    expect(S().project.media[ep2.id].identity.episode).toBe(2);
     expect(Object.values(bins).filter((b) => b.kind === 'series')).toHaveLength(1);
     const tree = seriesTree(S());
     expect(tree.series).toHaveLength(1);

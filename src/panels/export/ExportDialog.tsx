@@ -109,9 +109,11 @@ export function ExportDialog() {
     if (phase.kind === 'job' && isTerminal(job ?? finalJob ?? undefined)) setPhase({ kind: 'edit' });
     const api = recutApi();
     if (api && !init.outputDir) {
-      api.getPrefs().then((prefs) => {
-        if (prefs.lastExportDir) setSettings((s) => (s && !s.outputDir ? { ...s, outputDir: prefs.lastExportDir! } : s));
-      }).catch(() => { /* ignore */ });
+      // Preferences' last export dir, else the user's home directory, as the output directory fallback.
+      Promise.all([api.getPrefs().catch(() => null), api.appInfo().catch(() => null)]).then(([prefs, info]) => {
+        const dir = prefs?.lastExportDir?.trim() || info?.homeDir || '';
+        if (dir) setSettings((s) => (s && !s.outputDir ? { ...s, outputDir: dir } : s));
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);

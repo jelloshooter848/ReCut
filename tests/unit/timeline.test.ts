@@ -884,6 +884,14 @@ describe('tracks', () => {
     expect(v4).toMatchObject({ name: 'V4', kind: 'video', patched: false });
     expect(s.videoTracks).toHaveLength(4);
     expect(addTrack(s, 'audio').name).toBe('A4');
+    // insert at an index: renumbers default names and clamps out-of-range indices
+    const v2 = addTrack(s, 'video', 1);
+    expect(s.videoTracks.indexOf(v2)).toBe(1);
+    expect(s.videoTracks.map((t) => t.name)).toEqual(['V1', 'V2', 'V3', 'V4', 'V5']);
+    expect(s.audioTracks.indexOf(addTrack(s, 'audio', 99))).toBe(4);
+    expect(s.audioTracks.indexOf(addTrack(s, 'audio', -5))).toBe(0);
+    expect(s.audioTracks.map((t) => t.name)).toEqual(['A1', 'A2', 'A3', 'A4', 'A5', 'A6']);
+    s.videoTracks.splice(1, 1); s.audioTracks.splice(0, 1); s.audioTracks.splice(3, 1); renameTracks(s);
     s.videoTracks[2].name = 'Titles';
     expect(removeTrack(s, s.videoTracks[1].id)).toBe(true);
     expect(s.videoTracks.map((t) => t.name)).toEqual(['V1', 'Titles', 'V3']);

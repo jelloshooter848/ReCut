@@ -3,12 +3,12 @@
  *  - proxy: queued/running/ready/failed → media.proxy (+ media element invalidation when ready)
  *  - sceneDetect: done → detected scenes; failed → status
  *  - export: toasts
- * Each terminal result is applied once (by job id), and every write is additionally guarded by the media's
- * current state so a second subscriber (the Jobs / Project panels keep their own mirrors) cannot double-apply.
- * Jobs are also mirrored into store.jobs.
+ * This is the ONLY job→project mirror (jobsStore → store): each terminal result is applied once (by job id) and
+ * every write is additionally guarded by the media's current state, so results survive a project reload without
+ * double-applying. Jobs are also mirrored into store.jobs so panels may read either store consistently.
  *
- * Note: store.setProxy / setSceneDetectStatus are undoable commits, so per-tick progress is NOT written to
- * the store (only status transitions); live progress is read from jobsStore by the UI.
+ * Note: status writes are quiet (not undoable) but per-tick progress is still NOT written to the store (only
+ * status transitions); live progress is read from jobsStore by the UI.
  */
 import type { JobInfo } from '@shared/model';
 import type { SceneDetectResult } from '@shared/ipc';

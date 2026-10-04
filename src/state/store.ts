@@ -222,7 +222,7 @@ export const useStore = create<RecutStore>()((set, get) => {
     return true;
   };
 
-  /** Apply a recipe without touching history or dirty state (view / active sequence / transient drags). */
+  /** Apply a recipe without touching history (view / active sequence / transient drags / job status mirrors). */
   const quiet = (recipe: Recipe, opts: { dirty?: boolean } = {}): void => {
     const prev = get().project;
     const next = produce(prev, recipe);
@@ -246,6 +246,7 @@ export const useStore = create<RecutStore>()((set, get) => {
 
     // ---------------------------------------------------------------- undo model
     commit,
+    quiet,
     undo() {
       const s = get();
       if (s.transaction) return false;
@@ -354,8 +355,9 @@ export const useStore = create<RecutStore>()((set, get) => {
         }
       });
     },
-    organizeAsSeries(mediaIds, series, season) {
+    organizeAsSeries(items, series, season) {
       let seriesBinId = ''; let seasonBinId = '';
+      const entries = items.map((it) => (typeof it === 'string' ? { id: it } : it));
       commit('Organize as series', (d) => {
         const tvParent = d.bins['bin-tv'] ? 'bin-tv' : null;
         let seriesBin = Object.values(d.bins).find((b) => b.kind === 'series' && b.name === series);
@@ -364,11 +366,13 @@ export const useStore = create<RecutStore>()((set, get) => {
         let seasonBin = Object.values(d.bins).find((b) => b.kind === 'season' && b.parentId === seriesBin!.id && b.name === seasonName);
         if (!seasonBin) { seasonBin = { id: uid('bin'), name: seasonName, parentId: seriesBin.id, kind: 'season' }; d.bins[seasonBin.id] = seasonBin; }
         seriesBinId = seriesBin.id; seasonBinId = seasonBin.id;
-        for (const id of mediaIds) {
-          const m = d.media[id];
+        for (const it of entries) {
+          const m = d.media[it.id];
           if (!m) continue;
           m.identity.series = series;
           m.identity.season = season;
+          if (it.episode !== undefined) m.identity.episode = it.episode;
+          if (it.title !== undefined) { if (it.title) m.identity.title = it.title; else delete m.identity.title; }
           if (m.category === 'Other' || m.category === 'Movie') m.category = 'Episode';
           m.binId = seasonBin.id;
         }
@@ -387,8 +391,14 @@ export const useStore = create<RecutStore>()((set, get) => {
       commit('Edit media', (d) => {
         const m = d.media[id];
         if (!m) return;
-        Object.assign(m, patch, { id });
-        if (patch.identity) m.identity = { ...m.identity, ...patch.identity };
+        const { identity, ...rest } = patch;
+        Object.assign(m, rest, { id });
+        if (identity) {
+          // Merge over the current identity; an explicit `undefined` clears that field.
+          const merged: Record<string, unknown> = { ...m.identity };
+          for (const [k, v] of Object.entries(identity)) { if (v === undefined) delete merged[k]; else merged[k] = v; }
+          m.identity = merged as MediaItem['identity'];
+        }
         addToVocab(d.tags, 'custom', patch.tags);
       });
     },
@@ -426,10 +436,12 @@ export const useStore = create<RecutStore>()((set, get) => {
         if (m.preferredAudioStream === undefined && result.audio.length) m.preferredAudioStream = result.audio[0].index;
       });
     },
-    setProxy(id, proxy) { commit('Update proxy', (d) => { const m = d.media[id]; if (m) m.proxy = proxy; }); },
-    setSceneDetectStatus(id, status) { commit('Scene detection', (d) => { const m = d.media[id]; if (m) m.sceneDetectStatus = status; }); },
+    // Job/status mirrors are quiet: they arrive asynchronously and must not become undo steps (nor clear redo).
+    setProxy(id, proxy) { quiet((d) => { const m = d.media[id]; if (m) m.proxy = proxy; }, { dirty: true }); },
+    setSceneDetectStatus(id, status) { quiet((d) => { const m = d.media[id]; if (m) m.sceneDetectStatus = status; }, { dirty: true }); },
     setDetectedScenes(id, boundaries, duration) {
-      commit('Detect scenes', (d) => {
+      // Detection results also arrive from a background job; edits to the scenes (rename/merge/split) stay undoable.
+      quiet((d) => {
         const m = d.media[id];
         if (!m) return;
         const cuts = [...new Set(boundaries.filter((b) => b > 0 && b < duration))].sort((a, b) => a - b);
@@ -441,7 +453,7 @@ export const useStore = create<RecutStore>()((set, get) => {
         }
         m.detectedScenes = scenes;
         m.sceneDetectStatus = 'done';
-      });
+      }, { dirty: true });
     },
     renameDetectedScene(mediaId, sceneId, name) {
       commit('Rename scene', (d) => { const s = d.media[mediaId]?.detectedScenes.find((x) => x.id === sceneId); if (s) s.name = name; });
@@ -491,7 +503,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       commit('Delete scene', (d) => { const m = d.media[mediaId]; if (m) m.detectedScenes = m.detectedScenes.filter((s) => s.id !== sceneId); });
     },
     relinkMedia(id, newPath, stat) {
-      commit('Relink media', (d) => {
+      quiet((d) => {
         const m = d.media[id];
         if (!m) return;
         m.path = newPath;
@@ -499,9 +511,9 @@ export const useStore = create<RecutStore>()((set, get) => {
         m.probeError = undefined;
         if (stat?.size !== undefined) m.fileSize = stat.size;
         if (stat?.mtimeMs !== undefined) m.fileMtime = stat.mtimeMs;
-      });
+      }, { dirty: true });
     },
-    setOffline(id, offline) { commit(offline ? 'Media offline' : 'Media online', (d) => { const m = d.media[id]; if (m) m.offline = offline; }); },
+    setOffline(id, offline) { quiet((d) => { const m = d.media[id]; if (m) m.offline = offline; }); },
     addMediaSubtitleTrack(track) {
       commit('Add subtitles', (d) => {
         d.subtitleTracks[track.id] = track;
@@ -628,9 +640,12 @@ export const useStore = create<RecutStore>()((set, get) => {
             if (!st) continue;
             const overlapping = st.cues.filter((c) => c.end > inS && c.start < outS);
             if (overlapping.length === 0) continue;
-            let target = seq.subtitleTracks.find((t) => t.language === st.language);
+            // Tracks are named by language; untagged ('und') tracks take the media track's name (e.g. the SRT base name).
+            const untagged = !st.language || st.language === 'und';
+            const trackName = untagged ? (st.name?.replace(/\.[^./\\]+$/, '') || 'Subtitles') : st.language;
+            let target = seq.subtitleTracks.find((t) => t.language === st.language && (!untagged || t.name === trackName));
             if (!target) {
-              target = { id: uid('sst'), name: st.language || st.name || 'Subtitles', language: st.language, enabled: true, cues: [] };
+              target = { id: uid('sst'), name: trackName, language: st.language, enabled: true, cues: [] };
               seq.subtitleTracks.push(target);
             }
             for (const cue of overlapping) {
@@ -925,9 +940,9 @@ export const useStore = create<RecutStore>()((set, get) => {
         reconcileTransitions(found.track);
       });
     },
-    addTrack(seqId, kind) {
+    addTrack(seqId, kind, index) {
       let id: ID | null = null;
-      commit(`Add ${kind} track`, (d) => { const seq = d.sequences[seqId]; if (seq) id = tlAddTrack(seq, kind).id; });
+      commit(`Add ${kind} track`, (d) => { const seq = d.sequences[seqId]; if (seq) id = tlAddTrack(seq, kind, index).id; });
       return id;
     },
     removeTrack(seqId, trackId) {

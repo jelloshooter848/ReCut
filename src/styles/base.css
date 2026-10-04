@@ -323,10 +323,14 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; }
 
 /* ---------- layout ---------- */
 .layout { display: flex; flex-direction: column; width: 100%; height: 100%; background: var(--bg-0); overflow: hidden; }
-.layout-body { flex: 1; display: flex; flex-direction: row; min-height: 0; min-width: 0; overflow: hidden; }
+.layout-body { flex: 1; display: flex; flex-direction: row; min-height: 0; min-width: 0; overflow: hidden; position: relative; }
 .layout-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .layout-row { display: flex; flex-direction: row; min-width: 0; min-height: 0; overflow: hidden; }
-.layout-maximized { flex: 1; display: flex; min-height: 0; min-width: 0; }
+/* Maximize: the zone's slot is lifted over the body; every other slot and splitter stays mounted but hidden. */
+.layout-body.has-maximized .layout-zone-slot:not(.layout-maximized),
+.layout-body.has-maximized .splitter,
+.layout-body.has-maximized .zone-empty { visibility: hidden; pointer-events: none; }
+.layout-body > .layout-maximized, .layout-body .layout-maximized { position: absolute; inset: 3px; z-index: 2; visibility: visible; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 
 .topbar {
   display: flex; align-items: center; gap: 8px; height: var(--topbar-h); padding: 0 10px 0 12px;

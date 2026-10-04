@@ -16,10 +16,11 @@ import { activeSequence, selectedClips } from '@/state/selectors';
 import { importMediaFiles, importSubtitleFile, recutApi } from '@/state/mediaActions';
 import { useLayoutStore } from '@/components/layout/layoutStore';
 import { toast } from '@/components/ui/toastStore';
-import { uid } from '@shared/ids';
 import type { Clip, ID, Sequence, Track } from '@shared/model';
-import { clamp, secondsToFrames } from '@shared/time';
+import { secondsToFrames } from '@shared/time';
 import { allTracks, clipAt, clipEnd, findClip, nextEdit, prevEdit, sequenceDuration, sourceTimeAt } from '@shared/timeline';
+import { MAX_ZOOM, MIN_ZOOM, zoomAround, zoomToFit } from '@/panels/timeline/viewMath';
+import { clipboardHasClips, copyClipsToClipboard, pasteClipboardAt } from './clipboard';
 import { getActiveTransport, shuttle, type Transport } from './transport';
 import { requestNewProject, requestOpenProject, requestSave, requestSaveAs } from './project';
 import { promptText } from './dialogs/ConfirmDialog';
@@ -83,28 +84,33 @@ const S = () => useStore.getState();
 const seqNow = (): Sequence | null => activeSequence(S());
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** Visible timeline width in px, reported by the Timeline panel; used by zoom-to-fit. */
+/** Visible timeline width in px, reported by the Timeline panel on resize (fallback when it is not mounted). */
 let viewportWidth = 1200;
 export function setTimelineViewportWidth(px: number): void { if (Number.isFinite(px) && px > 0) viewportWidth = px; }
-export function getTimelineViewportWidth(): number { return viewportWidth; }
-export const ZOOM_MIN = 0.01;
-export const ZOOM_MAX = 400;
+/** The live `.tl-tracks-col` width when the Timeline panel is mounted and laid out, else the last reported width. */
+export function getTimelineViewportWidth(): number {
+  if (typeof document !== 'undefined') {
+    const w = document.querySelector<HTMLElement>('.tl-tracks-col')?.clientWidth ?? 0;
+    if (w > 0) return w;
+  }
+  return viewportWidth;
+}
+export const ZOOM_MIN = MIN_ZOOM;
+export const ZOOM_MAX = MAX_ZOOM;
 
-/** Zoom (px per frame) that fits `durationFrames` into `widthPx`. */
-export function zoomToFitValue(durationFrames: number, widthPx = viewportWidth): number {
-  return clamp(widthPx / Math.max(1, durationFrames), ZOOM_MIN, ZOOM_MAX);
+/** Zoom (px per frame) that fits `durationFrames` into `widthPx` (same math as the Timeline panel's zoom-to-fit). */
+export function zoomToFitValue(durationFrames: number, widthPx = getTimelineViewportWidth()): number {
+  return zoomToFit(Math.max(1, durationFrames), widthPx);
 }
 
 /** Multiply the zoom keeping the playhead at the same screen x (and visible). */
 export function zoomAroundPlayhead(seq: Sequence, factor: number): void {
   const { zoom, scroll, playhead } = seq.view;
-  const nz = clamp(zoom * factor, ZOOM_MIN, ZOOM_MAX);
-  if (nz === zoom) return;
-  const offsetPx = (playhead - scroll) * zoom;
-  let ns = playhead - offsetPx / nz;
-  const visible = viewportWidth / nz;
-  if (playhead < ns || playhead > ns + visible) ns = playhead - visible / 2;
-  S().setView(seq.id, { zoom: nz, scroll: Math.max(0, ns) });
+  const next = zoomAround(zoom, scroll, (playhead - scroll) * zoom, zoom * factor);
+  if (next.zoom === zoom) return;
+  const visible = getTimelineViewportWidth() / next.zoom;
+  if (playhead < next.scroll || playhead > next.scroll + visible) next.scroll = Math.max(0, playhead - visible / 2);
+  S().setView(seq.id, next);
 }
 
 /** Store-backed transport over the active sequence, used when no monitor has registered one. */
@@ -197,54 +203,16 @@ function goToEditPoint(dir: -1 | 1): void {
 }
 
 // ------------------------------------------------------------------
-// Clipboard
+// Clipboard (shared with the Timeline panel: src/app/clipboard.ts)
 // ------------------------------------------------------------------
 
-export interface ClipboardEntry { clip: Clip; trackId: ID; trackKind: 'video' | 'audio'; trackIndex: number }
-export interface ClipClipboard { entries: ClipboardEntry[]; origin: number; sequenceId: ID }
-
-let clipboard: ClipClipboard | null = null;
-export function getClipboard(): ClipClipboard | null { return clipboard; }
-export function setClipboard(c: ClipClipboard | null): void { clipboard = c; }
+export { getClipboard, setClipboard, pasteClipboardAt, type ClipboardEntry, type ClipClipboard } from './clipboard';
 
 function copySelection(): boolean {
   const seq = seqNow();
   if (!seq) return false;
-  const clips = selectedClips(S());
-  if (!clips.length) { toast('info', 'Nothing selected to copy'); return false; }
-  const entries: ClipboardEntry[] = [];
-  for (const c of clips) {
-    const loc = findClip(seq, c.id);
-    if (!loc) continue;
-    const list = loc.track.kind === 'video' ? seq.videoTracks : seq.audioTracks;
-    entries.push({ clip: JSON.parse(JSON.stringify(c)) as Clip, trackId: loc.track.id, trackKind: loc.track.kind, trackIndex: list.indexOf(loc.track) });
-  }
-  clipboard = { entries, origin: Math.min(...entries.map((e) => e.clip.start)), sequenceId: seq.id };
+  if (!copyClipsToClipboard(seq, S().ui.selectedClipIds)) { toast('info', 'Nothing selected to copy'); return false; }
   return true;
-}
-
-/** Paste the clipboard at the playhead (overwrite) onto the same tracks (by id, else by kind + index). Returns new clip ids. */
-export function pasteClipboardAt(seq: Sequence, frame: number): ID[] {
-  if (!clipboard || !clipboard.entries.length) return [];
-  const linkMap = new Map<string, string>();
-  const placements: { trackId: ID; clip: Clip }[] = [];
-  for (const e of clipboard.entries) {
-    const list = e.trackKind === 'video' ? seq.videoTracks : seq.audioTracks;
-    const track = list.find((t) => t.id === e.trackId && !t.locked) ?? list[Math.min(e.trackIndex, list.length - 1)] ?? list.find((t) => !t.locked);
-    if (!track || track.locked) continue;
-    let linkId = e.clip.linkId;
-    if (linkId) { if (!linkMap.has(linkId)) linkMap.set(linkId, uid('link')); linkId = linkMap.get(linkId)!; }
-    const src = e.clip;
-    const clip: Clip = {
-      ...src, id: uid('clip'), start: Math.max(0, Math.round(frame + (src.start - clipboard.origin))), linkId,
-      tags: [...src.tags], characters: [...src.characters], plotlines: [...src.plotlines], locations: [...src.locations],
-      transform: { ...src.transform, crop: { ...src.transform.crop } }, audio: { ...src.audio },
-    };
-    placements.push({ trackId: track.id, clip });
-  }
-  if (!placements.length) return [];
-  const ok = S().placeClipsAction(seq.id, placements, 'overwrite');
-  return ok ? placements.map((p) => p.clip.id) : [];
 }
 
 // ------------------------------------------------------------------
@@ -427,7 +395,7 @@ export function buildEditingCommands(): CommandInput[] {
     cmd(C.cut, () => { const seq = seqNow(); if (seq && copySelection()) S().deleteSelected(seq.id); }, () => hasSeq() && hasClipSelection()),
     cmd(C.paste, () => {
       const seq = seqNow(); if (!seq) return;
-      if (!clipboard?.entries.length) { toast('info', 'Clipboard is empty'); return; }
+      if (!clipboardHasClips()) { toast('info', 'Clipboard is empty'); return; }
       const ids = pasteClipboardAt(seq, seq.view.playhead);
       if (ids.length) S().select(ids); else toast('warn', 'Could not paste here (target tracks locked?)');
     }, hasSeq),

@@ -111,9 +111,14 @@ export type SequenceSettingsPatch = Partial<Pick<Sequence, 'name' | 'fps' | 'wid
 
 export interface MediaRelinkStat { size?: number; mtimeMs?: number }
 
+/** Per-item input for organizeAsSeries; `title: ''` clears the episode title. */
+export interface SeriesItemInput { id: ID; episode?: number; title?: string }
+
 export interface StoreActions {
   // ---- undo model ----
   commit(label: string, recipe: Recipe): boolean;
+  /** Apply a recipe without pushing history or clearing redo (status mirrors, view state). `dirty` marks the project modified. */
+  quiet(recipe: Recipe, opts?: { dirty?: boolean }): void;
   undo(): boolean;
   redo(): boolean;
   canUndo(): boolean;
@@ -137,7 +142,7 @@ export interface StoreActions {
   renameBin(id: ID, name: string): void;
   deleteBin(id: ID): void;
   moveToBin(ids: ID[], binId: ID | null): void;
-  organizeAsSeries(mediaIds: ID[], series: string, season: number): { seriesBinId: ID; seasonBinId: ID };
+  organizeAsSeries(items: (ID | SeriesItemInput)[], series: string, season: number): { seriesBinId: ID; seasonBinId: ID };
 
   // ---- media ----
   addMedia(items: MediaItem[]): void;
@@ -195,7 +200,8 @@ export interface StoreActions {
   addDefaultTransitionAtSelection(seqId?: ID): void;
   removeTransition(seqId: ID, transitionId: ID): void;
   setTransitionDuration(seqId: ID, transitionId: ID, frames: number): void;
-  addTrack(seqId: ID, kind: 'video' | 'audio'): ID | null;
+  /** Append a track, or insert it at `index` within the tracks of that kind (clamped). */
+  addTrack(seqId: ID, kind: 'video' | 'audio', index?: number): ID | null;
   removeTrack(seqId: ID, trackId: ID): void;
   setTrackFlags(seqId: ID, trackId: ID, patch: TrackFlagsPatch): void;
 

@@ -82,15 +82,15 @@ function VirtualListInner<T>(
   for (let i = start; i <= end; i++) {
     const row = rows[i];
     items.push(
-      <div key={keyOf(row, i)} className="vl-row" style={{ top: offsets[i], height: offsets[i + 1] - offsets[i] }} data-index={i}>
+      <div key={keyOf(row, i)} className="pp-vl-row" style={{ top: offsets[i], height: offsets[i + 1] - offsets[i] }} data-index={i}>
         {render(row, i)}
       </div>,
     );
   }
 
   return (
-    <div ref={el} className={['vl', className].filter(Boolean).join(' ')} onScroll={onScroll} {...containerProps}>
-      <div className="vl-inner" style={{ height: total }}>{items}</div>
+    <div ref={el} className={['pp-vl', className].filter(Boolean).join(' ')} onScroll={onScroll} {...containerProps}>
+      <div className="pp-vl-inner" style={{ height: total }}>{items}</div>
       {footer}
     </div>
   );

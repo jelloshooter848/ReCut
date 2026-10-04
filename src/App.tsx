@@ -22,6 +22,7 @@ import { DialogHost } from '@/app/dialogs/ConfirmDialog';
 import { NewSequenceDialog } from '@/app/dialogs/NewSequenceDialog';
 import { PreferencesDialog } from '@/app/dialogs/PreferencesDialog';
 import { SpeedDialog } from '@/app/dialogs/SpeedDialog';
+import { RelinkDialog } from '@/panels/project/RelinkDialog';
 import '@/panels';
 
 const TOAST_KIND: Record<StoreToastKind, ShellToastKind> = { info: 'info', success: 'ok', warning: 'warn', error: 'error' };
@@ -104,6 +105,7 @@ export function App() {
       <NewSequenceDialog />
       <PreferencesDialog />
       <SpeedDialog />
+      <RelinkDialog />
       <DialogHost />
     </>
   );

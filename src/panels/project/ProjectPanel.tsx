@@ -3,7 +3,7 @@ import { AlertTriangle, FolderPlus, Import, Layers as LayersIcon, LayoutGrid, Li
 import type { ID } from '@shared/model';
 import { Button, EmptyState, IconButton, SearchField, Select, Toggle, useContextMenu } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
-import { setClipDrag, type ClipDragPayload } from '@/app/dnd';
+import { pathOfDroppedFile, setClipDrag, type ClipDragPayload } from '@/app/dnd';
 import { isEditableTarget } from '@/keyboard/useShortcuts';
 import { useStore, seriesTree, verifyMediaOnline } from '@/state';
 import type { PanelProps } from '../registry';
@@ -14,7 +14,6 @@ import {
   type BinRow, type ExpandedMap, type GroupRow, type ItemRow, type Row, type SceneRow, type SortKey, type TreeMode, type ViewMode,
 } from './tree';
 import { PanelDialogs, type PanelDialog } from './dialogs';
-import { RelinkDialog } from './RelinkDialog';
 import { InfoFooter } from './InfoFooter';
 import { deleteSequenceConfirmed, importPaths, importViaDialog, loadInSource, locateMedia, openSequence, removeMediaConfirmed } from './actions';
 import { backgroundMenu, binMenu, groupMenu, mediaMenu, sceneMenu, sequenceMenu, type MenuEnv } from './menus';
@@ -25,8 +24,8 @@ type ClickableRow = SelectableRow | GroupRow;
 function filePaths(dt: DataTransfer): string[] {
   const out: string[] = [];
   for (const f of Array.from(dt.files)) {
-    const p = (f as File & { path?: string }).path;
-    if (typeof p === 'string' && p) out.push(p);
+    const p = pathOfDroppedFile(f);
+    if (p) out.push(p);
   }
   return out;
 }
@@ -352,7 +351,6 @@ export function ProjectPanel(_props: PanelProps) {
       </div>
       <InfoFooter mediaId={infoMediaId} sequenceId={infoSeqId} open={infoOpen} onToggle={() => setInfoOpen((v) => !v)} />
       <PanelDialogs dialog={dialog} onClose={() => { setDialog(null); rootRef.current?.focus(); }} />
-      <RelinkDialog />
     </div>
   );
 }

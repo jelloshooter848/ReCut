@@ -13,11 +13,23 @@ export interface LayoutProps extends TopBarProps {
   statusBar?: React.ReactNode;
 }
 
+/** One zone in its layout slot. Every zone stays mounted in place when another is maximized (panels never remount). */
+function ZoneSlot({ zoneId, style, slotRef }: { zoneId: ZoneId; style?: React.CSSProperties; slotRef?: React.Ref<HTMLDivElement> }) {
+  const isMax = useLayoutStore((s) => s.maximized === zoneId);
+  return (
+    <div ref={slotRef} className={['layout-col', 'layout-zone-slot', isMax ? 'layout-maximized' : ''].filter(Boolean).join(' ')} style={isMax ? undefined : style} data-zone-slot={zoneId}>
+      <TabbedZone zoneId={zoneId} />
+    </div>
+  );
+}
+
 /**
  * Workspace layout:
  *   [TopBar]
  *   [ left-top    ] [ monitor-left | monitor-right ] [ right ]
  *   [ left-bottom ] [ center-bottom                ] [       ]
+ * A maximized zone is lifted over the body with CSS (its slot becomes `.layout-maximized`); the other slots and
+ * splitters are hidden but stay mounted, so e.g. Program playback survives maximize / restore.
  */
 export function Layout({ toolbar, statusBar, ...topBar }: LayoutProps) {
   usePanels(); // re-render on registrations so empty zones collapse/expand
@@ -44,50 +56,40 @@ export function Layout({ toolbar, statusBar, ...topBar }: LayoutProps) {
     <div className="layout" data-workspace={workspace}>
       <TopBar {...topBar} />
       {toolbar}
-      <div className="layout-body" style={{ padding: 3 }}>
-        {maximized ? (
-          <div className="layout-maximized"><TabbedZone zoneId={maximized} /></div>
-        ) : (
-          <>
-            {leftVisible && (
-              <div className="layout-col" ref={leftCol} style={{ flex: `0 0 ${sizes.leftW}px`, width: sizes.leftW }}>
-                {has('left-top') && <div className="layout-col" style={{ flex: `${has('left-bottom') ? sizes.leftSplit : 1} 1 0px` }}><TabbedZone zoneId="left-top" /></div>}
-                {has('left-top') && has('left-bottom') && (
-                  <Splitter direction="v" onDragStart={begin} onDoubleClick={() => setSizes({ leftSplit: preset.leftSplit })}
-                    onDrag={(d) => setSizes({ leftSplit: start.current.leftSplit + d / Math.max(1, leftCol.current?.clientHeight ?? 1) })} />
-                )}
-                {has('left-bottom') && <div className="layout-col" style={{ flex: `${has('left-top') ? 1 - sizes.leftSplit : 1} 1 0px` }}><TabbedZone zoneId="left-bottom" /></div>}
-              </div>
+      <div className={['layout-body', maximized ? 'has-maximized' : ''].filter(Boolean).join(' ')} style={{ padding: 3 }} data-maximized={maximized ?? undefined}>
+        {leftVisible && (
+          <div className="layout-col" ref={leftCol} style={{ flex: `0 0 ${sizes.leftW}px`, width: sizes.leftW }}>
+            {has('left-top') && <ZoneSlot zoneId="left-top" style={{ flex: `${has('left-bottom') ? sizes.leftSplit : 1} 1 0px` }} />}
+            {has('left-top') && has('left-bottom') && (
+              <Splitter direction="v" onDragStart={begin} onDoubleClick={() => setSizes({ leftSplit: preset.leftSplit })}
+                onDrag={(d) => setSizes({ leftSplit: start.current.leftSplit + d / Math.max(1, leftCol.current?.clientHeight ?? 1) })} />
             )}
-            {leftVisible && <Splitter direction="h" onDragStart={begin} onDoubleClick={() => setSizes({ leftW: preset.leftW })} onDrag={(d) => setSizes({ leftW: start.current.leftW + d })} />}
-
-            <div className="layout-col" ref={centerCol} style={{ flex: '1 1 0px' }}>
-              {monitorsVisible && (
-                <div className="layout-row" ref={monitorRow} style={{ flex: `${bottomVisible ? sizes.centerSplit : 1} 1 0px` }}>
-                  {has('monitor-left') && <div className="layout-col" style={{ flex: `${has('monitor-right') ? sizes.monitorSplit : 1} 1 0px` }}><TabbedZone zoneId="monitor-left" /></div>}
-                  {has('monitor-left') && has('monitor-right') && (
-                    <Splitter direction="h" onDragStart={begin} onDoubleClick={() => setSizes({ monitorSplit: 0.5 })}
-                      onDrag={(d) => setSizes({ monitorSplit: start.current.monitorSplit + d / Math.max(1, monitorRow.current?.clientWidth ?? 1) })} />
-                  )}
-                  {has('monitor-right') && <div className="layout-col" style={{ flex: `${has('monitor-left') ? 1 - sizes.monitorSplit : 1} 1 0px` }}><TabbedZone zoneId="monitor-right" /></div>}
-                </div>
-              )}
-              {monitorsVisible && bottomVisible && (
-                <Splitter direction="v" onDragStart={begin} onDoubleClick={() => setSizes({ centerSplit: preset.centerSplit })}
-                  onDrag={(d) => setSizes({ centerSplit: start.current.centerSplit + d / Math.max(1, centerCol.current?.clientHeight ?? 1) })} />
-              )}
-              {bottomVisible && <div className="layout-col" style={{ flex: `${monitorsVisible ? 1 - sizes.centerSplit : 1} 1 0px` }}><TabbedZone zoneId="center-bottom" /></div>}
-              {!monitorsVisible && !bottomVisible && <div className="zone"><div className="zone-empty">Drop panels here</div></div>}
-            </div>
-
-            {rightVisible && <Splitter direction="h" onDragStart={begin} onDoubleClick={() => setSizes({ rightW: preset.rightW })} onDrag={(d) => setSizes({ rightW: start.current.rightW - d })} />}
-            {rightVisible && (
-              <div className="layout-col" style={{ flex: `0 0 ${sizes.rightW}px`, width: sizes.rightW }}>
-                <TabbedZone zoneId="right" />
-              </div>
-            )}
-          </>
+            {has('left-bottom') && <ZoneSlot zoneId="left-bottom" style={{ flex: `${has('left-top') ? 1 - sizes.leftSplit : 1} 1 0px` }} />}
+          </div>
         )}
+        {leftVisible && <Splitter direction="h" onDragStart={begin} onDoubleClick={() => setSizes({ leftW: preset.leftW })} onDrag={(d) => setSizes({ leftW: start.current.leftW + d })} />}
+
+        <div className="layout-col" ref={centerCol} style={{ flex: '1 1 0px' }}>
+          {monitorsVisible && (
+            <div className="layout-row" ref={monitorRow} style={{ flex: `${bottomVisible ? sizes.centerSplit : 1} 1 0px` }}>
+              {has('monitor-left') && <ZoneSlot zoneId="monitor-left" style={{ flex: `${has('monitor-right') ? sizes.monitorSplit : 1} 1 0px` }} />}
+              {has('monitor-left') && has('monitor-right') && (
+                <Splitter direction="h" onDragStart={begin} onDoubleClick={() => setSizes({ monitorSplit: 0.5 })}
+                  onDrag={(d) => setSizes({ monitorSplit: start.current.monitorSplit + d / Math.max(1, monitorRow.current?.clientWidth ?? 1) })} />
+              )}
+              {has('monitor-right') && <ZoneSlot zoneId="monitor-right" style={{ flex: `${has('monitor-left') ? 1 - sizes.monitorSplit : 1} 1 0px` }} />}
+            </div>
+          )}
+          {monitorsVisible && bottomVisible && (
+            <Splitter direction="v" onDragStart={begin} onDoubleClick={() => setSizes({ centerSplit: preset.centerSplit })}
+              onDrag={(d) => setSizes({ centerSplit: start.current.centerSplit + d / Math.max(1, centerCol.current?.clientHeight ?? 1) })} />
+          )}
+          {bottomVisible && <ZoneSlot zoneId="center-bottom" style={{ flex: `${monitorsVisible ? 1 - sizes.centerSplit : 1} 1 0px` }} />}
+          {!monitorsVisible && !bottomVisible && <div className="zone"><div className="zone-empty">Drop panels here</div></div>}
+        </div>
+
+        {rightVisible && <Splitter direction="h" onDragStart={begin} onDoubleClick={() => setSizes({ rightW: preset.rightW })} onDrag={(d) => setSizes({ rightW: start.current.rightW - d })} />}
+        {rightVisible && <ZoneSlot zoneId="right" style={{ flex: `0 0 ${sizes.rightW}px`, width: sizes.rightW }} />}
       </div>
       {statusBar}
     </div>

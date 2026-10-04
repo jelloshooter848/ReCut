@@ -65,8 +65,13 @@ export interface AppInfo {
   ffmpegVersion: string | null;
   cacheDir: string;
   userDataDir: string;
+  /** The user's home directory (fallback output location for exports). */
+  homeDir: string;
   isDev: boolean;
 }
+
+/** Structural stand-in for the DOM `File` (shared/ is compiled without the DOM lib); a real File satisfies it. */
+export interface DroppedFile { name: string; size: number; type: string }
 
 export interface FileFilter { name: string; extensions: string[] }
 
@@ -116,6 +121,8 @@ export interface RecutApi {
   openExternal(url: string): Promise<void>;
   showItemInFolder(path: string): Promise<void>;
   toggleFullscreen(): Promise<boolean>;
+  /** Filesystem path of a File dropped from the OS (Electron >= 32 no longer exposes `File.path`). '' when unknown. */
+  pathForFile(file: DroppedFile): string;
 
   openFiles(opts: OpenFilesOptions): Promise<string[]>;
   openFolder(opts?: { title?: string; defaultPath?: string }): Promise<string | null>;

@@ -7,16 +7,9 @@ import { formatClock } from '@shared/time';
 import { parseEpisodeInfo } from './parseIdentity';
 import { detectScenes } from './actions';
 
-/**
- * Merge an identity patch over the media's CURRENT identity. (store.updateMedia assigns the patch before merging,
- * so a partial `identity` would otherwise drop the fields it does not mention.)
- */
+/** Partial identity update; store.updateMedia merges over the current identity and clears fields set to undefined. */
 function patchIdentity(id: ID, patch: Partial<MediaItem['identity']>): void {
-  const st = useStore.getState();
-  const cur = st.project.media[id]?.identity ?? {};
-  const next = { ...cur } as Record<string, unknown>;
-  for (const [k, v] of Object.entries(patch)) { if (v === undefined) delete next[k]; else next[k] = v; }
-  st.updateMedia(id, { identity: next as MediaItem['identity'] });
+  useStore.getState().updateMedia(id, { identity: patch as MediaItem['identity'] });
 }
 
 export type PanelDialog =
@@ -56,8 +49,7 @@ export function OrganizeSeriesDialog({ items, onClose }: { items: MediaItem[]; o
     const bySeason = new Map<number, EpisodeDraft[]>();
     for (const r of rows) { const l = bySeason.get(r.season) ?? []; l.push(r); bySeason.set(r.season, l); }
     for (const [s, list] of bySeason) {
-      st.organizeAsSeries(list.map((r) => r.id), name, s);
-      for (const r of list) patchIdentity(r.id, { episode: r.episode, title: r.title.trim() || undefined });
+      st.organizeAsSeries(list.map((r) => ({ id: r.id, episode: r.episode, title: r.title.trim() })), name, s);
     }
     toast('ok', `Organized ${rows.length} item${rows.length === 1 ? '' : 's'} as ${name}`);
     onClose();

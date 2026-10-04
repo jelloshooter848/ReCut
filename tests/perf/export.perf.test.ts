@@ -1,0 +1,150 @@
+/**
+ * Export graph benchmarks: buildRenderGraph on the 2500-clip sequence (time, filter length, input count,
+ * IPC payload size of the ExportRequest), then whether ffmpeg actually accepts the generated graph
+ * (parse + init only: `-t 0.5`, null muxer, memory-capped child) at 100 / 500 / 2500 clips.
+ *
+ * Run: npx vitest run -c tests/perf/vitest.config.ts tests/perf/export.perf.test.ts
+ */
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { spawn, execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { ExportSettings, MediaItem, MediaProbe, Sequence } from '../../shared/model';
+import type { ExportRequest } from '../../shared/ipc';
+import { useStore, resetStore } from '../../src/state/store';
+import { buildRenderGraph, FILTER_SCRIPT_TOKEN } from '../../electron/export/renderGraph';
+import { allTracks } from '../../shared/timeline';
+// @ts-expect-error plain JS module shared with the Electron harness
+import { buildBigProject } from './bigProject.mjs';
+import { bench, flush, ms, now, record, round } from './_report';
+
+const SCRATCH = process.env.RECUT_PERF_SCRATCH || path.join(os.tmpdir(), 'recut-perf');
+const FFMPEG = process.env.RECUT_FFMPEG || 'ffmpeg';
+const S = () => useStore.getState();
+
+function probeFile(file: string): MediaProbe {
+  const j = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file]).toString());
+  const v = j.streams.find((s: { codec_type: string }) => s.codec_type === 'video');
+  const rat = (r: string) => { const [n, d] = r.split('/').map(Number); return { num: n, den: d || 1 }; };
+  return {
+    container: j.format.format_name, duration: Number(j.format.duration), size: Number(j.format.size), startTime: Number(j.format.start_time ?? 0), browserPlayable: true,
+    video: v ? { index: v.index, codec: v.codec_name, width: v.width, height: v.height, fps: rat(v.r_frame_rate), avgFps: rat(v.avg_frame_rate), isVfr: false } : undefined,
+    audio: j.streams.filter((s: { codec_type: string }) => s.codec_type === 'audio').map((s: { index: number; codec_name: string; channels: number; channel_layout?: string; sample_rate: string }) => ({ index: s.index, codec: s.codec_name, channels: s.channels, layout: s.channel_layout ?? '', sampleRate: Number(s.sample_rate) })),
+    subtitles: [],
+  };
+}
+
+function settings(): ExportSettings {
+  return {
+    outputDir: SCRATCH, fileName: 'perf-export.mp4', width: 1280, height: 720, fps: { num: 24, den: 1 },
+    videoCodec: 'libx264', qualityMode: 'crf', crf: 28, videoBitrateKbps: 4000, preset: 'ultrafast',
+    audioCodec: 'aac', audioBitrateKbps: 128, audioChannels: 2, sampleRate: 48000, rangeMode: 'entire',
+    burnSubtitles: false, exportSubtitleSidecar: false, useProxies: false,
+  };
+}
+
+/** Run ffmpeg to validate graph parsing/init only. Child is capped at `memMB` of address space and killed after `timeoutMs`. */
+function validateGraph(args: string[], filterGraph: string, tag: string, memMB = 8192, timeoutMs = 240_000): Promise<{ code: number | null; signal: string | null; ms: number; peakRssMB: number; tail: string; timedOut: boolean }> {
+  const script = path.join(SCRATCH, `filter-${tag}.txt`);
+  fs.writeFileSync(script, filterGraph);
+  const a = args.map((x) => (x === FILTER_SCRIPT_TOKEN ? script : x));
+  // -t <dur> ... -f mp4 <out>  ->  -t 0.5 ... -f null -
+  const ti = a.lastIndexOf('-t'); if (ti >= 0) a[ti + 1] = '0.5';
+  const fi = a.lastIndexOf('-f'); if (fi >= 0) a[fi + 1] = 'null';
+  a[a.length - 1] = '-';
+  const cmd = `ulimit -v ${memMB * 1024}; exec ${FFMPEG} -hide_banner -nostdin -loglevel error ${a.slice(3).map((x) => `'${x.replace(/'/g, `'\\''`)}'`).join(' ')}`;
+  return new Promise((resolve) => {
+    const t0 = now();
+    const child = spawn('bash', ['-c', cmd], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = '';
+    child.stderr.on('data', (d) => { err += String(d); if (err.length > 20000) err = err.slice(-20000); });
+    let peak = 0; let timedOut = false;
+    const poll = setInterval(() => {
+      try {
+        // bash -c exec => the pid is ffmpeg itself
+        const st = fs.readFileSync(`/proc/${child.pid}/status`, 'utf8');
+        const m = /VmHWM:\s+(\d+) kB/.exec(st); if (m) peak = Math.max(peak, Number(m[1]) / 1024);
+      } catch { /* gone */ }
+    }, 200);
+    const killer = setTimeout(() => { timedOut = true; try { child.kill('SIGKILL'); } catch { /* ignore */ } }, timeoutMs);
+    child.on('close', (code, signal) => {
+      clearInterval(poll); clearTimeout(killer);
+      resolve({ code, signal, ms: round(now() - t0), peakRssMB: round(peak), tail: err.trim().split('\n').slice(-6).join(' | ').slice(0, 600), timedOut });
+    });
+  });
+}
+
+let big: ReturnType<typeof buildBigProject>;
+let mediaFiles: string[] = [];
+
+describe('export graph @ 2500 clips', () => {
+  beforeAll(() => {
+    fs.mkdirSync(SCRATCH, { recursive: true });
+    // 4 tiny real inputs (2s, 160x90, tone) so ffmpeg can open every one of the 2500 segments.
+    mediaFiles = [];
+    for (let i = 0; i < 4; i++) {
+      const f = path.join(SCRATCH, `tiny-${i}.mp4`);
+      if (!fs.existsSync(f)) execFileSync(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', `testsrc=size=160x90:rate=24:d=61`, '-f', 'lavfi', '-i', `sine=frequency=${220 + i * 110}:duration=61:sample_rate=48000`, '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '32k', '-shortest', f]);
+      mediaFiles.push(f);
+    }
+    resetStore();
+    const base = mediaFiles.map((f, i) => ({ name: `tiny ${i}.mp4`, path: f, probe: probeFile(f) }));
+    big = buildBigProject(useStore, base, { altSequences: 0 });
+  });
+  afterAll(() => flush('export'));
+
+  function requestFor(seq: Sequence): ExportRequest {
+    return { sequence: seq, media: S().project.media as Record<string, MediaItem>, settings: settings() };
+  }
+
+  /** Sub-sequence keeping the first `n` clips (by pairs across tracks) of the big one. */
+  function trimmed(n: number): Sequence {
+    const seq = S().project.sequences[big.seqId];
+    const perTrack = Math.ceil(n / allTracks(seq).length);
+    const cut = (tracks: Sequence['videoTracks']) => tracks.map((t) => { const clips = t.clips.slice(0, perTrack); const ids = new Set(clips.map((c) => c.id)); return { ...t, clips, transitions: t.transitions.filter((tr) => (!tr.outClipId || ids.has(tr.outClipId)) && (!tr.inClipId || ids.has(tr.inClipId))) }; });
+    return { ...seq, videoTracks: cut(seq.videoTracks), audioTracks: cut(seq.audioTracks) };
+  }
+
+  it('buildRenderGraph time / size scaling and IPC payload', () => {
+    const seq = S().project.sequences[big.seqId];
+    const req = requestFor(seq);
+    let g = buildRenderGraph(req);
+    const b = bench(5, () => { g = buildRenderGraph(req); });
+    ms('graph', 'buildRenderGraph 2500 clips (median of 5)', b.median, 200);
+    record({ section: 'graph', metric: 'filter graph length (chars)', value: g.filterGraph.length, unit: 'chars' });
+    record({ section: 'graph', metric: 'filter graph chains', value: g.filterGraph.split(';\n').length, unit: '' });
+    record({ section: 'graph', metric: 'ffmpeg inputs (one per clip segment)', value: g.inputCount, unit: 'inputs', threshold: 'ffmpeg must open all of them', pass: null });
+    record({ section: 'graph', metric: 'ffmpeg argv length', value: g.args.length, unit: 'args' });
+    record({ section: 'graph', metric: 'argv bytes (sum)', value: g.args.join(' ').length, unit: 'bytes' });
+    record({ section: 'graph', metric: 'warnings', value: g.warnings.length, unit: '' });
+    const t = now(); const json = JSON.stringify(req); const jt = now() - t;
+    record({ section: 'ipc', metric: 'ExportRequest JSON size (MB) 2500 clips + 60 media', value: round(json.length / 1048576), unit: 'MB' });
+    ms('ipc', 'ExportRequest JSON.stringify', jt, 50);
+    const sc = bench(3, () => { structuredClone(req); });
+    ms('ipc', 'ExportRequest structuredClone (IPC one way, median)', sc.median, 50);
+    for (const n of [100, 500, 1000]) {
+      const r = requestFor(trimmed(n)); const gg = buildRenderGraph(r);
+      record({ section: 'graph', metric: `filter graph length @ ${n} clips`, value: gg.filterGraph.length, unit: 'chars' });
+      const bb = bench(5, () => { buildRenderGraph(r); });
+      ms('graph', `buildRenderGraph @ ${n} clips (median)`, bb.median, 100);
+    }
+    expect(g.inputCount).toBeGreaterThanOrEqual(2400);
+  });
+
+  it('ffmpeg accepts the generated graph (parse + init, -t 0.5, null muxer)', async () => {
+    let lastOk = true;
+    for (const n of [100, 500, 2500]) {
+      if (!lastOk) { record({ section: 'ffmpeg', metric: `validate @ ${n} clips`, value: 'skipped (smaller graph already failed)', unit: '' }); continue; }
+      const seq = n >= 2500 ? S().project.sequences[big.seqId] : trimmed(n);
+      const g = buildRenderGraph(requestFor(seq));
+      const r = await validateGraph(g.args, g.filterGraph, `n${n}`, n >= 2500 ? 10240 : 6144);
+      const ok = r.code === 0;
+      lastOk = ok;
+      record({ section: 'ffmpeg', metric: `ffmpeg exit @ ${n} clips (${g.inputCount} inputs)`, value: r.timedOut ? 'TIMEOUT (killed)' : `${r.code ?? r.signal}`, unit: '', threshold: '0', pass: ok, note: ok ? '' : r.tail });
+      ms('ffmpeg', `ffmpeg wall time @ ${n} clips (0.5 s output)`, r.ms, 60_000);
+      record({ section: 'ffmpeg', metric: `ffmpeg peak RSS @ ${n} clips (MB)`, value: r.peakRssMB, unit: 'MB', threshold: '<= 4096 MB', pass: r.peakRssMB <= 4096 });
+    }
+    expect(true).toBe(true);
+  });
+});

@@ -2,11 +2,11 @@
  * Preload: exposes `window.recut` (RecutApi) to the renderer via contextBridge.
  * Every method maps 1:1 onto an IPC channel from shared/ipc.ts.
  */
-import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, IpcRendererEvent } from 'electron';
 import type { AppPreferences, ID, JobInfo, Project } from '../shared/model';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import type {
-  ExportRequest, FilmstripRequest, MenuCommand, MessageOptions, OpenFilesOptions, ProxyRequest, RecutApi,
+  DroppedFile, ExportRequest, FilmstripRequest, MenuCommand, MessageOptions, OpenFilesOptions, ProxyRequest, RecutApi,
   RelinkScanRequest, SaveFileOptions, SceneDetectRequest, ThumbnailRequest,
 } from '../shared/ipc';
 
@@ -30,6 +30,9 @@ const api: RecutApi = {
   openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url),
   showItemInFolder: (path: string) => ipcRenderer.invoke(IPC.showItemInFolder, path),
   toggleFullscreen: () => ipcRenderer.invoke(IPC.toggleFullscreen),
+  pathForFile: (file: DroppedFile) => {
+    try { return webUtils.getPathForFile(file as Parameters<typeof webUtils.getPathForFile>[0]) || ''; } catch { return ''; }
+  },
 
   openFiles: (opts: OpenFilesOptions) => ipcRenderer.invoke(IPC.dialogOpenFiles, opts),
   openFolder: (opts?: { title?: string; defaultPath?: string }) => ipcRenderer.invoke(IPC.dialogOpenFolder, opts ?? {}),

@@ -12,7 +12,8 @@ import { audioSummary, canThumb, dateLabel, mediaDurationLabel, mediaFpsLabel, p
 import type { BinRow, CardsRow, GroupRow, ItemRow, MediaRow, Row, SceneRow, SequenceRow, SortKey } from './tree';
 import { expandKey } from './tree';
 
-export const ITEMS_DND_TYPE = 'application/x-recut-items';
+import { ITEMS_DND_TYPE } from '@/app/dnd';
+export { ITEMS_DND_TYPE };
 export interface ItemsDragPayload { ids: ID[] }
 
 export interface RowCallbacks {
