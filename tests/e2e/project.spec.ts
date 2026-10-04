@@ -52,7 +52,16 @@ test.beforeAll(async () => {
     await page.waitForSelector('#root .layout', { timeout: 60_000 });
   }
   await page.waitForSelector('[data-testid="project-panel"]');
+  // Maximize the Project zone so the virtualized list renders every row (assertions count DOM rows).
+  await setMaximized(true);
 });
+
+async function setMaximized(on: boolean) {
+  const maximized = await page.evaluate(() => !!document.querySelector('.layout-maximized'));
+  if (maximized === on) return;
+  await page.locator('[data-zone="left-top"] .zone-tab[data-panel="project"]').dblclick();
+  await expect.poll(() => page.evaluate(() => !!document.querySelector('.layout-maximized'))).toBe(on);
+}
 
 test.afterAll(async () => {
   await app?.close();
@@ -77,11 +86,14 @@ test('imports three episodes and shows probed rows', async () => {
     await expect(row).toContainText('24');          // fps
     await expect(row).toContainText('2ch aac');
   }
-  // Info footer shows read-only metadata for the selected item.
+  // Info footer (collapsed by default) shows read-only metadata for the selected item.
   await rows.first().click();
   const info = page.getByTestId('info-footer');
   await expect(info).toContainText('Station Eleven S01E01');
+  await info.locator('.pp-info-head').click();
   await expect(info).toContainText('h264 640×360');
+  await expect(info).toContainText('2ch (stereo)');
+  await info.locator('.pp-info-head').click();
 });
 
 test('organizes the episodes as a series through the context menu and renders the series tree', async () => {
@@ -172,11 +184,15 @@ test('keyboard: Enter loads the selected media in the Source monitor', async () 
 });
 
 test('screenshot', async () => {
-  // Thumbnails are lazy; give them a moment to land before the shot.
+  const dir = path.join(root, 'docs/screenshots');
+  fs.mkdirSync(dir, { recursive: true });
+  // Maximized panel with the info footer open: thumbnails are lazy, give them a moment to land.
   await page.locator('[data-row-kind="media"]').first().click();
+  await page.getByTestId('info-footer').locator('.pp-info-head').click();
   await page.waitForTimeout(1500);
-  const out = path.join(root, 'docs/screenshots/project.png');
-  fs.mkdirSync(path.dirname(out), { recursive: true });
-  await page.screenshot({ path: out });
-  await page.getByTestId('project-panel').screenshot({ path: path.join(root, 'docs/screenshots/project-panel.png') });
+  await page.getByTestId('project-panel').screenshot({ path: path.join(dir, 'project-panel.png') });
+  // Normal layout for the docs shot.
+  await setMaximized(false);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: path.join(dir, 'project.png') });
 });

@@ -1,7 +1,7 @@
 /** Media inspector: identity / category / tags, probe summary, proxy + scene detection status and subtitle tracks. */
 import React, { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { FolderOpen, Play, ScanSearch, Square, X } from 'lucide-react';
+import { Play, ScanSearch, Square, X } from 'lucide-react';
 import { MEDIA_CATEGORIES, type ID, type JobInfo, type MediaCategory, type MediaItem, type SourceIdentity } from '@shared/model';
 import { fpsLabel, fpsValue } from '@shared/time';
 import { identityLabel, mediaSubtitleTracks, startProxy, startSceneDetect, useStore } from '@/state';
@@ -133,7 +133,7 @@ function SingleMedia({ m }: { m: MediaItem }) {
             <Row label="Playback"><Value dim={p.browserPlayable} className={p.browserPlayable ? '' : 'text-accent-2'}>{p.browserPlayable ? 'Direct' : `Proxy required${p.playabilityReason ? ` — ${p.playabilityReason}` : ''}`}</Value></Row>
           </>
         ) : null}
-        <Row label="File"><Value onClick={() => openInFolder(m.path)} title={`${m.path}\nReveal in file manager`}><FolderOpen size={10} />{m.path.split(/[\\/]/).pop()}</Value></Row>
+        <Row label="File"><Value onClick={() => openInFolder(m.path)} title={`${m.path}\nReveal in file manager`}>{m.path.split(/[\\/]/).pop()}</Value></Row>
         <Row label="Path"><Value copy={m.path} dim>{m.path}</Value></Row>
       </Section>
 

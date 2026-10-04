@@ -50,7 +50,7 @@ export function ProjectPanel(_props: PanelProps) {
   const [expanded, setExpanded] = useState<ExpandedMap>({});
   const [renamingKey, setRenamingKey] = useState<string | null>(null);
   const [dialog, setDialog] = useState<PanelDialog>(null);
-  const [infoOpen, setInfoOpen] = useState(true);
+  const [infoOpen, setInfoOpen] = useState(false);
   const [dropKey, setDropKey] = useState<string | null>(null);
   const [fileDrag, setFileDrag] = useState(false);
   const [selSeqIds, setSelSeqIds] = useState<ID[]>([]);

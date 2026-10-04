@@ -70,7 +70,7 @@ export function SequenceInspector({ seqId }: { seqId: ID }) {
       </div>
 
       <Section id="seq-settings" title="Sequence settings">
-        <Row label="Frame rate" title="Frame rate is fixed once a sequence has clips (positions are frames)."><Value copy={fpsLabel(fps)}>{fpsLabel(fps)} fps <span className="text-faint">({fps.num}/{fps.den})</span></Value></Row>
+        <Row label="Frame rate" title="Frame rate is fixed once a sequence has clips (positions are frames)."><Value copy={fpsLabel(fps)} title={`${fps.num}/${fps.den}`}>{fpsLabel(fps)} fps</Value></Row>
         <Row label="Resolution" prop="resolution">
           <Select size="sm" value={resPreset ? `${resPreset.w}x${resPreset.h}` : 'custom'}
             options={[...RES_PRESETS.map((r) => ({ value: `${r.w}x${r.h}`, label: r.label })), { value: 'custom', label: `Custom (${seq.width}×${seq.height})` }]}

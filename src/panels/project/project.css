@@ -81,7 +81,7 @@
 .pp-info-head:hover { color: var(--text); }
 .pp-info-head > svg { width: 12px; height: 12px; }
 .pp-info-head .title { color: var(--text); text-transform: none; letter-spacing: 0; font-size: var(--font-size-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pp-info-body { max-height: 160px; overflow: auto; padding: 2px 8px 6px; display: grid; grid-template-columns: max-content 1fr; column-gap: 10px; row-gap: 2px; }
+.pp-info-body { max-height: min(140px, 35%); overflow: auto; padding: 2px 8px 6px; display: grid; grid-template-columns: max-content 1fr; column-gap: 10px; row-gap: 2px; }
 .pp-info-body dt { color: var(--text-faint); white-space: nowrap; }
 .pp-info-body dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); user-select: text; -webkit-user-select: text; }
 .pp-info-body dd.wrap { white-space: normal; word-break: break-all; }
