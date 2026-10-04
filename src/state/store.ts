@@ -20,13 +20,14 @@ import { secondsToFrames } from '../../shared/time';
 import { createProject, LiveView } from '../../shared/project';
 import {
   MIN_CLIP_FRAMES, allTracks, clipEnd, clipSourceOut, findClip, findTrack, linkedClips, makeClip, placeClips,
-  razorAt, removeClips as tlRemoveClips, rippleDeleteClips, liftRange, extractRange, trimStart, trimEnd,
+  razorAt, removeClips as tlRemoveClips, rippleDeleteClips, rippleDeleteDisabledClips, removableDisabledClipIds, liftRange, extractRange, trimStart, trimEnd,
   rippleTrimStart, rippleTrimEnd, rollEdit as tlRollEdit, slipClip, slideClip, moveClips as tlMoveClips,
   addTransition as tlAddTransition, removeTransition as tlRemoveTransition, addTrack as tlAddTrack,
   removeTrack as tlRemoveTrack, reconcileTransitions, reconcileAll, rippleShift, addMarker as tlAddMarker,
   followClipMarkers, transitionLimit, type NewClipSpec, type MediaDurationLookup,
 } from '../../shared/timeline';
 import { emptyHistory, pushHistory, undoHistory, redoHistory, changedSequenceIds, undoLabel, redoLabel } from './history';
+import { proxyStreamStale } from '../playback/mediaSource';
 import type {
   RecutStore, StoreState, UIState, Recipe, SelectMode, Tool, DialogName, ToastKind,
 } from './types';
@@ -243,6 +244,22 @@ export const useStore = create<RecutStore>()((set, get) => {
 
   const activeId = (seqId?: ID): ID | null => seqId ?? get().project.activeSequenceId;
   const seqOf = (seqId?: ID): Sequence | null => { const id = activeId(seqId); return id ? get().project.sequences[id] ?? null : null; };
+  /** Duplicate a sequence as the next version (optionally ripple-removing its disabled clips) in one undo step. */
+  const duplicateSeq = (id: ID, newName: string, label: string, withoutDisabled: boolean): ID | null => {
+    const src = get().project.sequences[id];
+    if (!src) return null;
+    const copy = cloneSequenceWithNewIds(src, newName);
+    if (withoutDisabled) rippleDeleteDisabledClips(copy);
+    commit(label, (d) => {
+      const siblings = Object.values(d.sequences).filter((s) => s.parentSequenceId === id || s.id === id).length;
+      copy.versionLabel = `v${siblings + 1}`;
+      d.sequences[copy.id] = copy;
+      const at = d.sequenceOrder.indexOf(id);
+      d.sequenceOrder.splice(at >= 0 ? at + 1 : d.sequenceOrder.length, 0, copy.id);
+      d.activeSequenceId = copy.id;
+    });
+    return copy.id;
+  };
   const selectedIn = (seq: Sequence, ids: ID[]): Clip[] => {
     const set_ = new Set(ids); const out: Clip[] = [];
     for (const t of allTracks(seq)) for (const c of t.clips) if (set_.has(c.id)) out.push(c);
@@ -430,7 +447,10 @@ export const useStore = create<RecutStore>()((set, get) => {
         const m = d.media[id];
         if (!m) return;
         const { identity, ...rest } = patch;
+        const prevStream = m.preferredAudioStream;
         Object.assign(m, rest, { id });
+        // A proxy built for another audio stream would preview the wrong track: mark it stale (Generate again).
+        if ('preferredAudioStream' in rest && m.preferredAudioStream !== prevStream && proxyStreamStale(m)) m.proxy = { status: 'none' };
         if (identity) {
           // Merge over the current identity; an explicit `undefined` clears that field.
           const merged: Record<string, unknown> = { ...m.identity };
@@ -583,18 +603,17 @@ export const useStore = create<RecutStore>()((set, get) => {
       });
     },
     duplicateSequence(id, newName) {
-      const src = get().project.sequences[id];
-      if (!src) return null;
-      const copy = cloneSequenceWithNewIds(src, newName);
-      commit('Duplicate sequence', (d) => {
-        const siblings = Object.values(d.sequences).filter((s) => s.parentSequenceId === id || s.id === id).length;
-        copy.versionLabel = `v${siblings + 1}`;
-        d.sequences[copy.id] = copy;
-        const at = d.sequenceOrder.indexOf(id);
-        d.sequenceOrder.splice(at >= 0 ? at + 1 : d.sequenceOrder.length, 0, copy.id);
-        d.activeSequenceId = copy.id;
-      });
-      return copy.id;
+      return duplicateSeq(id, newName, 'Duplicate sequence', false);
+    },
+    duplicateWithoutDisabled(id, newName) {
+      return duplicateSeq(id, newName, 'Duplicate as cut without disabled clips', true);
+    },
+    removeDisabledClips(seqId) {
+      const seq = seqOf(seqId);
+      if (!seq || !removableDisabledClipIds(seq).length) return 0;
+      let removed = 0;
+      commit('Remove disabled clips', (d) => { const s = d.sequences[seq.id]; if (s) removed = rippleDeleteDisabledClips(s); });
+      return removed;
     },
     deleteSequence(id) {
       commit('Delete sequence', (d) => {

@@ -4,3 +4,4 @@ export * from './mediaActions';
 export * from './history';
 export type * from './types';
 export { usePlayhead, useViewScroll } from './hooks';
+export { useFfmpegStatus, setFfmpegAvailability, ffmpegUnavailable, type FfBinaryName } from './ffmpegStatus';

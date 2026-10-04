@@ -19,6 +19,8 @@ export interface ProxyResult {
   height?: number;
   /** True when a finished proxy was already in the cache. */
   cached: boolean;
+  /** Absolute audio stream index baked into the proxy (undefined: the source's first audio stream). */
+  audioStream?: number;
 }
 
 function evenDown(n: number): number {
@@ -97,7 +99,7 @@ export async function runProxy(req0: ProxyRequest, ctx: JobRunContext): Promise<
     const info = await probeMedia(out).catch(() => undefined);
     if (info && info.duration > 0) {
       ctx.setProgress(1, 'Cached');
-      return { path: out, width: info.video?.width, height: info.video?.height, cached: true };
+      return { path: out, width: info.video?.width, height: info.video?.height, cached: true, audioStream: validStream(req.audioStream) ? req.audioStream : undefined };
     }
     await removeQuietly(out); // corrupt leftover
   }
@@ -131,7 +133,7 @@ export async function runProxy(req0: ProxyRequest, ctx: JobRunContext): Promise<
   await fsp.rename(outPart, out);
   const info = await probeMedia(out).catch(() => undefined);
   ctx.setProgress(1, 'Done');
-  return { path: out, width: info?.video?.width, height: info?.video?.height, cached: false };
+  return { path: out, width: info?.video?.width, height: info?.video?.height, cached: false, audioStream: validStream(req.audioStream) ? req.audioStream : undefined };
 }
 
 /**

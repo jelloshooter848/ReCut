@@ -72,6 +72,8 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       cmd('Ripple Delete', 'edit.rippleDelete'),
       { type: 'separator' },
       cmd('Select All', 'edit.selectAll'),
+      // macOS has Preferences in the app menu; elsewhere it lives at the end of Edit.
+      ...(isMac ? [] : [{ type: 'separator' as const }, cmd('Preferences…', 'app.preferences', 'CmdOrCtrl+,')]),
     ],
   };
 
@@ -80,6 +82,9 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
     submenu: [
       cmd('New Sequence…', 'sequence.new'),
       cmd('Duplicate Sequence', 'sequence.duplicate'),
+      cmd('Duplicate as Cut Without Disabled Clips…', 'sequence.duplicateWithoutDisabled'),
+      { type: 'separator' },
+      cmd('Remove Disabled Clips…', 'sequence.removeDisabledClips'),
       { type: 'separator' },
       cmd('Add Edit', 'sequence.addEdit'),
       { type: 'separator' },

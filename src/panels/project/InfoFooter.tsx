@@ -4,6 +4,7 @@ import type { ID } from '@shared/model';
 import { formatClock } from '@shared/time';
 import { allTracks } from '@shared/timeline';
 import { useStore, identityLabel } from '@/state';
+import { mediaNeedsProxyForPreview, previewPlaybackLabel } from '@/playback/mediaSource';
 import { channelsLabel, dateLabel, formatBytes, rationalLabel, sequenceDurationLabel } from './format';
 
 export interface InfoFooterProps { mediaId: ID | null; sequenceId: ID | null; open: boolean; onToggle(): void }
@@ -35,7 +36,7 @@ export function InfoFooter({ mediaId, sequenceId, open, onToggle }: InfoFooterPr
       if (p.subtitles.length) rows.push({ k: 'Embedded subs', v: p.subtitles.map((s) => `#${s.index} ${s.codec}${s.language ? ` [${s.language}]` : ''}`).join(', ') });
       if (p.startTime) rows.push({ k: 'Start time', v: `${p.startTime.toFixed(3)} s` });
       if (p.bitrate) rows.push({ k: 'Bitrate', v: `${Math.round(p.bitrate / 1000)} kb/s` });
-      if (!p.browserPlayable) rows.push({ k: 'Playback', v: p.playabilityReason ?? 'Not directly decodable — needs a proxy', cls: 'warn' });
+      if (!p.browserPlayable) { const pl = previewPlaybackLabel(m); rows.push({ k: 'Playback', v: pl.direct ? pl.text : mediaNeedsProxyForPreview(m) ? (p.playabilityReason ?? 'Not directly decodable — needs a proxy') : pl.text, cls: pl.direct ? undefined : 'warn' }); }
     }
     if (m.proxy.status !== 'none') rows.push({ k: 'Proxy', v: m.proxy.status === 'ready' ? `${m.proxy.path ?? ''}${m.proxy.width ? ` (${m.proxy.width}×${m.proxy.height})` : ''}` : m.proxy.status === 'failed' ? `failed: ${m.proxy.error ?? ''}` : m.proxy.status, cls: m.proxy.status === 'failed' ? 'danger' : m.proxy.status === 'ready' ? 'wrap' : undefined });
     if (m.detectedScenes.length) rows.push({ k: 'Scenes', v: `${m.detectedScenes.length} detected` });

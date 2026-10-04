@@ -44,6 +44,7 @@
     "appId": "app.recut.editor",
     "productName": "ReCut",
     "files": ["dist/**/*", "package.json"],
+    "extraResources": [{ "from": "resources/ffmpeg", "to": "ffmpeg", "filter": ["**/*"] }],
     "directories": { "output": "release" },
     "linux": { "target": ["AppImage"], "category": "AudioVideo" },
     "mac": { "target": ["dmg"] },

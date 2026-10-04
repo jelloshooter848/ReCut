@@ -10,6 +10,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ensureDirSafe } from './safeMkdir';
+import { getFfmpegPath, getFfprobePath } from './media/ffmpeg';
 import type { AppPreferences, ID, JobInfo, MediaProbe, Project } from '../shared/model';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import type {
@@ -46,6 +47,7 @@ export interface MediaHandlers {
   probe(path: string): Promise<MediaProbe>;
   thumbnail(req: ThumbnailRequest): Promise<string>;
   filmstrip(req: FilmstripRequest): Promise<string[]>;
+  cancelThumbnails(requestIds: string[]): Promise<void>;
   waveform(path: string, mediaId?: ID): Promise<WaveformData>;
   startProxy(req: ProxyRequest): Promise<JobInfo>;
   startSceneDetect(req: SceneDetectRequest): Promise<JobInfo>;
@@ -64,7 +66,7 @@ export interface MediaHandlers {
 }
 
 // Compile-time check: MediaHandlers must stay in sync with the RecutApi surface.
-type MediaApiKeys = 'probe' | 'thumbnail' | 'filmstrip' | 'waveform' | 'startProxy' | 'startSceneDetect' | 'extractSubtitles'
+type MediaApiKeys = 'probe' | 'thumbnail' | 'filmstrip' | 'cancelThumbnails' | 'waveform' | 'startProxy' | 'startSceneDetect' | 'extractSubtitles'
   | 'listJobs' | 'cancelJob' | 'clearJobs' | 'startExport' | 'cancelExport' | 'previewExportCommand';
 type _AssertMediaHandlers = Pick<RecutApi, MediaApiKeys> extends Pick<MediaHandlers, MediaApiKeys> ? true : never;
 const _mediaHandlersInSync: _AssertMediaHandlers = true;
@@ -74,6 +76,7 @@ export function registerMediaIpc(h: MediaHandlers): void {
   ipcMain.handle(IPC.mediaProbe, (_e, p: string) => h.probe(assertString(p, 'path')));
   ipcMain.handle(IPC.mediaThumbnail, (_e, req: ThumbnailRequest) => h.thumbnail(req));
   ipcMain.handle(IPC.mediaFilmstrip, (_e, req: FilmstripRequest) => h.filmstrip(req));
+  ipcMain.handle(IPC.mediaThumbCancel, (_e, ids: unknown) => h.cancelThumbnails(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : []));
   ipcMain.handle(IPC.mediaWaveform, (_e, p: string, mediaId?: ID) => h.waveform(assertString(p, 'path'), mediaId));
   ipcMain.handle(IPC.mediaProxyStart, (_e, req: ProxyRequest) => h.startProxy(req));
   ipcMain.handle(IPC.mediaSceneDetectStart, (_e, req: SceneDetectRequest) => h.startSceneDetect(req));
@@ -114,22 +117,7 @@ function parentWindow(deps: IpcDeps): BrowserWindow | undefined {
   return w && !w.isDestroyed() ? w : undefined;
 }
 
-// --- ffmpeg discovery (for AppInfo only; the media layer has its own resolver) ---
-
-function findExecutable(name: string, envVar: string): string | null {
-  const fromEnv = process.env[envVar];
-  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
-  const exts = process.platform === 'win32' ? ['.exe', ''] : [''];
-  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
-  dirs.push('/usr/local/bin', '/usr/bin', '/opt/homebrew/bin', '/snap/bin');
-  for (const d of dirs) {
-    for (const ext of exts) {
-      const p = path.join(d, name + ext);
-      try { fs.accessSync(p, fs.constants.X_OK); return p; } catch { /* keep looking */ }
-    }
-  }
-  return null;
-}
+// --- ffmpeg discovery: the same resolver the media services and export use ---
 
 let ffmpegVersionCache: Promise<string | null> | null = null;
 function ffmpegVersion(ffmpegPath: string | null): Promise<string | null> {
@@ -145,10 +133,7 @@ function ffmpegVersion(ffmpegPath: string | null): Promise<string | null> {
 }
 
 export function resolveFfmpeg(): { ffmpegPath: string | null; ffprobePath: string | null } {
-  return {
-    ffmpegPath: findExecutable('ffmpeg', 'RECUT_FFMPEG_PATH'),
-    ffprobePath: findExecutable('ffprobe', 'RECUT_FFPROBE_PATH'),
-  };
+  return { ffmpegPath: getFfmpegPath(), ffprobePath: getFfprobePath() };
 }
 
 export async function resolveCacheDir(userData: string): Promise<string> {

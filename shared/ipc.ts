@@ -40,6 +40,7 @@ export const IPC = {
   mediaProbe: 'media:probe',
   mediaThumbnail: 'media:thumbnail',
   mediaFilmstrip: 'media:filmstrip',
+  mediaThumbCancel: 'media:thumbCancel',
   mediaWaveform: 'media:waveform',
   mediaProxyStart: 'media:proxyStart',
   mediaSceneDetectStart: 'media:sceneDetectStart',
@@ -59,6 +60,17 @@ export const IPC = {
   evOpenProjectPath: 'ev:openProjectPath',
   evBeforeQuit: 'ev:beforeQuit',
 } as const;
+
+/** How to fix a missing FFmpeg (shown in the startup banner and in import / export / proxy errors). */
+export const FFMPEG_INSTALL_HELP =
+  'Install FFmpeg (it provides both ffmpeg and ffprobe) and restart ReCut: `sudo apt install ffmpeg` on Debian/Ubuntu, '
+  + '`brew install ffmpeg` on macOS, or `winget install Gyan.FFmpeg` on Windows. Or point ReCut at the binaries with the '
+  + 'RECUT_FFMPEG and RECUT_FFPROBE environment variables. See docs/INSTALL.md.';
+
+/** Clear error for a missing ffmpeg / ffprobe binary. */
+export function ffmpegMissingMessage(binary: 'ffmpeg' | 'ffprobe'): string {
+  return `${binary} was not found, so ReCut cannot ${binary === 'ffprobe' ? 'read media files' : 'process media'}. ${FFMPEG_INSTALL_HELP}`;
+}
 
 export interface AppInfo {
   version: string;
@@ -95,7 +107,11 @@ export interface RelinkCandidate { missingMediaId: ID; path: string; confidence:
 export interface RelinkScanRequest { folder: string; missing: { mediaId: ID; fileName: string; size?: number }[] }
 
 export interface ThumbnailRequest { path: string; time: number; width?: number; mediaId?: ID }
-export interface FilmstripRequest { path: string; times: number[]; width: number; mediaId?: ID }
+export interface FilmstripRequest {
+  path: string; times: number[]; width: number; mediaId?: ID;
+  /** Names this request so `cancelThumbnails([requestId])` can drop its still-queued frames. */
+  requestId?: string;
+}
 
 export interface WaveformData {
   /** peaks per second */
@@ -169,6 +185,8 @@ export interface RecutApi {
   /** Returns a recut-media:// URL to a cached JPEG. */
   thumbnail(req: ThumbnailRequest): Promise<string>;
   filmstrip(req: FilmstripRequest): Promise<string[]>;
+  /** Drop the still-queued frames of filmstrip requests (by `requestId`); running extractions finish and are cached. */
+  cancelThumbnails(requestIds: string[]): Promise<void>;
   waveform(path: string, mediaId?: ID): Promise<WaveformData>;
   startProxy(req: ProxyRequest): Promise<JobInfo>;
   startSceneDetect(req: SceneDetectRequest): Promise<JobInfo>;

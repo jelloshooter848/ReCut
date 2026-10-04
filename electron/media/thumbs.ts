@@ -54,11 +54,9 @@ async function withSlot<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<
 export function thumbQueueDepth(): { active: number; waiting: number } { return { active, waiting: waiting.length }; }
 
 // ------------------------------------------------------------------
-// Request cancellation. A renderer request may carry a `requestId`; a later request carrying `cancel: [ids]`
-// aborts those requesters. Until shared/ipc.ts grows a dedicated channel, cancellations ride on the filmstrip
-// channel (`{ path: '', times: [], width: 0, cancel }`), see src/playback/thumbnails.ts.
+// Request cancellation. A renderer request may carry a `requestId`; `cancelThumbRequests([ids])` (IPC channel
+// media:thumbCancel, RecutApi.cancelThumbnails) aborts those requesters.
 // ------------------------------------------------------------------
-export type CancellableFilmstripRequest = FilmstripRequest & { requestId?: string; cancel?: string[] };
 const requesters = new Map<string, AbortController>();
 
 /** Abort the given renderer requests: their queued batches are dropped (running ffmpeg jobs finish and are cached). */
@@ -233,11 +231,10 @@ export async function getThumbnail(req: ThumbnailRequest): Promise<string> {
  * faster than one process per frame; frames the batch cannot produce fall back to getThumbnail.
  * Returns file paths aligned with `req.times` ('' for frames dropped because the request was canceled).
  *
- * Queueing is LIFO (newest viewport first). `signal` (or a `requestId` later named in a `cancel` request)
+ * Queueing is LIFO (newest viewport first). `signal` (or a `requestId` later passed to `cancelThumbRequests`)
  * drops this request's still-queued batches unless another live request is waiting for the same frames.
  */
-export async function getFilmstrip(req: CancellableFilmstripRequest, signal?: AbortSignal): Promise<string[]> {
-  if (req.cancel) { cancelThumbRequests(req.cancel); return []; }
+export async function getFilmstrip(req: FilmstripRequest, signal?: AbortSignal): Promise<string[]> {
   // Register synchronously (before any await) so a cancel arriving right behind this request finds it.
   if (req.requestId && !signal) {
     const ac = new AbortController();

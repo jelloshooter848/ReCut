@@ -4,6 +4,7 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { launchApp, makeTestMedia, importMedia, getState, MEDIA, ROOT, type LaunchedApp } from './helpers';
 
@@ -192,4 +193,44 @@ test.describe('Program Monitor', () => {
     await page.waitForTimeout(500);
     expect(await getState<boolean>(page, '(s) => s.playback.playing')).toBe(false);
   });
+
+  test('draws a still image on V2 over video (no Needs proxy)', async () => {
+    const { page, tmp } = launched;
+    test.setTimeout(90_000);
+    const png = path.join(tmp, 'still-magenta.png');
+    execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=magenta:s=320x180:d=1', '-frames:v', '1', png]);
+    const [imgId] = await importMedia(page, [png]);
+    expect(await getState<string>(page, `(s) => s.project.media[${JSON.stringify(imgId)}].kind`)).toBe('image');
+    const seqId = await getState<string>(page, '(s) => s.project.activeSequenceId');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const clipId = await page.evaluate(({ seqId, imgId }) => {
+      const st = (window as any).__recut.store.getState();
+      const seq = st.project.sequences[seqId];
+      const ids = st.insertFromSource(seqId, { mediaId: imgId, in: 0, out: 4, atFrame: 0, mode: 'overwrite', videoTrackId: seq.videoTracks[1].id, includeAudio: false });
+      // Half size, in the top-left quarter of the frame: video stays visible around it.
+      st.setClipTransform(seqId, ids[0], { scale: 0.5, x: -seq.width / 4, y: -seq.height / 4 });
+      st.setView(seqId, { playhead: 30, inPoint: null, outPoint: null });
+      return ids[0];
+    }, { seqId, imgId });
+    expect(clipId).toBeTruthy();
+    // The image layer is drawn: the top-left quarter turns magenta, the bottom-right still shows video.
+    const sample = (fx: number, fy: number) => page.evaluate(({ sel, fx, fy }) => {
+      const c = document.querySelector(sel) as HTMLCanvasElement;
+      const d = c.getContext('2d')!.getImageData(Math.floor(c.width * fx), Math.floor(c.height * fy), 1, 1).data;
+      return [d[0], d[1], d[2]];
+    }, { sel: CANVAS, fx, fy });
+    await expect.poll(async () => {
+      const [r, g, b] = await sample(0.25, 0.25);
+      return r > 200 && g < 60 && b > 200;
+    }, { timeout: 20_000, intervals: [250] }).toBe(true);
+    const [r2, g2, b2] = await sample(0.75, 0.75);
+    expect(r2 > 200 && g2 < 60 && b2 > 200).toBe(false);
+    await expect(page.getByTestId('program-needs-proxy')).toHaveCount(0);
+    await expect(page.getByTestId('program-missing')).toHaveCount(0);
+    // The timeline clip carries no PROXY badge.
+    await expect(page.locator(`[data-clip-id="${clipId}"] .tl-badge.needs-proxy`)).toHaveCount(0);
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: path.join(ROOT, 'docs/screenshots/program-still.png') });
+  });
 });
+

@@ -413,3 +413,8 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; }
 .jobs-indicator .progress { width: 60px; flex: none; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- FFmpeg missing banner ---------- */
+.ffmpeg-banner { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: color-mix(in srgb, var(--warn) 18%, var(--bg-0)); color: var(--text); border-bottom: 1px solid var(--warn); font-size: 12px; }
+.ffmpeg-banner svg { color: var(--warn); flex: none; }
+.ffmpeg-banner .grow { flex: 1; min-width: 0; }

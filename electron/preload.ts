@@ -61,6 +61,7 @@ const api: RecutApi = {
   probe: (path: string) => ipcRenderer.invoke(IPC.mediaProbe, path),
   thumbnail: (req: ThumbnailRequest) => ipcRenderer.invoke(IPC.mediaThumbnail, req),
   filmstrip: (req: FilmstripRequest) => ipcRenderer.invoke(IPC.mediaFilmstrip, req),
+  cancelThumbnails: (requestIds: string[]) => ipcRenderer.invoke(IPC.mediaThumbCancel, requestIds),
   waveform: (path: string, mediaId?: ID) => ipcRenderer.invoke(IPC.mediaWaveform, path, mediaId),
   startProxy: (req: ProxyRequest) => ipcRenderer.invoke(IPC.mediaProxyStart, req),
   startSceneDetect: (req: SceneDetectRequest) => ipcRenderer.invoke(IPC.mediaSceneDetectStart, req),

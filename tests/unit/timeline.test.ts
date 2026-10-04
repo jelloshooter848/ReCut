@@ -1200,3 +1200,15 @@ describe('attack fixes (QA-11/12/14/15/17, E-18)', () => {
     expect(gone.markers.find((m) => m.id === 'm')!.clipId).toBeUndefined();
   });
 });
+
+describe('shared speed range', () => {
+  it('Inspector and Speed dialog share 1 %–10 000 %', async () => {
+    const { SPEED_PERCENT_MIN, SPEED_PERCENT_MAX, clampSpeedPercent } = await import('../../shared/timeline');
+    expect([SPEED_PERCENT_MIN, SPEED_PERCENT_MAX]).toEqual([1, 10000]);
+    expect(clampSpeedPercent(0.5)).toBe(0.01);
+    expect(clampSpeedPercent(5)).toBe(0.05);
+    expect(clampSpeedPercent(2500)).toBe(25);
+    expect(clampSpeedPercent(20000)).toBe(100);
+    expect(clampSpeedPercent(Number.NaN)).toBe(1);
+  });
+});

@@ -3,7 +3,8 @@
  * that disable / enable clips in one undo step.
  */
 import React, { useMemo } from 'react';
-import { Eye, EyeOff, FlaskConical, RotateCcw, X } from 'lucide-react';
+import { CopyPlus, Eye, EyeOff, FlaskConical, RotateCcw, Scissors, X } from 'lucide-react';
+import { runCommand } from '@/keyboard/shortcuts';
 import type { Sequence } from '@shared/model';
 import { allTracks } from '@shared/timeline';
 import { useStore } from '@/state';
@@ -81,6 +82,10 @@ export function FilterBar({ seq, filters, palette }: FilterBarProps) {
           onClick={() => bulkEnable('Disable matching clips', (enabled, matches) => (matches && enabled ? false : null))}>Disable matching</Button>
         <Button size="sm" icon={RotateCcw} disabled={disabledCount === 0} data-testid="enable-all" title="Re-enable every disabled clip (one undo step)"
           onClick={() => bulkEnable('Enable all clips', (enabled) => (enabled ? null : true))}>Enable all{disabledCount ? ` (${disabledCount})` : ''}</Button>
+        <Button size="sm" icon={Scissors} disabled={disabledCount === 0} data-testid="remove-disabled" title="Ripple-delete every disabled clip and close the gaps (asks first; one undo step)"
+          onClick={() => runCommand('sequence.removeDisabledClips')}>Remove disabled</Button>
+        <Button size="sm" icon={CopyPlus} disabled={disabledCount === 0} data-testid="duplicate-without-disabled" title="Duplicate the sequence as a new version with the disabled clips removed and gaps closed"
+          onClick={() => runCommand('sequence.duplicateWithoutDisabled')}>Duplicate as cut</Button>
         {stats ? (
           <span className="sl-whatif mono" data-testid="whatif-readout" title="Sequence duration minus the matching clips on V1 (ignores gaps closing and other tracks)">
             Runtime if removed: <b>{formatHMS(stats.runtimeIfRemoved, seq.fps)}</b>

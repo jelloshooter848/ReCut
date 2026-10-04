@@ -15,6 +15,8 @@ import {
   buildRenderGraph, buildSubtitleSrt, exportPartPath, exportSidecarPath, FILTER_SCRIPT_TOKEN, sec, type RenderGraph,
 } from './renderGraph';
 import { ensureDirSafe } from '../safeMkdir';
+import { getFfmpegPath } from '../media/ffmpeg';
+import { ffmpegMissingMessage } from '../../shared/ipc';
 import { CHUNK_MAX_AUDIO_SEGMENTS, CHUNK_MAX_SEGMENTS, planExportChunks, sampleIndexAt, shouldChunk, type ExportChunk } from './chunks';
 
 /**
@@ -50,22 +52,14 @@ export interface ExportJobQueue {
 // ffmpeg resolution
 // ---------------------------------------------------------------------------------------------------
 
-let cachedFfmpeg: string | null = null;
-
-/** Resolves the ffmpeg binary: $RECUT_FFMPEG, then PATH, then /usr/bin/ffmpeg. */
+/**
+ * The ffmpeg binary export uses: the app-wide resolver in electron/media/ffmpeg.ts (RECUT_FFMPEG /
+ * RECUT_FFMPEG_PATH, bundled resources/ffmpeg, PATH). Throws a readable error when FFmpeg is missing.
+ */
 export function resolveFfmpegPath(): string {
-  if (cachedFfmpeg) return cachedFfmpeg;
-  const env = process.env.RECUT_FFMPEG;
-  if (env && fs.existsSync(env)) return (cachedFfmpeg = env);
-  const names = process.platform === 'win32' ? ['ffmpeg.exe', 'ffmpeg'] : ['ffmpeg'];
-  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
-    if (!dir) continue;
-    for (const n of names) {
-      const p = path.join(dir, n);
-      try { if (fs.statSync(p).isFile()) return (cachedFfmpeg = p); } catch { /* not here */ }
-    }
-  }
-  return (cachedFfmpeg = '/usr/bin/ffmpeg');
+  const bin = getFfmpegPath();
+  if (!bin) throw new Error(ffmpegMissingMessage('ffmpeg'));
+  return bin;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -125,6 +119,7 @@ export async function startExportJob(queue: ExportJobQueue, req: ExportRequest):
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
+  if (!getFfmpegPath()) return { ok: false, error: ffmpegMissingMessage('ffmpeg') };
   try {
     // Never a blocking / recursive mkdir on a user path (BUG-1: recursive mkdir under /proc never returns).
     await ensureDirSafe(path.dirname(graph.outputPath));
@@ -317,7 +312,8 @@ async function runChunkedExport(
 // ---------------------------------------------------------------------------------------------------
 
 function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgress, signal?: AbortSignal, onSpawn?: (c: ChildProcess) => void): Promise<void> {
-  const bin = resolveFfmpegPath();
+  let bin: string;
+  try { bin = resolveFfmpegPath(); } catch (e) { return Promise.reject(e); }
   const full = ['-progress', 'pipe:1', '-nostats', '-loglevel', 'warning', ...args];
   return new Promise<void>((resolve, reject) => {
     let child: ChildProcess;

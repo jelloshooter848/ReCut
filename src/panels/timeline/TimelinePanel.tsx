@@ -6,7 +6,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { useShallow } from 'zustand/react/shallow';
 import type { Clip, ID, Marker, Sequence, Track, TransitionType } from '@shared/model';
 import { formatSecondsTimecode, formatTimecode, fpsLabel } from '@shared/time';
-import { clipEnd, clipSourceOut, editPoints, findClip, resolveSubtitleCues, sequenceDuration, sourceTimeAt } from '@shared/timeline';
+import { clipEnd, clipSourceOut, editPoints, findClip, removableDisabledClipIds, resolveSubtitleCues, sequenceDuration, sourceTimeAt } from '@shared/timeline';
 import { useStore, filterMatches, filtersActive, usePlayhead } from '@/state';
 import { hasClipDrag, readClipDrag } from '@/app/dnd';
 import { openContextMenu, type MenuItem } from '@/components/ui/ContextMenu';
@@ -307,6 +307,11 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
       { heading: clip.name },
       ...cutItems,
       { label: clip.enabled ? 'Disable' : 'Enable', shortcut: 'Shift+E', onSelect: () => st.setClipEnabled(seqId, clip.id, !clip.enabled) },
+      ...(() => {
+        const s = st.project.sequences[seqId];
+        const n = s ? removableDisabledClipIds(s).length : 0;
+        return n ? [{ label: `Remove Disabled Clips (${n})…`, onSelect: () => runCommand('sequence.removeDisabledClips') }] : [];
+      })(),
       { label: clip.linkId ? 'Unlink' : 'Link', shortcut: 'Ctrl+L', disabled: !clip.linkId && sel.length < 2, onSelect: () => (clip.linkId ? st.unlinkSelected(seqId) : st.linkSelected(seqId)) },
       { label: 'Speed / Duration…', shortcut: getShortcutLabel('clip.speedDuration') || undefined, onSelect: () => setDialog({ kind: 'speed', clipId: clip.id }) },
       { label: 'Rename…', onSelect: () => setDialog({ kind: 'rename', clipId: clip.id }) },

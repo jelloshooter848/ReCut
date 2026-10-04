@@ -59,6 +59,8 @@ export const menuCommandMap: Record<string, string> = {
   'file.clearRecent': 'file.clearRecent',
   'file.importSubtitles': 'file.importSubtitles',
   'sequence.duplicate': 'sequence.duplicate',
+  'sequence.duplicateWithoutDisabled': 'sequence.duplicateWithoutDisabled',
+  'sequence.removeDisabledClips': 'sequence.removeDisabledClips',
   'app.preferences': 'app.preferences',
   'help.about': 'help.about',
 };

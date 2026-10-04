@@ -8,7 +8,7 @@ import type { ExportSettings, JobInfo, Sequence } from '@shared/model';
 import type { ExportRequest } from '@shared/ipc';
 import { FPS_PRESETS, fpsEquals, fpsLabel, formatTimecode, framesToSeconds } from '@shared/time';
 import { allTracks, resolveSubtitleCues } from '@shared/timeline';
-import { useStore, activeSequence, recutApi } from '@/state';
+import { useStore, activeSequence, recutApi, ffmpegUnavailable } from '@/state';
 import { useJob } from '@/app/jobsStore';
 import { Button, Dialog, NumberField, ProgressBar, Select, Slider, TextField, Toggle } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
@@ -169,6 +169,8 @@ export function ExportDialog() {
         const final: ExportSettings = { ...settings, fileName: withMp4(sanitizeFileName(settings.fileName)), useProxies: false };
         saveExportSettings(projectId, seq.id, final);
         api.setPrefs({ lastExportDir: final.outputDir }).catch(() => { /* ignore */ });
+        const noFfmpeg = ffmpegUnavailable('ffmpeg');
+        if (noFfmpeg) { setStartError(noFfmpeg); setStarting(false); return; }
         try {
           const res = await api.startExport(buildRequest(seq, media, final));
           if (res.ok) { setFinalJob(null); setPhase({ kind: 'job', jobId: res.jobId, outputPath: res.outputPath }); }

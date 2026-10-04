@@ -7,7 +7,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { FolderOpen, Link2, Plus, RotateCcw, Unlink2, X } from 'lucide-react';
 import type { Clip, ClipAudio, ClipTransform, ID, MediaItem, Rational, TagVocabulary, Track, Transition, TransitionType } from '@shared/model';
-import { clipEnd, clipSourceOut, defaultAudio, defaultTransform, findClip, linkedClips, transitionsForClip } from '@shared/timeline';
+import { clampSpeedPercent, clipEnd, clipSourceOut, defaultAudio, defaultTransform, findClip, linkedClips, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN, transitionsForClip } from '@shared/timeline';
 import { formatSecondsTimecode, fpsEquals, fpsLabel } from '@shared/time';
 import { activeSequence, identityLabel, originalTimecode, selectedClips, useStore } from '@/state';
 import type { StoreState } from '@/state';
@@ -257,7 +257,7 @@ function SpeedSection({ seqId, fps, clips }: { seqId: ID; fps: Rational; clips: 
   useEffect(() => { setDraft(null); }, [speedPct]);
   const apply = (pct: number) => {
     setDraft(null);
-    const speed = Math.max(0.1, Math.min(8, pct / 100));
+    const speed = clampSpeedPercent(pct);
     // one call per link group (setClipSpeed already applies to the linked clips)
     const seen = new Set<string>();
     for (const c of clips) { const key = c.linkId ?? c.id; if (seen.has(key)) continue; seen.add(key); setClipSpeed(seqId, c.id, speed, { ripple }); }
@@ -265,8 +265,8 @@ function SpeedSection({ seqId, fps, clips }: { seqId: ID; fps: Rational; clips: 
   const dur = clips.reduce((a, c) => a + c.duration, 0);
   return (
     <Section id="speed" title="Speed / Duration" badge={mixed ? MIXED : `${speedPct}%`}>
-      <Row label="Speed" prop="speed" onReset={() => apply(100)} canReset={clips.some((c) => c.speed !== 1)} title="10% – 800%. Changes clip duration; linked clips follow.">
-        <NF value={draft ?? speedPct} mixed={mixed && draft === null} unit="%" min={10} max={800} precision={1} def={100} onChange={setDraft} onCommit={apply} />
+      <Row label="Speed" prop="speed" onReset={() => apply(100)} canReset={clips.some((c) => c.speed !== 1)} title={`${SPEED_PERCENT_MIN}% – ${SPEED_PERCENT_MAX}%. Changes clip duration; linked clips follow.`}>
+        <NF value={draft ?? speedPct} mixed={mixed && draft === null} unit="%" min={SPEED_PERCENT_MIN} max={SPEED_PERCENT_MAX} precision={1} def={100} onChange={setDraft} onCommit={apply} />
       </Row>
       <Row label="Duration"><Value copy={String(dur)}>{framesLabel(dur, fps)}</Value></Row>
       <Row label="Ripple" title="Shift following clips when the duration changes">

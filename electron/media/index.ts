@@ -7,7 +7,7 @@
  */
 import type { ID, JobInfo, MediaProbe } from '@shared/model';
 import {
-  pathToMediaUrl,
+  pathToMediaUrl, ffmpegMissingMessage,
   type ExportRequest, type ExportStartResult, type FilmstripRequest, type ProxyRequest,
   type SceneDetectRequest, type ThumbnailRequest, type WaveformData,
 } from '@shared/ipc';
@@ -17,7 +17,7 @@ import { buildExportCommand, cancelExportJob, startExportJob } from '../export/e
 import { cacheKeyForPath, setCacheDir } from './cache';
 import { getFfmpegPath, getFfprobePath, setFfmpegPaths } from './ffmpeg';
 import { probeMedia } from './probe';
-import { getFilmstrip, getThumbnail } from './thumbs';
+import { cancelThumbRequests, getFilmstrip, getThumbnail } from './thumbs';
 import { getWaveform } from './waveform';
 import { startProxyJob } from './proxy';
 import { startSceneDetectJob } from './sceneDetect';
@@ -52,7 +52,12 @@ export const mediaHandlers: MediaHandlers = {
 
   async filmstrip(req: FilmstripRequest): Promise<string[]> {
     const files = await getFilmstrip(req);
-    return files.map(pathToMediaUrl);
+    // '' = frame not produced (request canceled): keep it '' rather than a bare scheme URL.
+    return files.map((f) => (f ? pathToMediaUrl(f) : ''));
+  },
+
+  async cancelThumbnails(requestIds: string[]): Promise<void> {
+    cancelThumbRequests(requestIds);
   },
 
   async waveform(path: string, _mediaId?: ID): Promise<WaveformData> {
@@ -61,6 +66,7 @@ export const mediaHandlers: MediaHandlers = {
   },
 
   async startProxy(req: ProxyRequest): Promise<JobInfo> {
+    if (!getFfmpegPath()) throw new Error(ffmpegMissingMessage('ffmpeg'));
     const { job } = await startProxyJob(jobQueue, req);
     return job;
   },

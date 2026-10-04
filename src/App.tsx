@@ -23,6 +23,8 @@ import { NewSequenceDialog } from '@/app/dialogs/NewSequenceDialog';
 import { PreferencesDialog } from '@/app/dialogs/PreferencesDialog';
 import { SpeedDialog } from '@/app/dialogs/SpeedDialog';
 import { RelinkDialog } from '@/panels/project/RelinkDialog';
+import { FfmpegBanner } from '@/app/FfmpegBanner';
+import { recutApi, setFfmpegAvailability } from '@/state';
 import '@/panels';
 
 const TOAST_KIND: Record<StoreToastKind, ShellToastKind> = { info: 'info', success: 'ok', warning: 'warn', error: 'error' };
@@ -52,6 +54,7 @@ function initApp(): void {
   initProjectLifecycle();
   initJobsRouter();
   bridgeStoreToasts();
+  recutApi()?.appInfo().then(setFfmpegAvailability).catch(() => undefined);
 }
 
 function ProjectTitle() {
@@ -98,7 +101,7 @@ export function App() {
   useEffect(() => { initApp(); }, []);
   return (
     <>
-      <Layout projectSlot={<ProjectTitle />} rightSlot={<GlobalButtons />} />
+      <Layout projectSlot={<ProjectTitle />} rightSlot={<GlobalButtons />} toolbar={<FfmpegBanner />} />
       <ContextMenuHost />
       <ToastHost />
       <ShortcutsDialog />

@@ -380,16 +380,16 @@ describe('timeline level of detail (P-05)', () => {
 describe('cancellable filmstrip requests (P-05)', () => {
   it('abort resolves at once, cancels the IPC only when every sharer aborted, and caches nothing for it', async () => {
     const { ThumbnailCache } = await import('../../src/playback/thumbnails');
-    const calls: { times: number[]; requestId?: string; cancel?: string[] }[] = [];
+    const calls: { times?: number[]; requestId?: string; cancel?: string[] }[] = [];
     let release: (v: string[]) => void = () => {};
-    const filmstrip = (req: { times: number[]; requestId?: string; cancel?: string[] }) => {
+    const filmstrip = (req: { times: number[]; requestId?: string }) => {
       calls.push(req);
-      if (req.cancel) return Promise.resolve([]);
       return new Promise<string[]>((r) => { release = r; });
     };
+    const cancelThumbnails = async (ids: string[]) => { calls.push({ cancel: ids }); };
     const g = globalThis as { window?: unknown };
     const prev = g.window;
-    g.window = { recut: { filmstrip, thumbnail: async () => '' } };
+    g.window = { recut: { filmstrip, cancelThumbnails, thumbnail: async () => '' } };
     try {
       const tc = new ThumbnailCache();
       const a = new AbortController(), b = new AbortController();

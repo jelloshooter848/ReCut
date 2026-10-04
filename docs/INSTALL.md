@@ -8,7 +8,7 @@ far (see [Packaged builds](#packaged-builds)).
 | Requirement | Version | Notes |
 |---|---|---|
 | Node.js | 20 or 22 (developed on 22) | npm comes with it. |
-| FFmpeg + FFprobe | 6.0 or newer (developed on 6.1.1) | Must be on `PATH`, or set `RECUT_FFMPEG` / `RECUT_FFPROBE`. Not bundled. |
+| FFmpeg + FFprobe | 6.0 or newer (developed on 6.1.1) | On `PATH`, set with `RECUT_FFMPEG` / `RECUT_FFPROBE`, or bundled in a package you build yourself (see [Bundling FFmpeg](#bundling-ffmpeg)). |
 | libx264 in your FFmpeg build | | Required for proxies and H.264 export. |
 | libx265 | optional | Only for H.265 / HEVC export. |
 | libass (`subtitles` filter) | optional | Only for burned-in subtitles. |
@@ -26,8 +26,18 @@ far (see [Packaged builds](#packaged-builds)).
 Check the install with `ffmpeg -version` and `ffprobe -version`. Once ReCut is running, **Preferences** (Ctrl+, / Cmd+,)
 shows the FFmpeg and FFprobe paths it found and the FFmpeg version, or "not found".
 
-ReCut does **not** stop at startup when FFmpeg is missing. Import, thumbnails, proxies and export fail with
-"ffmpeg binary not found (set RECUT_FFMPEG or install ffmpeg)".
+If FFmpeg or FFprobe is missing, ReCut still starts, but shows a warning banner at the top of the window until you
+install it and restart. **How to install…** in the banner repeats these steps. While FFmpeg is missing, Import,
+proxies and Export stop with a message that says what is missing and how to fix it, instead of a generic error.
+
+ReCut looks for the binaries in this order (one resolver, used by import, thumbnails, proxies, export and
+Preferences / About):
+
+1. `RECUT_FFMPEG` / `RECUT_FFPROBE` (or `RECUT_FFMPEG_PATH` / `RECUT_FFPROBE_PATH`).
+2. The bundled folder `<resources>/ffmpeg/` of a packaged app (`ffmpeg`, `ffprobe`, or `ffmpeg.exe`, `ffprobe.exe` on
+   Windows), then `resources/ffmpeg/` in the working folder when you run from source.
+3. `PATH`, then `/usr/local/bin`, `/usr/bin`, `/opt/homebrew/bin` and `/snap/bin` (apps started from a desktop
+   launcher often get a short `PATH`).
 
 ## Install from source
 
@@ -62,10 +72,24 @@ npm run dist       # build + electron-builder         → AppImage (Linux), dmg 
 - **Verified:** `npm run package` on Linux, which produces `release/linux-unpacked/` with the `recut` executable.
 - **Not verified:** the `npm run dist` targets (AppImage, dmg, nsis). They are configured in `package.json` → `build`
   but have not been built or tested. Code signing and notarisation are not set up.
-- Packaged builds **do not include FFmpeg**. electron-builder only packs `dist/**` and `package.json`. Install FFmpeg
-  separately as described above. The media layer also looks for binaries in `<resources>/ffmpeg/`, so you can drop
-  `ffmpeg` / `ffprobe` there yourself. The exporter does not look there (see [LIMITATIONS](LIMITATIONS.md)), so set
-  `RECUT_FFMPEG` or keep FFmpeg on `PATH`.
+- By default a package does **not** include FFmpeg, so users install it themselves as described above. To ship it
+  inside the app, see [Bundling FFmpeg](#bundling-ffmpeg).
+
+### Bundling FFmpeg
+
+`package.json` → `build.extraResources` copies the folder `resources/ffmpeg/` into the packaged app as
+`<resources>/ffmpeg/`. The folder is not in the repository (it is git-ignored). When it does not exist, the package is
+built without FFmpeg. To bundle FFmpeg:
+
+1. Download **static** builds of `ffmpeg` and `ffprobe` for the target platform, for example from johnvansickle.com
+   (Linux), evermeet.cx (macOS) or gyan.dev / BtbN (Windows). Use builds that include libx264. Check the licence
+   (GPL builds make the package GPL).
+2. Put them in `resources/ffmpeg/` at the repository root, named exactly `ffmpeg` and `ffprobe` (`ffmpeg.exe` and
+   `ffprobe.exe` on Windows). On Linux and macOS, run `chmod +x resources/ffmpeg/*`.
+3. Run `npm run package` or `npm run dist`. The binaries end up in `release/linux-unpacked/resources/ffmpeg/` (or the
+   matching folder of the dmg / installer), and ReCut uses them unless `RECUT_FFMPEG` / `RECUT_FFPROBE` are set.
+
+Build one package per platform: the binaries are platform-specific.
 
 ## First launch
 
@@ -91,9 +115,9 @@ All are optional. They are read by the main process (`electron/`).
 
 | Variable | Effect |
 |---|---|
-| `RECUT_FFMPEG` | Absolute path to `ffmpeg`. Takes precedence over bundled and `PATH` lookups. Used by media services and by the exporter. |
+| `RECUT_FFMPEG` | Absolute path to `ffmpeg`. Takes precedence over bundled and `PATH` lookups. Used everywhere (import, thumbnails, proxies, export, About). |
 | `RECUT_FFPROBE` | Absolute path to `ffprobe`. |
-| `RECUT_FFMPEG_PATH` / `RECUT_FFPROBE_PATH` | Aliases of the two above, honoured by the media services (`electron/media/ffmpeg.ts`) only. **The exporter ignores `RECUT_FFMPEG_PATH`.** |
+| `RECUT_FFMPEG_PATH` / `RECUT_FFPROBE_PATH` | Aliases of the two above. |
 | `RECUT_USER_DATA` | Overrides Electron's `userData` directory (prefs, untitled autosave, default cache). Useful for isolated test runs. |
 | `RECUT_CACHE_DIR` | Cache root for thumbnails, waveforms, proxies and scene-detection results. Takes precedence over the `cacheDir` pref and `<userData>/cache`. |
 | `RECUT_DISABLE_GPU=1` | Calls `app.disableHardwareAcceleration()`. Use it on machines or VMs with broken GPU drivers. |

@@ -8,6 +8,7 @@ import { Toggle } from '@/components/ui/Toggle';
 import { useStore } from '@/state/store';
 import { activeSequence, selectedClips } from '@/state/selectors';
 import { formatTimecode } from '@shared/time';
+import { clampSpeedPercent, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN } from '@shared/timeline';
 import { toast } from '@/components/ui/toastStore';
 
 interface SpeedDialogState { open: boolean; setOpen(open: boolean): void }
@@ -29,8 +30,8 @@ export function SpeedDialog() {
   const newDuration = first && seq ? Math.max(1, Math.round(first.duration * first.speed / (percent / 100))) : 0;
   const apply = () => {
     if (!seq || !clips.length) { closeSpeedDialog(); return; }
-    const speed = percent / 100;
-    if (!(speed > 0)) { toast('warn', 'Speed must be greater than 0%'); return; }
+    if (!(percent > 0)) { toast('warn', 'Speed must be greater than 0%'); return; }
+    const speed = clampSpeedPercent(percent);
     const seen = new Set<string>();
     for (const c of clips) {
       const key = c.linkId ?? c.id;
@@ -47,7 +48,7 @@ export function SpeedDialog() {
         {!clips.length ? <div className="text-dim">Select one or more clips first.</div> : null}
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
           <label className="text-dim" style={{ width: 90 }}>Speed</label>
-          <NumberField value={percent} onChange={setPercent} min={1} max={10000} step={1} precision={1} unit="%" />
+          <NumberField value={percent} onChange={setPercent} min={SPEED_PERCENT_MIN} max={SPEED_PERCENT_MAX} step={1} precision={1} unit="%" />
         </div>
         {first && seq ? (
           <div className="row" style={{ gap: 8 }}>

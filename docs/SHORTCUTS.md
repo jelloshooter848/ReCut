@@ -53,6 +53,7 @@ or Timeline, whichever was clicked last), or Compare when it is focused.
 | Apply Default Video Transition (cross dissolve) | Ctrl+D |
 | Apply Default Audio Transition (crossfade) | Ctrl+Shift+D |
 | Enable / Disable Clip | Shift+E |
+| Remove Disabled Clips… (ripple, asks first) | unbound (Sequence menu, Storyline › What if, clip context menu) |
 | Link / Unlink | Ctrl+L |
 | Speed / Duration… | Ctrl+R |
 | Nudge Selection Left / Right 1 Frame | Alt+← / Alt+→ |
@@ -87,9 +88,9 @@ The default transition length is set in **Preferences › Default transition** (
 | Import Media… | Ctrl+I |
 | Export… | Ctrl+M |
 | New Sequence… | Ctrl+Shift+N |
-| Preferences… | Ctrl+, |
+| Preferences… | Ctrl+, (menu: **Edit › Preferences…** on Linux / Windows, **ReCut › Preferences…** on macOS) |
 | Quit | Ctrl+Q |
-| Import Subtitles…, Duplicate Sequence…, Take Sequence Snapshot…, Rename Sequence…, Sequence Settings…, Clear Recent Projects | unbound (assign them in the dialog) |
+| Import Subtitles…, Duplicate Sequence…, Duplicate as Cut Without Disabled Clips…, Take Sequence Snapshot…, Rename Sequence…, Sequence Settings…, Clear Recent Projects | unbound (assign them in the dialog) |
 
 ## View & panels
 

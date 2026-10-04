@@ -10,7 +10,8 @@ import { uid } from '../../shared/ids';
 import { useStore, serializeForSave } from './store';
 import { fileNameOf } from './selectors';
 import { classifyPath, importIdentity, sidecarLanguage, LONG_FORM_MOVIE_SEC, type ImportBinKind } from './parseIdentity';
-import { mediaNeedsProxyForPreview } from '../playback/mediaSource';
+import { mediaNeedsProxyForPreview, proxyStreamStale } from '../playback/mediaSource';
+import { ffmpegUnavailable } from './ffmpegStatus';
 
 export function recutApi(): RecutApi | null {
   return typeof window !== 'undefined' && window.recut ? window.recut : null;
@@ -57,6 +58,11 @@ export async function importMediaFiles(paths: string[], binId: ID | null = null)
  */
 export async function importMedia(paths: string[], binId: ID | null = null, opts: ImportOptions = {}): Promise<ImportReport> {
   const st = useStore.getState();
+  const noFfprobe = ffmpegUnavailable('ffprobe');
+  if (noFfprobe && paths.length) {
+    say('error', `Import failed: ${noFfprobe}`);
+    return { added: [], existing: [], subtitlePaths: [], sidecarsUsed: [], binIds: [] };
+  }
   const byPath = new Map(Object.values(st.project.media).map((m) => [m.path, m.id] as const));
   const unique = [...new Set(paths.filter((p) => typeof p === 'string' && p))];
   const subtitlePaths = unique.filter((p) => classifyPath(p) === 'subtitle');
@@ -239,8 +245,40 @@ export async function startProxy(mediaId: ID): Promise<JobInfo | null> {
   const st = useStore.getState();
   const m = st.project.media[mediaId];
   if (!api || !m) return null;
-  st.setProxy(mediaId, { status: 'queued', progress: 0 });
+  const noFfmpeg = ffmpegUnavailable('ffmpeg', 'ffprobe');
+  if (noFfmpeg) throw new Error(noFfmpeg);
+  st.setProxy(mediaId, { status: 'queued', progress: 0, ...(m.preferredAudioStream !== undefined ? { audioStream: m.preferredAudioStream } : {}) });
   return api.startProxy({ mediaId, path: m.path, height: st.project.settings.proxyHeight, audioStream: m.preferredAudioStream });
+}
+
+/** Queue a proxy when proxies are on and the preview cannot decode the original (errors mark the proxy failed). */
+function requeueProxyIfNeeded(mediaId: ID): void {
+  const st = useStore.getState();
+  const m = st.project.media[mediaId];
+  if (!m || m.proxy.status !== 'none' || !st.project.settings.useProxies || !mediaNeedsProxyForPreview(m)) return;
+  startProxy(mediaId).catch((e) => useStore.getState().setProxy(mediaId, { status: 'failed', error: e instanceof Error ? e.message : String(e) }));
+}
+
+/**
+ * The media's proxy was built for another audio stream than its preferred one: mark it stale (status 'none') and
+ * requeue it when proxies are on and the media needs one. Returns true when the proxy was stale.
+ */
+export function requeueStaleProxy(mediaId: ID): boolean {
+  const m = useStore.getState().project.media[mediaId];
+  if (!m || !proxyStreamStale(m)) return false;
+  useStore.getState().setProxy(mediaId, { status: 'none' });
+  requeueProxyIfNeeded(mediaId);
+  return true;
+}
+
+/** Change the media's preferred audio stream; a proxy carrying another stream goes stale and is rebuilt if needed. */
+export function setMediaAudioStream(mediaId: ID, stream: number | undefined): void {
+  const st = useStore.getState();
+  const before = st.project.media[mediaId];
+  if (!before || before.preferredAudioStream === stream) return;
+  const hadProxy = before.proxy.status !== 'none';
+  st.updateMedia(mediaId, { preferredAudioStream: stream }); // marks a stale proxy 'none'
+  if (hadProxy && useStore.getState().project.media[mediaId]?.proxy.status === 'none') requeueProxyIfNeeded(mediaId);
 }
 
 export async function startSceneDetect(mediaId: ID, threshold?: number): Promise<JobInfo | null> {
@@ -313,9 +351,18 @@ export async function openProject(path: string): Promise<{ ok: true; project: Pr
   }
 }
 
+/**
+ * Autosave the dirty project. Sends compact JSON (same bytes as the main process's serializeAutosave) through
+ * autosaveProjectJson when available: one string crosses IPC instead of a structured clone of the whole project
+ * (P-06). Falls back to autosaveProject on older bridges. Throws when the write failed.
+ */
 export async function autosaveProject(): Promise<void> {
   const api = recutApi();
   const st = useStore.getState();
   if (!api || !st.dirty) return;
-  await api.autosaveProject(st.projectPath, serializeForSave(st));
+  const project = serializeForSave(st);
+  const res = typeof api.autosaveProjectJson === 'function'
+    ? await api.autosaveProjectJson(st.projectPath, JSON.stringify(project))
+    : await api.autosaveProject(st.projectPath, project);
+  if (res && res.ok === false) throw new Error(res.error);
 }

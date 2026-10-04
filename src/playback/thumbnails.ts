@@ -54,8 +54,7 @@ let stripSeq = 0;
 let cancelQueue: string[] = [];
 /**
  * Tell the main process to drop queued work of canceled requests (batched per task).
- * Until shared/ipc.ts has a dedicated cancel channel this rides on the filmstrip channel: electron/media/thumbs.ts
- * treats a request carrying `cancel` as a cancellation and answers [].
+ * Uses the dedicated media:thumbCancel channel (RecutApi.cancelThumbnails).
  */
 function cancelStripRequest(id: string): void {
   cancelQueue.push(id);
@@ -64,7 +63,8 @@ function cancelStripRequest(id: string): void {
     const ids = cancelQueue; cancelQueue = [];
     const recut = api();
     if (!recut || !ids.length) return;
-    recut.filmstrip({ path: '', times: [], width: 0, cancel: ids } as FilmstripRequest & { cancel: string[] }).catch(() => { /* ignore */ });
+    if (typeof recut.cancelThumbnails !== 'function') return;
+    recut.cancelThumbnails(ids).catch(() => { /* ignore */ });
   });
 }
 
@@ -124,7 +124,7 @@ export class ThumbnailCache {
     if (!entry) {
       const requestId = signal ? `fs${++stripSeq}` : undefined;
       const e: StripEntry = { promise: Promise.resolve([]), sharers: 0, pinned: !signal, canceled: false, requestId };
-      const req = { path: mediaPath, times: missing.map((i) => times[i]), width, mediaId } as FilmstripRequest & { requestId?: string };
+      const req: FilmstripRequest = { path: mediaPath, times: missing.map((i) => times[i]), width, mediaId };
       if (requestId) req.requestId = requestId;
       e.promise = recut.filmstrip(req)
         .then((urls) => {

@@ -53,6 +53,37 @@ export function mediaNeedsProxyForPreview(media: MediaItem | undefined): boolean
 
 const DEFAULT_FPS: Rational = { num: 24, den: 1 };
 
+/**
+ * Audio stream the media's proxy carries: recorded on the proxy, else parsed from the cache file name
+ * (`<key>_<h>p_a<N>.mp4`), else the first audio stream (what ffmpeg maps by default).
+ */
+export function proxyAudioStream(media: MediaItem): number | undefined {
+  if (typeof media.proxy.audioStream === 'number') return media.proxy.audioStream;
+  const m = media.proxy.path ? /_a(\d+)\.mp4$/i.exec(media.proxy.path) : null;
+  if (m) return Number(m[1]);
+  return media.probe?.audio[0]?.index;
+}
+
+/**
+ * True when the media has a proxy (ready / failed) that was built for a different audio stream than the media's
+ * preferred one, so the preview would play the wrong language / commentary track.
+ */
+export function proxyStreamStale(media: MediaItem): boolean {
+  if (media.proxy.status !== 'ready' && media.proxy.status !== 'failed') return false;
+  const want = media.preferredAudioStream ?? media.probe?.audio[0]?.index;
+  const have = proxyAudioStream(media);
+  return want !== undefined && have !== undefined && want !== have;
+}
+
+/** One-line preview status for the Media Inspector / info footer: direct, still image, or needs a proxy. */
+export function previewPlaybackLabel(media: MediaItem): { direct: boolean; text: string } {
+  const p = media.probe;
+  if (isDisplayableImage(media)) return { direct: true, text: 'Direct (still image)' };
+  if (isStillImage(media)) return { direct: false, text: 'Not previewable — convert the image to PNG or JPEG (export still works)' };
+  if (!p || p.browserPlayable) return { direct: true, text: 'Direct' };
+  return { direct: false, text: `Proxy required${p.playabilityReason ? ` — ${p.playabilityReason}` : ''}` };
+}
+
 export function resolvePlaybackPath(media: MediaItem, useProxies: boolean): PlaybackPathResolution {
   if (media.offline) return { path: null, usingProxy: false, reason: 'media offline' };
   if (isDisplayableImage(media)) return { path: media.path, usingProxy: false, timeOffset: 0, isImage: true };

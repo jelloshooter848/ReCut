@@ -10,6 +10,7 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { ffmpegMissingMessage } from '../../shared/ipc';
 
 export type FfBinary = 'ffmpeg' | 'ffprobe';
 
@@ -46,6 +47,8 @@ function bundledDirs(): string[] {
 function whichSync(name: FfBinary): string | null {
   const sep = process.platform === 'win32' ? ';' : ':';
   const dirs = (process.env.PATH ?? '').split(sep).filter(Boolean);
+  // GUI launches (macOS Finder, desktop files) often get a minimal PATH: also look in the usual install folders.
+  if (process.platform !== 'win32') dirs.push('/usr/local/bin', '/usr/bin', '/opt/homebrew/bin', '/snap/bin');
   for (const dir of dirs) {
     for (const file of exeNames(name)) {
       const full = path.join(dir, file);
@@ -56,10 +59,12 @@ function whichSync(name: FfBinary): string | null {
 }
 
 /**
- * Resolve the path to ffmpeg or ffprobe. Order:
- *   1. env RECUT_FFMPEG / RECUT_FFPROBE
- *   2. bundled `resources/ffmpeg/<name>` next to the app
- *   3. PATH
+ * Resolve the path to ffmpeg or ffprobe. The single resolver for the whole app (media services, export,
+ * About / Preferences). Order:
+ *   1. env RECUT_FFMPEG / RECUT_FFPROBE (or RECUT_FFMPEG_PATH / RECUT_FFPROBE_PATH)
+ *   2. bundled `<process.resourcesPath>/ffmpeg/<name>(.exe)` (electron-builder extraResources), then
+ *      `resources/ffmpeg` next to the executable / in the working directory (dev)
+ *   3. PATH, then /usr/local/bin, /usr/bin, /opt/homebrew/bin, /snap/bin
  * Returns null when not found. Result is cached; call `resetFfmpegPaths()` to re-resolve.
  */
 export function resolveBinary(name: FfBinary): string | null {
@@ -247,7 +252,7 @@ export function runFfmpeg(args: string[], opts: RunFfmpegOptions = {}): FfmpegRu
 
   if (!bin) {
     return {
-      promise: Promise.reject(new FfmpegError('ffmpeg binary not found (set RECUT_FFMPEG or install ffmpeg)', {})),
+      promise: Promise.reject(new FfmpegError(ffmpegMissingMessage('ffmpeg'), {})),
       cancel() {},
       child: null,
       args: fullArgs,
@@ -372,7 +377,7 @@ export function runFfmpeg(args: string[], opts: RunFfmpegOptions = {}): FfmpegRu
 /** Run ffprobe with `-v error -print_format json` prepended and parse stdout as JSON. */
 export function runFfprobeJson<T = unknown>(args: string[], opts: { timeoutMs?: number } = {}): Promise<T> {
   const bin = getFfprobePath();
-  if (!bin) return Promise.reject(new FfmpegError('ffprobe binary not found (set RECUT_FFPROBE or install ffmpeg)', {}));
+  if (!bin) return Promise.reject(new FfmpegError(ffmpegMissingMessage('ffprobe'), {}));
   return new Promise<T>((resolve, reject) => {
     const child = spawn(bin, ['-v', 'error', '-print_format', 'json', ...args], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     const out: Buffer[] = [];

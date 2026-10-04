@@ -94,6 +94,15 @@ export function mediaFrames(mediaDuration: number, fps: Rational): number {
   return Number.isFinite(mediaDuration) ? Math.max(1, secondsToFrames(mediaDuration, fps)) : Number.MAX_SAFE_INTEGER;
 }
 
+/** Clip speed range in percent, shared by the Inspector field and the Speed / Duration dialog (forward only). */
+export const SPEED_PERCENT_MIN = 1;
+export const SPEED_PERCENT_MAX = 10000;
+/** Clamp a speed percentage into [SPEED_PERCENT_MIN, SPEED_PERCENT_MAX]; returns a speed multiplier (1 = 100 %). */
+export function clampSpeedPercent(pct: number): number {
+  const p = Number.isFinite(pct) ? pct : 100;
+  return Math.max(SPEED_PERCENT_MIN, Math.min(SPEED_PERCENT_MAX, p)) / 100;
+}
+
 /** Max timeline frames available from sourceIn given speed. */
 export function maxDurationFrom(sourceIn: number, speed: number, mediaDuration: number, fps: Rational): number {
   if (!Number.isFinite(mediaDuration)) return Number.MAX_SAFE_INTEGER;
@@ -584,6 +593,20 @@ export function rippleDeleteClips(seq: Sequence, clipIds: ID[]): void {
     // Tracks with a clip still spanning the gap are left alone by rippleShift's collision check.
     rippleShift(seq, gap.end, -(gap.end - gap.start));
   }
+}
+
+/** Disabled clips that can be removed (not on a locked track), in track order. */
+export function removableDisabledClipIds(seq: Sequence): ID[] {
+  const out: ID[] = [];
+  for (const t of allTracks(seq)) if (!t.locked) for (const c of t.clips) if (!c.enabled) out.push(c.id);
+  return out;
+}
+
+/** Ripple-delete every disabled clip (unlocked tracks): turns a what-if experiment into a real cut. Returns the count. */
+export function rippleDeleteDisabledClips(seq: Sequence): number {
+  const ids = removableDisabledClipIds(seq);
+  if (ids.length) rippleDeleteClips(seq, ids);
+  return ids.length;
 }
 
 /** Lift: remove the in/out range on the given tracks (no shift). */

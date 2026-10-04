@@ -76,6 +76,8 @@ export interface ProxyInfo {
   error?: string;
   width?: number;
   height?: number;
+  /** Audio stream index baked into the proxy (undefined: the source's first audio stream / unknown). */
+  audioStream?: number;
 }
 
 export interface DetectedScene {

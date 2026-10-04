@@ -19,14 +19,14 @@ import { useLayoutStore } from '@/components/layout/layoutStore';
 import { toast } from '@/components/ui/toastStore';
 import type { Clip, ID, Sequence, Track, TransitionType } from '@shared/model';
 import { secondsToFrames } from '@shared/time';
-import { addTransition, allTracks, clipAt, clipEnd, findClip, nextEdit, prevEdit, sequenceDuration, sourceTimeAt } from '@shared/timeline';
+import { addTransition, allTracks, clipAt, clipEnd, findClip, nextEdit, prevEdit, removableDisabledClipIds, sequenceDuration, sourceTimeAt } from '@shared/timeline';
 import { MAX_ZOOM, MIN_ZOOM, minZoomFor, zoomAround, zoomToFit } from '@/panels/timeline/viewMath';
 import { useTimelineUi } from '@/panels/timeline/timelineStore';
 import { insertSourceIntoSequence } from '@/panels/source/insert';
 import { clipboardHasClips, copyClipsToClipboard, pasteClipboardAt } from './clipboard';
 import { getActiveTransport, shuttle, type Transport } from './transport';
 import { requestNewProject, requestOpenProject, requestSave, requestSaveAs } from './project';
-import { promptText } from './dialogs/ConfirmDialog';
+import { confirm, promptText } from './dialogs/ConfirmDialog';
 import { openSpeedDialog } from './dialogs/SpeedDialog';
 import { openSequenceDialog } from './dialogs/NewSequenceDialog';
 import type { Tool } from '@/state/types';
@@ -45,6 +45,8 @@ export const EXTRA_COMMAND_IDS = {
   preferences: 'app.preferences',
   quit: 'file.quit',
   duplicateSequence: 'sequence.duplicate',
+  removeDisabledClips: 'sequence.removeDisabledClips',
+  duplicateWithoutDisabled: 'sequence.duplicateWithoutDisabled',
   takeSnapshot: 'sequence.takeSnapshot',
   renameSequence: 'sequence.rename',
   sequenceSettings: 'sequence.settings',
@@ -64,6 +66,8 @@ const EXTRA_META: Record<string, { title: string; category: string; keys: string
   [EXTRA_COMMAND_IDS.preferences]: { title: 'Preferences…', category: 'File', keys: ['Ctrl+,'] },
   [EXTRA_COMMAND_IDS.quit]: { title: 'Quit', category: 'File', keys: ['Ctrl+Q'] },
   [EXTRA_COMMAND_IDS.duplicateSequence]: { title: 'Duplicate Sequence…', category: 'File', keys: [] },
+  [EXTRA_COMMAND_IDS.removeDisabledClips]: { title: 'Remove Disabled Clips…', category: 'Editing', keys: [] },
+  [EXTRA_COMMAND_IDS.duplicateWithoutDisabled]: { title: 'Duplicate as Cut Without Disabled Clips…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.takeSnapshot]: { title: 'Take Sequence Snapshot…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.renameSequence]: { title: 'Rename Sequence…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.sequenceSettings]: { title: 'Sequence Settings…', category: 'File', keys: [] },
@@ -506,6 +510,16 @@ export function buildEditingCommands(): CommandInput[] {
       const id = S().duplicateSequence(seq.id, name.trim() || `${seq.name} copy`);
       if (id) toast('ok', `Created ${S().project.sequences[id]?.name}`);
     }, hasSeq),
+    cmd(X.removeDisabledClips, async () => { await removeDisabledClipsConfirmed(); }, () => hasSeq() && disabledCount() > 0),
+    cmd(X.duplicateWithoutDisabled, async () => {
+      const seq = seqNow(); if (!seq) return;
+      const n = disabledCount();
+      if (!n) { toast('info', 'No disabled clips in this sequence'); return; }
+      const name = await promptText({ title: 'Duplicate as Cut Without Disabled Clips', label: `Name for the new cut (${n} disabled clip${n === 1 ? '' : 's'} removed, gaps closed)`, initial: `${seq.name} cut` });
+      if (name === null) return;
+      const id = S().duplicateWithoutDisabled(seq.id, name.trim() || `${seq.name} cut`);
+      if (id) toast('ok', `Created ${S().project.sequences[id]?.name} without ${n} disabled clip${n === 1 ? '' : 's'}`);
+    }, () => hasSeq() && disabledCount() > 0),
     cmd(X.takeSnapshot, async () => {
       const seq = seqNow(); if (!seq) return;
       const name = await promptText({ title: 'Take Snapshot', label: 'Snapshot name', initial: `Snapshot ${seq.snapshots.length + 1}` });
@@ -528,6 +542,32 @@ export function buildEditingCommands(): CommandInput[] {
       await api.message({ type: 'info', title: 'About ReCut', message: `ReCut ${info.version}`, detail: `FFmpeg: ${info.ffmpegVersion ?? 'not found'}\n${info.ffmpegPath ?? ''}\nCache: ${info.cacheDir}`, buttons: ['OK'] });
     }),
   ];
+}
+
+/** Removable disabled clips in the active sequence. */
+function disabledCount(): number {
+  const seq = seqNow();
+  return seq ? removableDisabledClipIds(seq).length : 0;
+}
+
+/**
+ * Remove Disabled Clips: confirm with the count, then ripple-delete them in one undo step (turns a what-if
+ * experiment into the real cut). Returns the number of clips removed.
+ */
+export async function removeDisabledClipsConfirmed(): Promise<number> {
+  const seq = seqNow(); if (!seq) return 0;
+  const n = disabledCount();
+  if (!n) { toast('info', 'No disabled clips in this sequence'); return 0; }
+  const i = await confirm({
+    type: 'question', title: 'Remove Disabled Clips',
+    message: `Remove ${n} disabled clip${n === 1 ? '' : 's'} from "${seq.name}" and close the gaps?`,
+    detail: 'This is one undo step. To keep the original, use Duplicate as Cut Without Disabled Clips instead.',
+    buttons: ['Remove', 'Cancel'], defaultId: 0, cancelId: 1,
+  });
+  if (i !== 0) return 0;
+  const removed = S().removeDisabledClips(seq.id);
+  if (removed) toast('ok', `Removed ${removed} disabled clip${removed === 1 ? '' : 's'}`);
+  return removed;
 }
 
 /** Register (or re-register) every editing command. Idempotent. */

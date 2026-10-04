@@ -4,7 +4,8 @@ import { useShallow } from 'zustand/react/shallow';
 import { Play, ScanSearch, Square, X } from 'lucide-react';
 import { MEDIA_CATEGORIES, type ID, type JobInfo, type MediaCategory, type MediaItem, type SourceIdentity } from '@shared/model';
 import { fpsLabel, fpsValue } from '@shared/time';
-import { identityLabel, mediaSubtitleTracks, startProxy, startSceneDetect, useStore } from '@/state';
+import { identityLabel, mediaSubtitleTracks, setMediaAudioStream, startProxy, startSceneDetect, useStore } from '@/state';
+import { mediaNeedsProxyForPreview, previewPlaybackLabel } from '@/playback/mediaSource';
 import type { StoreState } from '@/state';
 import { useJobsStore } from '@/app/jobsStore';
 import { Button, ColorSwatchPicker, IconButton, ProgressBar, Select, TagInput, TextField } from '@/components/ui';
@@ -70,7 +71,7 @@ function SingleMedia({ m }: { m: MediaItem }) {
           <span className="ellipsis" title={identityLabel(m)}>{identityLabel(m)}</span>
           {m.offline ? <span className="badge danger">offline</span> : null}
           {m.probeError ? <span className="badge danger" title={m.probeError}>probe failed</span> : null}
-          {p && !p.browserPlayable ? <span className="badge warn" title={p.playabilityReason ?? 'Needs a proxy for playback'}>needs proxy</span> : null}
+          {mediaNeedsProxyForPreview(m) ? <span className="badge warn" title={p?.playabilityReason ?? 'Needs a proxy for playback'}>needs proxy</span> : null}
         </div>
         <div className="row gap-4">
           <span className="insp-label" style={{ width: 36 }}>Label</span>
@@ -105,7 +106,7 @@ function SingleMedia({ m }: { m: MediaItem }) {
         {p && p.audio.length > 0 ? (
           <Row label="Audio stream" prop="preferred-audio" title="Audio stream used for new clips">
             <Select size="sm" value={m.preferredAudioStream === undefined ? 'auto' : String(m.preferredAudioStream)} options={audioOptions}
-              onChange={(v) => updateMedia(m.id, { preferredAudioStream: v === 'auto' ? undefined : Number(v) })} />
+              onChange={(v) => setMediaAudioStream(m.id, v === 'auto' ? undefined : Number(v))} />
           </Row>
         ) : null}
       </Section>
@@ -128,7 +129,7 @@ function SingleMedia({ m }: { m: MediaItem }) {
             {p.subtitles.length ? <Row label="Embedded subs"><Value dim>{p.subtitles.map((s) => `${s.codec}${s.language ? ` ${s.language}` : ''}`).join(' · ')}</Value></Row> : null}
             <Row label="Start time"><Value dim>{p.startTime.toFixed(3)}s</Value></Row>
             <Row label="Size"><Value dim>{formatBytes(m.fileSize ?? p.size)}{p.bitrate ? ` · ${Math.round(p.bitrate / 1000)} kb/s` : ''}</Value></Row>
-            <Row label="Playback"><Value dim={p.browserPlayable} className={p.browserPlayable ? '' : 'text-accent-2'}>{p.browserPlayable ? 'Direct' : `Proxy required${p.playabilityReason ? ` — ${p.playabilityReason}` : ''}`}</Value></Row>
+            <Row label="Playback">{(() => { const pl = previewPlaybackLabel(m); return <Value dim={pl.direct} className={pl.direct ? '' : 'text-accent-2'}>{pl.text}</Value>; })()}</Row>
           </>
         ) : null}
         <Row label="File"><Value onClick={() => openInFolder(m.path)} title={`${m.path}\nReveal in file manager`}>{m.path.split(/[\\/]/).pop()}</Value></Row>

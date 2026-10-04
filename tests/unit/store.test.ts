@@ -690,3 +690,140 @@ describe('view hot path (P-02)', () => {
     expect(after.audioTracks[2]).toBe(before.audioTracks[2]);
   });
 });
+
+describe('what-if → real cut (disabled clips)', () => {
+  /** Three linked A/V pairs back to back (10 s each at 24 fps); the middle pair disabled. */
+  function threePairsMiddleDisabled(): { ids: string[][] } {
+    const ids = [0, 1, 2].map((i) => S().insertFromSource(seqId, { mediaId: media.id, in: i * 10, out: i * 10 + 10, atFrame: i * 240, mode: 'overwrite' }));
+    for (const id of ids[1]) S().setClipEnabled(seqId, id, false);
+    S().clearHistory();
+    return { ids };
+  }
+
+  it('removeDisabledClips ripple-deletes every disabled clip in one undo step', () => {
+    const { ids } = threePairsMiddleDisabled();
+    expect(S().removeDisabledClips(seqId)).toBe(2);
+    const s = seq();
+    expect(clips()).toHaveLength(4);
+    expect(clips().every((c) => c.enabled)).toBe(true);
+    expect(findClip(s, ids[1][0])).toBeFalsy();
+    expect(findClip(s, ids[2][0])!.clip.start).toBe(240); // gap closed
+    expect(findClip(s, ids[2][1])!.clip.start).toBe(240);
+    expect(getUndoLabels().undo).toBe('Remove disabled clips');
+    expect(S().history.past.length).toBe(1);
+    expect(S().undo()).toBe(true);
+    expect(clips()).toHaveLength(6);
+    expect(findClip(seq(), ids[2][0])!.clip.start).toBe(480);
+  });
+
+  it('removeDisabledClips is a no-op without disabled clips', () => {
+    S().insertFromSource(seqId, { mediaId: media.id, in: 0, out: 10, atFrame: 0, mode: 'insert' });
+    S().clearHistory();
+    expect(S().removeDisabledClips(seqId)).toBe(0);
+    expect(S().history.past.length).toBe(0);
+  });
+
+  it('duplicateWithoutDisabled leaves the original alone and closes the gaps in the copy (one undo step)', () => {
+    threePairsMiddleDisabled();
+    const newId = S().duplicateWithoutDisabled(seqId, 'Tight cut')!;
+    expect(newId).toBeTruthy();
+    const orig = S().project.sequences[seqId];
+    const dup = S().project.sequences[newId];
+    expect(allTracks(orig).flatMap((t) => t.clips)).toHaveLength(6);
+    const dupClips = allTracks(dup).flatMap((t) => t.clips);
+    expect(dupClips).toHaveLength(4);
+    expect(dupClips.every((c) => c.enabled)).toBe(true);
+    expect(dup.videoTracks[0].clips.map((c) => c.start)).toEqual([0, 240]);
+    expect(dup.name).toBe('Tight cut');
+    expect(dup.parentSequenceId).toBe(seqId);
+    expect(S().project.activeSequenceId).toBe(newId);
+    expect(S().history.past.length).toBe(1);
+    S().undo();
+    expect(S().project.sequences[newId]).toBeUndefined();
+  });
+});
+
+describe('renderer autosave', () => {
+  it('sends compact JSON through autosaveProjectJson, falling back to autosaveProject', async () => {
+    const { autosaveProject } = await import('../../src/state/mediaActions');
+    const g = globalThis as { window?: unknown };
+    const prev = g.window;
+    const calls: { kind: string; path: string | null; arg: unknown }[] = [];
+    try {
+      useStore.setState({ dirty: true, projectPath: '/p/x.recut' });
+      g.window = { recut: {
+        autosaveProjectJson: async (path: string | null, json: string) => { calls.push({ kind: 'json', path, arg: json }); return { ok: true, path: 'a' }; },
+        autosaveProject: async (path: string | null, p: unknown) => { calls.push({ kind: 'obj', path, arg: p }); return { ok: true, path: 'a' }; },
+      } };
+      await autosaveProject();
+      expect(calls).toHaveLength(1);
+      expect(calls[0].kind).toBe('json');
+      expect(calls[0].path).toBe('/p/x.recut');
+      const json = calls[0].arg as string;
+      expect(json).not.toContain('\n'); // compact, like serializeAutosave
+      expect(JSON.parse(json).id).toBe(S().project.id);
+
+      g.window = { recut: { autosaveProject: async (path: string | null, p: unknown) => { calls.push({ kind: 'obj', path, arg: p }); return { ok: true, path: 'a' }; } } };
+      await autosaveProject();
+      expect(calls[1].kind).toBe('obj');
+
+      g.window = { recut: { autosaveProjectJson: async () => ({ ok: false, error: 'Autosave failed: disk full' }) } };
+      await expect(autosaveProject()).rejects.toThrow(/disk full/);
+    } finally {
+      g.window = prev;
+    }
+  });
+});
+
+describe('proxy vs preferred audio stream', () => {
+  function twoStreamMedia(playable: boolean): MediaItem {
+    const m = fakeMedia('dual.mkv');
+    m.probe = { ...m.probe!, browserPlayable: playable, audio: [
+      { index: 1, codec: 'ac3', channels: 6, layout: '5.1', sampleRate: 48000 },
+      { index: 2, codec: 'ac3', channels: 2, layout: 'stereo', sampleRate: 48000 },
+    ] };
+    m.preferredAudioStream = 1;
+    m.proxy = { status: 'ready', path: '/cache/proxies/k_540p_a1.mp4' };
+    return m;
+  }
+
+  it('updateMedia marks a proxy built for another stream stale (proxy state is a job mirror, not undone)', () => {
+    const m = twoStreamMedia(false);
+    S().addMedia([m]);
+    S().updateMedia(m.id, { preferredAudioStream: 1 });
+    expect(S().project.media[m.id].proxy.status).toBe('ready');
+    S().updateMedia(m.id, { preferredAudioStream: 2 });
+    expect(S().project.media[m.id].proxy).toEqual({ status: 'none' });
+    S().undo();
+    expect(S().project.media[m.id].preferredAudioStream).toBe(1);
+  });
+
+  it('a proxy recorded for the new stream stays ready', () => {
+    const m = twoStreamMedia(false);
+    m.proxy = { status: 'ready', path: '/cache/p.mp4', audioStream: 2 };
+    S().addMedia([m]);
+    S().updateMedia(m.id, { preferredAudioStream: 2 });
+    expect(S().project.media[m.id].proxy.status).toBe('ready');
+  });
+
+  it('setMediaAudioStream requeues the proxy when proxies are on and the media needs one', async () => {
+    const { setMediaAudioStream } = await import('../../src/state/mediaActions');
+    const g = globalThis as { window?: unknown };
+    const prev = g.window;
+    const reqs: { mediaId: string; audioStream?: number }[] = [];
+    g.window = { recut: { startProxy: async (r: { mediaId: string; audioStream?: number }) => { reqs.push(r); return { id: 'j' }; } } };
+    try {
+      const undecodable = twoStreamMedia(false);
+      const playable = twoStreamMedia(true);
+      S().addMedia([undecodable, playable]);
+      setMediaAudioStream(undecodable.id, 2);
+      setMediaAudioStream(playable.id, 2);
+      await Promise.resolve();
+      expect(reqs.map((r) => [r.mediaId, r.audioStream])).toEqual([[undecodable.id, 2]]);
+      expect(S().project.media[undecodable.id].proxy).toMatchObject({ status: 'queued', audioStream: 2 });
+      expect(S().project.media[playable.id].proxy.status).toBe('none');
+    } finally {
+      g.window = prev;
+    }
+  });
+});

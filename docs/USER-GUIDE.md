@@ -37,7 +37,11 @@ Alt+Shift+0.
    - Audio goes into **Audio** and images into **Graphics**.
 3. Subtitle files next to a video (`Episode.srt`, `Episode.en.srt`, `.vtt`) are attached automatically.
 4. Files Chromium cannot decode (HEVC, AC-3/DTS audio, TS, ...) get a **proxy** automatically while **Use proxies** is
-   on. Watch progress in the top-bar jobs indicator or in **Jobs › Proxies**.
+   on. Watch progress in the top-bar jobs indicator or in **Jobs › Proxies**. Still images (PNG, JPEG, WebP, GIF,
+   BMP) never need a proxy: the monitors draw them directly. Other image formats (TIFF, HEIC, ...) export correctly but
+   do not show in the Program monitor; convert them to PNG or JPEG for preview.
+5. If a yellow banner says **FFmpeg was not found**, install FFmpeg (see [INSTALL](INSTALL.md)) and restart ReCut.
+   Import, proxies and export do not work without it.
 
 ## 2. Organise
 
@@ -48,7 +52,9 @@ Alt+Shift+0.
   "Galaxy Saga", Collection "Original Trilogy"). The Media Inspector › **Identity** section edits one item.
 - Right-click › **Set Category**, **Rename** (F2), or **Tag…**. Use the colour labels in the Inspector.
 - The **Inspector** shows media info (codecs, fps, audio streams, VFR), the **Audio stream** to use for new clips,
-  proxy and scene status, and attached subtitle tracks.
+  proxy and scene status, and attached subtitle tracks. Changing the **Audio stream** of a file whose proxy carries
+  another stream marks that proxy stale. With proxies on, a file that needs one gets a new proxy for the chosen
+  stream.
 
 ## 3. Detect scenes
 
@@ -120,8 +126,8 @@ Scenes in the library are reusable, tagged source ranges.
 - Nudge with **Alt+←/→** (add Shift for 5 frames). Hold Ctrl while dragging for an insert-move. Snapping (S) catches
   edges, markers and the playhead. Hold Alt to bypass it.
 - A **sync badge** on a clip means it has drifted from its linked partner by N frames.
-- **Speed / Duration…** (Ctrl+R) or the Inspector's Speed field changes speed. Turn on **Ripple following clips** to
-  move later clips.
+- **Speed / Duration…** (Ctrl+R) or the Inspector's Speed field changes speed (both accept 1 %–10 000 %). Turn on
+  **Ripple following clips** to move later clips.
 
 ## 9. Transitions
 
@@ -145,6 +151,11 @@ Scenes in the library are reusable, tagged source ranges.
    - **Runtime if removed** shows an estimate.
 
    Each is one undo step. Disabled clips export as black or silence until you remove them.
+   - **Remove disabled** (also **Sequence › Remove Disabled Clips…** and the clip right-click menu) ripple-deletes
+     every disabled clip and closes the gaps, after asking with the count. One undo step. Clips on locked tracks are
+     left alone.
+   - **Duplicate as cut** (**Sequence › Duplicate as Cut Without Disabled Clips…**) keeps the experiment and makes a
+     new version of the sequence with the disabled clips removed and the gaps closed.
 4. **Story blocks:** drag on the Storyline strip, or use **Block from In/Out** / **Block from Selection**, to label
    acts and arcs. Right-click a block to rename it, set In/Out to it or change its colour. The block table lists
    them with durations and notes.

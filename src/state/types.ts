@@ -172,6 +172,10 @@ export interface StoreActions {
   // ---- sequences ----
   addSequence(seq: Sequence, opts?: { activate?: boolean }): void;
   duplicateSequence(id: ID, newName: string): ID | null;
+  /** Ripple-delete every disabled clip of the sequence (one undo step). Returns how many clips were removed. */
+  removeDisabledClips(seqId?: ID): number;
+  /** Duplicate the sequence and ripple-delete the disabled clips in the copy (one undo step). Returns the copy's id. */
+  duplicateWithoutDisabled(id: ID, newName: string): ID | null;
   deleteSequence(id: ID): void;
   renameSequence(id: ID, name: string): void;
   setActiveSequence(id: ID | null): void;
