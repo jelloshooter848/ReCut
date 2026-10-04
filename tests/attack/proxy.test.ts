@@ -126,6 +126,7 @@ describe('proxy time mapping', () => {
     vclip(seq, m, 0, 24, 1); aclip(seq, m, 0, 24, 1);
     const g = buildRenderGraph(request(seq, [m]));
     expect(g.args.join(' ')).not.toContain('SHOULD_NOT_APPEAR');
-    expect(g.args.filter((a) => a === m.path).length).toBe(2);
+    // A linked V+A pair with identical ranges shares one input since M-09 (was 2 inputs).
+    expect(g.args.filter((a) => a === m.path).length).toBe(1);
   });
 });

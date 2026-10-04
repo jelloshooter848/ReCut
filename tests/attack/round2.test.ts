@@ -213,7 +213,8 @@ describe('proxy audio stream choice', () => {
     const m = await makeMediaItem(mediaPath('multi.mkv'), { preferredAudioStream: 2 });
     expect(m.probe!.browserPlayable).toBe(false); // ac3 => preview MUST use the proxy
     const q = new JobQueue();
-    const { job, outputPath } = await startProxyJob(q, { mediaId: 'multi', path: m.path, height: 240 });
+    // The renderer passes media.preferredAudioStream (src/state/mediaActions.ts startProxy).
+    const { job, outputPath } = await startProxyJob(q, { mediaId: 'multi', path: m.path, height: 240, audioStream: m.preferredAudioStream });
     const final = await q.waitFor(job.id);
     expect(final.status).toBe('done');
     const pp = await probeMedia(outputPath);

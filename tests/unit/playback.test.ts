@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { Clip, MediaItem, Sequence, Track, Transition } from '../../shared/model';
 import { createSequence } from '../../shared/project';
 import { defaultAudio, defaultTransform } from '../../shared/timeline';
-import { resolvePlaybackPath, mediaFps } from '../../src/playback/mediaSource';
+import { resolvePlaybackPath, mediaFps, mediaTimeOffset, toElementTime, fromElementTime, clampElementTime } from '../../src/playback/mediaSource';
 import { PlaybackClock } from '../../src/playback/clock';
 import { planFrame, fadeEnvelope, contributionsAt } from '../../src/playback/planner';
 import { peaksForRange, ThumbnailCache, WaveformCache } from '../../src/playback/thumbnails';
@@ -478,5 +478,54 @@ describe('ThumbnailCache / WaveformCache without window.recut', () => {
     } finally {
       delete (globalThis as any).window;
     }
+  });
+});
+
+// ------------------------------------------------------------------ M-11: element time of originals with a container start offset
+
+describe('element time mapping (container start_time)', () => {
+  const withStart = (startTime: number, over: Partial<MediaItem> = {}) => {
+    const m = mediaItem('ts10', over);
+    m.probe = { ...m.probe!, startTime };
+    return m;
+  };
+
+  it('originals are offset by probe.startTime; proxies and zero-start files are not', () => {
+    expect(resolvePlaybackPath(withStart(9.978), false).timeOffset).toBe(9.978);
+    expect(resolvePlaybackPath(withStart(0), false).timeOffset).toBe(0);
+    const proxied = withStart(9.978, { proxy: { status: 'ready', path: '/proxies/ts10.mp4' } });
+    expect(resolvePlaybackPath(proxied, true)).toMatchObject({ usingProxy: true, timeOffset: 0 });
+    const notPlayable = withStart(1.462, { proxy: { status: 'ready', path: '/proxies/ts.mp4' } });
+    notPlayable.probe = { ...notPlayable.probe!, browserPlayable: false };
+    expect(resolvePlaybackPath(notPlayable, false)).toMatchObject({ usingProxy: true, timeOffset: 0 });
+    expect(mediaTimeOffset(withStart(-0.021), false)).toBe(0);
+    expect(mediaTimeOffset(withStart(9.978), true)).toBe(0);
+  });
+
+  it('source time <-> element time round-trips and clamps to the playable span', () => {
+    // counter24_ts10.mp4: frame 100 centre (4.1875 s) must be written as 9.978 + 4.1875
+    expect(toElementTime(4.1875, 9.978)).toBeCloseTo(14.1655, 9);
+    expect(fromElementTime(toElementTime(4.1875, 9.978), 9.978)).toBeCloseTo(4.1875, 9);
+    expect(toElementTime(1, undefined)).toBe(1);
+    // zero offset: [0, duration)
+    expect(clampElementTime(25, 20, 0)).toBeCloseTo(19.999, 9);
+    expect(clampElementTime(-1, 20, 0)).toBe(0);
+    // offset: never before the first pts; Chromium's duration (22.458 for a 20 s file at 9.978) is not an end bound
+    expect(clampElementTime(9, 22.458, 9.978)).toBe(9.978);
+    expect(clampElementTime(25, 22.458, 9.978)).toBe(25);
+  });
+
+  it('planFrame carries the offset on video layers and audio sources', () => {
+    const s = seq();
+    const m = withStart(9.978);
+    s.videoTracks[0].clips.push(clip('v', m.id, 0, 48));
+    s.audioTracks[0].clips.push(clip('a', m.id, 0, 48, { kind: 'audio' }));
+    const plan = planFrame(s, { [m.id]: m }, 10, false);
+    expect(plan.layers[0].timeOffset).toBe(9.978);
+    expect(plan.audio[0].timeOffset).toBe(9.978);
+    const proxied = withStart(9.978, { proxy: { status: 'ready', path: '/p.mp4' } });
+    const plan2 = planFrame(s, { [m.id]: proxied }, 10, true);
+    expect(plan2.layers[0].timeOffset).toBe(0);
+    expect(plan2.audio[0].timeOffset).toBe(0);
   });
 });

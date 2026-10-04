@@ -25,6 +25,9 @@ async function measure(outputPath: string, fps: Rational, label: string): Promis
   return { flashes, beeps };
 }
 
+/** First 24 fps timeline frame whose editor seek (t + 0.5/24) is at or past a flash at container-relative t. */
+function editorFlashFrame(t: number): number { return Math.ceil((t - 0.5 / 24) * 24 - 1e-6); }
+
 /** First flash frame and first beep (in frames) must agree within tolerance frames. */
 function expectAligned(flashes: number[], beeps: number[], fps: Rational, wantFlash: number[], wantBeepSec: number[], tolFrames = 1) {
   expect(flashes, 'flash frames').toEqual(wantFlash);
@@ -52,8 +55,11 @@ describe('export A/V sync (24 fps sequence)', () => {
       if (warnings.length) console.log(`[sync ${c.file}] warnings: ${warnings.join(' | ')}`);
       const r = await measure(outputPath, FPS_24, `${c.file} mid`);
       // flashes at source 6.0 and 8.0 (+flashShift) => frames 24, 72 (+24*shift); beeps at 6.0 and 8.0 (+beepShift) => 1.0 s, 3.0 s
-      const fs0 = 24 * (c.flashShift ?? 0);
-      const wantFlash = [24 + fs0, 72 + fs0];
+      // Editor model (frame covering t + 0.5/24): the flash sits at container-relative 1.0 s + the video stream's
+      // start offset (0.0213 s for the AAC-primed ts/ts10 files, 0.521 s for vdelay), so it can show one frame later
+      // than the rounded 24 + 24*flashShift.
+      const vs = (m.probe!.video as { startTime?: number }).startTime ?? 0;
+      const wantFlash = [editorFlashFrame(1.0 + vs), editorFlashFrame(3.0 + vs)];
       const wantBeep = [1.0 + (c.beepShift ?? 0), 3.0 + (c.beepShift ?? 0)];
       expectAligned(r.flashes, r.beeps, FPS_24, wantFlash, wantBeep);
     });
@@ -75,11 +81,11 @@ describe('export A/V sync (24 fps sequence)', () => {
     vclip(seq, m, 0, 96, 0); aclip(seq, m, 0, 96, 0);
     const { outputPath } = await exportSeq(seq, [m]);
     const r = await measure(outputPath, FPS_24, 'vdelay head');
-    // video frames exist from 0.5 s: flash at source 0.5 and 2.5 => frames 12, 60; beeps at 0 and 2 s
+    // video frames exist from 0.521 s: flash at source 0.521 and 2.521 => editor frames 13, 61; beeps at 0 and 2 s
     expect(r.beeps.length).toBe(2);
     expect(Math.abs(frameOf(r.beeps[0], FPS_24))).toBeLessThanOrEqual(1);
     expect(Math.abs(frameOf(r.beeps[1], FPS_24) - 48)).toBeLessThanOrEqual(1);
-    expect(r.flashes).toEqual([12, 60]);
+    expect(r.flashes).toEqual([editorFlashFrame(0.521), editorFlashFrame(2.521)]);
   });
 
   it('2x speed keeps flash and beep aligned (flashes every second)', async () => {
@@ -97,8 +103,9 @@ describe('export A/V sync (24 fps sequence)', () => {
     vclip(seq, m, 0, 96, 5.0, 0.5); aclip(seq, m, 0, 96, 5.0, 0.5);
     const { outputPath } = await exportSeq(seq, [m]);
     const r = await measure(outputPath, FPS_24, '0.5x');
-    // flash at source 6.0 => timeline 2.0 s = frame 48 (shown for 2 frames: 48, 49); beep at 2.0 s
-    expect(r.flashes.slice(0, 1)).toEqual([48]);
+    // flash at source 6.0: the editor at frame 47 seeks to 5 + 47/48 + 1/48 = 6.0 exactly, i.e. the flash frame
+    // (floor(t*fps + 0.5) model), so it shows at 47 and 48; beep at 2.0 s (frame 48)
+    expect(r.flashes.slice(0, 1)).toEqual([47]);
     expect(r.beeps.length).toBe(1);
     expect(Math.abs(frameOf(r.beeps[0], FPS_24) - 48)).toBeLessThanOrEqual(1);
   });

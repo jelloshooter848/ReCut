@@ -16,7 +16,9 @@ export const WAVEFORM_RATE = 50;        // buckets per second
 export const WAVEFORM_SAMPLE_RATE = 4000; // Hz of the decoded PCM
 const SAMPLES_PER_BUCKET = WAVEFORM_SAMPLE_RATE / WAVEFORM_RATE; // 80
 
-interface WaveHeader { rate: number; duration: number; version: 1 }
+/** v2: peaks start at the container start (late audio padded with silence). v1 caches are recomputed. */
+const WAVE_VERSION = 2;
+interface WaveHeader { rate: number; duration: number; version: number }
 
 const inFlight = new Map<string, Promise<WaveformData>>();
 
@@ -30,6 +32,7 @@ async function readCached(key: string): Promise<WaveformData | null> {
   if (!(await fileExists(json)) || !(await fileExists(pk))) return null;
   try {
     const header = JSON.parse(await fsp.readFile(json, 'utf8')) as WaveHeader;
+    if (header.version !== WAVE_VERSION) return null;
     const buf = await fsp.readFile(pk);
     return { rate: header.rate, duration: header.duration, peaks: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength) };
   } catch {
@@ -42,7 +45,7 @@ async function writeCached(key: string, data: WaveformData): Promise<void> {
   const pkPart = `${pk}.part`, jsonPart = `${json}.part`;
   try {
     await fsp.writeFile(pkPart, data.peaks);
-    const header: WaveHeader = { rate: data.rate, duration: data.duration, version: 1 };
+    const header: WaveHeader = { rate: data.rate, duration: data.duration, version: WAVE_VERSION };
     await fsp.writeFile(jsonPart, JSON.stringify(header));
     await fsp.rename(pkPart, pk);
     await fsp.rename(jsonPart, json);
@@ -106,17 +109,25 @@ export async function computeWaveform(filePath: string, opts: WaveformOptions = 
     return { rate: WAVEFORM_RATE, duration, peaks: new Uint8Array(0) };
   }
   let mapSpec = '0:a:0';
+  let stream = audioStreams[0];
   if (opts.streamIndex !== undefined) {
     const s = audioStreams.find((a) => a.index === opts.streamIndex);
     if (!s) throw new Error(`stream ${opts.streamIndex} is not an audio stream of ${path.basename(filePath)}`);
     mapSpec = `0:${s.index}`;
+    stream = s;
   }
+  // ffmpeg decodes the stream from its own first sample; <video> (and the export) place it at
+  // (stream start - container start). Pad that lead with silence so peaks are in media time (M-08).
+  const lead = Math.max(0, (parseFloat(stream.start_time ?? '') || 0) - (parseFloat(raw.format?.start_time ?? '') || 0));
 
   const expected = duration > 0 ? Math.ceil(duration * WAVEFORM_RATE) + 1 : 0;
   const peaks = new PeakBuffer(expected);
   // carry-over bucket state across chunk boundaries
   let bucketMax = 0;
   let bucketCount = 0;
+  const leadSamples = lead > 1e-6 && Number.isFinite(lead) ? Math.round(lead * WAVEFORM_SAMPLE_RATE) : 0;
+  for (let i = 0; i < Math.floor(leadSamples / SAMPLES_PER_BUCKET); i++) peaks.push(0);
+  bucketCount = leadSamples % SAMPLES_PER_BUCKET;
 
   const run = runFfmpeg(
     [

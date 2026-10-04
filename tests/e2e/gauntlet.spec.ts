@@ -33,8 +33,25 @@ const timelineSnapshot = (seq: SeqLite) => ({
 
 async function focusSource(page: Page) { await page.locator('.source-panel').focus(); }
 
+export type ConformAnswer = 'click-change' | 'enter' | 'keep';
+
+/**
+ * After an insert into an empty sequence whose fps / frame size differ from the media, the app asks
+ * "Change sequence to match clip?" (`conform-dialog`). Answer it the requested way. Returns true when it was shown.
+ */
+async function answerConformIfShown(page: Page, answer: ConformAnswer, settled: () => Promise<boolean>): Promise<boolean> {
+  const dlg = page.getByTestId('conform-dialog');
+  await expect.poll(async () => (await settled()) || (await dlg.count()) > 0, { timeout: 20_000 }).toBe(true);
+  if (!(await dlg.count())) return false;
+  if (answer === 'click-change') await page.getByTestId('conform-change').click();
+  else if (answer === 'keep') await page.getByTestId('conform-keep').click();
+  else await page.keyboard.press('Enter');
+  await expect(dlg).toHaveCount(0);
+  return true;
+}
+
 /** Mark In at `inS`, Out at `outS` with the I / O keys on the focused Source panel, then press ',' (insert). */
-async function markAndInsert(page: Page, inS: number, outS: number): Promise<void> {
+async function markAndInsert(page: Page, inS: number, outS: number, conform: ConformAnswer = 'click-change'): Promise<boolean> {
   const nVideo = async () => evalStore<number>(page, '(s) => { const q = s.project.sequences[s.project.activeSequenceId]; return q.videoTracks.reduce((n, t) => n + t.clips.length, 0); }');
   const before = await nVideo();
   await seekSource(page, inS);
@@ -47,7 +64,31 @@ async function markAndInsert(page: Page, inS: number, outS: number): Promise<voi
   // Out is exclusive: the end of the frame under the playhead.
   await expect.poll(async () => Math.abs(((await evalStore<number | null>(page, '(s) => s.ui.sourceClip?.outPoint ?? null')) ?? -99) - (outS + 1 / SOURCE_FPS)) < 0.03).toBe(true);
   await page.keyboard.press(',');
+  const shown = await answerConformIfShown(page, conform, async () => (await nVideo()) > before);
   await expect.poll(nVideo).toBe(before + 1);
+  return shown;
+}
+
+/** Stub Electron's native message box in the main process (records each call's message, answers `response`). */
+async function stubMessageBox(L: Launched, response: number): Promise<void> {
+  await L.app.evaluate(({ dialog }, response) => {
+    const g = globalThis as unknown as { __gauntletMsgs: string[] };
+    g.__gauntletMsgs = [];
+    const fake = async (...args: unknown[]) => {
+      const opts = (args.length > 1 ? args[1] : args[0]) as { message?: string };
+      g.__gauntletMsgs.push(String(opts?.message ?? ''));
+      return { response, checkboxChecked: false };
+    };
+    (dialog as unknown as { showMessageBox: unknown }).showMessageBox = fake;
+  }, response);
+}
+const stubbedMessages = (L: Launched) => L.app.evaluate(() => (globalThis as unknown as { __gauntletMsgs?: string[] }).__gauntletMsgs ?? []);
+
+/** Stub the native folder / file picker in the main process so a UI button that opens it gets `paths`. */
+async function stubOpenDialog(L: Launched, paths: string[]): Promise<void> {
+  await L.app.evaluate(({ dialog }, paths) => {
+    (dialog as unknown as { showOpenDialog: unknown }).showOpenDialog = async () => ({ canceled: false, filePaths: paths });
+  }, paths);
 }
 
 /** Open the Export dialog with the real shortcut; falls back to the store when the key does not reach the shell. */
@@ -106,6 +147,13 @@ test.describe.serial('TEST 1 — Basic Movie Edit', () => {
       expect(m.probeError, m.probeError).toBeUndefined();
       expect(m.probe?.browserPlayable).toBe(true);
       expect(Math.round(m.probe!.duration)).toBe(24);
+      expect(await evalStore<string[]>(page, '(s) => s.ui.selectedMediaIds'), 'imported item is selected').toEqual([mediaId]);
+    });
+
+    await g.step('Import auto-routes the movie into the Movies bin', 'API', async () => {
+      const r = await evalStore<{ bin: string | null; category: string; identity: unknown }>(page, '(s, id) => ({ bin: s.project.media[id].binId, category: s.project.media[id].category, identity: s.project.media[id].identity })', mediaId);
+      g.note(`"Galaxy Saga 1 - A New Dawn.mp4" → bin=${r.bin} category=${r.category} identity=${JSON.stringify(r.identity)}`, 'API');
+      expect(r.bin, 'movie titles without a (year) are not recognised as movies (parseIdentity.importIdentity requires a year)').toBe('bin-movies');
     });
 
     await g.step('Double-click the item in the Project panel → Source monitor loads it', 'UI', async () => {
@@ -151,9 +199,18 @@ test.describe.serial('TEST 1 — Basic Movie Edit', () => {
       expect(seen[0]).toBeLessThan(seen[1]); expect(seen[1]).toBeLessThan(seen[2]);
     });
 
-    await g.step('I / O / , on the focused Source panel ×3 → 3 video + 3 linked audio clips (seeks via store.setSourceTime)', 'UI+API', async () => {
+    await g.step('I / O / , on the focused Source panel ×3 → conform prompt (click Change) → 3 video + 3 linked audio clips (seeks via store.setSourceTime)', 'UI+API', async () => {
       const ranges: [number, number][] = [[1, 3], [5, 7], [9, 11]];
-      for (const [i, o] of ranges) await markAndInsert(page, i, o);
+      const shown: boolean[] = [];
+      for (const [i, o] of ranges) {
+        shown.push(await markAndInsert(page, i, o, 'click-change'));
+        // three-point rules: the playhead lands at the end of the edit; sequence In/Out are cleared
+        const v = await evalStore<{ ph: number; i: number | null; o: number | null; end: number }>(page, '(s) => { const q = s.project.sequences[s.project.activeSequenceId]; const ends = q.videoTracks.flatMap((t) => t.clips.map((c) => c.start + c.duration)); return { ph: q.view.playhead, i: q.view.inPoint, o: q.view.outPoint, end: Math.max(...ends) }; }');
+        expect(v.ph, 'playhead at end of edit').toBe(v.end); expect(v.i).toBeNull(); expect(v.o).toBeNull();
+      }
+      expect(shown, 'conform dialog only on the first insert into the empty sequence').toEqual([true, false, false]);
+      const fmt = await evalStore<{ fps: { num: number; den: number }; w: number; h: number }>(page, '(s) => { const q = s.project.sequences[s.project.activeSequenceId]; return { fps: q.fps, w: q.width, h: q.height }; }');
+      expect(fmt.fps.num / fmt.fps.den).toBeCloseTo(24, 5); expect([fmt.w, fmt.h]).toEqual([640, 360]);
       seq = await seqState(page);
       const v = vclips(seq), a = aclips(seq);
       expect(v).toHaveLength(3); expect(a).toHaveLength(3);
@@ -322,30 +379,21 @@ test.describe.serial('TEST 2 — TV Fan Edit', () => {
     await g.step('Import the three Station Eleven episodes', 'API', async () => {
       ids = await importMedia(page, episodes);
       expect(ids).toHaveLength(3);
+      expect([...(await evalStore<string[]>(page, '(s) => s.ui.selectedMediaIds'))].sort()).toEqual([...ids].sort());
     });
 
-    await g.step('Organize as Series via the Project panel context menu dialog ("Station Eleven", season 1)', 'UI', async () => {
-      await setMaximized(page, 'project', true);
-      const rows = page.locator('[data-row-kind="media"]');
-      await expect(rows).toHaveCount(3);
-      await rows.nth(0).click();
-      await rows.nth(2).click({ modifiers: ['Shift'] });
-      await expect.poll(() => evalStore<number>(page, '(s) => s.ui.selectedMediaIds.length')).toBe(3);
-      await rows.nth(1).click({ button: 'right' });
-      await page.locator('.menu-item', { hasText: 'Organize as Series' }).click();
-      const name = page.getByTestId('series-name');
-      await expect(name).toBeVisible();
-      await name.fill('Station Eleven');
-      await page.getByTestId('series-apply').click();
-      const identities = await evalStore<{ series?: string; season?: number; episode?: number }[]>(page, '(s) => Object.values(s.project.media).map((m) => m.identity).sort((a, b) => a.episode - b.episode)');
-      expect(identities).toEqual([
-        { series: 'Station Eleven', season: 1, episode: 1 },
-        { series: 'Station Eleven', season: 1, episode: 2 },
-        { series: 'Station Eleven', season: 1, episode: 3 },
-      ]);
+    await g.step('Episodes auto-organise into TV › Station Eleven › Season 1 with episode numbers (Project panel shows the bins)', 'UI+API', async () => {
+      const r = await evalStore<{ identities: unknown[]; path: string[][] }>(page, `(s, ids) => {
+        const bins = s.project.bins;
+        const chain = (id) => { const out = []; let b = bins[id]; while (b) { out.unshift(b.name); b = b.parentId ? bins[b.parentId] : null; } return out; };
+        return { identities: ids.map((id) => ({ series: s.project.media[id].identity.series, season: s.project.media[id].identity.season, episode: s.project.media[id].identity.episode })),
+                 path: ids.map((id) => chain(s.project.media[id].binId)) };
+      }`, ids);
+      expect(r.identities).toEqual([1, 2, 3].map((episode) => ({ series: 'Station Eleven', season: 1, episode })));
+      for (const p of r.path) expect(p).toEqual(['TV', 'Station Eleven', 'Season 1']);
       await expect(page.locator('[data-row-kind="bin"] .pp-name', { hasText: 'Station Eleven' })).toHaveCount(1);
-      await setMaximized(page, 'project', false);
-    }, { fallback: async () => { await evalStore(page, '(s, ids) => s.organizeAsSeries(ids, "Station Eleven", 1)', ids); await setMaximized(page, 'project', false); } });
+      await expect(page.locator('[data-row-kind="bin"] .pp-name', { hasText: /^Season 1$/ })).toHaveCount(1);
+    }, { fallback: async () => { await evalStore(page, '(s, ids) => s.organizeAsSeries(ids.map((id, i) => ({ id, episode: i + 1 })), "Station Eleven", 1)', ids); } });
 
     await g.step('Import the matching .srt for each episode (actions.importSubtitleFile — native picker otherwise)', 'API', async () => {
       for (let i = 0; i < ids.length; i++) {
@@ -383,13 +431,21 @@ test.describe.serial('TEST 2 — TV Fan Edit', () => {
       expect(Math.abs((await sourceVideoTime(page)) - 5)).toBeLessThan(0.15);
     });
 
+    let transcriptConform = false;
     await g.step('Insert from E01 via the result\'s "Insert at playhead" button (carries the cue)', 'UI', async () => {
       await results.first().hover();
       await results.first().getByLabel('Insert at playhead', { exact: false }).click();
+      transcriptConform = await answerConformIfShown(page, 'enter', async () => (await evalStore<number>(page, '(s) => s.project.sequences[s.project.activeSequenceId].videoTracks[0].clips.length')) > 0);
       seq = await seqState(page);
       expect(vclips(seq)).toHaveLength(1);
       expect(vclips(seq)[0].mediaId).toBe(ep1);
       expect(seq.subtitleTracks[0]?.cues.map((c) => c.text)).toEqual(['Where is the doctor?']);
+    });
+
+    await g.step('Transcript "Insert at playhead" into the EMPTY 1080p/23.976 sequence offers the conform prompt (like Source , and timeline drop)', 'UI', async () => {
+      const fmt = await evalStore<{ fps: number; w: number; h: number }>(page, '(s) => { const q = s.project.sequences[s.project.activeSequenceId]; return { fps: q.fps.num / q.fps.den, w: q.width, h: q.height }; }');
+      g.note(`sequence after first Transcript insert: ${fmt.w}x${fmt.h} @ ${fmt.fps.toFixed(3)} fps; conform prompt shown=${transcriptConform}`);
+      expect(transcriptConform, 'Transcript insert bypasses maybeConformSequence (calls store.insertFromSource directly)').toBe(true);
     });
 
     await g.step('Insert from E02 via the Source monitor: click result → "," on the focused Source panel', 'UI', async () => {
@@ -422,7 +478,8 @@ test.describe.serial('TEST 2 — TV Fan Edit', () => {
       await page.locator('.menu-item', { hasText: 'Tag…' }).click();
       const dlg = page.getByRole('dialog').filter({ hasText: 'Tags —' });
       await expect(dlg).toBeVisible();
-      const input = dlg.locator('input[placeholder="Add character…"]');
+      // (the TagInput drops its placeholder once it holds a value, so locate it by its form row)
+      const input = dlg.locator('.tl-form-row', { hasText: 'Characters' }).locator('input');
       await input.click(); await input.fill('Kirsten'); await input.press('Enter');
       await input.fill('Jeevan'); await input.press('Enter');
       await dlg.getByRole('button', { name: 'Apply', exact: true }).click();
@@ -431,7 +488,7 @@ test.describe.serial('TEST 2 — TV Fan Edit', () => {
       expect(vclips(seq)[0].characters).toEqual(['Kirsten', 'Jeevan']);
       expect(await evalStore<string[]>(page, '(s) => s.project.tags.characters')).toEqual(expect.arrayContaining(['Kirsten', 'Jeevan']));
       await setMaximized(page, 'timeline', false);
-    }, { note: 'zoom set through the store', fallback: async () => { await setMaximized(page, 'timeline', false); await evalStore(page, '(s, id) => s.setClipTags(s.project.activeSequenceId, id, { characters: ["Kirsten", "Jeevan"] })', vclips(seq)[0].id); } });
+    }, { note: 'zoom set through the store', fallback: async () => { await page.keyboard.press('Escape'); await setMaximized(page, 'timeline', false); await evalStore(page, '(s, id) => s.setClipTags(s.project.activeSequenceId, id, { characters: ["Kirsten", "Jeevan"] })', vclips(seq)[0].id); } });
 
     await g.step('Tag clip 3 by character through the Inspector TagInput', 'UI', async () => {
       seq = await seqState(page);
@@ -561,25 +618,30 @@ test.describe.serial('TEST 3 — Large-Media Workflow', () => {
 
     const jobsPanel = page.getByTestId('jobs-panel');
     const proxyRow = (mediaId: string) => page.locator(`[data-testid="proxy-row"][data-media-id="${mediaId}"]`);
-    await g.step('Jobs › Proxies: "Generate missing proxies" → all four ready', 'UI', async () => {
+    let undecodable: (keyof typeof id)[] = [];
+    await g.step('Proxies are on → undecodable files (HEVC / AC-3) get proxies automatically on import; Jobs › Proxies shows them ready', 'UI', async () => {
+      expect(await evalStore<boolean>(page, '(s) => s.project.settings.useProxies')).toBe(true);
+      const m0 = await mediaState(page);
+      undecodable = (Object.keys(id) as (keyof typeof id)[]).filter((k) => m0[id[k]].probe?.browserPlayable === false);
+      g.note(`not browser-playable: ${undecodable.join(', ') || '(none)'}`, 'API');
+      expect(undecodable).toContain('ac3');
+      if (!hevcNative) expect(undecodable).toContain('hevc');
       await showPanel(page, 'jobs');
       await jobsPanel.getByRole('tab', { name: 'Proxies' }).click();
       await expect(page.getByTestId('proxies-tab')).toBeVisible();
-      await expect(proxyRow(id.hevc)).toHaveAttribute('data-proxy-status', 'none');
-      await page.getByTestId('proxies-generate-missing').click();
-      await page.waitForFunction((ids) => {
-        const media = (window as unknown as W).__recut.store.getState().project.media;
-        return ids.every((i: string) => media[i].proxy.status === 'ready' || media[i].proxy.status === 'failed');
-      }, Object.values(id), { timeout: 300_000 });
+      for (const k of undecodable) await expect(proxyRow(id[k])).toHaveAttribute('data-proxy-status', 'ready', { timeout: 300_000 });
       const m = await mediaState(page);
       for (const k of Object.keys(id) as (keyof typeof id)[]) {
-        expect(m[id[k]].proxy.status, `${k}: ${m[id[k]].proxy.error ?? ''}`).toBe('ready');
-        expect(fs.existsSync(m[id[k]].proxy.path!)).toBe(true);
-        await expect(proxyRow(id[k])).toHaveAttribute('data-proxy-status', 'ready');
+        if (undecodable.includes(k)) {
+          expect(m[id[k]].proxy.status, `${k}: ${m[id[k]].proxy.error ?? ''}`).toBe('ready');
+          expect(fs.existsSync(m[id[k]].proxy.path!)).toBe(true);
+        } else {
+          expect(m[id[k]].proxy.status, `${k} is decodable → no automatic proxy`).toBe('none');
+        }
       }
-    }, { fallback: async () => { for (const i of Object.values(id)) await page.evaluate((x) => (window as unknown as W).__recut.actions.startProxy(x), i); await page.waitForFunction((ids) => { const media = (window as unknown as W).__recut.store.getState().project.media; return ids.every((i: string) => media[i].proxy.status === 'ready'); }, Object.values(id), { timeout: 300_000 }); } });
+    }, { fallback: async () => { for (const k of undecodable) await page.evaluate((x) => (window as unknown as W).__recut.actions.startProxy(x), id[k]); await page.waitForFunction((ids) => { const media = (window as unknown as W).__recut.store.getState().project.media; return ids.every((i: string) => media[i].proxy.status === 'ready'); }, undecodable.map((k) => id[k]), { timeout: 300_000 }); } });
 
-    await g.step('Source monitor shows the Proxy badge for the HEVC file and plays it', 'UI', async () => {
+    await g.step('Source monitor shows the PROXY badge for the HEVC file and plays it (currentTime advances)', 'UI', async () => {
       const row = page.locator(`[data-row-kind="media"][data-media-id="${id.hevc}"]`);
       await row.scrollIntoViewIfNeeded();
       await row.dblclick();
@@ -595,15 +657,19 @@ test.describe.serial('TEST 3 — Large-Media Workflow', () => {
       expect(await page.locator('.source-panel .source-error-card').count()).toBe(0);
     }, { note: 'HEVC proxy badge asserted only when HEVC is not natively decodable in this Chromium build' });
 
-    await g.step('Build a sequence with one range from each of the four files (dbl-click → I/O → ",")', 'UI+API', async () => {
+    await g.step('Build a sequence with one range from each of the four files (dbl-click → I/O → ","; conform prompt answered with Enter)', 'UI+API', async () => {
+      const shown: boolean[] = [];
       for (const k of ['h264', 'ac3', 'hevc', 'surround'] as const) {
         const row = page.locator(`[data-row-kind="media"][data-media-id="${id[k]}"]`);
         await row.scrollIntoViewIfNeeded();
         await row.dblclick();
         await expect.poll(() => evalStore<string>(page, '(s) => s.ui.sourceClip?.mediaId')).toBe(id[k]);
         await waitSourceReady(page);
-        await markAndInsert(page, 1, 3);
+        shown.push(await markAndInsert(page, 1, 3, 'enter'));
       }
+      expect(shown).toEqual([true, false, false, false]);
+      const fmt = await evalStore<{ fps: number; w: number }>(page, '(s) => { const q = s.project.sequences[s.project.activeSequenceId]; return { fps: q.fps.num / q.fps.den, w: q.width }; }');
+      expect(fmt.w, 'Enter = default button (Change)').toBe(640); expect(fmt.fps).toBeCloseTo(24, 5);
       const seq = await seqState(page);
       expect(vclips(seq).map((c) => c.mediaId)).toEqual([id.h264, id.ac3, id.hevc, id.surround]);
       expect(aclips(seq)).toHaveLength(4);
@@ -615,19 +681,23 @@ test.describe.serial('TEST 3 — Large-Media Workflow', () => {
       await evalStore(page, '(s, f) => s.setView(s.project.activeSequenceId, { playhead: f })', c.start + Math.floor(c.duration / 2));
     };
     const proxySwitch = () => page.getByTestId('proxies-tab').getByRole('switch', { name: /Playback proxies/ });
-    await g.step('Proxies ON (toggle in the Proxies tab): the Program monitor renders non-black frames from proxies', 'UI+API', async () => {
+    const chips = async () => ({
+      offline: await page.getByTestId('program-offline').count(), needsProxy: await page.getByTestId('program-needs-proxy').count(),
+      cantPlay: await page.getByTestId('program-missing').count(), proxy: await page.getByTestId('program-proxy').count(),
+    });
+    await g.step('Proxies ON: the Program monitor renders non-black frames for every clip; Proxy chip on the HEVC clip; no problem chips', 'UI+API', async () => {
       await jobsPanel.getByRole('tab', { name: 'Proxies' }).click();
-      if ((await proxySwitch().getAttribute('aria-checked')) !== 'true') await proxySwitch().click();
-      await expect.poll(() => evalStore<boolean>(page, '(s) => s.project.settings.useProxies')).toBe(true);
-      for (const k of ['h264', 'hevc', 'surround'] as const) {
+      await expect(proxySwitch()).toHaveAttribute('aria-checked', 'true');
+      for (const k of ['h264', 'ac3', 'hevc', 'surround'] as const) {
         await playheadInto(id[k]);
         await expect.poll(() => programBrightness(page), { timeout: 30_000, intervals: [250] }).toBeGreaterThan(20);
+        if (k === 'hevc' && !hevcNative) await expect(page.getByTestId('program-proxy')).toBeVisible();
       }
-      await expect(page.getByTestId('program-proxy')).toBeVisible();
-      expect(await page.getByTestId('program-missing').count()).toBe(0);
+      const c = await chips();
+      expect([c.offline, c.needsProxy, c.cantPlay]).toEqual([0, 0, 0]);
     }, { note: 'playhead placed through the store' });
 
-    await g.step('Proxies OFF: H.264 clips render from the originals (no Proxy chip)', 'UI+API', async () => {
+    await g.step('Proxies OFF (Proxies tab switch): H.264 clips render from the originals (no Proxy chip, no problem chips)', 'UI+API', async () => {
       await proxySwitch().click();
       await expect.poll(() => evalStore<boolean>(page, '(s) => s.project.settings.useProxies')).toBe(false);
       await playheadInto(id.h264);
@@ -636,33 +706,34 @@ test.describe.serial('TEST 3 — Large-Media Workflow', () => {
       expect(await page.getByTestId('program-missing').count()).toBe(0);
     });
 
-    await g.step('Proxies OFF: the HEVC clip — expected "missing/undecodable" chip; observed behaviour recorded in the note', 'UI+API', async () => {
+    await g.step('Proxies OFF with the HEVC proxy still ready — observed behaviour (app falls back to the proxy for an undecodable original)', 'UI+API', async () => {
       if (hevcNative) { g.note('skipped: HEVC decodes natively in this Chromium build'); return; }
       await playheadInto(id.hevc);
       await page.waitForTimeout(1500);
-      const missing = await page.getByTestId('program-missing').count();
-      const proxyChip = await page.getByTestId('program-proxy').count();
+      const c = await chips();
       const bright = await programBrightness(page);
-      g.note(`observed with proxies off: missing-chip=${missing} proxy-chip=${proxyChip} brightness=${bright.toFixed(0)}`);
-      // Either the brief's expectation (missing chip) or the app's documented fallback (plays the proxy anyway, with the Proxy chip).
-      expect(missing === 1 || (proxyChip === 1 && bright > 20)).toBe(true);
-    }, { note: 'app falls back to a ready proxy for undecodable originals even when proxies are off (resolvePlaybackPath)' });
+      g.note(`observed with proxies off + HEVC proxy ready: needs-proxy chip=${c.needsProxy} proxy chip=${c.proxy} brightness=${bright.toFixed(0)}`);
+      expect(c.needsProxy === 1 || (c.proxy === 1 && bright > 20)).toBe(true);
+    }, { note: 'resolvePlaybackPath: a ready proxy is used for undecodable originals even with proxies off' });
 
-    await g.step('Delete the HEVC proxy (row button) with proxies off → Program chip reports the clip as missing; regenerate → renders again', 'UI+API', async () => {
+    await g.step('Proxies OFF + HEVC proxy deleted (row button) → Program shows `program-needs-proxy` "Needs proxy: N" while H.264 renders; chip\'s "Generate proxies" → renders again', 'UI+API', async () => {
       if (hevcNative) { g.note('skipped: HEVC decodes natively in this Chromium build'); return; }
       await proxyRow(id.hevc).getByLabel('Delete proxy').click();
       await expect(proxyRow(id.hevc)).toHaveAttribute('data-proxy-status', 'none');
       await playheadInto(id.hevc);
-      await expect(page.getByTestId('program-missing')).toBeVisible({ timeout: 20_000 });
-      await expect(page.getByTestId('program-missing')).toContainText(/Missing media/);
-      // H.264 neighbours still render
+      const chip = page.getByTestId('program-needs-proxy');
+      await expect(chip).toBeVisible({ timeout: 20_000 });
+      await expect(chip).toContainText(/Needs proxy: [1-9]/);
+      g.note(`needs-proxy chip text with one undecodable file at the playhead: "${(await chip.innerText()).replace(/\s+/g, ' ').trim()}" (counts video + linked audio clips, not files)`);
+      expect(await page.getByTestId('program-offline').count()).toBe(0);
       await playheadInto(id.h264);
       await expect.poll(() => programBrightness(page), { timeout: 30_000, intervals: [250] }).toBeGreaterThan(20);
-      await proxyRow(id.hevc).getByTestId('proxy-generate').click();
+      await expect(page.getByTestId('program-proxy')).toHaveCount(0);
+      await page.getByTestId('program-generate-proxies').click();
       await expect(proxyRow(id.hevc)).toHaveAttribute('data-proxy-status', 'ready', { timeout: 180_000 });
       await playheadInto(id.hevc);
       await expect.poll(() => programBrightness(page), { timeout: 30_000, intervals: [250] }).toBeGreaterThan(20);
-      await expect(page.getByTestId('program-missing')).toHaveCount(0, { timeout: 20_000 });
+      await expect(page.getByTestId('program-needs-proxy')).toHaveCount(0, { timeout: 20_000 });
     });
 
     await g.step('Re-enable proxies', 'UI', async () => {
@@ -687,6 +758,8 @@ test.describe.serial('TEST 3 — Large-Media Workflow', () => {
       await expect(page.getByTestId('relink-list').locator('.pp-relink-row')).toHaveCount(4);
       await expect(page.locator('.toast.warn', { hasText: /offline/ })).toBeVisible();
       await expect(page.getByTestId('offline-banner')).toBeVisible();
+      await expect(page.getByTestId('program-offline')).toContainText(/Offline: [1-9]/);
+      g.note(`Program chip: ${(await page.getByTestId('program-offline').innerText()).trim()}`);
     }, {
       fallback: async () => {
         const res = await page.evaluate((p) => (window as unknown as W).__recut.actions.openProject(p), projectPath);
@@ -697,37 +770,58 @@ test.describe.serial('TEST 3 — Large-Media Workflow', () => {
       },
     });
 
-    await g.step('Relink via "Search folder…" (folder picker is native → scanForRelink + relinkMedia through the bridge), then "Check files" in the dialog', 'UI+API', async () => {
-      const relinked = await page.evaluate(async (folder) => {
+    await g.step('window.recut.scanForRelink on the moved folder finds all four files by name+size', 'API', async () => {
+      const found = await page.evaluate(async (folder) => {
         const w = window as unknown as W;
-        const st = w.__recut.store.getState();
-        const offline = Object.values(st.project.media as Record<string, { id: string; path: string; fileSize?: number; offline: boolean }>).filter((m) => m.offline);
-        const found: { missingMediaId: string; path: string; confidence: string }[] = await w.recut.scanForRelink({ folder, missing: offline.map((m) => ({ mediaId: m.id, fileName: m.path.split('/').pop(), size: m.fileSize })) });
-        const done: string[] = [];
-        for (const m of offline) {
-          const c = found.find((f) => f.missingMediaId === m.id);
-          if (!c) continue;
-          const s = await w.recut.stat(c.path);
-          w.__recut.store.getState().relinkMedia(m.id, c.path, s.exists ? { size: s.size, mtimeMs: s.mtimeMs } : undefined);
-          await w.__recut.actions.probeMedia(m.id);
-          done.push(`${c.confidence}:${c.path}`);
-        }
-        return done;
+        const offline = Object.values(w.__recut.store.getState().project.media as Record<string, { id: string; path: string; fileSize?: number; probe?: { size?: number }; offline: boolean }>).filter((m) => m.offline);
+        return w.recut.scanForRelink({ folder, missing: offline.map((m) => ({ mediaId: m.id, fileName: m.path.split('/').pop(), size: m.fileSize ?? m.probe?.size })) }) as Promise<{ missingMediaId: string; path: string; confidence: string }[]>;
       }, movedDir);
-      expect(relinked).toHaveLength(4);
-      expect(relinked.every((r) => r.startsWith('name+size:'))).toBe(true);
+      expect(found).toHaveLength(4);
+      expect(found.every((f) => f.confidence === 'name+size' && f.path.startsWith(movedDir))).toBe(true);
+    });
+
+    await g.step('Relink dialog: "Search folder…" (native folder picker stubbed in main to return the moved folder) → "Apply 4 matches" → all online', 'UI', async () => {
+      await stubOpenDialog(L, [movedDir]);
       const dlg = page.getByRole('dialog').filter({ hasText: 'Relink offline media' });
+      await expect(dlg).toBeVisible();
+      await dlg.getByRole('button', { name: /Search folder/ }).click();
+      await expect(page.locator('.toast', { hasText: 'Found 4 matches' })).toBeVisible({ timeout: 30_000 });
+      await dlg.getByRole('button', { name: /Apply 4 matches/ }).click();
+      await expect.poll(() => evalStore<number>(page, '(s) => Object.values(s.project.media).filter((m) => m.offline).length'), { timeout: 60_000 }).toBe(0);
+      await expect(dlg).toContainText('All media is online');
       await dlg.getByRole('button', { name: 'Check files' }).click();
       await expect(page.locator('.toast', { hasText: 'All media online' })).toBeVisible();
-      await expect(dlg).toContainText('All media is online');
-      await dlg.getByRole('button', { name: 'Close' }).click();
+      await dlg.locator('button.btn', { hasText: /^Close$/ }).click();
+      await expect(dlg).toHaveCount(0);
       await expect(page.getByTestId('offline-banner')).toHaveCount(0);
+      await expect(page.getByTestId('program-offline')).toHaveCount(0);
       const m = await mediaState(page);
       for (const k of Object.keys(id) as (keyof typeof id)[]) {
         expect(m[id[k]].offline).toBe(false);
         expect(m[id[k]].path.startsWith(movedDir)).toBe(true);
         expect(m[id[k]].probe?.duration).toBeGreaterThan(0);
       }
+      await playheadInto(id.h264);
+      await expect.poll(() => programBrightness(page), { timeout: 30_000, intervals: [250] }).toBeGreaterThan(20);
+    }, {
+      note: 'only the OS folder picker is stubbed (dialog.showOpenDialog in the main process)',
+      fallback: async () => {
+        await page.evaluate(async (folder) => {
+          const w = window as unknown as W;
+          const st = w.__recut.store.getState();
+          const offline = Object.values(st.project.media as Record<string, { id: string; path: string; fileSize?: number; offline: boolean }>).filter((m) => m.offline);
+          const found: { missingMediaId: string; path: string }[] = await w.recut.scanForRelink({ folder, missing: offline.map((m) => ({ mediaId: m.id, fileName: m.path.split('/').pop(), size: m.fileSize })) });
+          for (const m of offline) {
+            const c = found.find((f) => f.missingMediaId === m.id);
+            if (!c) continue;
+            const s = await w.recut.stat(c.path);
+            w.__recut.store.getState().relinkMedia(m.id, c.path, s.exists ? { size: s.size, mtimeMs: s.mtimeMs } : undefined);
+            await w.__recut.actions.probeMedia(m.id);
+          }
+        }, movedDir);
+        await evalStore(page, '(s) => s.closeDialog("relink")');
+        expect(await evalStore<number>(page, '(s) => Object.values(s.project.media).filter((m) => m.offline).length')).toBe(0);
+      },
     });
 
     const outDir = path.join(tmp, 'export');
@@ -740,7 +834,7 @@ test.describe.serial('TEST 3 — Large-Media Workflow', () => {
       const seq = await seqState(page);
       seqSeconds = framesToSec(sequenceDurationFrames(seq), seq.fps);
       const r = await runExport(page, outDir, 'surround.mp4', async () => {
-        const sel = page.getByTestId('export-dialog').locator('select').filter({ has: page.locator('option', { hasText: '5.1 Surround' }) });
+        const sel = page.getByTestId('export-dialog').locator('select:not([data-testid="export-preset"])').filter({ has: page.locator('option', { hasText: /^5\.1 Surround$/ }) });
         await sel.selectOption('6');
         await expect(page.getByTestId('export-dialog').locator('.xd-summary')).toContainText('5.1');
       });
@@ -755,7 +849,7 @@ test.describe.serial('TEST 3 — Large-Media Workflow', () => {
     await g.step('Export again in stereo → 2-channel output with the sequence duration', 'UI', async () => {
       await page.getByTestId('export-another').click();
       const r = await runExport(page, outDir, 'stereo.mp4', async () => {
-        const sel = page.getByTestId('export-dialog').locator('select').filter({ has: page.locator('option', { hasText: '5.1 Surround' }) });
+        const sel = page.getByTestId('export-dialog').locator('select:not([data-testid="export-preset"])').filter({ has: page.locator('option', { hasText: /^5\.1 Surround$/ }) });
         await sel.selectOption('2');
         await expect(page.getByTestId('export-dialog').locator('.xd-summary')).toContainText('Stereo');
       });
@@ -786,7 +880,7 @@ test.describe.serial('TEST 4 — Failure Recovery', () => {
   });
   test.afterAll(async () => { g.write(RESULTS, L?.errors ?? []); await closeApp(L); });
 
-  test('invalid media, broken srt, canceled proxy, unwritable export dir, corrupt project, truncated autosave', async () => {
+  test('invalid media, broken srt, canceled proxy, unwritable export dir, corrupt project, corrupt autosave, quit prompt', async () => {
     let page = L.page;
     const errorsBefore = () => L.errors.length;
 
@@ -821,28 +915,49 @@ test.describe.serial('TEST 4 — Failure Recovery', () => {
       expect(L.errors.length - n0).toBe(0);
     }, { note: 'the Project panel "Import Subtitles…" path uses a native file picker; its toast ("No cues found …") is not reachable from automation' });
 
-    await g.step('Cancel a proxy job mid-way (Proxies tab row Generate → Cancel) → status not ready, no .part files in the cache', 'UI', async () => {
-      [hevcId] = await importMedia(page, [path.join(mediaDir, MEDIA.movie0hevc)]);
+    await g.step('Cancel a proxy job mid-way (proxies off before import; Proxies tab row Generate → Cancel once it is running) → not ready, no .part files', 'UI', async () => {
       await showPanel(page, 'jobs');
       await page.getByTestId('jobs-panel').getByRole('tab', { name: 'Proxies' }).click();
+      const sw = page.getByTestId('proxies-tab').getByRole('switch', { name: /Playback proxies/ });
+      if ((await sw.getAttribute('aria-checked')) === 'true') await sw.click();
+      await expect.poll(() => evalStore<boolean>(page, '(s) => s.project.settings.useProxies')).toBe(false);
+      [hevcId] = await importMedia(page, [path.join(mediaDir, MEDIA.movie0hevc)]);
       const row = page.locator(`[data-testid="proxy-row"][data-media-id="${hevcId}"]`);
       await expect(row).toBeVisible();
-      await row.getByTestId('proxy-generate').click();
-      await row.getByTestId('proxy-cancel').click({ timeout: 5_000 });
-      await page.waitForFunction((id) => {
-        const w = window as unknown as W;
-        const p = w.__recut.store.getState().project.media[id].proxy;
-        const active = w.__recut.jobsStore.getState().jobs.some((j) => j.kind === 'proxy' && j.mediaId === id && (j.status === 'queued' || j.status === 'running'));
-        return !active && p.status !== 'queued' && p.status !== 'running';
-      }, hevcId, { timeout: 60_000 });
+      await expect(row).toHaveAttribute('data-proxy-status', 'none');
+      let outcome = '';
+      for (let attempt = 0; attempt < 3 && outcome !== 'canceled'; attempt++) {
+        const before = (await jobs(page)).filter((j) => j.kind === 'proxy').map((j) => j.id);
+        // Click Generate, then click the row's Cancel button as soon as the job is running (DOM clicks inside one evaluate so the
+        // short synthetic file cannot finish in between two Playwright round-trips).
+        outcome = await page.evaluate(async ({ id, before }) => {
+          const w = window as unknown as W;
+          const rowEl = () => document.querySelector(`[data-testid="proxy-row"][data-media-id="${id}"]`);
+          (rowEl()?.querySelector('[data-testid="proxy-generate"]') as HTMLElement | null)?.click();
+          const t0 = performance.now();
+          while (performance.now() - t0 < 60_000) {
+            const j = w.__recut.jobsStore.getState().jobs.find((x) => x.kind === 'proxy' && x.mediaId === id && !before.includes(x.id));
+            if (j && (j.status === 'done' || j.status === 'failed')) return `finished-before-cancel:${j.status}`;
+            const btn = rowEl()?.querySelector('[data-testid="proxy-cancel"]') as HTMLElement | null;
+            if (j && j.status === 'running' && btn) { btn.click(); return `cancel-clicked@${Math.round(j.progress * 100)}%`; }
+            await new Promise((r) => setTimeout(r, 15));
+          }
+          return 'timeout';
+        }, { id: hevcId, before });
+        g.note(`attempt ${attempt + 1}: ${outcome}`);
+        if (!outcome.startsWith('cancel-clicked')) { await evalStore(page, '(s, id) => s.setProxy(id, { status: "none" })', hevcId); continue; }
+        const job = await waitForJob(page, { kind: 'proxy', exclude: before, mediaId: hevcId }, 60_000);
+        outcome = job?.status ?? 'missing';
+      }
+      expect(outcome).toBe('canceled');
+      await page.waitForFunction((id) => { const p = (window as unknown as W).__recut.store.getState().project.media[id].proxy; return p.status !== 'queued' && p.status !== 'running'; }, hevcId, { timeout: 30_000 });
       const proxy = (await mediaState(page))[hevcId].proxy;
-      const job = (await jobs(page)).find((j) => j.kind === 'proxy' && j.mediaId === hevcId);
-      expect(job?.status).toBe('canceled');
       expect(proxy.status).not.toBe('ready');
       expect(proxy.status).toBe('none');
-      await expect.poll(() => listFilesRecursive(L.cacheDir).filter((f) => f.endsWith('.part')), { timeout: 10_000 }).toEqual([]);
+      await expect.poll(() => listFilesRecursive(L.cacheDir).filter((f) => /\.part(-|$)/.test(path.basename(f))), { timeout: 15_000 }).toEqual([]);
       await expect(row).toHaveAttribute('data-proxy-status', 'none');
-    });
+      await expect(row.getByTestId('proxy-generate')).toBeVisible();
+    }, { note: 'proxies switched off through the Proxies-tab switch so the import does not auto-start a proxy' });
 
     await g.step('Start an export to an unwritable directory (/proc/recut-nope) → error shown, app continues', 'UI+API', async () => {
       const n0 = errorsBefore();
@@ -851,7 +966,9 @@ test.describe.serial('TEST 4 — Failure Recovery', () => {
       await expect(dialog).toBeVisible();
       await page.getByTestId('export-outdir').fill('/proc/recut-nope');
       await page.getByTestId('export-filename').fill('nope.mp4');
-      await page.getByTestId('export-start').click();
+      const why = await page.getByTestId('export-start').getAttribute('title');
+      g.note(`Export button before start: disabled=${await page.getByTestId('export-start').isDisabled()} title=${why} checklist="${(await page.getByTestId('export-checklist').innerText()).replace(/\s+/g, ' ')}"`);
+      await page.getByTestId('export-start').click({ timeout: 10_000 });
       const startError = page.getByTestId('export-start-error');
       const failed = page.getByTestId('export-error');
       await expect(startError.or(failed)).toBeVisible({ timeout: 60_000 });
@@ -896,22 +1013,57 @@ test.describe.serial('TEST 4 — Failure Recovery', () => {
       fs.writeFileSync(p1, good); // restore the file on disk
     }, { note: 'no toast / warning tells the user the backup was used' });
 
-    await g.step('Truncated autosave does not crash recovery on relaunch; the app comes up usable', 'UI+API', async () => {
-      const good = fs.readFileSync(p1, 'utf8');
-      const autosave = `${p1}.autosave`;
-      fs.writeFileSync(autosave, good.slice(0, 200));
-      const future = new Date(Date.now() + 20_000);
-      fs.utimesSync(autosave, future, future);
+    await g.step('Corrupt autosaves do not break startup recovery: truncated untitled autosave ignored, the valid newer autosave of keep.recut is still offered and recovers', 'UI+API', async () => {
       await closeApp(L);
+      const good = fs.readFileSync(p1, 'utf8');
+      const proj = JSON.parse(good);
+      proj.name = 'keep (recovered)';
+      const autosave = `${p1}.autosave`;
+      fs.writeFileSync(autosave, JSON.stringify(proj));
+      const untitled = path.join(L.userData, 'autosave', 'untitled.recut.autosave');
+      fs.mkdirSync(path.dirname(untitled), { recursive: true });
+      fs.writeFileSync(untitled, good.slice(0, 200));
+      const future = new Date(Date.now() + 30_000);
+      fs.utimesSync(autosave, future, future);
+      fs.utimesSync(untitled, new Date(Date.now() + 60_000), new Date(Date.now() + 60_000)); // newest, but unreadable
       L = await launchGauntlet(tmp);
       page = L.page;
-      await page.waitForTimeout(4_000);
-      expect(await page.getByTestId('recovery-dialog').count(), 'no recovery prompt for an unparseable autosave').toBe(0);
+      const rec = page.getByTestId('recovery-dialog');
+      await expect(rec).toBeVisible({ timeout: 30_000 });
+      await expect(rec).toContainText('keep.recut');
+      await page.getByRole('button', { name: 'Recover', exact: true }).click();
+      await expect.poll(() => evalStore<string>(page, '(s) => s.project.name')).toBe('keep (recovered)');
+      expect(await evalStore<string>(page, '(s) => s.projectPath')).toBe(p1);
+      expect(await evalStore<boolean>(page, '(s) => s.dirty')).toBe(true);
       expect(await page.evaluate(() => (window as unknown as W).__recut.runCommand('edit.deselectAll'))).toBe(true);
-      const res = await page.evaluate((p) => (window as unknown as W).__recut.actions.openProject(p), p1);
-      expect(res.ok).toBe(true);
       expect(L.errors, `renderer errors: ${L.errors.join(' | ')}`).toEqual([]);
+    }, {
+      fallback: async () => {
+        if (!L.page.isClosed()) { page = L.page; return; }
+        L = await launchGauntlet(tmp); page = L.page;
+      },
     });
+
+    await g.step('Quit prompt: dirty project + window.recut.quit(false) with the native Save/Don\'t Save/Cancel box stubbed to Cancel → app stays open > 5 s', 'UI+API', async () => {
+      await evalStore(page, '(s) => s.addMarker(s.project.activeSequenceId, { time: 12, name: "unsaved" })');
+      expect(await evalStore<boolean>(page, '(s) => s.dirty')).toBe(true);
+      await stubMessageBox(L, 2);
+      let closed = false;
+      L.app.on('close', () => { closed = true; });
+      await page.evaluate(() => { void (window as unknown as W).recut.quit(false); });
+      await expect.poll(() => stubbedMessages(L), { timeout: 15_000 }).toEqual([expect.stringMatching(/Save changes to .* before quitting\?/)]);
+      await page.waitForTimeout(5_500);
+      expect(closed, 'app closed despite Cancel').toBe(false);
+      expect(page.isClosed()).toBe(false);
+      expect(await L.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed()).length)).toBe(1);
+      expect(await evalStore<boolean>(page, '(s) => s.dirty'), 'still dirty: nothing saved or discarded').toBe(true);
+      expect(await page.evaluate(() => (window as unknown as W).__recut.runCommand('edit.deselectAll'))).toBe(true);
+      // A second quit request is handled again (pending state was cleared by quitCancel).
+      await page.evaluate(() => { void (window as unknown as W).recut.quit(false); });
+      await expect.poll(async () => (await stubbedMessages(L)).length, { timeout: 15_000 }).toBe(2);
+      await page.waitForTimeout(1_000);
+      expect(closed).toBe(false);
+    }, { note: 'dialog.showMessageBox replaced in the main process via electronApp.evaluate' });
 
     g.finish(RESULTS, L.errors);
   });

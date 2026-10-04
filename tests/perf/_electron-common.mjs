@@ -53,7 +53,9 @@ export const INIT_SCRIPT = `
   }
   // React DevTools hook: per commit, count component fibers that actually rendered (new fiber object + PerformedWork),
   // attributed to the layout zone panel they live in.
-  const seen = new WeakSet();
+  // A fiber object is reused every other render (double buffering), so remember the props/state it was counted with:
+  // it rendered in this commit iff PerformedWork is set and its props or state object changed since we last saw it.
+  const seen = new WeakMap();
   const isComp = (f) => f.tag === 0 || f.tag === 1 || f.tag === 11 || f.tag === 14 || f.tag === 15;
   const isClipFiber = (f) => { const c = f.child; return isComp(f) && c && c.tag === 5 && c.stateNode && c.stateNode.dataset && c.stateNode.dataset.clipId !== undefined && c.stateNode.classList.contains('tl-clip'); };
   const labelOf = (el) => { const ch = el.firstElementChild; if (!ch) return 'empty'; return ch.getAttribute('data-testid') || (ch.hasAttribute('data-timeline') ? 'timeline' : (ch.className || '').split(' ').find((c) => c && c !== 'panel' && c !== 'col' && c !== 'grow') || 'unknown'); };
@@ -66,7 +68,7 @@ export const INIT_SCRIPT = `
       const inner = (f.tag === 5 && f.stateNode && f.stateNode.classList && f.stateNode.classList.contains('zone-panel')) ? labelOf(f.stateNode) : ctx;
       if (isComp(f)) {
         const clip = isClipFiber(f); if (clip) out.clipTotal++;
-        if (!seen.has(f)) { seen.add(f); if (f.flags & 1) { out.rendered++; out.byPanel[inner] = (out.byPanel[inner] || 0) + 1; if (clip) out.clipRendered++; const ty = f.type && (f.type.displayName || f.type.name || (f.type.type && (f.type.type.displayName || f.type.type.name)) || (f.type.render && f.type.render.name)) || '?'; out.byName = out.byName || {}; out.byName[ty] = (out.byName[ty] || 0) + 1; } }
+        const prevSeen = seen.get(f); if (!prevSeen || prevSeen.p !== f.memoizedProps || prevSeen.s !== f.memoizedState) { seen.set(f, { p: f.memoizedProps, s: f.memoizedState }); if (f.flags & 1) { out.rendered++; out.byPanel[inner] = (out.byPanel[inner] || 0) + 1; if (clip) out.clipRendered++; const ty = f.type && (f.type.displayName || f.type.name || (f.type.type && (f.type.type.displayName || f.type.type.name)) || (f.type.render && f.type.render.name)) || '?'; out.byName = out.byName || {}; out.byName[ty] = (out.byName[ty] || 0) + 1; } }
       }
       if (f.child) { stack.push(f); labels.push(ctx); label = inner; f = f.child; continue; }
       label = ctx;
@@ -143,4 +145,10 @@ export async function launchAndBuild({ width = 1900, height = 1050, tag = 'elect
   h.rendererMB = async () => (await h.metrics()).filter((m) => m.type === 'Tab').reduce((a, m) => a + m.ws, 0);
   h.zoomFit = async () => { const w = await h.tlWidth(); const z = Math.max(0.01, (w * 0.96) / Math.max(1, dur)); await h.setView({ zoom: z, scroll: 0 }); return z; };
   return h;
+}
+
+/** The app asks before quitting with unsaved changes, so app.close() can hang: kill the process tree instead. */
+export async function closeApp(app) {
+  try { await Promise.race([app.evaluate(({ app }) => app.exit(0)), sleep(3000)]); } catch { /* ignore */ }
+  try { app.process().kill('SIGKILL'); } catch { /* ignore */ }
 }

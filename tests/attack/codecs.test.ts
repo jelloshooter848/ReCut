@@ -132,7 +132,8 @@ describe('export audio stream mapping', () => {
     const seq = makeSeq(FPS_24);
     vclip(seq, m, 0, 48, 0); aclip(seq, m, 0, 48, 0, 1, 0, 3);
     const g = buildRenderGraph(request(seq, [m]));
-    expect(g.filterGraph).toMatch(/\[1:3\]atrim/);
+    // The linked V+A pair now shares one input (M-09), so only the absolute stream index is pinned.
+    expect(g.filterGraph).toMatch(/\[\d+:3\]atrim/);
     const { outputPath } = await exportSeq(seq, [m]);
     // 880 Hz vs 440 Hz: check the dominant frequency by zero-crossing rate
     const { ff } = await import('./helpers');

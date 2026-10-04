@@ -26,28 +26,44 @@ Files:
 
 ### Inputs
 
-Each rendered clip segment is its own ffmpeg input (so a clip used three times is decoded three times,
-each decode limited to what is needed):
+Each rendered clip segment gets an ffmpeg input, each decode limited to what is needed. A linked
+video + audio pair with the same range shares one input (identical args are reused once per stream kind),
+so a linked clip is decoded once:
 
 ```
--ss <seek> -t <preroll + srcLen + 0.25> -i <media.path>
+-copyts -start_at_zero [-ss <seek>] -t <(S - seek) + srcLen + 0.25> -i <media.path>
 ```
 
-`seek = max(0, sourceStart - 1s)` (one second of pre-roll for decoder warm-up); the exact cut is done
-in-graph with `trim=start=<preroll>` so cuts land on the intended frame regardless of keyframe placement.
-Input seeking in ffmpeg is relative to the container start time, which is also what `sourceIn` means.
+**Timestamps are container-relative source seconds.** `-copyts -start_at_zero` keeps every stream's own
+pts minus the container start_time, which is exactly what `sourceIn` means (and what the editor, proxies and
+thumbnails use). ffmpeg's default rebasing is not used because it depends on the container: MPEG-TS does not
+rebase to the `-ss` point (its picture came out 1 s early), and each stream's own start offset was lost for
+clips in the first second of a file. `-ss` is only a decode shortcut: `seek = max(0, S - h - preroll)` with
+`h = 0.5/mediaFps`, `preroll = 0.04 s` for MP4/MOV/MKV/WebM (frame-exact input seek) and `1 s` for other
+containers (TS etc.). All cuts are done in-graph on absolute source times, so they land on the intended frame
+regardless of keyframe placement.
 Images use `-loop 1 -framerate FPS -t <len>`. Disabled clips are skipped; offline / missing media and
 clips whose media lacks the needed stream are skipped with a warning (black / silence is rendered there).
 
 ### Video segments (one chain per clip)
 
 ```
-[i:v:0] trim=start=P:duration=L, setpts=PTS-STARTPTS, [setpts=PTS/speed,] fps=FPS, format=yuva420p,
-        scale=W:H:force_original_aspect_ratio=decrease:force_divisible_by=2,
+[i:v:0] trim=start=S-h:duration=h+L, settb=AVTB, setpts=PTS-(S+c)/TB, [setpts=PTS/speed,]
+        fps=FPS:start_time=0, format=yuva420p, [lut=a=0:enable='lt(t,T)',] scale=W:H:force_original_aspect_ratio=decrease:force_divisible_by=2,
         <transform>, [lut=a=val*opacity,]
         tpad=stop=N:stop_mode=clone, trim=end_frame=N, setpts=PTS-STARTPTS, [fade=in/out]
 ```
 
+- **Frame choice matches the editor.** The Program Monitor seeks to `sourceTime + 0.5/mediaFps` and shows the
+  frame covering it, i.e. media frame `floor(t*mediaFps + 0.5)`. The chain keeps frames from half a media
+  frame before the in-point `S`, keeps their sub-frame phase, and biases them by
+  `c = 0.5/mediaFps - 0.5*speed/seqFps (+1 µs so a frame starting exactly at the seek time wins)`; `fps`
+  (which keeps the last frame whose rounded pts falls in a slot) then picks exactly that frame, also for
+  off-grid in-points, mixed rates and VFR sources. `settb=AVTB` keeps sub-frame precision (`setpts` truncates
+  to the stream time base, 1/1000 in MKV).
+- `fps=…:start_time=0` anchors slot 0 at the in-point. A video stream that starts after the in-point (the
+  probe records `video.startTime`, the stream start relative to the container start) is padded with its first
+  frame, made transparent up to `T` (the slot of its first real frame).
 - `tpad` + `trim=end_frame=N` make every segment **exactly N frames** even if the source ran short or
   `fps` rounded differently; this is what makes segment arithmetic (and therefore timeline positions) exact.
 - Segments are `yuva420p` with transparent padding so upper tracks show lower tracks through letterboxing,
@@ -63,8 +79,10 @@ added at compositing time, so V1 gaps are black.
 
 ### Track assembly and compositing
 
-Per video track, segments and gaps are joined with `concat=n=K:v=1:a=0` followed by
-`setpts=N*den/num/TB` (re-stamps frames consecutively, independent of concat's duration estimation).
+Per video track, segments and gaps are joined with `concat=n=K:v=1:a=0` (a single segment is used as is)
+followed by `settb=den/num,setpts=N` (re-stamps frames consecutively with integer timestamps, independent of
+concat's duration estimation; the former `setpts=N*den/num/TB` truncated to N-1 in floating point and
+dropped/doubled frames on single-segment tracks).
 Tracks are composited bottom (V1) to top with `overlay=0:0:eof_action=pass` onto an opaque black base of
 exactly `frameCount` frames, then optional `subtitles=`, then `format=yuv420p`. Muted video tracks are
 skipped; if any track is soloed, only soloed tracks are rendered.
@@ -95,10 +113,13 @@ Audio comes only from audio-track clips (linked video/audio are separate clips).
 with a warning). Chain:
 
 ```
-atrim=start=P:duration=L, asetpts=PTS-STARTPTS, [atempo... (stages within 0.5..2)],
+atrim=start=S:duration=L, asetpts=PTS-S/TB, aresample=async=1:first_pts=0, [atempo... (stages within 0.5..2)],
 aresample=SR, aformat=sample_fmts=fltp:channel_layouts=stereo|5.1,
 [volume=<gain>dB,] [volume=<volume>,] [afade in/out,] apad=whole_dur=len, atrim=duration=len
 ```
+
+Audio is rebased to the in-point `S` (not to its own first sample) and `aresample=async=1:first_pts=0` fills
+a late-starting stream with silence, so a file whose audio starts after its video keeps that offset.
 
 Muted clips are silence; gaps are `anullsrc`. Per track: `concat`, then `volume=<track.volume>`.
 Tracks are mixed with `amix=inputs=N:normalize=0:duration=longest`, then `aresample`/`aformat` to the

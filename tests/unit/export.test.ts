@@ -467,3 +467,46 @@ describe('export request validation', () => {
     expect(buildRenderGraph(req(ok)).warnings.some((w) => /extends past/.test(w))).toBe(false);
   });
 });
+
+describe('render graph timestamps (docs/attack/media.md M-01..M-04, M-09)', () => {
+  const mp4 = (m: MediaItem): MediaItem => ({ ...m, probe: { ...m.probe!, container: 'mp4' } });
+
+  it('track timeline uses integer frame timestamps (settb + setpts=N), never N*den/num/TB', () => {
+    const s = createSequence('T', { num: 30000, den: 1001 }, 320, 240);
+    s.videoTracks[0].clips.push(makeClip({ mediaId: mediaA.id, name: 'v', sourceIn: 0.4, duration: 30, kind: 'video' }, 0));
+    const g = buildRenderGraph(req(s, { fps: { num: 30000, den: 1001 } }));
+    expect(g.filterGraph).toContain('settb=1001/30000,setpts=N[tv');
+    expect(g.filterGraph).not.toMatch(/setpts=N\*/);
+  });
+
+  it('inputs keep container-relative pts; video trims half a media frame early with the editor phase bias; audio rebases to the in-point', () => {
+    const s = seq();
+    const m = mp4(mediaA);
+    vclip(s, m, 0, 24, 2); aclip(s, m, 0, 24, 2);
+    const g = buildRenderGraph({ ...req(s), media: { [m.id]: m } });
+    // linked V+A with the same range share one input (M-09); exact container: no 1 s pre-roll
+    expect(g.inputCount).toBe(1);
+    const i = g.args.indexOf('-copyts');
+    expect(g.args.slice(i, i + 4)).toEqual(['-copyts', '-start_at_zero', '-ss', '1.939167']);
+    // 24 fps media in a 24 fps sequence: trim at 2 - 1/48, setpts bias c = 1/48 - 1/48 (+1 µs)
+    expect(g.filterGraph).toContain('[0:v:0]trim=start=1.979167:duration=1.270833,settb=AVTB,setpts=PTS-2.000001/TB,fps=24/1:start_time=0');
+    expect(g.filterGraph).toMatch(/\[0:1\]atrim=start=2:duration=1\.25,asetpts=PTS-2\/TB,aresample=async=1:first_pts=0/);
+  });
+
+  it('non-exact containers keep 1 s of decoder pre-roll; different ranges get separate inputs', () => {
+    const s = seq();
+    vclip(s, mediaA, 0, 24, 3); aclip(s, mediaA, 0, 24, 2);
+    const g = buildRenderGraph(req(s));
+    expect(g.inputCount).toBe(2);
+    expect(g.args).toContain('1.979167'); // 3 - 1/48 - 1
+  });
+
+  it('late-starting video (probe video.startTime) is transparent until its first frame', () => {
+    const s = seq();
+    const m = mp4(mediaA);
+    (m.probe!.video as { startTime?: number }).startTime = 0.5;
+    vclip(s, m, 0, 24, 0);
+    const g = buildRenderGraph({ ...req(s), media: { [m.id]: m } });
+    expect(g.filterGraph).toContain("lut=a=0:enable='lt(t,0.479166)'");
+  });
+});

@@ -66,7 +66,8 @@ const INIT_SCRIPT = `
     AudioNode.prototype.disconnect = function (...a) { P.audio.disconnects++; return d.apply(this, a); };
   }
   // React DevTools hook: per commit, count ClipView fibers that actually rendered (new fiber object + PerformedWork).
-  const seen = new WeakSet();
+  const seen = new WeakMap(); // fiber objects alternate (double buffering): count by props/state change, not identity
+  const fresh = (f) => { const p = seen.get(f); if (p && p.p === f.memoizedProps && p.s === f.memoizedState) return false; seen.set(f, { p: f.memoizedProps, s: f.memoizedState }); return true; };
   const isClipFiber = (f) => { const c = f.child; return (f.tag === 0 || f.tag === 15 || f.tag === 14 || f.tag === 11) && c && c.tag === 5 && c.stateNode && c.stateNode.dataset && c.stateNode.dataset.clipId !== undefined && c.stateNode.classList.contains('tl-clip'); };
   const isTimelineBody = (f) => { const c = f.child; return (f.tag === 0 || f.tag === 15) && c && c.tag === 5 && c.stateNode && c.stateNode.classList && c.stateNode.classList.contains('tl-root'); };
   const walk = (root) => {
@@ -74,8 +75,8 @@ const INIT_SCRIPT = `
     let f = root.current.child; const stack = [];
     while (f) {
       out.fibers++;
-      if (isClipFiber(f)) { out.clipTotal++; if (!seen.has(f)) { seen.add(f); if (f.flags & 1) out.clipRendered++; else out.clipCloned++; } }
-      else if (isTimelineBody(f) && !seen.has(f)) { seen.add(f); if (f.flags & 1) out.timelineBody++; }
+      if (isClipFiber(f)) { out.clipTotal++; if (fresh(f)) { if (f.flags & 1) out.clipRendered++; else out.clipCloned++; } }
+      else if (isTimelineBody(f) && fresh(f)) { if (f.flags & 1) out.timelineBody++; }
       if (f.child) { stack.push(f); f = f.child; continue; }
       while (f && !f.sibling) f = stack.pop();
       if (f) f = f.sibling;
@@ -622,5 +623,5 @@ console.log('\n--- main process ---');
 
 fs.writeFileSync(path.join(OUT, 'electron.json'), JSON.stringify(results, null, 2));
 console.log(`\n[perf] ${results.length} measurements -> ${path.join(OUT, 'electron.json')}`);
-await app.close().catch(() => {});
+try { await Promise.race([app.evaluate(({ app }) => app.exit(0)), new Promise((r) => setTimeout(r, 3000))]); } catch {} try { app.process().kill('SIGKILL'); } catch {} // app.close() can hang on the unsaved-changes prompt
 process.exit(0);

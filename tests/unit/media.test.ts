@@ -16,10 +16,10 @@ process.env.RECUT_CACHE_DIR = path.join(tmp, 'cache');
 import { getFfmpegPath, getFfprobePath, getFfmpegVersion, runFfmpeg, runFfprobeJson, FfmpegError } from '../../electron/media/ffmpeg';
 import { probeMedia, classifyKind, parseRational, probeFromFfprobe } from '../../electron/media/probe';
 import { getCacheDir, cacheKeyForFile, cacheKeyForPath } from '../../electron/media/cache';
-import { getThumbnail, getFilmstrip } from '../../electron/media/thumbs';
+import { getThumbnail, getFilmstrip, frameSeekTime } from '../../electron/media/thumbs';
 import { getWaveform, computeWaveform } from '../../electron/media/waveform';
 import { downsamplePeaks } from '../../electron/media/peaks';
-import { startProxyJob } from '../../electron/media/proxy';
+import { startProxyJob, buildProxyArgs, proxyOutputPath } from '../../electron/media/proxy';
 import { startSceneDetectJob, enforceMinSceneGap, parseShowinfoPts } from '../../electron/media/sceneDetect';
 import { extractSubtitles } from '../../electron/media/subtitlesExtract';
 import { JobQueue } from '../../electron/jobs/jobQueue';
@@ -474,4 +474,48 @@ describe('mediaHandlers facade', () => {
     const ex = await mediaHandlers.startExport({} as never);
     expect(typeof ex.ok).toBe('boolean');
   }, 60_000);
+});
+
+describe('media timing fixes (docs/attack/media.md M-05, M-06, M-10)', () => {
+  const vstream = (over: Record<string, unknown> = {}) => ({
+    index: 0, codec_type: 'video' as const, codec_name: 'h264', width: 320, height: 240, r_frame_rate: '24/1', avg_frame_rate: '24/1', pix_fmt: 'yuv420p', ...over,
+  });
+
+  it('probe reports the display size and rotation of rotated video (display matrix or rotate tag)', () => {
+    const dm = probeFromFfprobe({ streams: [vstream({ side_data_list: [{ side_data_type: 'Display Matrix', rotation: -90 }] })], format: { format_name: 'mov,mp4', duration: '2' } }, '/x/r.mp4');
+    expect(dm.video).toMatchObject({ width: 240, height: 320, rotation: 270, codedWidth: 320, codedHeight: 240 });
+    const tag = probeFromFfprobe({ streams: [vstream({ tags: { rotate: '90' } })], format: { format_name: 'mov,mp4', duration: '2' } }, '/x/r.mp4');
+    expect(tag.video).toMatchObject({ width: 240, height: 320, rotation: 90 });
+    const flip = probeFromFfprobe({ streams: [vstream({ side_data_list: [{ rotation: 180 }] })], format: { format_name: 'mov,mp4', duration: '2' } }, '/x/r.mp4');
+    expect(flip.video).toMatchObject({ width: 320, height: 240, rotation: 180 });
+  });
+
+  it('probe records the video stream start relative to the container start', () => {
+    const p = probeFromFfprobe({ streams: [vstream({ start_time: '10.000000' })], format: { format_name: 'mov,mp4', duration: '20', start_time: '9.978000' } }, '/x/a.mp4');
+    expect((p.video as { startTime?: number }).startTime).toBeCloseTo(0.022, 6);
+    expect(p.startTime).toBeCloseTo(9.978, 6);
+  });
+
+  it('proxy maps the requested audio stream and keys the cache on it', () => {
+    const base = { mediaId: 'm', path: '/x/multi.mkv', height: 240 };
+    const opts = { targetHeight: 240, hasVideo: true, hasAudio: true, outPart: '/tmp/x.part' };
+    const a2 = buildProxyArgs({ ...base, audioStream: 2 }, opts);
+    expect(a2[a2.indexOf('-c:a') - 1]).toBe('0:2');
+    const def = buildProxyArgs(base, opts);
+    expect(def[def.indexOf('-c:a') - 1]).toBe('0:a:0?');
+    expect(proxyOutputPath('k', 240, 2)).toMatch(/k_240p_a2\.mp4$/);
+    expect(proxyOutputPath('k', 240)).toMatch(/k_240p\.mp4$/);
+  });
+
+  it('thumbnail seek lands a quarter frame before the covering frame', () => {
+    const grid = { fps: 24, start: 0 };
+    for (const k of [1, 2, 10, 47, 48, 100]) {
+      const t = (k + 0.5) / 24; // frame centre
+      expect(frameSeekTime(t, grid)).toBeCloseTo((k - 0.25) / 24, 9);
+      expect(frameSeekTime(k / 24, grid)).toBeCloseTo((k - 0.25) / 24, 9); // frame start stays on frame k
+    }
+    expect(frameSeekTime(0.02, grid)).toBe(0);
+    expect(frameSeekTime(6.0, { fps: 24, start: 0.0213 })).toBeCloseTo(0.0213 + (143 - 0.25) / 24, 9);
+    expect(frameSeekTime(3.3, null)).toBe(3.3);
+  });
 });

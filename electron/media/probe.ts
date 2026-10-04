@@ -32,6 +32,7 @@ export interface FfprobeStream {
   bits_per_raw_sample?: string;
   disposition?: Record<string, number>;
   tags?: Record<string, string>;
+  side_data_list?: { side_data_type?: string; rotation?: number | string; displaymatrix?: string }[];
 }
 
 export interface FfprobeFormat {
@@ -47,6 +48,38 @@ export interface FfprobeFormat {
 }
 
 export interface FfprobeOutput { streams?: FfprobeStream[]; format?: FfprobeFormat }
+
+/**
+ * Extra fields probeMedia records on the video stream beyond the shared VideoStreamInfo
+ * (TODO(model): move into shared/model.ts VideoStreamInfo). They survive project save/load as plain JSON.
+ */
+export interface ProbedVideoStreamInfo extends VideoStreamInfo {
+  /** Display rotation in degrees (0, 90, 180, 270), from the display matrix side data or the `rotate` tag. */
+  rotation: number;
+  /** Coded (storage) size; `width`/`height` are the DISPLAY size (swapped for 90/270 rotation). */
+  codedWidth: number;
+  codedHeight: number;
+  /** Stream start relative to the container start (seconds, >= 0). The export pads a late-starting video stream. */
+  startTime: number;
+}
+
+/** Display rotation of a stream in degrees, normalized to 0/90/180/270 (clockwise, as players apply it). */
+export function streamRotation(s: FfprobeStream): number {
+  let deg: number | undefined;
+  for (const sd of s.side_data_list ?? []) {
+    const r = typeof sd.rotation === 'string' ? Number(sd.rotation) : sd.rotation;
+    if (typeof r === 'number' && Number.isFinite(r)) { deg = r; break; }
+  }
+  if (deg === undefined) {
+    const tag = Number(s.tags?.rotate);
+    if (Number.isFinite(tag)) deg = tag;
+  }
+  if (deg === undefined) return 0;
+  // ffprobe's display-matrix rotation is counter-clockwise (e.g. -90 for a phone held upright); the
+  // `rotate` tag is clockwise. Only the axis swap matters downstream, so normalize to a quarter turn.
+  const q = ((Math.round(deg / 90) % 4) + 4) % 4;
+  return q * 90;
+}
 
 // ------------------------------------------------------------------
 
@@ -97,6 +130,15 @@ export function layoutForChannels(channels: number): string {
     case 8: return '7.1';
     default: return `${channels} channels`;
   }
+}
+
+/** Start of a stream relative to the container start_time (seconds, >= 0; 0 when unknown). */
+export function streamStartOffset(s: FfprobeStream, format: FfprobeFormat): number {
+  const st = num(s.start_time);
+  if (st === undefined) return 0;
+  const fst = num(format.start_time) ?? 0;
+  const d = st - fst;
+  return d > 1e-6 ? Math.round(d * 1e6) / 1e6 : 0;
 }
 
 /** Pick a single container name from ffprobe's comma list, preferring the file extension. */
@@ -168,17 +210,27 @@ export function probeFromFfprobe(raw: FfprobeOutput, filePath: string, fileSize?
     const avgFps = avgFps0.num ? avgFps0 : fps;
     const fv = ratValue(fps), av = ratValue(avgFps);
     const isVfr = fv > 0 && av > 0 && Math.abs(fv - av) / fv > 0.005;
-    video = {
+    const codedWidth = s.width ?? s.coded_width ?? 0;
+    const codedHeight = s.height ?? s.coded_height ?? 0;
+    const rotation = streamRotation(s);
+    const swap = rotation === 90 || rotation === 270;
+    const v: ProbedVideoStreamInfo = {
       index: s.index,
       codec: s.codec_name ?? 'unknown',
-      width: s.width ?? s.coded_width ?? 0,
-      height: s.height ?? s.coded_height ?? 0,
+      // Display size: Chromium and ffmpeg (autorotate) present a 90/270-rotated stream with swapped axes.
+      width: swap ? codedHeight : codedWidth,
+      height: swap ? codedWidth : codedHeight,
       fps,
       avgFps,
       pixFmt: s.pix_fmt,
       isVfr,
       colorSpace: s.color_space,
+      rotation,
+      codedWidth,
+      codedHeight,
+      startTime: streamStartOffset(s, format),
     };
+    video = v;
     break;
   }
 

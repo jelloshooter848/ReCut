@@ -104,7 +104,11 @@ export interface WaveformData {
   duration: number;
 }
 
-export interface ProxyRequest { mediaId: ID; path: string; height: number; audioChannels?: number }
+export interface ProxyRequest {
+  mediaId: ID; path: string; height: number; audioChannels?: number;
+  /** Absolute ffprobe index of the audio stream to carry (the media's preferredAudioStream); default: first audio stream. */
+  audioStream?: number;
+}
 export interface SceneDetectRequest { mediaId: ID; path: string; threshold: number; duration: number; minSceneSeconds?: number }
 export interface SceneDetectResult { boundaries: number[]; duration: number }
 

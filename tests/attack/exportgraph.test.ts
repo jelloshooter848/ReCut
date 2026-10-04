@@ -42,6 +42,8 @@ describe('scale: 300-clip sequence', () => {
     expect(bad).toBe(0);
 
     // PERF EXPERIMENT: the same graph with the 1 s decoder pre-roll removed (-ss moved to the exact start, trim=start=0).
+    // Only meaningful while the graph still uses the 1 s pre-roll; since M-09 MP4 inputs seek right before the trim point.
+    if (!/\btrim=start=1:/.test(g.filterGraph)) { console.log('[300 clips, no pre-roll] skipped: graph already has no 1 s pre-roll'); return; }
     const t2 = performance.now();
     const patched = await exportPatched(request(seq, [counter24]), {
       args: (a) => a.map((x, i) => (a[i - 1] === '-ss' ? String(Number(x) + 1) : x)),

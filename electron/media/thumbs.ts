@@ -1,11 +1,14 @@
 /**
  * Thumbnail + filmstrip extraction, cached as JPEG files under `thumbs/<key>/<timeMs>_<w>.jpg`.
+ * The extracted frame is the one COVERING the time (what <video> shows), see frameSeekTime.
  */
+import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { FilmstripRequest, ThumbnailRequest } from '@shared/ipc';
 import { cacheKeyForPath, cacheSubdir, ensureDir, fileExists, removeQuietly } from './cache';
 import { fmtSeconds, runFfmpeg } from './ffmpeg';
+import { probeMedia, type ProbedVideoStreamInfo } from './probe';
 
 const DEFAULT_WIDTH = 160;
 const MAX_CONCURRENT = 3;
@@ -45,14 +48,25 @@ function timeKey(time: number): number {
   return Math.max(0, Math.round((Number.isFinite(time) ? time : 0) * 1000));
 }
 
+/**
+ * Per-file thumbnail directory name: the file's cache key, re-hashed with the extraction version so entries
+ * written before M-10 (which held the frame AFTER a mid-frame time) are never served again.
+ */
+const THUMB_VERSION = 'covering-frame-v2';
+function thumbDirName(key: string): string {
+  return createHash('sha1').update(`${key}|${THUMB_VERSION}`).digest('hex');
+}
+
 async function thumbDir(key: string): Promise<string> {
-  const dir = path.join(cacheSubdir('thumbs'), key);
+  const dir = path.join(cacheSubdir('thumbs'), thumbDirName(key));
   await ensureDir(dir);
   return dir;
 }
 
+function thumbFileName(time: number, width: number): string { return `${timeKey(time)}_${width}.jpg`; }
+
 export function thumbnailCachePath(key: string, time: number, width?: number): string {
-  return path.join(cacheSubdir('thumbs'), key, `${timeKey(time)}_${normWidth(width)}.jpg`);
+  return path.join(cacheSubdir('thumbs'), thumbDirName(key), thumbFileName(time, normWidth(width)));
 }
 
 async function validOutput(p: string): Promise<boolean> {
@@ -64,11 +78,48 @@ async function validOutput(p: string): Promise<boolean> {
   }
 }
 
+// ------------------------------------------------------------------
+// Frame-exact seek (M-10)
+// ------------------------------------------------------------------
+
+/** CFR frame grid of a file's video stream: fps and the first frame's container-relative time. */
+export interface FrameGrid { fps: number; start: number }
+
+const gridCache = new Map<string, Promise<FrameGrid | null>>();
+
+/** Frame grid of `file` (null for VFR, stills or unknown: then thumbnails seek to the raw time). */
+function frameGrid(file: string): Promise<FrameGrid | null> {
+  let p = gridCache.get(file);
+  if (!p) {
+    p = probeMedia(file).then((pr) => {
+      const v = pr.video as ProbedVideoStreamInfo | undefined;
+      if (!v || v.isVfr || !(pr.duration > 0) || !(v.fps.num > 0 && v.fps.den > 0)) return null;
+      return { fps: v.fps.num / v.fps.den, start: typeof v.startTime === 'number' && v.startTime > 0 ? v.startTime : 0 };
+    }).catch(() => null);
+    gridCache.set(file, p);
+    if (gridCache.size > 256) gridCache.delete(gridCache.keys().next().value as string);
+  }
+  return p;
+}
+
+/**
+ * Input-seek time that makes ffmpeg return the frame COVERING `time` (what <video> shows), not the first
+ * frame at or after it: a quarter frame before the covering frame's start, so stream time-base rounding of
+ * frame pts (1/1000 in MKV) cannot skip it.
+ */
+export function frameSeekTime(time: number, grid: FrameGrid | null): number {
+  if (!grid || !Number.isFinite(time)) return time;
+  const j = Math.floor((time - grid.start) * grid.fps + 1e-6);
+  if (j <= 0) return 0;
+  return Math.max(0, grid.start + (j - 0.25) / grid.fps);
+}
+
 /** One ffmpeg invocation: seek to `time`, grab one frame, write JPEG to `out` (via .part). */
 async function extractOne(file: string, time: number, width: number, out: string): Promise<boolean> {
   const part = `${out}.part`;
+  const seek = frameSeekTime(time, await frameGrid(file));
   const args = [
-    '-ss', fmtSeconds(time),
+    '-ss', fmtSeconds(seek),
     '-i', file,
     '-an', '-sn', '-dn',
     '-map', '0:v:0',
@@ -111,7 +162,7 @@ export async function getThumbnail(req: ThumbnailRequest): Promise<string> {
   const width = normWidth(req.width);
   const key = await cacheKeyForPath(req.path);
   const dir = await thumbDir(key);
-  const out = path.join(dir, `${timeKey(req.time)}_${width}.jpg`);
+  const out = path.join(dir, thumbFileName(req.time, width));
   if (await fileExists(out)) return out;
 
   const existing = inFlight.get(out);
@@ -136,7 +187,7 @@ export async function getFilmstrip(req: FilmstripRequest): Promise<string[]> {
   const width = normWidth(req.width);
   const key = await cacheKeyForPath(req.path);
   const dir = await thumbDir(key);
-  const outs = req.times.map((t) => path.join(dir, `${timeKey(t)}_${width}.jpg`));
+  const outs = req.times.map((t) => path.join(dir, thumbFileName(t, width)));
 
   // unique uncached times (not currently in flight elsewhere)
   const pending = new Map<string, number>();
@@ -184,7 +235,8 @@ async function extractBatch(file: string, width: number, batch: [string, number]
     return;
   }
   const args: string[] = [];
-  for (const [, t] of batch) args.push('-ss', fmtSeconds(t), '-i', file);
+  const grid = await frameGrid(file);
+  for (const [, t] of batch) args.push('-ss', fmtSeconds(frameSeekTime(t, grid)), '-i', file);
   batch.forEach(([out], idx) => {
     args.push(
       '-map', `${idx}:v:0`,

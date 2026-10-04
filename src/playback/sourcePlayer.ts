@@ -9,7 +9,7 @@ import type { MediaItem, Rational } from '../../shared/model';
 import { frameCenterSeconds, secondsToFramesFloor } from '../../shared/time';
 import { pathToMediaUrl } from '../../shared/ipc';
 import { PlaybackClock } from './clock';
-import { resolvePlaybackPath, mediaFps, mediaDurationSeconds, type PlaybackPathResolution } from './mediaSource';
+import { resolvePlaybackPath, mediaFps, mediaDurationSeconds, toElementTime, fromElementTime, type PlaybackPathResolution } from './mediaSource';
 
 const loadErrorListeners = new Set<(path: string) => void>();
 /** Subscribe to load/decode errors of any SourcePlayer element (path = the file that failed). */
@@ -219,12 +219,14 @@ export class SourcePlayer {
 
   currentTime(): number {
     if (this.playing && !this.isNative()) return this.clampTime(this.clock.now());
-    return this.el.currentTime || 0;
+    return Math.max(0, this.elTime());
   }
 
   currentFrame(): number { return secondsToFramesFloor(this.currentTime(), this.fps); }
 
   duration(): number {
+    // With a container start offset Chromium's duration is not the media length; trust the probe then.
+    if (this.offset() > 0 && Number.isFinite(this.probedDuration) && this.probedDuration > 0) return this.probedDuration;
     const d = this.el.duration;
     if (Number.isFinite(d) && d > 0) return d;
     return Number.isFinite(this.probedDuration) ? this.probedDuration : 0;
@@ -264,6 +266,14 @@ export class SourcePlayer {
   private isNative(): boolean { return this.rate > 0 && this.rate <= MAX_NATIVE_RATE; }
   private fpsValue(): number { return this.fps.num / this.fps.den; }
 
+  /**
+   * Element time offset: Chromium's media timeline is the file's absolute pts, so an original with a
+   * container start_time > 0 is played at sourceTime + startTime (M-11). Proxies are 0-based.
+   */
+  private offset(): number { return this.resolution.timeOffset ?? 0; }
+  /** Element currentTime as a (container-relative) source time. */
+  private elTime(): number { return fromElementTime(this.el.currentTime || 0, this.offset()); }
+
   private snap(seconds: number): number {
     const frame = secondsToFramesFloor(Math.max(0, seconds), this.fps);
     return this.clampTime(frameCenterSeconds(frame, this.fps));
@@ -277,9 +287,9 @@ export class SourcePlayer {
 
   private seekInternal(t: number): void {
     if (!this.resolution.path) return;
-    if (Math.abs(this.el.currentTime - t) < 1e-4) return;
+    if (Math.abs(this.elTime() - t) < 1e-4) return;
     this.seekPending = true;
-    try { this.el.currentTime = t; } catch { this.seekPending = false; }
+    try { this.el.currentTime = toElementTime(t, this.offset()); } catch { this.seekPending = false; }
   }
 
   /** Put the element into native or stepped mode according to the rate. */
@@ -288,7 +298,7 @@ export class SourcePlayer {
     if (this.isNative()) {
       this.el.playbackRate = this.rate;
       const t = this.clock.now();
-      if (Math.abs(this.el.currentTime - t) > 0.05) this.seekInternal(t);
+      if (Math.abs(this.elTime() - t) > 0.05) this.seekInternal(t);
       void this.el.play().catch(() => { /* autoplay refused or load error; error event handles */ });
     } else {
       try { this.el.pause(); } catch { /* ignore */ }
@@ -323,7 +333,7 @@ export class SourcePlayer {
     if (!this.playing || this.destroyed) return;
     if (this.isNative()) {
       // Element is the time authority; keep the clock in step for mode switches.
-      this.clock.seek(this.el.currentTime);
+      this.clock.seek(Math.max(0, this.elTime()));
       this.emitTime();
     } else {
       const dur = this.duration();

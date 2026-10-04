@@ -9,7 +9,7 @@
  * exact frame counts, compositing, audio mixing).
  */
 import path from 'node:path';
-import type { Clip, ExportSettings, ID, MediaItem, Rational, Sequence, Track, Transition } from '@shared/model';
+import type { Clip, ExportSettings, ID, MediaItem, Rational, Sequence, Track, Transition, VideoStreamInfo } from '@shared/model';
 import type { ExportRequest } from '@shared/ipc';
 import { clipEnd, sequenceDuration, sourceTimeAt } from '@shared/timeline';
 import { framesToSeconds } from '@shared/time';
@@ -253,27 +253,91 @@ interface Ctx {
   labelCounter: number;
   /** Absolute frame of the export range start. */
   rangeStartF: number;
+  /** Input args key -> input index and the stream kinds already taken from it (V+A input sharing). */
+  inputKeys: Map<string, { index: number; kinds: Set<'video' | 'audio'> }[]>;
 }
 
 function newLabel(ctx: Ctx, prefix: string): string { return `[${prefix}${ctx.labelCounter++}]`; }
 
-/** Adds an ffmpeg input for the segment; returns the input index. */
-function addInput(ctx: Ctx, seg: ClipSeg, kind: 'video' | 'audio'): { index: number; preroll: number; srcLen: number } {
+/** Containers whose input seek (`-ss` before `-i`) is frame-exact in ffmpeg: no decoder pre-roll needed. */
+const EXACT_SEEK_CONTAINERS = new Set(['mp4', 'mov', 'm4v', 'm4a', 'matroska', 'webm']);
+
+/** Seconds of pre-roll decoded before the trim point (a small margin for exact containers, 1 s otherwise). */
+function inputPreroll(m: MediaItem): number {
+  const c = m.probe?.container;
+  return c && EXACT_SEEK_CONTAINERS.has(c) ? 0.04 : 1;
+}
+
+/** Half a media frame (seconds) when the media has video; 0 otherwise. */
+function halfMediaFrame(m: MediaItem): number {
+  const f = m.probe?.video?.fps;
+  const v = f && f.num > 0 && f.den > 0 ? f.num / f.den : 0;
+  return v > 0 ? 0.5 / v : 0;
+}
+
+/**
+ * Start of the video stream relative to the container start (seconds), when the probe recorded it
+ * (`startTime` on the probed video stream, see electron/media/probe.ts); 0 otherwise.
+ */
+function videoStreamStart(m: MediaItem): number {
+  const v = m.probe?.video as (VideoStreamInfo & { startTime?: number }) | undefined;
+  const st = v?.startTime;
+  return typeof st === 'number' && Number.isFinite(st) && st > 0 ? st : 0;
+}
+
+/** `PTS-x/TB` with a signed offset (x may be negative). */
+function ptsMinus(x: number, ptsName = 'PTS'): string {
+  return x >= 0 ? `${ptsName}-${sec(x)}/TB` : `${ptsName}+${sec(-x)}/TB`;
+}
+
+interface InputInfo {
+  index: number;
+  /** Container-relative source second the segment's media time starts at (transition handle included). */
+  srcStart: number;
+  /** Source seconds of the segment (timeline length * speed). */
+  srcLen: number;
+  /** Source seconds read before srcStart (half a media frame for the video frame choice). */
+  lead: number;
+}
+
+/**
+ * Adds (or reuses) an ffmpeg input for the segment and returns its index.
+ *
+ * Timestamps: every media input is opened with `-copyts -start_at_zero`, so decoded pts are
+ * container-relative source seconds (pts - format start_time) whatever the container does on seek
+ * (MPEG-TS does not rebase to the `-ss` point, M-02) and whatever each stream's own start is
+ * (late audio/video keeps its offset, M-04). The filters then trim on those absolute source times.
+ * `-ss` is only a decode shortcut: exact containers seek right before the trim point, others keep 1 s
+ * of pre-roll (M-09). A linked video+audio pair with the same range shares one input.
+ */
+function addInput(ctx: Ctx, seg: ClipSeg, kind: 'video' | 'audio'): InputInfo {
   const totalFrames = seg.extBefore + seg.frames + seg.extAfter;
   const tlLen = totalFrames * ctx.fd;
   const srcLen = tlLen * seg.speed;
   if (seg.isImage && kind === 'video') {
     ctx.inputs.push(['-loop', '1', '-framerate', fpsStr(ctx.fps), '-t', sec(tlLen + 0.5), '-i', seg.media.path]);
-    return { index: ctx.inputs.length - 1, preroll: 0, srcLen: tlLen };
+    return { index: ctx.inputs.length - 1, srcStart: 0, srcLen: tlLen, lead: 0 };
   }
   const srcStart = Math.max(0, seg.srcStart - seg.extBefore * ctx.fd * seg.speed);
-  const seek = Math.max(0, srcStart - 1);
-  const preroll = srcStart - seek;
-  const args: string[] = [];
+  // Same lead for video and audio so a linked pair produces identical input args (and shares the input).
+  const lead = halfMediaFrame(seg.media);
+  const from = Math.max(0, srcStart - lead);
+  const seek = Math.max(0, from - inputPreroll(seg.media));
+  const args: string[] = ['-copyts', '-start_at_zero'];
   if (seek > 0) args.push('-ss', sec(seek));
-  args.push('-t', sec(preroll + srcLen + 0.25), '-i', seg.media.path);
+  args.push('-t', sec((srcStart - seek) + srcLen + 0.25), '-i', seg.media.path);
+  const key = args.join('\u0000');
+  const same = ctx.inputKeys.get(key) ?? [];
+  const shared = same.find((e) => !e.kinds.has(kind));
+  if (shared) {
+    shared.kinds.add(kind);
+    return { index: shared.index, srcStart, srcLen, lead };
+  }
   ctx.inputs.push(args);
-  return { index: ctx.inputs.length - 1, preroll, srcLen };
+  const index = ctx.inputs.length - 1;
+  same.push({ index, kinds: new Set([kind]) });
+  ctx.inputKeys.set(key, same);
+  return { index, srcStart, srcLen, lead };
 }
 
 /** Transform placement: returns the extra filters applied after the fit scale, or [] for identity. */
@@ -326,16 +390,36 @@ function clamp01(v: number): number { return Number.isFinite(v) ? Math.min(1, Ma
 /** Builds the exact-length video stream for a clip segment. Returns its label. */
 function videoSegment(ctx: Ctx, seg: ClipSeg): string {
   const totalFrames = seg.extBefore + seg.frames + seg.extAfter;
-  const { index, preroll, srcLen } = addInput(ctx, seg, 'video');
+  const { index, srcStart, srcLen, lead } = addInput(ctx, seg, 'video');
   seg.input = index;
   const f: string[] = [];
   if (seg.isImage) {
-    f.push(`trim=duration=${sec(srcLen + 0.25)}`, 'setpts=PTS-STARTPTS');
+    f.push(`trim=duration=${sec(srcLen + 0.25)}`, 'setpts=PTS-STARTPTS', `fps=${fpsStr(ctx.fps)}`, 'format=yuva420p');
   } else {
-    f.push(`trim=start=${sec(preroll)}:duration=${sec(srcLen + 0.25)}`, 'setpts=PTS-STARTPTS');
+    // Frame choice = the editor's: timeline frame n shows the media frame covering
+    // srcStart + n*fd*speed + 0.5/mediaFps (SequencePlayer seeks to frame centres). Keep frames from
+    // half a media frame before the in-point and keep their sub-frame phase, biased by
+    // c = 0.5/mediaFps - 0.5*fd*speed so that fps= (which keeps the last frame whose pts rounds to a slot)
+    // picks exactly that frame (M-03). pts are container-relative (-copyts -start_at_zero, see addInput).
+    const from = Math.max(0, srcStart - lead);
+    // +1 µs: a frame starting exactly at the seek time belongs to that time (the editor model floors t*fps + 0.5).
+    const c = lead > 0 ? lead - 0.5 * ctx.fd * seg.speed + 1e-6 : 0;
+    // settb=AVTB first: setpts truncates to the stream time base (1/1000 in MKV, 1/120 in some MP4s), which
+    // would move frames across fps slot boundaries.
+    f.push(`trim=start=${sec(from)}:duration=${sec(srcStart - from + srcLen + 0.25)}`, 'settb=AVTB', `setpts=${ptsMinus(srcStart + c)}`);
     if (Math.abs(seg.speed - 1) > 1e-9) f.push(`setpts=PTS/${num(seg.speed)}`);
+    // start_time=0 anchors slot 0 at the in-point; earlier frames are dropped and a stream that starts after
+    // the in-point is padded with copies of its first frame...
+    f.push(`fps=${fpsStr(ctx.fps)}:start_time=0`, 'format=yuva420p');
+    // ...which are made transparent when the probe knows the video stream starts late (M-04: the gap shows
+    // what is under the clip, like an empty timeline region).
+    const vStart = videoStreamStart(seg.media);
+    if (vStart > from + 1e-3) {
+      const firstOut = (vStart - srcStart - c) / seg.speed;
+      const hideBefore = firstOut - 0.5 * ctx.fd;
+      if (hideBefore > 0) f.push(`lut=a=0:enable='lt(t,${sec(hideBefore)})'`);
+    }
   }
-  f.push(`fps=${fpsStr(ctx.fps)}`, 'format=yuva420p');
   f.push(`scale=${ctx.W}:${ctx.H}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic`);
   f.push(...transformFilters(ctx, seg));
   const op = seg.clip.transform.opacity;
@@ -378,9 +462,11 @@ function videoTrack(ctx: Ctx, plan: TrackPlan): string | null {
   flush();
   const trackLabel = newLabel(ctx, 'tv');
   if (parts.length === 1) {
-    ctx.chains.push(`${parts[0]}setpts=N*${ctx.fps.den}/${ctx.fps.num}/TB${trackLabel}`);
+    // Integer timestamps in the frame time base: N*den/num/TB evaluated in floating point truncates to
+    // N-1 for many N when TB is already den/num, which duplicated pts and dropped/doubled frames (M-01).
+    ctx.chains.push(`${parts[0]}settb=${ctx.fps.den}/${ctx.fps.num},setpts=N${trackLabel}`);
   } else {
-    ctx.chains.push(`${parts.join('')}concat=n=${parts.length}:v=1:a=0,setpts=N*${ctx.fps.den}/${ctx.fps.num}/TB${trackLabel}`);
+    ctx.chains.push(`${parts.join('')}concat=n=${parts.length}:v=1:a=0,settb=${ctx.fps.den}/${ctx.fps.num},setpts=N${trackLabel}`);
   }
   return trackLabel;
 }
@@ -414,12 +500,14 @@ function atempoChain(speed: number): string[] {
 function audioSegment(ctx: Ctx, seg: ClipSeg): string {
   const totalFrames = seg.extBefore + seg.frames + seg.extAfter;
   const lenSec = totalFrames * ctx.fd;
-  const { index, preroll, srcLen } = addInput(ctx, seg, 'audio');
+  const { index, srcStart, srcLen } = addInput(ctx, seg, 'audio');
   seg.input = index;
   const streamIdx = audioStreamIndex(seg, ctx.warnings);
   const inLabel = streamIdx === null ? `[${index}:a:0]` : `[${index}:${streamIdx}]`;
   const f: string[] = [];
-  f.push(`atrim=start=${sec(preroll)}:duration=${sec(srcLen + 0.25)}`, 'asetpts=PTS-STARTPTS');
+  // Rebase to the in-point (not to the stream's first sample) and fill a late start with silence, so a
+  // stream that starts after the container start keeps its offset (M-04). pts are container-relative.
+  f.push(`atrim=start=${sec(srcStart)}:duration=${sec(srcLen + 0.25)}`, `asetpts=${ptsMinus(srcStart)}`, 'aresample=async=1:first_pts=0');
   if (Math.abs(seg.speed - 1) > 1e-9) f.push(...atempoChain(seg.speed));
   f.push(`aresample=${ctx.SR}`, `aformat=sample_fmts=fltp:channel_layouts=${ctx.layout}`);
   const a = seg.clip.audio;
@@ -602,7 +690,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
 
   const ctx: Ctx = {
     seq, settings, W, H, fps: seq.fps, fd: seqFd, SR, layout,
-    inputs: [], chains: [], warnings, labelCounter: 0, rangeStartF: startF,
+    inputs: [], chains: [], warnings, labelCounter: 0, rangeStartF: startF, inputKeys: new Map(),
   };
 
   // ---- Video

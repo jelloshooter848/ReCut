@@ -254,19 +254,24 @@ export class Gauntlet {
   readonly steps: StepResult[] = [];
   constructor(readonly label: string) {}
 
-  async step<T>(name: string, mode: Mode, fn: () => Promise<T>, opts: { note?: string; fallback?: () => Promise<T | void> } = {}): Promise<T | undefined> {
+  async step<T>(name: string, mode: Mode, fn: () => Promise<T>, opts: { note?: string; fallback?: () => Promise<T | void>; timeoutMs?: number } = {}): Promise<T | undefined> {
+    const limit = opts.timeoutMs ?? 240_000;
+    const withTimeout = <R>(p: Promise<R>, what: string) => {
+      let timer: NodeJS.Timeout | undefined;
+      return Promise.race([p, new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} did not finish within ${limit / 1000}s (step watchdog)`)), limit); })]).finally(() => clearTimeout(timer));
+    };
     try {
-      const r = await fn();
+      const r = await withTimeout(fn(), 'step');
       this.steps.push({ name, mode, ok: true, note: opts.note });
       console.log(`[${this.label}] PASS (${mode}) ${name}${opts.note ? ` — ${opts.note}` : ''}`);
       return r;
     } catch (e) {
-      const msg = (e instanceof Error ? e.message : String(e)).split('\n').slice(0, 6).join(' | ');
+      const msg = (e instanceof Error ? e.message : String(e)).split('\n').slice(0, 14).join(' | ');
       this.steps.push({ name, mode, ok: false, note: opts.note, error: msg });
       console.log(`[${this.label}] FAIL (${mode}) ${name}: ${msg}`);
       if (opts.fallback) {
         try {
-          const r = await opts.fallback();
+          const r = await withTimeout(opts.fallback(), 'workaround');
           this.steps.push({ name: `${name} [WORKAROUND via store API]`, mode: 'API', ok: true });
           console.log(`[${this.label}] WORKAROUND ${name}`);
           return (r ?? undefined) as T | undefined;

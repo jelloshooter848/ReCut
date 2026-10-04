@@ -236,7 +236,7 @@ export async function startProxy(mediaId: ID): Promise<JobInfo | null> {
   const m = st.project.media[mediaId];
   if (!api || !m) return null;
   st.setProxy(mediaId, { status: 'queued', progress: 0 });
-  return api.startProxy({ mediaId, path: m.path, height: st.project.settings.proxyHeight });
+  return api.startProxy({ mediaId, path: m.path, height: st.project.settings.proxyHeight, audioStream: m.preferredAudioStream });
 }
 
 export async function startSceneDetect(mediaId: ID, threshold?: number): Promise<JobInfo | null> {

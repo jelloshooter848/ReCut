@@ -31,6 +31,8 @@ export interface LayerPlan {
   transform: ClipTransform;
   /** Index into seq.videoTracks (0 = bottom). */
   trackIndex: number;
+  /** Seconds added to sourceTime to get the element's currentTime (container start of an original; 0 for proxies). */
+  timeOffset: number;
   /** Media frame rate, for frame-centering seeks. */
   mediaFps: Rational;
   /** Probed media size (null when unknown; the player falls back to the element's videoWidth/Height). */
@@ -48,6 +50,8 @@ export interface AudioPlan {
   path: string;
   usingProxy: boolean;
   sourceTime: number;
+  /** Seconds added to sourceTime to get the element's currentTime (container start of an original; 0 for proxies). */
+  timeOffset: number;
   /** Linear gain: 10^(gain/20) * volume * fade envelope * transition gain (track volume NOT included). */
   gain: number;
   /** Track volume (linear) so the player can keep a per-track GainNode. */
@@ -175,6 +179,7 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
         path: res.path,
         usingProxy: res.usingProxy,
         sourceTime: sourceTimeAt(clip, frame, fps),
+        timeOffset: res.timeOffset ?? 0,
         alpha,
         transform: clip.transform,
         trackIndex: index,
@@ -201,6 +206,7 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
         path: res.path,
         usingProxy: res.usingProxy,
         sourceTime: sourceTimeAt(clip, frame, fps),
+        timeOffset: res.timeOffset ?? 0,
         gain,
         trackVolume: Math.max(0, track.volume),
         speed: clip.speed,

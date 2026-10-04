@@ -15,6 +15,7 @@ import { sequenceDuration, resolveSubtitleCues, type ResolvedCue } from '../../s
 import { PlaybackClock } from './clock';
 import { MediaElementPool } from './elementPool';
 import { planFrame, type FramePlan, type LayerPlan, type AudioPlan, type MissingMedia } from './planner';
+import { clampElementTime, toElementTime } from './mediaSource';
 
 export interface SequencePlayerSettings {
   useProxies: boolean;
@@ -330,10 +331,9 @@ export class SequencePlayer {
     el.addEventListener('loadeddata', redraw);
   }
 
-  private clampToMedia(el: HTMLMediaElement, t: number): number {
-    const d = el.duration;
-    if (Number.isFinite(d) && d > 0) return Math.max(0, Math.min(d - 0.001, t));
-    return Math.max(0, t);
+  /** Source time -> clamped element currentTime (originals with a container start offset are absolute-pts based). */
+  private clampToMedia(el: HTMLMediaElement, sourceTime: number, offset: number): number {
+    return clampElementTime(toElementTime(sourceTime, offset), el.duration, offset);
   }
 
   private updateVideoElements(plan: FramePlan): void {
@@ -346,7 +346,7 @@ export class SequencePlayer {
       const el = this.pool.acquire(layer.path, role);
       this.ensureListeners(el);
       this.activeVideo.set(layer.clipId, el);
-      const target = this.clampToMedia(el, layer.sourceTime + 0.5 / fpsValue(layer.mediaFps));
+      const target = this.clampToMedia(el, layer.sourceTime + 0.5 / fpsValue(layer.mediaFps), layer.timeOffset);
       if (native) {
         const wanted = Math.max(0.0625, Math.min(16, layer.speed * this.rate));
         if (Math.abs(el.playbackRate - wanted) > 1e-3) el.playbackRate = wanted;
@@ -403,7 +403,7 @@ export class SequencePlayer {
       route.clipGain.gain.setTargetAtTime(a.gain, now, 0.01);
       this.trackGain(a.trackId).gain.setTargetAtTime(a.trackVolume, now, 0.01);
 
-      const target = this.clampToMedia(el, a.sourceTime);
+      const target = this.clampToMedia(el, a.sourceTime, a.timeOffset);
       if (native) {
         const wanted = Math.max(0.0625, Math.min(16, a.speed * this.rate));
         if (Math.abs(el.playbackRate - wanted) > 1e-3) el.playbackRate = wanted;

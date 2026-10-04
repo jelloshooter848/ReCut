@@ -10,6 +10,14 @@ export interface PlaybackPathResolution {
   /** Absolute filesystem path to play, or null when nothing is playable. */
   path: string | null;
   usingProxy: boolean;
+  /**
+   * Seconds to ADD to a (container-relative) source time to get the <video>/<audio> element's
+   * currentTime, and to subtract when reading it back. Chromium's media timeline is the file's
+   * absolute pts, so an original whose container start_time is not 0 (e.g. MPEG-TS remuxes,
+   * `-output_ts_offset` files) is offset by that start time; proxies are 0-based (offset 0).
+   * Missing means 0.
+   */
+  timeOffset?: number;
   /** Human readable explanation when a non-obvious choice was made or nothing is playable. */
   reason?: string;
 }
@@ -21,13 +29,13 @@ export function resolvePlaybackPath(media: MediaItem, useProxies: boolean): Play
   const proxyReady = media.proxy?.status === 'ready' && !!media.proxy.path;
   const proxyPath = proxyReady ? media.proxy.path! : null;
 
-  if (useProxies && proxyPath) return { path: proxyPath, usingProxy: true };
+  if (useProxies && proxyPath) return { path: proxyPath, usingProxy: true, timeOffset: 0 };
 
   const playable = media.probe?.browserPlayable === true;
-  if (playable) return { path: media.path, usingProxy: false };
+  if (playable) return { path: media.path, usingProxy: false, timeOffset: mediaTimeOffset(media, false) };
 
   if (proxyPath) {
-    return { path: proxyPath, usingProxy: true, reason: 'original not decodable; using proxy' };
+    return { path: proxyPath, usingProxy: true, timeOffset: 0, reason: 'original not decodable; using proxy' };
   }
 
   if (!media.probe) {
@@ -41,6 +49,38 @@ export function resolvePlaybackPath(media: MediaItem, useProxies: boolean): Play
       ? `; proxy failed${media.proxy.error ? ': ' + media.proxy.error : ''}`
       : '; generate a proxy to preview';
   return { path: null, usingProxy: false, reason: `original not decodable${why}${proxyHint}` };
+}
+
+/**
+ * Element-time offset for playing `media` (see PlaybackPathResolution.timeOffset): the container
+ * start_time for originals, 0 for proxies (which ffmpeg writes 0-based, relative to the container start).
+ */
+export function mediaTimeOffset(media: MediaItem | undefined, usingProxy: boolean): number {
+  if (usingProxy) return 0;
+  const st = media?.probe?.startTime;
+  return typeof st === 'number' && Number.isFinite(st) && st > 0 ? st : 0;
+}
+
+/** Source time (container-relative seconds) -> media element currentTime. */
+export function toElementTime(sourceTime: number, offset: number | undefined): number {
+  return sourceTime + (offset ?? 0);
+}
+
+/** Media element currentTime -> source time (container-relative seconds). */
+export function fromElementTime(elementTime: number, offset: number | undefined): number {
+  return elementTime - (offset ?? 0);
+}
+
+/**
+ * Clamp an element-time seek target to the playable span of the element: [offset, duration).
+ * When the original has a start offset, Chromium's reported `duration` is not a reliable end
+ * (it is neither the stream length nor offset + length), so only the lower bound is enforced and
+ * the element clamps past-the-end seeks itself.
+ */
+export function clampElementTime(t: number, elementDuration: number, offset: number | undefined): number {
+  const off = offset ?? 0;
+  if (off === 0 && Number.isFinite(elementDuration) && elementDuration > 0) return Math.max(0, Math.min(elementDuration - 0.001, t));
+  return Math.max(off, t);
 }
 
 /** Frame rate of the media's video stream; falls back to 24 fps for audio/images/unknown. */

@@ -7,7 +7,7 @@
  *
  *   npm run build && xvfb-run -a -s "-screen 0 1920x1080x24" node tests/perf/electron-attrib.mjs
  */
-import { launchAndBuild, makeRecorder, sleep, stats, r2 } from './_electron-common.mjs';
+import { launchAndBuild, makeRecorder, sleep, stats, r2, closeApp } from './_electron-common.mjs';
 
 const R = makeRecorder();
 const H = await launchAndBuild({ tag: 'attrib' });
@@ -106,5 +106,5 @@ for (const L of layouts) {
 }
 R.rec('mem', 'renderer working set at end (MB) / JS heap (MB)', `${await H.rendererMB()} / ${r2(await page.evaluate(() => performance.memory ? performance.memory.usedJSHeapSize / 1048576 : -1))}`, 'MB');
 R.save('electron-attrib');
-await H.app.close().catch(() => {});
+await closeApp(H.app);
 process.exit(0);
