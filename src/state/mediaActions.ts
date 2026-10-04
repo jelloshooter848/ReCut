@@ -10,6 +10,7 @@ import { uid } from '../../shared/ids';
 import { useStore, serializeForSave } from './store';
 import { fileNameOf } from './selectors';
 import { classifyPath, importIdentity, sidecarLanguage, LONG_FORM_MOVIE_SEC, type ImportBinKind } from './parseIdentity';
+import { mediaNeedsProxyForPreview } from '../playback/mediaSource';
 
 export function recutApi(): RecutApi | null {
   return typeof window !== 'undefined' && window.recut ? window.recut : null;
@@ -131,7 +132,7 @@ async function probeImported(list: { id: ID; category: string; auto: boolean }[]
       // BUG-3: long-form video without an episode marker is a movie.
       useStore.getState().updateMedia(id, { category: 'Movie', ...(auto && m.binId === null && useStore.getState().project.bins['bin-movies'] ? { binId: 'bin-movies' } : {}) });
     }
-    if (!probe.browserPlayable && (m.kind === 'video' || m.kind === 'audio') && m.proxy.status === 'none') needProxy.push(id);
+    if (mediaNeedsProxyForPreview({ ...m, probe }) && (m.kind === 'video' || m.kind === 'audio') && m.proxy.status === 'none') needProxy.push(id);
   }));
   if (!needProxy.length || !useStore.getState().project.settings.useProxies) return;
   let started = 0;

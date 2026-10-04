@@ -16,6 +16,35 @@ import { PlaybackClock } from './clock';
 import { MediaElementPool } from './elementPool';
 import { planFrame, type FramePlan, type LayerPlan, type AudioPlan, type MissingMedia } from './planner';
 import { clampElementTime, toElementTime } from './mediaSource';
+import { pathToMediaUrl } from '../../shared/ipc';
+
+/** Decoded still images shared by every player, keyed by file path (LRU-capped). */
+const IMAGE_CACHE_CAP = 64;
+const imageCache = new Map<string, { img: HTMLImageElement; error: string | null; waiters: Set<() => void> }>();
+
+/** Get (or start loading) the cached <img> for a still-image path; `onReady` fires once when it loads or fails. */
+export function getStillImage(path: string, onReady?: () => void): { img: HTMLImageElement; error: string | null } {
+  let entry = imageCache.get(path);
+  if (entry) {
+    imageCache.delete(path); imageCache.set(path, entry); // LRU bump
+  } else {
+    const img = new Image();
+    img.decoding = 'async';
+    const e: { img: HTMLImageElement; error: string | null; waiters: Set<() => void> } = { img, error: null, waiters: new Set() };
+    const flush = () => { const w = [...e.waiters]; e.waiters.clear(); for (const cb of w) cb(); };
+    img.onload = flush;
+    img.onerror = () => { e.error = 'image could not be decoded'; flush(); };
+    img.src = pathToMediaUrl(path);
+    imageCache.set(path, e);
+    entry = e;
+    while (imageCache.size > IMAGE_CACHE_CAP) imageCache.delete(imageCache.keys().next().value as string);
+  }
+  if (onReady && !entry.img.complete && !entry.error) entry.waiters.add(onReady);
+  return entry;
+}
+
+/** Drop a cached still image (relink / file replaced). */
+export function forgetStillImage(path: string): void { imageCache.delete(path); }
 
 export interface SequencePlayerSettings {
   useProxies: boolean;
@@ -83,6 +112,8 @@ export class SequencePlayer {
   private destroyed = false;
   private offPoolRelease: (() => void) | null = null;
   private ctx: CanvasRenderingContext2D | null;
+  /** Redraw when a still image finishes loading (paused display would otherwise stay black). */
+  private readonly imageRedraw = () => { if (!this.destroyed) { this.lastFrame = -1; this.requestTick(); } };
 
   constructor(
     public readonly canvas: HTMLCanvasElement,
@@ -97,6 +128,7 @@ export class SequencePlayer {
     // A released path (proxy ready, relink) disposes elements this player may still hold: re-acquire and redraw.
     this.offPoolRelease = pool.onPathReleased?.((path) => {
       if (this.destroyed) return;
+      forgetStillImage(path);
       const plan = this.lastPlan;
       const uses = !plan || plan.layers.some((l) => l.path === path) || plan.audio.some((a) => a.path === path);
       if (!uses) return;
@@ -247,6 +279,11 @@ export class SequencePlayer {
     const check = (items: (LayerPlan | AudioPlan)[]) => {
       for (const it of items) {
         if (seen.has(it.clipId)) continue;
+        if ('isImage' in it && it.isImage) {
+          const imgErr = getStillImage(it.path).error;
+          if (imgErr) { seen.add(it.clipId); out.push({ clipId: it.clipId, mediaId: it.mediaId, reason: imgErr }); }
+          continue;
+        }
         const err = this.pool.getError(it.path);
         if (err) { seen.add(it.clipId); out.push({ clipId: it.clipId, mediaId: it.mediaId, reason: err.message }); }
       }
@@ -353,6 +390,7 @@ export class SequencePlayer {
     const native = this.isNative();
     const seen = new Set<ID>();
     for (const layer of plan.layers) {
+      if (layer.isImage) { getStillImage(layer.path, this.imageRedraw); continue; }
       seen.add(layer.clipId);
       if (this.pool.getError(layer.path)) continue;
       const role = `video:${layer.clipId}#${this.id}`;
@@ -506,10 +544,20 @@ export class SequencePlayer {
     ctx.scale(sx, sy);
 
     for (const layer of plan.layers) {
-      const el = this.activeVideo.get(layer.clipId);
-      if (!el || el.readyState < 2 || layer.alpha <= 0) continue;
-      const vw = el.videoWidth || layer.mediaSize?.width || 0;
-      const vh = el.videoHeight || layer.mediaSize?.height || 0;
+      if (layer.alpha <= 0) continue;
+      let el: HTMLVideoElement | HTMLImageElement | undefined;
+      let vw = 0, vh = 0;
+      if (layer.isImage) {
+        const img = getStillImage(layer.path).img;
+        if (!img.complete || !img.naturalWidth) continue;
+        el = img; vw = img.naturalWidth; vh = img.naturalHeight;
+      } else {
+        const v = this.activeVideo.get(layer.clipId);
+        if (!v || v.readyState < 2) continue;
+        el = v;
+        vw = v.videoWidth || layer.mediaSize?.width || 0;
+        vh = v.videoHeight || layer.mediaSize?.height || 0;
+      }
       if (!vw || !vh) continue;
       const fit = Math.min(seq.width / vw, seq.height / vh);
       const tr = layer.transform;

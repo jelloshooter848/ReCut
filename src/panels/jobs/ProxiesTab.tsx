@@ -10,6 +10,7 @@ import { useJobsStore } from '@/app/jobsStore';
 import { Button, EmptyState, ProgressBar, Select, Toggle } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
 import { jobEq, useJobsSelect } from './useJobsSelect';
+import { isStillImage, mediaNeedsProxyForPreview } from '@/playback/mediaSource';
 
 const PROXY_HEIGHTS = [{ value: '540', label: '540p' }, { value: '720', label: '720p' }, { value: '1080', label: '1080p' }];
 
@@ -17,11 +18,11 @@ const isActiveJob = (j: JobInfo) => j.status === 'queued' || j.status === 'runni
 
 /** Media that can have a proxy: online video/audio with (or awaiting) a probe. */
 export function proxyEligible(m: MediaItem): boolean {
-  if (m.offline) return false;
+  if (m.offline || isStillImage(m)) return false;
   if (m.probe) return !!m.probe.video || m.probe.audio.length > 0;
   return m.kind === 'video' || m.kind === 'audio' || m.kind === 'unknown';
 }
-export function needsProxy(m: MediaItem): boolean { return !!m.probe && !m.probe.browserPlayable && proxyEligible(m); }
+export function needsProxy(m: MediaItem): boolean { return mediaNeedsProxyForPreview(m) && proxyEligible(m); }
 export function missingProxy(m: MediaItem): boolean { return proxyEligible(m) && (m.proxy.status === 'none' || m.proxy.status === 'failed'); }
 export function sceneEligible(m: MediaItem): boolean { return !m.offline && !!m.probe?.video && m.kind !== 'image'; }
 

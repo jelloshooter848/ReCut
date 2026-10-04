@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { Clip, MediaItem, Sequence, Track, Transition } from '../../shared/model';
 import { createSequence } from '../../shared/project';
 import { defaultAudio, defaultTransform } from '../../shared/timeline';
-import { resolvePlaybackPath, mediaFps, mediaTimeOffset, toElementTime, fromElementTime, clampElementTime } from '../../src/playback/mediaSource';
+import { resolvePlaybackPath, mediaFps, mediaTimeOffset, toElementTime, fromElementTime, clampElementTime, isDisplayableImage, mediaNeedsProxyForPreview } from '../../src/playback/mediaSource';
 import { PlaybackClock } from '../../src/playback/clock';
 import { planFrame, fadeEnvelope, contributionsAt } from '../../src/playback/planner';
 import { peaksForRange, ThumbnailCache, WaveformCache } from '../../src/playback/thumbnails';
@@ -561,5 +561,70 @@ describe('contributionsAt index (P-08)', () => {
     }
     const track = { id: 'v1', kind: 'video', name: 'V1', clips, transitions, muted: false, solo: false, locked: false, volume: 1 } as unknown as Track;
     for (let f = -5; f < t + 10; f++) expect(contributionsAt(track, f).map((x) => x.clip.id)).toEqual(linear(track, f));
+  });
+});
+
+// ------------------------------------------------------------------ still images (Program monitor)
+
+describe('still images', () => {
+  function image(id: string, ext = 'png', over: Partial<MediaItem> = {}): MediaItem {
+    return mediaItem(id, {
+      path: `/media/${id}.${ext}`, kind: 'image', category: 'Other',
+      probe: {
+        container: 'png_pipe', duration: 0, size: 1, audio: [], subtitles: [], startTime: 0, browserPlayable: false,
+        playabilityReason: 'still image',
+        video: { index: 0, codec: 'png', width: 640, height: 360, fps: { num: 25, den: 1 }, avgFps: { num: 0, den: 1 }, isVfr: false },
+      },
+      ...over,
+    });
+  }
+
+  it('resolves png/jpg/jpeg/webp/gif/bmp as directly displayable originals (never a proxy)', () => {
+    for (const ext of ['png', 'jpg', 'JPEG', 'webp', 'gif', 'bmp']) {
+      const m = image('I', ext, { proxy: { status: 'ready', path: '/cache/I.proxy.mp4' } });
+      expect(isDisplayableImage(m)).toBe(true);
+      expect(resolvePlaybackPath(m, true)).toMatchObject({ path: `/media/I.${ext}`, usingProxy: false, isImage: true });
+      expect(mediaNeedsProxyForPreview(m)).toBe(false);
+    }
+  });
+
+  it('an image Chromium cannot show reports a conversion hint, not a proxy hint', () => {
+    const m = image('T', 'tiff');
+    expect(isDisplayableImage(m)).toBe(false);
+    const r = resolvePlaybackPath(m, true);
+    expect(r.path).toBeNull();
+    expect(r.reason).toMatch(/convert/);
+    expect(mediaNeedsProxyForPreview(m)).toBe(false);
+  });
+
+  it('undecodable video still needs a proxy', () => {
+    const m = mediaItem('H');
+    m.probe!.browserPlayable = false;
+    expect(mediaNeedsProxyForPreview(m)).toBe(true);
+  });
+
+  it('planFrame draws a PNG on V2 over video as an image layer with transform/opacity, and no audio', () => {
+    const s = seq();
+    s.videoTracks[0].clips.push(clip('v', 'A', 0, 100));
+    const t = defaultTransform();
+    t.opacity = 0.5; t.scale = 0.5; t.x = 100;
+    s.videoTracks[1].clips.push(clip('still', 'P', 0, 100, { transform: t }));
+    s.audioTracks[0].clips.push(clip('stillA', 'P', 0, 100, { kind: 'audio' }));
+    const media = { ...MEDIA, P: image('P') };
+    const p = planFrame(s, media, 50, true);
+    expect(p.missing).toEqual([]);
+    expect(p.layers.map((l) => [l.clipId, l.isImage])).toEqual([['v', false], ['still', true]]);
+    expect(p.layers[1]).toMatchObject({ path: '/media/P.png', usingProxy: false, alpha: 0.5, transform: { scale: 0.5, x: 100 } });
+    expect(p.audio).toEqual([]);
+  });
+
+  it('a dissolve onto a still image ramps its alpha', () => {
+    const s = seq();
+    s.videoTracks[0].clips.push(clip('a', 'A', 0, 48), clip('img', 'P', 48, 48));
+    s.videoTracks[0].transitions.push(tr('x', 'crossDissolve', 24, 'a', 'img'));
+    const p = planFrame(s, { ...MEDIA, P: image('P') }, 48, false);
+    const layer = p.layers.find((l) => l.clipId === 'img')!;
+    expect(layer.isImage).toBe(true);
+    expect(layer.alpha).toBeCloseTo(0.5, 6);
   });
 });

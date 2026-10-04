@@ -4,7 +4,7 @@
  */
 import type { ID, MediaItem, Sequence } from '@shared/model';
 import type { MissingMedia } from '@/playback';
-import { resolvePlaybackPath } from '@/playback/mediaSource';
+import { mediaNeedsProxyForPreview, resolvePlaybackPath } from '@/playback/mediaSource';
 
 /** Distinct media ids referenced by a sequence's clips (cached per sequence object). */
 const mediaIdsCache = new WeakMap<Sequence, ID[]>();
@@ -56,7 +56,7 @@ export function classifyMissing(missing: readonly MissingMedia[], media: Record<
   for (const m of missing) {
     const item = media[m.mediaId];
     if (!item || item.offline) { out.offline++; continue; }
-    if (item.probe && !item.probe.browserPlayable) {
+    if (mediaNeedsProxyForPreview(item)) {
       out.needsProxy++;
       const st = item.proxy.status;
       if (st === 'queued' || st === 'running') out.proxyBusy = true;

@@ -20,12 +20,45 @@ export interface PlaybackPathResolution {
   timeOffset?: number;
   /** Human readable explanation when a non-obvious choice was made or nothing is playable. */
   reason?: string;
+  /** True when `path` is a still image to draw with an <img> (no <video>, no audio, no proxy). */
+  isImage?: boolean;
+}
+
+/** Still-image extensions Chromium decodes in an <img> (drawn directly; never proxied). */
+export const DISPLAYABLE_IMAGE_EXTS: readonly string[] = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
+
+function fileExt(path: string): string {
+  const base = path.split(/[\\/]/).pop() ?? '';
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
+}
+
+/** A still image (classified on import, or probed as one). */
+export function isStillImage(media: MediaItem | undefined): boolean {
+  return !!media && (media.kind === 'image' || media.probe?.playabilityReason === 'still image');
+}
+
+/** A still image the renderer can draw directly from the original file (png/jpg/jpeg/webp/gif/bmp). */
+export function isDisplayableImage(media: MediaItem | undefined): boolean {
+  return isStillImage(media) && DISPLAYABLE_IMAGE_EXTS.includes(fileExt(media!.path));
+}
+
+/**
+ * Whether previewing `media` needs a proxy: probed, not decodable by Chromium, and not a still image
+ * (images are drawn directly, or not at all — a proxy job cannot transcode a frame without duration).
+ */
+export function mediaNeedsProxyForPreview(media: MediaItem | undefined): boolean {
+  return !!media && !media.offline && !!media.probe && !media.probe.browserPlayable && !isStillImage(media);
 }
 
 const DEFAULT_FPS: Rational = { num: 24, den: 1 };
 
 export function resolvePlaybackPath(media: MediaItem, useProxies: boolean): PlaybackPathResolution {
   if (media.offline) return { path: null, usingProxy: false, reason: 'media offline' };
+  if (isDisplayableImage(media)) return { path: media.path, usingProxy: false, timeOffset: 0, isImage: true };
+  if (isStillImage(media) && media.probe) {
+    return { path: null, usingProxy: false, reason: `image format not previewable (${fileExt(media.path) || 'unknown'}); convert to PNG or JPEG` };
+  }
   const proxyReady = media.proxy?.status === 'ready' && !!media.proxy.path;
   const proxyPath = proxyReady ? media.proxy.path! : null;
 

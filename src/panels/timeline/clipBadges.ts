@@ -3,6 +3,7 @@
  * "needs a proxy" status for media Chromium cannot decode.
  */
 import type { Clip, ID, MediaItem, Rational, Track } from '@shared/model';
+import { mediaNeedsProxyForPreview } from '@/playback/mediaSource';
 
 /** Timeline frame at which source time 0 of the clip would sit (fractional). Equal anchors = in sync. */
 export function clipSyncAnchor(clip: Pick<Clip, 'start' | 'sourceIn' | 'speed'>, fps: Rational): number {
@@ -42,5 +43,5 @@ export function formatSyncOffset(frames: number): string {
 
 /** Media that Chromium cannot decode and that has no usable proxy yet (amber PROXY badge). */
 export function mediaNeedsProxy(m: MediaItem | undefined): boolean {
-  return !!m && !m.offline && !!m.probe && !m.probe.browserPlayable && m.proxy.status !== 'ready';
+  return mediaNeedsProxyForPreview(m) && m!.proxy.status !== 'ready';
 }

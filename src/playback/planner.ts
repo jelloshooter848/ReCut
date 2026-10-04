@@ -41,6 +41,8 @@ export interface LayerPlan {
   speed: number;
   /** True when the frame lies outside the clip's own range (transition handle). */
   handle: boolean;
+  /** Still image: draw `path` with an <img> (sourceTime / speed are irrelevant). */
+  isImage: boolean;
 }
 
 export interface AudioPlan {
@@ -250,6 +252,7 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
         mediaSize: mediaSize(m),
         speed: clip.speed,
         handle,
+        isImage: res.isImage === true,
       });
     }
   }
@@ -260,6 +263,7 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
       const m = media[clip.mediaId];
       if (!m) { report(clip, 'media not in project'); continue; }
       const res = resolvePlaybackPath(m, useProxies);
+      if (res.isImage) continue; // still images are silent
       if (!res.path) { report(clip, res.reason ?? 'not playable'); continue; }
       const gain = dbToLinear(clip.audio.gain) * Math.max(0, clip.audio.volume) * fadeEnvelope(clip, frame) * weight;
       audio.push({
