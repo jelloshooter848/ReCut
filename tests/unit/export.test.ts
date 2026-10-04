@@ -14,7 +14,7 @@ import { createSequence } from '@shared/project';
 import { makeClip } from '@shared/timeline';
 import { buildRenderGraph, escapeFilterPath, exportOutputPath, FILTER_SCRIPT_TOKEN, sanitizeExportFileName } from '../../electron/export/renderGraph';
 import { runExport, buildExportCommand, startExportJob, type ExportJobQueue, type ExportJobSpec } from '../../electron/export/exporter';
-import { planExportChunks, sampleIndexAt, shouldChunk } from '../../electron/export/chunks';
+import { estimateSegmentMemoryMB, planExportChunks, sampleIndexAt, shouldChunk } from '../../electron/export/chunks';
 import type { ChildProcess } from 'node:child_process';
 
 const exec = promisify(execFile);
@@ -596,6 +596,25 @@ describe('chunked export (P-01)', () => {
     expect(chunks.slice(1).some((c) => c.startF % AUDIO_LEN !== 0 && c.startF < Math.floor((CLIPS * LEN) / AUDIO_LEN) * AUDIO_LEN)).toBe(true);
     // Sample-exact cumulative boundaries (23.976: 2002 samples per frame at 48 kHz).
     expect(sampleIndexAt(1001, 1, 48000, { num: 24000, den: 1001 })).toBe(2002000);
+  });
+
+  it('limits video chunks by estimated ffmpeg memory for high-resolution sources', () => {
+    const hd: MediaItem = { ...lumaMedia, probe: { ...lumaMedia.probe!, video: { ...lumaMedia.probe!.video!, width: 1920, height: 1080 } } };
+    const s = createSequence('HD', FPS, 1920, 1080);
+    for (let i = 0; i < 100; i++) s.videoTracks[0].clips.push(makeClip({ mediaId: hd.id, name: `c${i}`, sourceIn: 0, duration: 24, kind: 'video' }, i * 24));
+    const r: ExportRequest = { sequence: s, media: { [hd.id]: hd }, settings: settings({ width: 1920, height: 1080 }) };
+    const per = estimateSegmentMemoryMB(1920, 1080, 1920, 1080);
+    expect(per).toBeGreaterThan(40);
+    const chunks = planExportChunks({ req: r, startF: 0, endF: 2400 }, 100, 'video');
+    for (const c of chunks) {
+      expect(c.videoMemoryMB).toBeLessThanOrEqual(1000);
+      expect(c.videoSegments).toBeLessThanOrEqual(Math.floor(1000 / per));
+    }
+    expect(chunks.length).toBeGreaterThanOrEqual(Math.ceil(100 / Math.floor(1000 / per)));
+    // 40 clips: under the segment thresholds but about 1.9 GB in one process -> chunked.
+    const small = { ...s, videoTracks: [{ ...s.videoTracks[0], clips: s.videoTracks[0].clips.slice(0, 40) }, ...s.videoTracks.slice(1)] };
+    expect(shouldChunk({ req: { ...r, sequence: small }, startF: 0, endF: 960 }, 40)).toBe(true);
+    expect(shouldChunk({ req: { ...r, sequence: small, settings: settings({ width: 320, height: 180 }) }, startF: 0, endF: 240 }, 10)).toBe(false);
   });
 
   it('exports a 400-clip sequence in chunks: exact frames, content at boundaries, exact audio, bounded ffmpeg RSS', async () => {

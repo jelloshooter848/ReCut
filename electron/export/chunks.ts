@@ -27,6 +27,22 @@ export const CHUNK_VIDEO_SEGMENT_THRESHOLD = 120;
 export const CHUNK_MAX_SEGMENTS = 100;
 /** Target maximum clip segments per audio chunk (audio-only inputs cost about 2.5 MB each). */
 export const CHUNK_MAX_AUDIO_SEGMENTS = 300;
+/**
+ * Target peak ffmpeg memory of a video chunk. ffmpeg keeps every segment's decoder and filter frame pools
+ * until the process ends, so a chunk's memory grows with its segments and with the source and output
+ * resolution (measured with -threads 1 per input: 96 segments of 160x90 sources -> 1280x720 peaked at
+ * 1.07 GB, of 1920x1080 sources at 2.97 GB). See estimateSegmentMemoryMB.
+ */
+export const CHUNK_VIDEO_MEMORY_BUDGET_MB = 1000;
+
+/**
+ * Estimated peak ffmpeg memory (MB) one video clip segment adds to a chunk: about 2 MB of fixed cost,
+ * 10 bytes per source pixel (decoder pools) and 12 bytes per output pixel (filter pools). Calibrated
+ * against the measurements above (estimate 1267 / 3245 MB vs measured 1074 / 2968 MB).
+ */
+export function estimateSegmentMemoryMB(srcW: number, srcH: number, outW: number, outH: number): number {
+  return 2 + (srcW * srcH * 10 + outW * outH * 12) / 1e6;
+}
 
 export interface ExportChunk {
   /** Absolute sequence frames `[startF, endF)`. */
@@ -35,9 +51,15 @@ export interface ExportChunk {
   /** Clip segments the chunk's video / audio pass renders. */
   videoSegments: number;
   audioSegments: number;
+  /** Estimated peak ffmpeg memory of the chunk's video pass (MB). */
+  videoMemoryMB: number;
 }
 
-interface Intervals { starts: number[]; ends: number[] }
+interface Intervals { starts: number[]; ends: number[]; /** weights by start order / end order, prefix sums */ startW: number[]; endW: number[] }
+
+function weightedOverlap(iv: Intervals, a: number, b: number): number {
+  return iv.startW[countLess(iv.starts, b)] - iv.endW[countLessEq(iv.ends, a)];
+}
 
 /** Number of sorted values < x. */
 function countLess(arr: number[], x: number): number {
@@ -80,19 +102,42 @@ export function countSegments({ req, startF, endF }: ChunkPlanInput): { video: n
   return { video, audio };
 }
 
-/** True when the exporter should render in chunks. */
+/** Estimated peak ffmpeg memory (MB) of rendering all video segments of `[startF, endF)` in one process. */
+export function estimateVideoMemoryMB({ req, startF, endF }: ChunkPlanInput): number {
+  const seq = req.sequence;
+  const outW = Math.round(Number(req.settings.width) || seq.width);
+  const outH = Math.round(Number(req.settings.height) || seq.height);
+  let mb = 0;
+  for (const t of activeTracks(seq.videoTracks)) for (const c of renderedClips(t, startF, endF)) {
+    const v = req.media[c.mediaId]?.probe?.video;
+    mb += estimateSegmentMemoryMB(v && v.width > 0 ? v.width : 1920, v && v.height > 0 ? v.height : 1080, outW, outH);
+  }
+  return mb;
+}
+
+/**
+ * True when the exporter should render in chunks: too many inputs or video segments for one ffmpeg, or an
+ * estimated single-pass memory above 1.5x the chunk budget (few clips but high resolution).
+ */
 export function shouldChunk(input: ChunkPlanInput, inputCount: number): boolean {
-  return inputCount > CHUNK_INPUT_THRESHOLD || countSegments(input).video > CHUNK_VIDEO_SEGMENT_THRESHOLD;
+  return inputCount > CHUNK_INPUT_THRESHOLD
+    || countSegments(input).video > CHUNK_VIDEO_SEGMENT_THRESHOLD
+    || estimateVideoMemoryMB(input) > CHUNK_VIDEO_MEMORY_BUDGET_MB * 1.5;
 }
 
 /**
  * Splits `[startF, endF)` into consecutive chunks with at most `maxSegments` clip segments per pass where
  * a valid boundary allows it (a stretch with no valid boundary stays one chunk).
  *
+ * Video chunks are also limited to `memoryBudgetMB` of estimated ffmpeg memory (estimateSegmentMemoryMB:
+ * fewer segments per chunk for high-resolution sources / output).
  * `pass` selects which tracks count and constrain the boundaries: the video and audio passes are rendered
  * separately and may be chunked differently ('both' plans one boundary set valid for both).
  */
-export function planExportChunks(input: ChunkPlanInput, maxSegments = CHUNK_MAX_SEGMENTS, pass: 'video' | 'audio' | 'both' = 'both'): ExportChunk[] {
+export function planExportChunks(
+  input: ChunkPlanInput, maxSegments = CHUNK_MAX_SEGMENTS, pass: 'video' | 'audio' | 'both' = 'both',
+  memoryBudgetMB = CHUNK_VIDEO_MEMORY_BUDGET_MB,
+): ExportChunk[] {
   const { req, startF, endF } = input;
   const seq = req.sequence;
   const fps = seq.fps;
@@ -100,15 +145,23 @@ export function planExportChunks(input: ChunkPlanInput, maxSegments = CHUNK_MAX_
   const vTracks = pass === 'audio' ? [] : activeTracks(seq.videoTracks);
   const aTracks = pass === 'video' ? [] : activeTracks(seq.audioTracks);
 
-  const collect = (tracks: Track[]): Intervals => {
-    const starts: number[] = [], ends: number[] = [];
-    for (const t of tracks) for (const c of renderedClips(t, startF, endF)) {
-      starts.push(Math.max(c.start, startF)); ends.push(Math.min(clipEnd(c), endF));
-    }
-    starts.sort((x, y) => x - y); ends.sort((x, y) => x - y);
-    return { starts, ends };
+  const outW = Math.round(Number(req.settings.width) || seq.width);
+  const outH = Math.round(Number(req.settings.height) || seq.height);
+  const memOf = (c: Clip) => {
+    const v = req.media[c.mediaId]?.probe?.video;
+    const w = v && v.width > 0 ? v.width : 1920, h = v && v.height > 0 ? v.height : 1080;
+    return estimateSegmentMemoryMB(w, h, outW, outH);
   };
-  const vIv = collect(vTracks), aIv = collect(aTracks);
+  const collect = (tracks: Track[], weight: (c: Clip) => number): Intervals => {
+    const items: { s: number; e: number; w: number }[] = [];
+    for (const t of tracks) for (const c of renderedClips(t, startF, endF)) {
+      items.push({ s: Math.max(c.start, startF), e: Math.min(clipEnd(c), endF), w: weight(c) });
+    }
+    const byS = [...items].sort((x, y) => x.s - y.s), byE = [...items].sort((x, y) => x.e - y.e);
+    const prefix = (arr: typeof items) => { const out = [0]; for (const it of arr) out.push(out[out.length - 1] + it.w); return out; };
+    return { starts: byS.map((i) => i.s), ends: byE.map((i) => i.e), startW: prefix(byS), endW: prefix(byE) };
+  };
+  const vIv = collect(vTracks, memOf), aIv = collect(aTracks, () => 0);
 
   // Forbidden open windows (lo, hi) and spanning clips.
   const forbidden: [number, number][] = [];
@@ -156,8 +209,11 @@ export function planExportChunks(input: ChunkPlanInput, maxSegments = CHUNK_MAX_
     .filter((b) => !inside(b, forbidden));
   const clean = new Set(cands.filter((b) => !inside(b, spans)));
 
-  const counts = (a: number, b: number) => ({ video: overlapping(vIv, a, b), audio: overlapping(aIv, a, b) });
-  const fits = (a: number, b: number) => { const c = counts(a, b); return c.video <= maxSegments && c.audio <= maxSegments; };
+  const counts = (a: number, b: number) => ({ video: overlapping(vIv, a, b), audio: overlapping(aIv, a, b), mem: weightedOverlap(vIv, a, b) });
+  const fits = (a: number, b: number) => {
+    const c = counts(a, b);
+    return c.video <= maxSegments && c.audio <= maxSegments && c.mem <= memoryBudgetMB;
+  };
 
   const chunks: ExportChunk[] = [];
   let a = startF;
@@ -175,7 +231,7 @@ export function planExportChunks(input: ChunkPlanInput, maxSegments = CHUNK_MAX_
     if (best < 0) b = cands[ci]; // no boundary keeps the chunk within budget: smallest possible chunk
     else if (bestClean >= 0) {
       const c = counts(a, bestClean);
-      b = Math.max(c.video, c.audio) * 2 >= maxSegments ? bestClean : best;
+      b = Math.max(c.video, c.audio) * 2 >= maxSegments || c.mem * 2 >= memoryBudgetMB ? bestClean : best;
     } else b = best;
     chunks.push({ startF: a, endF: b, ...seg(counts(a, b)) });
     a = b;
@@ -183,8 +239,8 @@ export function planExportChunks(input: ChunkPlanInput, maxSegments = CHUNK_MAX_
   return chunks;
 }
 
-function seg(c: { video: number; audio: number }): { videoSegments: number; audioSegments: number } {
-  return { videoSegments: c.video, audioSegments: c.audio };
+function seg(c: { video: number; audio: number; mem: number }): { videoSegments: number; audioSegments: number; videoMemoryMB: number } {
+  return { videoSegments: c.video, audioSegments: c.audio, videoMemoryMB: Math.round(c.mem) };
 }
 
 /**
