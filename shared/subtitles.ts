@@ -38,7 +38,8 @@ export function parseSubtitles(content: string): ParseResult {
     if (lines.length === 0) continue;
     n++;
     let idx = 0;
-    if (/^\d+$/.test(lines[0].trim()) && lines.length > 1 && lines[1].includes('-->')) idx = 1;
+    // SRT numeric index, or a WebVTT cue identifier (any text), precedes the timing line.
+    if (lines.length > 1 && !lines[0].includes('-->') && lines[1].includes('-->')) idx = 1;
     const timing = lines[idx];
     if (!timing || !timing.includes('-->')) { warnings.push(`Block ${n}: missing timing line`); continue; }
     const [a, bRaw] = timing.split('-->');

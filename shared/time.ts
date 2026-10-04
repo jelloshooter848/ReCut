@@ -37,7 +37,8 @@ export function fpsEquals(a: Rational, b: Rational): boolean {
 
 export function parseFps(value: number): Rational {
   const candidates = FPS_PRESETS.map((p) => p.fps);
-  for (const c of candidates) if (Math.abs(fpsValue(c) - value) < 0.002) return c;
+  // Snap to a preset within 0.01 so rounded labels (23.98, 29.97, 59.94) resolve to the exact NTSC rational.
+  for (const c of candidates) if (Math.abs(fpsValue(c) - value) < 0.01) return c;
   if (Number.isInteger(value)) return { num: value, den: 1 };
   return { num: Math.round(value * 1000), den: 1000 };
 }
@@ -80,7 +81,10 @@ export function formatClock(seconds: number, ms = false): string {
   return `${neg ? '-' : ''}${base}${ms ? '.' + String(frac).padStart(3, '0') : ''}`;
 }
 
-/** Parse "HH:MM:SS:FF", "MM:SS", "SS", or "+/-N" (frames) into frames. Returns null if invalid. */
+/**
+ * Parse a timecode into frames. Fields fill right-to-left like Premiere's timecode entry:
+ * "HH:MM:SS:FF", "MM:SS:FF", "SS:FF", "FF", or "+/-N" (frames relative to `current`). Returns null if invalid.
+ */
 export function parseTimecode(input: string, fps: Rational, current = 0): number | null {
   const str = input.trim();
   if (!str) return null;

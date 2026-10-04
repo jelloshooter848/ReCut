@@ -160,19 +160,25 @@ export function rippleShift(seq: Sequence, fromFrame: number, delta: number, opt
     const movers = track.clips.filter((c) => c.start >= fromFrame && !(opts.except?.has(c.id)));
     if (movers.length === 0) continue;
     if (delta < 0) {
-      // Leftward shift: block if something spans the boundary or would collide.
-      const blocker = track.clips.find((c) => !opts.except?.has(c.id) && c.start < fromFrame && clipEnd(c) > fromFrame + delta);
+      // Leftward shift: block the whole track if a non-moving clip would be overlapped by the
+      // earliest mover after the shift (e.g. a clip spanning the gap being closed).
+      const firstMover = Math.min(...movers.map((c) => c.start));
+      const blocker = track.clips.find((c) => !opts.except?.has(c.id) && c.start < fromFrame && clipEnd(c) > firstMover + delta);
       if (blocker) continue;
     }
     for (const c of movers) c.start += delta;
-    for (const m of seq.markers) { /* markers stay anchored to time; Premiere behaviour */ void m; }
+    // Markers stay anchored to time (Premiere behaviour).
     shifted.push(track.id);
     reconcileTransitions(track);
   }
-  // Story blocks follow ripple so structure stays aligned.
+  // Story blocks follow ripple so structure stays aligned. For a leftward shift the removed region is
+  // [fromFrame + delta, fromFrame): boundaries inside it collapse onto its start.
+  const lo = Math.min(fromFrame, fromFrame + delta);
+  const mapStart = (f: number) => (f >= fromFrame ? f + delta : f > lo ? lo : f);
+  const mapEnd = (f: number) => (f > fromFrame ? f + delta : f > lo ? lo : f);
   for (const b of seq.storyBlocks) {
-    if (b.start >= fromFrame) { b.start = Math.max(0, b.start + delta); b.end = Math.max(b.start + 1, b.end + delta); }
-    else if (b.end > fromFrame) b.end = Math.max(b.start + 1, b.end + delta);
+    b.start = Math.max(0, mapStart(b.start));
+    b.end = Math.max(b.start + 1, mapEnd(b.end));
   }
   return shifted;
 }
@@ -200,7 +206,11 @@ export function clearRange(track: Track, start: number, end: number, except: Set
         duration: cEnd - end,
         sourceIn: c.sourceIn + consumed * (fps ? fps.den / fps.num : 0) * c.speed,
       };
-      if (c.start < start) { tail.audio = { ...c.audio, fadeIn: 0 }; }
+      if (c.start < start) {
+        // Cut in two: the tail is a new clip, so the out-transition (if any) must follow it.
+        tail.audio = { ...c.audio, fadeIn: 0 };
+        for (const tr of track.transitions) if (tr.outClipId === c.id) tr.outClipId = tail.id;
+      }
       result.push(tail);
     }
   }
@@ -283,10 +293,8 @@ export function overwriteClip(seq: Sequence, trackId: ID, clip: Clip): boolean {
 export function insertClip(seq: Sequence, trackId: ID, clip: Clip, opts: { rippleTracks?: 'all' | 'own' } = {}): boolean {
   const track = findTrack(seq, trackId);
   if (!track || track.locked) return false;
-  withFps(seq);
   const tracks = opts.rippleTracks === 'own' ? [track] : allTracks(seq).filter((t) => !t.locked);
-  for (const t of tracks) splitTrackAt(t, clip.start, seq.fps);
-  stripFps(seq);
+  splitTracksAt(seq, tracks, clip.start);
   rippleShift(seq, clip.start, clip.duration, { onlyTrackIds: new Set(tracks.map((t) => t.id)) });
   track.clips.push(clip);
   sortTrack(track);
@@ -304,9 +312,7 @@ export function placeClips(seq: Sequence, placements: { trackId: ID; clip: Clip 
   }
   const start = Math.min(...placements.map((p) => p.clip.start));
   const length = Math.max(...placements.map((p) => clipEnd(p.clip))) - start;
-  withFps(seq);
-  for (const t of allTracks(seq)) if (!t.locked) splitTrackAt(t, start, seq.fps);
-  stripFps(seq);
+  splitTracksAt(seq, allTracks(seq).filter((t) => !t.locked), start);
   rippleShift(seq, start, length);
   for (const p of placements) {
     const t = findTrack(seq, p.trackId)!;
@@ -347,27 +353,36 @@ export function splitClip(seq: Sequence, track: Track, clip: Clip, frame: number
   return tail;
 }
 
-function splitTrackAt(track: Track, frame: number, fps: Rational): void {
-  const c = track.clips.find((x) => x.start < frame && clipEnd(x) > frame);
-  if (!c) return;
-  const consumedSec = (frame - c.start) * fps.den / fps.num * c.speed;
-  const tail: Clip = { ...c, id: uid('clip'), start: frame, duration: clipEnd(c) - frame, sourceIn: c.sourceIn + consumedSec, audio: { ...c.audio, fadeIn: 0 } };
-  c.duration = frame - c.start;
-  for (const tr of track.transitions) if (tr.outClipId === c.id) tr.outClipId = tail.id;
-  track.clips.push(tail);
-  sortTrack(track);
+/**
+ * Split whatever strictly spans `frame` on each of `tracks` (a clip boundary at `frame` is not split).
+ * Tails that came from clips sharing a linkId are re-linked to each other with a fresh linkId so the
+ * head pair and the tail pair stay independently linked. Returns the created tails.
+ */
+function splitTracksAt(seq: Sequence, tracks: Track[], frame: number): Clip[] {
+  const tails: { tail: Clip; oldLink: ID | null }[] = [];
+  for (const track of tracks) {
+    const c = track.clips.find((x) => x.start < frame && clipEnd(x) > frame);
+    if (!c) continue;
+    const tail = splitClip(seq, track, c, frame);
+    if (tail) tails.push({ tail, oldLink: c.linkId });
+  }
+  const groups = new Map<ID, Clip[]>();
+  for (const t of tails) if (t.oldLink) { const g = groups.get(t.oldLink) ?? []; g.push(t.tail); groups.set(t.oldLink, g); }
+  for (const g of groups.values()) if (g.length > 1) { const link = uid('link'); for (const c of g) c.linkId = link; }
+  return tails.map((t) => t.tail);
 }
 
 /** Razor at frame: splits the clip under `frame` on the given tracks (or all unlocked tracks), keeping links. */
-export function razorAt(seq: Sequence, frame: number, trackIds?: ID[], opts: { linked?: boolean } = { linked: true }): Clip[] {
+export function razorAt(seq: Sequence, frame: number, trackIds?: ID[], opts: { linked?: boolean } = {}): Clip[] {
   const created: Clip[] = [];
+  const linked = opts.linked ?? true;
   const targets = trackIds ? allTracks(seq).filter((t) => trackIds.includes(t.id)) : allTracks(seq);
   const done = new Set<ID>();
   for (const track of targets) {
     if (track.locked) continue;
     const clip = track.clips.find((c) => c.start < frame && clipEnd(c) > frame);
     if (!clip || done.has(clip.id)) continue;
-    const group = opts.linked ? linkedClips(seq, clip) : [clip];
+    const group = linked ? linkedClips(seq, clip) : [clip];
     const newLink = group.length > 1 ? uid('link') : null;
     for (const g of group) {
       const loc = findClip(seq, g.id)!;
@@ -386,32 +401,34 @@ export function razorAt(seq: Sequence, frame: number, trackIds?: ID[], opts: { l
 
 export function removeClips(seq: Sequence, clipIds: ID[]): void {
   const ids = new Set(clipIds);
+  const removed = new Set<ID>();
   for (const t of allTracks(seq)) {
     if (t.locked) continue;
-    t.clips = t.clips.filter((c) => !ids.has(c.id));
+    t.clips = t.clips.filter((c) => { if (ids.has(c.id)) { removed.add(c.id); return false; } return true; });
     reconcileTransitions(t);
   }
-  for (const st of seq.subtitleTracks) st.cues = st.cues.filter((c) => !(c.clipId && ids.has(c.clipId)));
+  // Only cues attached to clips that were actually removed (clips on locked tracks keep theirs).
+  for (const st of seq.subtitleTracks) st.cues = st.cues.filter((c) => !(c.clipId && removed.has(c.clipId)));
 }
 
 /** Ripple delete: remove the clips and close the gaps they leave. Processes gaps right-to-left. */
 export function rippleDeleteClips(seq: Sequence, clipIds: ID[]): void {
   const locs = clipIds.map((id) => findClip(seq, id)).filter((l): l is ClipLocation => !!l && !l.track.locked);
-  // Group contiguous ranges: compute union of ranges per track then close them.
-  const ranges = locs.map((l) => ({ start: l.clip.start, end: clipEnd(l.clip), trackId: l.track.id }));
-  removeClips(seq, clipIds);
-  // Merge overlapping ranges across tracks into gap intervals
-  ranges.sort((a, b) => b.start - a.start);
-  const merged: { start: number; end: number; trackIds: Set<ID> }[] = [];
-  for (const r of ranges.sort((a, b) => a.start - b.start)) {
+  const ranges = locs.map((l) => ({ start: l.clip.start, end: clipEnd(l.clip) }));
+  removeClips(seq, locs.map((l) => l.clip.id));
+  // Merge overlapping/adjacent ranges (across tracks) into gap intervals, then close them right-to-left
+  // so earlier gaps are still at their original positions when processed.
+  ranges.sort((a, b) => a.start - b.start);
+  const merged: { start: number; end: number }[] = [];
+  for (const r of ranges) {
     const last = merged[merged.length - 1];
-    if (last && r.start <= last.end) { last.end = Math.max(last.end, r.end); last.trackIds.add(r.trackId); }
-    else merged.push({ start: r.start, end: r.end, trackIds: new Set([r.trackId]) });
+    if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
+    else merged.push({ start: r.start, end: r.end });
   }
-  for (const gap of merged.reverse()) {
-    // Only close the part of the gap that is actually empty on the gap's own tracks
-    const delta = -(gap.end - gap.start);
-    rippleShift(seq, gap.end, delta);
+  for (let i = merged.length - 1; i >= 0; i--) {
+    const gap = merged[i];
+    // Tracks with a clip still spanning the gap are left alone by rippleShift's collision check.
+    rippleShift(seq, gap.end, -(gap.end - gap.start));
   }
 }
 
@@ -481,42 +498,33 @@ export function trimEnd(seq: Sequence, clipId: ID, newEnd: number, mediaDur: Med
   return target;
 }
 
-/** Ripple trim head: like trimStart but closes/opens the resulting gap by shifting following clips. */
+/**
+ * Ripple trim head. `newStart` is expressed in the pre-edit timeline (like dragging the head with the
+ * ripple tool): moving it right by d trims d frames off the head and reveals later source; moving it left
+ * by d reveals earlier source. The clip's start stays anchored at its old position and everything that
+ * starts at or after it (on all unlocked tracks, where no collision results) shifts by -d / +d.
+ * Only linked clips that share the same start are trimmed together. Returns the applied (clamped) newStart.
+ */
 export function rippleTrimStart(seq: Sequence, clipId: ID, newStart: number, mediaDur: MediaDurationLookup): number {
   const loc = findClip(seq, clipId);
   if (!loc || loc.track.locked) return NaN;
   const oldStart = loc.clip.start;
-  const group = linkedClips(seq, loc.clip).filter((c) => c.start === oldStart);
-  // Limit by media availability of all linked clips
+  const group = linkedClips(seq, loc.clip).filter((c) => c.start === oldStart && !findClip(seq, c.id)!.track.locked);
   let target = newStart;
   for (const g of group) {
-    const gl = findClip(seq, g.id)!;
-    const lim = trimLimits(seq, gl.track, g, mediaDur(g.mediaId));
-    const minStart = Math.max(0, g.start - Math.floor((g.sourceIn / g.speed) * seq.fps.num / seq.fps.den + 1e-6));
-    target = Math.max(minStart, Math.min(lim.maxStart, target));
+    const handleBefore = Math.floor((g.sourceIn / g.speed) * seq.fps.num / seq.fps.den + 1e-6);
+    target = Math.max(oldStart - handleBefore, Math.min(clipEnd(g) - MIN_CLIP_FRAMES, target));
   }
-  const delta = target - oldStart;
+  const delta = target - oldStart; // > 0 shrink head, < 0 extend head
   if (delta === 0) return oldStart;
-  const ids = new Set(group.map((g) => g.id));
-  if (delta > 0) {
-    // shrinking head: trim, then shift this clip and everything after left by delta
-    for (const g of group) trimStart(seq, g.id, target, mediaDur, { ignoreNeighbors: true });
-    rippleShift(seq, oldStart + 1, -delta, {});
-    // The trimmed clips themselves also move left so the head stays anchored at oldStart
-    for (const g of group) g.start = oldStart;
-  } else {
-    // extending head: shift this clip and everything after right by -delta, then extend
-    rippleShift(seq, oldStart, -delta, {});
-    for (const g of group) { g.start = oldStart; }  // extend backwards into the new room
-    for (const g of group) {
-      const consumed = -delta; // frames added
-      g.sourceIn = Math.max(0, g.sourceIn - consumed * seq.fps.den / seq.fps.num * g.speed);
-      g.duration += consumed;
-    }
+  const except = new Set(group.map((g) => g.id));
+  for (const g of group) {
+    g.sourceIn = Math.max(0, g.sourceIn + delta * seq.fps.den / seq.fps.num * g.speed);
+    g.duration -= delta;
   }
-  void ids;
+  rippleShift(seq, oldStart, -delta, { except });
   reconcileAll(seq);
-  return oldStart;
+  return target;
 }
 
 /** Ripple trim tail: changes clip end and shifts everything after accordingly. */
@@ -583,15 +591,22 @@ export function slideClip(seq: Sequence, clipId: ID, deltaFrames: number, mediaD
   const prev = track.clips[index - 1];
   const next = track.clips[index + 1];
   let d = deltaFrames;
+  // An adjacent neighbour is trimmed to compensate; across a gap the clip may only move within the gap.
   if (prev) {
-    const maxPrevEnd = prev.start + maxDurationFrom(prev.sourceIn, prev.speed, mediaDur(prev.mediaId), seq.fps);
-    d = Math.min(d, maxPrevEnd - clipEnd(prev));            // prev can extend this much
-    d = Math.max(d, -(prev.duration - MIN_CLIP_FRAMES) - (clip.start - clipEnd(prev)));
+    const gap = clip.start - clipEnd(prev);
+    if (gap === 0) {
+      const maxPrevEnd = prev.start + maxDurationFrom(prev.sourceIn, prev.speed, mediaDur(prev.mediaId), seq.fps);
+      d = Math.min(d, maxPrevEnd - clipEnd(prev));            // prev can extend this much
+      d = Math.max(d, -(prev.duration - MIN_CLIP_FRAMES));    // prev can shrink this much
+    } else d = Math.max(d, -gap);
   } else d = Math.max(d, -clip.start);
   if (next) {
-    const handleNext = Math.floor((next.sourceIn / next.speed) * seq.fps.num / seq.fps.den + 1e-6);
-    d = Math.max(d, -handleNext - (next.start - clipEnd(clip)));
-    d = Math.min(d, next.duration - MIN_CLIP_FRAMES + (next.start - clipEnd(clip)));
+    const gap = next.start - clipEnd(clip);
+    if (gap === 0) {
+      const handleNext = Math.floor((next.sourceIn / next.speed) * seq.fps.num / seq.fps.den + 1e-6);
+      d = Math.max(d, -handleNext);                           // next can extend backwards this much
+      d = Math.min(d, next.duration - MIN_CLIP_FRAMES);       // next can shrink this much
+    } else d = Math.min(d, gap);
   }
   if (d === 0) return 0;
   if (prev && clipEnd(prev) === clip.start) prev.duration += d;
@@ -626,9 +641,7 @@ export function moveClips(seq: Sequence, moves: MoveSpec[], mode: 'overwrite' | 
   if (mode === 'insert') {
     const start = Math.min(...lifted.map((l) => l.toStart));
     const end = Math.max(...lifted.map((l) => l.toStart + l.clip.duration));
-    withFps(seq);
-    for (const t of allTracks(seq)) if (!t.locked) splitTrackAt(t, start, seq.fps);
-    stripFps(seq);
+    splitTracksAt(seq, allTracks(seq).filter((t) => !t.locked), start);
     rippleShift(seq, start, end - start);
   }
   for (const l of lifted) {

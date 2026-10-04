@@ -123,6 +123,7 @@ export function normalizeProject(raw: unknown): Project {
     const seq = createSequence('Sequence 01'); seq.binId = 'bin-sequences';
     out.sequences[seq.id] = seq; out.sequenceOrder.push(seq.id); out.activeSequenceId = seq.id;
   }
+  for (const id of Object.keys(out.media)) { if (!out.media[id] || typeof out.media[id] !== "object") { delete out.media[id]; } }
   for (const m of Object.values(out.media)) {
     m.proxy ??= { status: 'none' };
     if (m.proxy.status === 'running' || m.proxy.status === 'queued') m.proxy = { status: 'none' };
