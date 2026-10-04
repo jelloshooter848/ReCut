@@ -42,6 +42,13 @@ export interface VideoStreamInfo {
   pixFmt?: string;
   isVfr: boolean;
   colorSpace?: string;
+  /** Display rotation in degrees (0/90/180/270). `width`/`height` are the display size. Absent on old probes. */
+  rotation?: number;
+  /** Coded (storage) size before rotation. */
+  codedWidth?: number;
+  codedHeight?: number;
+  /** Video stream start relative to the container start (seconds, >= 0). */
+  startTime?: number;
 }
 
 export interface SubtitleStreamInfo { index: number; codec: string; language?: string; title?: string }

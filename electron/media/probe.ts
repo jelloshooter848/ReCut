@@ -49,10 +49,7 @@ export interface FfprobeFormat {
 
 export interface FfprobeOutput { streams?: FfprobeStream[]; format?: FfprobeFormat }
 
-/**
- * Extra fields probeMedia records on the video stream beyond the shared VideoStreamInfo
- * (TODO(model): move into shared/model.ts VideoStreamInfo). They survive project save/load as plain JSON.
- */
+/** VideoStreamInfo as produced by probeMedia: the optional probe-detail fields are always present. */
 export interface ProbedVideoStreamInfo extends VideoStreamInfo {
   /** Display rotation in degrees (0, 90, 180, 270), from the display matrix side data or the `rotate` tag. */
   rotation: number;
