@@ -624,3 +624,69 @@ describe('attack fixes (store) — snapshots', () => {
     expect(seq().markers.find((m) => m.id === note)!.time).toBe(20);
   });
 });
+
+describe('view hot path (P-02)', () => {
+  it('playhead / scroll move in place: same project + sequence refs, viewTick bumps, not dirty, no history', () => {
+    S().insertFromSource(seqId, { mediaId: media.id, in: 0, out: 10, atFrame: 0, mode: 'insert' });
+    useStore.setState({ dirty: false });
+    const p0 = S().project, s0 = seq(), tick0 = S().viewTick, hist0 = S().history.past.length;
+    S().setView(seqId, { playhead: 42 });
+    S().setView(seqId, { scroll: 7 });
+    expect(S().project).toBe(p0);
+    expect(seq()).toBe(s0);
+    expect(seq().view.playhead).toBe(42);
+    expect(seq().view.scroll).toBe(7);
+    expect(S().viewTick).toBe(tick0 + 2);
+    expect(S().dirty).toBe(false);
+    expect(S().history.past.length).toBe(hist0);
+    // A no-op move does not notify.
+    S().setView(seqId, { playhead: 42 });
+    expect(S().viewTick).toBe(tick0 + 2);
+  });
+
+  it('zoom / in / out replace the sequence (consumers of the sequence re-render) and still skip history', () => {
+    const p0 = S().project, s0 = seq(), hist0 = S().history.past.length;
+    S().setView(seqId, { zoom: 9, inPoint: 50, outPoint: 10 });
+    expect(S().project).not.toBe(p0);
+    expect(seq()).not.toBe(s0);
+    expect(seq().view).toMatchObject({ zoom: 9, inPoint: 10, outPoint: 50 });
+    expect(S().history.past.length).toBe(hist0);
+    // The new view stays writable: the next playhead move is in place again.
+    const s1 = seq();
+    S().setView(seqId, { playhead: 3 });
+    expect(seq()).toBe(s1);
+    expect(seq().view.playhead).toBe(3);
+  });
+
+  it('undo keeps the identity of sequences it did not touch and the live playhead', () => {
+    const other = createSequence('Other', FPS);
+    S().addSequence(other);
+    S().setActiveSequence(seqId);
+    S().clearHistory();
+    S().insertFromSource(seqId, { mediaId: media.id, in: 0, out: 10, atFrame: 0, mode: 'insert' });
+    S().setView(other.id, { playhead: 11 });
+    S().setView(seqId, { playhead: 77 });
+    const otherRef = S().project.sequences[other.id];
+    S().undo();
+    expect(S().project.sequences[other.id]).toBe(otherRef);
+    expect(seq().view.playhead).toBe(77);
+    expect(S().project.sequences[other.id].view.playhead).toBe(11);
+  });
+
+  it('saved data carries the live view and serialises as plain JSON', () => {
+    S().setView(seqId, { playhead: 123 });
+    const saved = JSON.parse(JSON.stringify(serializeForSave()));
+    expect(saved.sequences[seqId].view).toEqual({ playhead: 123, zoom: seq().view.zoom, scroll: 0, inPoint: null, outPoint: null });
+  });
+
+  it('a commit leaves untouched tracks (and their transitions) with the same identity', () => {
+    S().insertFromSource(seqId, { mediaId: media.id, in: 0, out: 10, atFrame: 0, mode: 'insert' });
+    const before = seq();
+    const v2 = before.videoTracks[1];
+    S().setClipEnabled(seqId, before.videoTracks[0].clips[0].id, false);
+    const after = seq();
+    expect(after).not.toBe(before);
+    expect(after.videoTracks[1]).toBe(v2);
+    expect(after.audioTracks[2]).toBe(before.audioTracks[2]);
+  });
+});

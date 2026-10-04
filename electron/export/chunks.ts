@@ -23,8 +23,10 @@ import { activeTracks } from './renderGraph';
 export const CHUNK_INPUT_THRESHOLD = 150;
 /** ...or more video clip segments than this. */
 export const CHUNK_VIDEO_SEGMENT_THRESHOLD = 120;
-/** Target maximum clip segments per chunk and per pass (video pass and audio pass separately). */
+/** Target maximum clip segments per video chunk (about 5-6 MB of ffmpeg memory per segment input). */
 export const CHUNK_MAX_SEGMENTS = 100;
+/** Target maximum clip segments per audio chunk (audio-only inputs cost about 2.5 MB each). */
+export const CHUNK_MAX_AUDIO_SEGMENTS = 300;
 
 export interface ExportChunk {
   /** Absolute sequence frames `[startF, endF)`. */
@@ -86,14 +88,17 @@ export function shouldChunk(input: ChunkPlanInput, inputCount: number): boolean 
 /**
  * Splits `[startF, endF)` into consecutive chunks with at most `maxSegments` clip segments per pass where
  * a valid boundary allows it (a stretch with no valid boundary stays one chunk).
+ *
+ * `pass` selects which tracks count and constrain the boundaries: the video and audio passes are rendered
+ * separately and may be chunked differently ('both' plans one boundary set valid for both).
  */
-export function planExportChunks(input: ChunkPlanInput, maxSegments = CHUNK_MAX_SEGMENTS): ExportChunk[] {
+export function planExportChunks(input: ChunkPlanInput, maxSegments = CHUNK_MAX_SEGMENTS, pass: 'video' | 'audio' | 'both' = 'both'): ExportChunk[] {
   const { req, startF, endF } = input;
   const seq = req.sequence;
   const fps = seq.fps;
   const fd = fps.den / fps.num;
-  const vTracks = activeTracks(seq.videoTracks);
-  const aTracks = activeTracks(seq.audioTracks);
+  const vTracks = pass === 'audio' ? [] : activeTracks(seq.videoTracks);
+  const aTracks = pass === 'video' ? [] : activeTracks(seq.audioTracks);
 
   const collect = (tracks: Track[]): Intervals => {
     const starts: number[] = [], ends: number[] = [];

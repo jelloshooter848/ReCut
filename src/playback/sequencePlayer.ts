@@ -81,6 +81,7 @@ export class SequencePlayer {
   private drawSubtitles: boolean;
   private readonly id: string;
   private destroyed = false;
+  private offPoolRelease: (() => void) | null = null;
   private ctx: CanvasRenderingContext2D | null;
 
   constructor(
@@ -93,6 +94,16 @@ export class SequencePlayer {
     this.drawSubtitles = options.drawSubtitles ?? true;
     this.id = options.id ?? `p${++playerCounter}`;
     this.ctx = canvas.getContext('2d', { alpha: false });
+    // A released path (proxy ready, relink) disposes elements this player may still hold: re-acquire and redraw.
+    this.offPoolRelease = pool.onPathReleased?.((path) => {
+      if (this.destroyed) return;
+      const plan = this.lastPlan;
+      const uses = !plan || plan.layers.some((l) => l.path === path) || plan.audio.some((a) => a.path === path);
+      if (!uses) return;
+      for (const [clipId, el] of this.activeVideo) if (!el.getAttribute('src')) this.activeVideo.delete(clipId);
+      this.lastFrame = -1;
+      this.requestTick();
+    }) ?? null;
     if (audioContext) {
       this.master = audioContext.createGain();
       this.master.connect(audioContext.destination);
@@ -267,6 +278,7 @@ export class SequencePlayer {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.offPoolRelease?.(); this.offPoolRelease = null;
     this.playing = false;
     this.clock.stop();
     if (this.rafId !== null) { cancelAnimationFrame(this.rafId); this.rafId = null; }

@@ -529,3 +529,37 @@ describe('element time mapping (container start_time)', () => {
     expect(plan2.audio[0].timeOffset).toBe(0);
   });
 });
+
+describe('contributionsAt index (P-08)', () => {
+  /** Reference: the old linear scan semantics (every clip checked, transitions looked up by find). */
+  function linear(track: Track, frame: number): string[] {
+    const ids: string[] = [];
+    for (const c of track.clips) {
+      if (!c.enabled) continue;
+      const end = c.start + c.duration;
+      const tin = track.transitions.find((t) => t.inClipId === c.id);
+      const tout = track.transitions.find((t) => t.outClipId === c.id);
+      let inside = frame >= c.start && frame < end;
+      if (tin && tin.outClipId !== null && tin.type !== 'dipToBlack') { const h = Math.max(1, tin.duration) / 2; if (frame >= c.start - h && frame < c.start + h) inside = true; }
+      if (tout && tout.inClipId !== null && tout.type !== 'dipToBlack') { const h = Math.max(1, tout.duration) / 2; if (frame >= end - h && frame < end + h) inside = true; }
+      if (inside) ids.push(c.id);
+    }
+    return ids;
+  }
+  it('matches a linear scan across cuts, dissolve handles, gaps and overlaps', () => {
+    const clips: Clip[] = [];
+    let t = 0;
+    for (let i = 0; i < 60; i++) { const d = 5 + (i * 7) % 23; clips.push(clip(`c${i}`, 'm1', t, d, { enabled: i % 11 !== 5 })); t += d + (i % 5 === 0 ? 4 : 0); }
+    clips.push(clip('long', 'm1', 3, 300)); // overlapping long clip (not normally possible on one track)
+    clips.sort((a, b) => a.start - b.start);
+    const transitions: Transition[] = [];
+    for (let i = 1; i < clips.length; i++) {
+      const a = clips[i - 1], b = clips[i];
+      if (a.id !== 'long' && b.id !== 'long' && a.start + a.duration === b.start && i % 3 === 0) {
+        transitions.push({ id: `t${i}`, type: i % 2 ? 'crossDissolve' : 'dipToBlack', duration: 2 + (i % 9), outClipId: a.id, inClipId: b.id } as Transition);
+      }
+    }
+    const track = { id: 'v1', kind: 'video', name: 'V1', clips, transitions, muted: false, solo: false, locked: false, volume: 1 } as unknown as Track;
+    for (let f = -5; f < t + 10; f++) expect(contributionsAt(track, f).map((x) => x.clip.id)).toEqual(linear(track, f));
+  });
+});

@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { ensureDirSafe } from '../safeMkdir';
 import { normalizeProject, serializeProject } from '../../shared/project';
 import type { AppPreferences, Project } from '../../shared/model';
 import type { LoadResult, RecoveryInfo, SaveResult } from '../../shared/ipc';
@@ -45,11 +46,19 @@ function errMsg(e: unknown): string {
  */
 export async function atomicWriteFile(target: string, data: string | Uint8Array, opts: { backup?: boolean } = {}): Promise<void> {
   const dir = path.dirname(target);
-  await fsp.mkdir(dir, { recursive: true });
+  await ensureDirSafe(dir); // never recursive mkdir on a user path (BUG-1)
   const tmp = path.join(dir, `.${path.basename(target)}.tmp-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+  // One buffer, written with as few syscalls as possible (FileHandle.writeFile goes through the thread
+  // pool in 512 KiB pieces, about 130 round trips for a 67 MB project).
+  const buf = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;
   const fh = await fsp.open(tmp, 'w');
   try {
-    await fh.writeFile(data);
+    let off = 0;
+    while (off < buf.byteLength) {
+      const { bytesWritten } = await fh.write(buf, off, buf.byteLength - off);
+      if (bytesWritten <= 0) throw new Error('short write');
+      off += bytesWritten;
+    }
     try { await fh.sync(); } catch { /* fsync unsupported on some filesystems */ }
   } finally {
     await fh.close();
@@ -72,6 +81,14 @@ export async function atomicWriteFile(target: string, data: string | Uint8Array,
 // ------------------------------------------------------------------
 // Save / load
 // ------------------------------------------------------------------
+
+/**
+ * Autosave serialization: compact JSON (2.5x smaller than the 2-space form, and faster to produce and
+ * write; P-06). Manual saves stay human-readable via serializeProject. Both parse to the same project.
+ */
+export function serializeAutosave(p: Project): string {
+  return JSON.stringify(p);
+}
 
 /** Save a project. The `.recut` extension is appended when missing; the final path is returned. */
 export async function saveProjectFile(filePath: string, project: Project): Promise<SaveResult> {
@@ -164,7 +181,7 @@ export async function writeAutosave(projectPath: string | null, project: Project
   try {
     const target = autosavePathFor(projectPath, userData);
     // Autosaves are already a safety net; no .bak chain for them.
-    await atomicWriteFile(target, serializeProject(project), { backup: false });
+    await atomicWriteFile(target, serializeAutosave(project), { backup: false });
     return { ok: true, path: target };
   } catch (e) {
     return { ok: false, error: `Autosave failed: ${errMsg(e)}` };

@@ -1,6 +1,7 @@
 # Export pipeline
 
-The export turns a `Sequence` into one MP4 with a single ffmpeg invocation. The acceptance bar is that
+The export turns a `Sequence` into one MP4 with a single ffmpeg invocation (or, for very large sequences, a
+series of bounded chunk renders joined losslessly; see "Chunked rendering"). The acceptance bar is that
 **the file reflects the timeline exactly**: every frame of the output corresponds to the frame the editor
 shows at that position, and the duration equals the exported range to the frame.
 
@@ -11,6 +12,8 @@ Files:
   No I/O; unit-tested; used for the "preview command" UI.
 - `electron/export/exporter.ts` — runs it: writes the graph to a temp file, spawns ffmpeg, parses
   `-progress` output, handles cancel, renames `<name>.part.mp4` to the final name, writes the `.srt` sidecar.
+- `electron/export/chunks.ts` — pure. Decides when to chunk and plans chunk boundaries.
+- `electron/safeMkdir.ts` — creates the output folder without recursive mkdir (see "Running it").
 - `tests/unit/export.test.ts` — generates synthetic media with ffmpeg and checks durations, frame counts,
   pixel colors and audio levels of real exports.
 
@@ -143,3 +146,53 @@ MP4 always has an audio track.
 - Burn-in: `buildRenderGraph` returns range-relative SRT in `subtitleContent`; the exporter writes it and
   passes the path, which is escaped for both filtergraph parsing levels (`escapeFilterPath`). With
   `exportSubtitleSidecar`, the same SRT is written next to the MP4.
+- The output folder is created with `ensureDirSafe` (`electron/safeMkdir.ts`), never with a blocking or
+  recursive mkdir: recursive mkdir never returns under `/proc` and froze the main process (BUG-1). It walks up
+  to the first existing ancestor, refuses non-folders and `/proc`, `/sys`, `/dev` (also through symlinks),
+  creates the missing parts one at a time and gives up after 5 s with "Cannot create output folder".
+
+## Chunked rendering (large sequences)
+
+One graph opens one ffmpeg input (demuxer + decoder) per clip segment, all at once; ffmpeg memory grows
+by about 6–13 MB per input and a 2,500-clip sequence was killed at 6 GB (docs/attack/performance.md P-01).
+When the single-pass graph would have more than **150 inputs** or more than **120 video clip segments**
+(`shouldChunk`), the exporter renders the range in chunks instead. Small sequences use the single pass
+unchanged.
+
+**Boundaries** (`planExportChunks`, integer sequence frames) are planned separately for the video pass
+(≤ 100 video segments per chunk, video tracks only) and the audio pass (≤ 300 audio segments, audio tracks
+only; audio-only inputs cost ~2.5 MB). A boundary is a clip edge on a rendered track and is never:
+
+- inside a transition window (two-sided: `(cut − ⌈D/2⌉, cut + ⌈D/2⌉)`; fade in/out: over the clip edge),
+  so no xfade / acrossfade / fade is split and no transition is dropped as "at the range edge";
+- inside an audio clip's own fade-in/out, inside an audio clip with speed ≠ 1 (atempo state), or inside a
+  clip that needs more source than its media has (its held last frame needs earlier frames).
+
+Cuts no clip spans on any track of the pass are preferred when they keep the chunk at least half full.
+Each chunk is `buildRenderGraph(req, { range, streams })` over its sub-range: the same segment chains, frame
+choice and exact frame counts as the single pass (a clip that spans a boundary is split into two segments
+whose source positions come from `sourceTimeAt`, exactly like an In/Out export starting mid-clip). Burn-in
+subtitles are written per chunk, relative to the chunk.
+
+**Video**: one ffmpeg per chunk → `chunk-NNNN.mp4` with the export's encoder args plus closed GOPs and an
+IDR at the chunk start (`-x264-params keyint=250:open-gop=0:stitchable=1` / `-x265-params
+keyint=250:open-gop=0`, `-force_key_frames 0`), `-an`. Each input gets `-threads 1` and the graph
+`-filter_complex_threads 2`: per-input decoder threads multiplied memory by the input count (1.47 GB →
+0.56 GB for a 96-segment chunk of the perf sequence, no slower).
+
+**Audio**: one ffmpeg per audio chunk → `chunk-NNNN.wav`, 32-bit float PCM (lossless w.r.t. the graph's
+`fltp`, no clipping of `amix` sums above 1.0). The chunk is exactly `S(end) − S(start)` samples long
+(`apad=whole_len=N,atrim=end_sample=N` on `[aout]`) with `S(f) = round((f − startF) · SR · den/num)`, so the
+chunks join with no drift at any frame rate. Measured: the concatenated chunk PCM equals the single-pass
+PCM to float rounding (≤ 1e-5, from SIMD/scalar tails at different frame splits) with boundaries inside
+clips. Known limit: when a boundary splits a clip whose source sample grid does not line up with the
+boundary (e.g. a 44.1 kHz source in a 48 kHz export, or 29.97 fps where a frame is 1601.6 samples), the rest
+of that clip in the next chunk can be offset by less than one source sample (≤ 11 µs); inaudible.
+
+**Join**: one ffmpeg reads both lists with the concat demuxer (`ffconcat`, relative names) — video
+`-c:v copy`, the PCM through one final AAC/AC-3 encode with the export's audio args —
+`-movflags +faststart -t <duration>` → `<name>.part.mp4`, renamed as usual.
+
+Progress is weighted (video 80 % by frames, audio 12 %, join 8 %) and monotonic. Cancel kills the current
+ffmpeg; the temp folder (chunk files, lists, scripts) is removed in all cases. An error names the step:
+`Export failed in chunk 3/26 (video, frames 5880-8760): <ffmpeg tail>`.

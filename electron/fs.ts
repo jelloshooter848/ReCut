@@ -3,6 +3,7 @@
  */
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { ensureDirSafe } from './safeMkdir';
 import type { FileStat, RelinkCandidate, RelinkScanRequest } from '../shared/ipc';
 
 export interface DirEntry { name: string; path: string; isDirectory: boolean; size: number }
@@ -21,7 +22,7 @@ export async function readText(p: string): Promise<string> {
 }
 
 export async function writeText(p: string, content: string): Promise<void> {
-  await fsp.mkdir(path.dirname(p), { recursive: true });
+  await ensureDirSafe(path.dirname(p));
   await fsp.writeFile(p, content, 'utf8');
 }
 

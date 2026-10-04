@@ -189,7 +189,32 @@ export function importIdentity(path: string, kind: PathClass | 'unknown' = class
   };
   if (info.episode !== undefined) return { identity: pick(['series', 'season', 'episode', 'title', 'year']), category: 'Episode', bin: info.series ? 'tv' : null };
   if (info.year !== undefined && info.title) return { identity: pick(['title', 'year']), category: 'Movie', bin: 'movies' };
+  // BUG-3: a video with no episode marker and no year is still a movie when its name reads like a title
+  // ("Galaxy Saga 1 - A New Dawn") or it sits in a movies / films folder. Camera / numbered clips stay Other;
+  // long-form video is reclassified after probing (see LONG_FORM_MOVIE_SEC).
+  if (kind === 'video') {
+    const title = looksLikeTitle(path);
+    if (title) return { identity: { title }, category: 'Movie', bin: 'movies' };
+  }
   return { identity: {}, category: 'Other', bin: null };
+}
+
+/** Video at least this long (seconds) without an episode marker is treated as a Movie once probed. */
+export const LONG_FORM_MOVIE_SEC = 40 * 60;
+
+/** The file name as a title (kept as-is) when it reads like one, else null. */
+function looksLikeTitle(path: string): string | null {
+  const parts = path.split(/[\\/]/);
+  const file = parts[parts.length - 1] ?? '';
+  const dir = (parts[parts.length - 2] ?? '').toLowerCase();
+  const d = file.lastIndexOf('.');
+  const base = (d > 0 ? file.slice(0, d) : file).trim();
+  if (!base) return null;
+  if (/^(movies?|films?)$/.test(dir)) return base;
+  // Camera / export names: IMG_0001, DSC01234, MVI_1234, GX010123, clip-001, take 3, 20240501_101500 …
+  if (/^(img|dsc|dscn|mvi|gx|gopr|vid|pxl|clip|take|shot|scene|untitled|output|export|render|screen ?recording)[\s._-]*\d+\b/i.test(base)) return null;
+  const words = base.split(/[\s._-]+/).filter((w) => /[a-z]{2,}/i.test(w));
+  return words.length >= 2 ? base : null;
 }
 
 /**

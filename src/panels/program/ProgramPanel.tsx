@@ -33,7 +33,7 @@ import { createFrameSignal, useFrame, type FrameSignal } from './frameSignal';
 import { createProgramTransport } from './programTransport';
 import { ScrubBar } from './ScrubBar';
 import { AudioMeter } from './AudioMeter';
-import { classifyMissing } from './missing';
+import { classifyMissing, sequenceMissing } from './missing';
 import './program.css';
 
 const DEFAULT_FPS: Rational = { num: 24000, den: 1001 };
@@ -159,12 +159,14 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
     const seq = activeSequence(st);
     let next = EMPTY_STATUS;
     if (seq) {
-      const missing = player.getMissing();
+      // Distinct media files of the whole sequence (BUG-4), plus element failures under the playhead.
+      const pool = getPool();
+      const missing = sequenceMissing(seq, st.project.media, st.project.settings.useProxies, (p) => pool.getError(p), player.getMissing());
       const plan = planFrame(seq, st.project.media, player.currentFrame(), st.project.settings.useProxies);
       const proxy = plan.layers.some((l) => l.usingProxy) || plan.audio.some((a) => a.usingProxy);
       next = { missing, proxy };
     }
-    const key = `${next.proxy}|${next.missing.map((m) => `${m.clipId}:${m.reason}`).join(',')}`;
+    const key = `${next.proxy}|${next.missing.map((m) => `${m.mediaId}:${m.clipId}:${m.reason}`).join(',')}`;
     if (key !== statusKey.current) { statusKey.current = key; setStatus(next); }
   }, []);
   const scheduleStatus = useCallback(() => {
@@ -312,11 +314,11 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
   const missingMenu = (): MenuItem[] => {
     const st = store();
     const seq = activeSequence(st);
-    const items: MenuItem[] = [{ heading: `${status.missing.length} clip${status.missing.length === 1 ? '' : 's'} cannot be played` }];
+    const items: MenuItem[] = [{ heading: `${status.missing.length} media file${status.missing.length === 1 ? '' : 's'} cannot be played` }];
     for (const m of status.missing) {
-      const clip = seq ? findClipById(seq, m.clipId) : undefined;
+      const clip = seq && m.clipId ? findClipById(seq, m.clipId) : undefined;
       const media = st.project.media[m.mediaId];
-      items.push({ label: `${clip?.name ?? media?.name ?? m.clipId} — ${m.reason}`, disabled: true });
+      items.push({ label: `${media?.name ?? clip?.name ?? m.mediaId} — ${m.reason}`, disabled: true });
     }
     const mediaIds = [...new Set(status.missing.map((m) => m.mediaId))].filter((id) => {
       const m = st.project.media[id];

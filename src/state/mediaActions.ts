@@ -9,7 +9,7 @@ import { parseSubtitles } from '../../shared/subtitles';
 import { uid } from '../../shared/ids';
 import { useStore, serializeForSave } from './store';
 import { fileNameOf } from './selectors';
-import { classifyPath, importIdentity, sidecarLanguage, type ImportBinKind } from './parseIdentity';
+import { classifyPath, importIdentity, sidecarLanguage, LONG_FORM_MOVIE_SEC, type ImportBinKind } from './parseIdentity';
 
 export function recutApi(): RecutApi | null {
   return typeof window !== 'undefined' && window.recut ? window.recut : null;
@@ -127,6 +127,9 @@ async function probeImported(list: { id: ID; category: string; auto: boolean }[]
     if (!m) return;
     if (m.kind === 'audio' && category === 'Other') {
       useStore.getState().updateMedia(id, { category: 'Music', ...(auto && m.binId === null && useStore.getState().project.bins['bin-audio'] ? { binId: 'bin-audio' } : {}) });
+    } else if (m.kind === 'video' && category === 'Other' && probe.duration >= LONG_FORM_MOVIE_SEC) {
+      // BUG-3: long-form video without an episode marker is a movie.
+      useStore.getState().updateMedia(id, { category: 'Movie', ...(auto && m.binId === null && useStore.getState().project.bins['bin-movies'] ? { binId: 'bin-movies' } : {}) });
     }
     if (!probe.browserPlayable && (m.kind === 'video' || m.kind === 'audio') && m.proxy.status === 'none') needProxy.push(id);
   }));
@@ -298,6 +301,11 @@ export async function openProject(path: string): Promise<{ ok: true; project: Pr
   try {
     const project = normalizeProject(res.project);
     useStore.getState().loadProjectData(project, res.path);
+    // BUG-5: tell the user the newest edits were lost (same wording as requestOpenProject, which does not call this).
+    if (res.fromBackup) {
+      const when = res.backupMtime ? new Date(res.backupMtime).toLocaleString() : 'an earlier save';
+      say('warn', `Opened the backup from ${when}; the project file was damaged`);
+    }
     return { ok: true, project };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

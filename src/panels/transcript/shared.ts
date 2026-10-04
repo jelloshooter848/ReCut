@@ -4,7 +4,7 @@
 import { useMemo } from 'react';
 import type { ID, MediaItem, Rational } from '../../../shared/model';
 import { formatSecondsTimecode } from '../../../shared/time';
-import { findClip } from '../../../shared/timeline';
+import { performSourceEdit } from '@/panels/source/insert';
 import { useStore, importSubtitleFile, importEmbeddedSubtitles, recutApi } from '@/state';
 import { toast, dismissToast } from '@/components/ui';
 import { buildTranscriptIndex, type TranscriptIndex } from '@/transcript/index';
@@ -41,20 +41,18 @@ export function loadInSource(mediaId: ID, inS: number, outS: number, opts: { foc
   if (opts.focus !== false) st.setActivePanel('source');
 }
 
-/** Insert a source range into the active sequence at the playhead. Returns the created clip ids. */
+/**
+ * Insert a source range into the active sequence at the playhead, through the shared Source edit path
+ * (performSourceEdit: conform-to-clip prompt, three-point rules with the sequence In/Out, playhead to the end).
+ * Returns the created clip ids ([] when nothing was inserted, or while a conform prompt is still open).
+ */
 export function insertAtPlayhead(mediaId: ID, inS: number, outS: number, originLabel = 'transcript'): ID[] {
   const st = useStore.getState();
   const seqId = st.project.activeSequenceId;
-  const seq = seqId ? st.project.sequences[seqId] : null;
-  if (!seqId || !seq) { toast.warn('No active sequence to insert into'); return []; }
+  if (!seqId || !st.project.sequences[seqId]) { toast.warn('No active sequence to insert into'); return []; }
   if (outS - inS <= 0) { toast.warn('Nothing to insert: empty range'); return []; }
-  const at = seq.view.playhead;
-  const ids = st.insertFromSource(seqId, { mediaId, in: inS, out: outS, atFrame: at, mode: 'insert', extra: { originLabel } });
-  if (ids.length === 0) { toast.warn('Nothing inserted — are the target tracks locked?'); return ids; }
-  const after = useStore.getState().project.sequences[seqId];
-  const placed = after ? findClip(after, ids[0])?.clip : undefined;
-  if (placed) useStore.getState().setView(seqId, { playhead: placed.start + placed.duration });
-  return ids;
+  const res = performSourceEdit({ mode: 'insert', mediaId, srcIn: inS, srcOut: outS, extra: { originLabel } }, seqId);
+  return res.clipIds;
 }
 
 /** Media the subtitle toolbar acts on: the Source clip, else the first selected media item. */

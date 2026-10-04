@@ -47,9 +47,11 @@ function routeProxy(job: JobInfo): void {
       const r = (job.result ?? null) as ProxyResultLike | null;
       if (!r?.path) { if (media.proxy.status !== 'failed') st.setProxy(media.id, { status: 'failed', error: 'Proxy job finished without a result' }); return; }
       if (media.proxy.status === 'ready' && media.proxy.path === r.path) return; // already applied by another mirror
-      st.setProxy(media.id, { status: 'ready', path: r.path, progress: 1, width: r.width, height: r.height });
+      // Drop stale elements BEFORE the store change: setProxy synchronously re-renders the paused Program frame, which
+      // acquires a fresh element for the proxy path; invalidating afterwards disposed that element (BUG-6).
       invalidateMediaPath(media.path);
       invalidateMediaPath(r.path);
+      st.setProxy(media.id, { status: 'ready', path: r.path, progress: 1, width: r.width, height: r.height });
       if (!r.cached) toast('ok', `Proxy ready: ${media.name}`);
       break;
     }

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, FolderPlus, Import, Layers as LayersIcon, LayoutGrid, List } from 'lucide-react';
-import type { ID } from '@shared/model';
+import type { ID, Project, Sequence } from '@shared/model';
+import { sequenceDuration } from '@shared/timeline';
 import { Button, EmptyState, IconButton, SearchField, Select, Toggle, useContextMenu } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
 import { pathOfDroppedFile, setClipDrag, type ClipDragPayload } from '@/app/dnd';
@@ -30,10 +31,30 @@ function filePaths(dt: DataTransfer): string[] {
   return out;
 }
 
+/** What the tree shows of a sequence; cached per sequence object (clip edits re-sum the duration once). */
+const seqSigCache = new WeakMap<Sequence, string>();
+function sequenceSig(s: Sequence): string {
+  let sig = seqSigCache.get(s);
+  if (sig === undefined) {
+    sig = [s.id, s.name, s.fps.num, s.fps.den, sequenceDuration(s), s.parentSequenceId ?? '', s.binId ?? '', s.versionLabel ?? ''].join('\u0001');
+    seqSigCache.set(s, sig);
+  }
+  return sig;
+}
+/** Changes only when a sequence's tree-visible fields change, not on every clip edit (P-04). */
+function sequencesSignature(p: Project): string {
+  let out = p.sequenceOrder.join(',');
+  for (const s of Object.values(p.sequences)) out += '\u0002' + sequenceSig(s);
+  return out;
+}
+
 export function ProjectPanel(_props: PanelProps) {
   const media = useStore((s) => s.project.media);
   const bins = useStore((s) => s.project.bins);
-  const sequences = useStore((s) => s.project.sequences);
+  // Rebuild the tree only when what it shows of the sequences changes (name / duration / bin / lineage).
+  const seqSig = useStore((s) => sequencesSignature(s.project));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const sequences = useMemo(() => useStore.getState().project.sequences, [seqSig]);
   const sequenceOrder = useStore((s) => s.project.sequenceOrder);
   const useProxies = useStore((s) => s.project.settings.useProxies);
   const selectedMediaIds = useStore((s) => s.ui.selectedMediaIds);

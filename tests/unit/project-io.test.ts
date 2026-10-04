@@ -7,8 +7,9 @@ import { createProject } from '../../shared/project';
 import {
   saveProjectFile, loadProjectFile, writeAutosave, checkRecovery, discardRecovery, autosavePathFor,
   untitledAutosavePath, clearUntitledAutosaveFor, defaultPrefs, readPrefs, updatePrefs, addRecentProject,
-  pushRecent, MAX_RECENT, atomicWriteFile, ensureProjectExt, projectPathForAutosave,
+  pushRecent, MAX_RECENT, atomicWriteFile, ensureProjectExt, projectPathForAutosave, serializeAutosave,
 } from '../../electron/project/io';
+import { ensureDirSafe } from '../../electron/safeMkdir';
 import { projectPathFromArgv } from '../../electron/project/argv';
 import { PROJECT_FORMAT_VERSION } from '../../shared/model';
 import { parseRange, contentTypeFor, mediaUrlPath } from '../../electron/media/range';
@@ -347,5 +348,61 @@ describe('projectPathFromArgv (QA-33)', () => {
   });
   it('relative paths resolve against the given working directory', () => {
     expect(projectPathFromArgv(['rel/p.recut'], '/work')).toBe(path.resolve('/work', 'rel/p.recut'));
+  });
+});
+
+describe('autosave format and safe folder creation (P-06, BUG-1)', () => {
+  it('autosaves are compact JSON; manual saves stay 2-space indented; both load the same project', async () => {
+    const project = createProject('Format');
+    const file = path.join(tmp, 'fmt.recut');
+    const saved = await saveProjectFile(file, project);
+    const auto = await writeAutosave(file, project, userData);
+    expect(saved.ok && auto.ok).toBe(true);
+    const manualText = await fsp.readFile(file, 'utf8');
+    const autoText = await fsp.readFile(autosavePathFor(file, userData), 'utf8');
+    expect(manualText).toContain('\n  "');
+    expect(autoText).not.toContain('\n');
+    expect(autoText).toBe(serializeAutosave(project));
+    expect(JSON.parse(autoText)).toEqual(JSON.parse(manualText));
+    const rec = await checkRecovery(userData, []);
+    expect(rec).toBeNull(); // autosave not newer than the project by more than the slack
+  });
+
+  it('atomicWriteFile writes large strings and buffers exactly', async () => {
+    const big = 'é'.repeat(3_000_000); // 6 MB of UTF-8
+    const f = path.join(tmp, 'big.txt');
+    await atomicWriteFile(f, big);
+    expect(await fsp.readFile(f, 'utf8')).toBe(big);
+    const buf = Buffer.alloc(1_500_000, 7);
+    await atomicWriteFile(f, buf);
+    expect((await fsp.readFile(f)).equals(buf)).toBe(true);
+  });
+
+  it('ensureDirSafe creates nested folders and refuses files / pseudo file systems quickly', async () => {
+    const nested = path.join(tmp, 'a', 'b', 'c');
+    await ensureDirSafe(nested);
+    expect(fs.statSync(nested).isDirectory()).toBe(true);
+    await ensureDirSafe(nested); // exists: no-op
+    const file = path.join(tmp, 'plain.txt');
+    fs.writeFileSync(file, 'x');
+    await expect(ensureDirSafe(path.join(file, 'sub'))).rejects.toThrow(/not a folder/);
+    if (process.platform === 'linux') {
+      const t0 = Date.now();
+      await expect(ensureDirSafe('/proc/recut-nope/deeper')).rejects.toThrow(/pseudo file system/);
+      await expect(ensureDirSafe('/sys/recut-nope')).rejects.toThrow(/pseudo file system/);
+      // Through a symlink into /proc.
+      const link = path.join(tmp, 'proclink');
+      fs.symlinkSync('/proc/self', link);
+      await expect(ensureDirSafe(path.join(link, 'recut-nope'))).rejects.toThrow(/pseudo file system/);
+      expect(Date.now() - t0).toBeLessThan(1000);
+    }
+  });
+
+  it('saving a project under /proc fails fast instead of hanging', async () => {
+    if (process.platform !== 'linux') return;
+    const t0 = Date.now();
+    const r = await saveProjectFile('/proc/recut-nope/p.recut', createProject('x'));
+    expect(r.ok).toBe(false);
+    expect(Date.now() - t0).toBeLessThan(1000);
   });
 });

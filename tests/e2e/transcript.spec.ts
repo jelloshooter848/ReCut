@@ -106,6 +106,11 @@ test.describe('Transcript search and Subtitles', () => {
       expect(before.playhead).toBe(0);
       await first.hover();
       await first.getByLabel('Insert at playhead', { exact: false }).click();
+      // BUG-2: the transcript insert goes through the shared Source edit path, so an empty sequence whose
+      // settings differ from the clip asks to conform first (same as `,` / `.` and drag & drop).
+      await expect(page.getByTestId('conform-dialog')).toBeVisible();
+      await page.getByTestId('conform-keep').click();
+      await expect.poll(async () => (await sequenceState(page)).clips.length).toBeGreaterThanOrEqual(1);
       const after = await sequenceState(page);
       expect(after.clips.length).toBeGreaterThanOrEqual(1);
       const video = after.clips.find((c) => c.mediaId === ep1Id)!;

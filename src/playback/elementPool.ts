@@ -32,6 +32,7 @@ export class MediaElementPool {
   private counter = 0;
   private destroyed = false;
   private listeners = new Set<(err: MediaLoadError) => void>();
+  private releaseListeners = new Set<(path: string) => void>();
 
   constructor(public capacity = 12) {}
 
@@ -86,6 +87,13 @@ export class MediaElementPool {
   releasePath(path: string): void {
     for (const e of [...this.entries.values()]) if (e.path === path) this.release(e.path, e.role);
     this.errors.delete(path);
+    for (const cb of this.releaseListeners) { try { cb(path); } catch { /* ignore */ } }
+  }
+
+  /** Called after `releasePath` (relink / proxy ready), so paused players re-acquire and redraw. */
+  onPathReleased(cb: (path: string) => void): () => void {
+    this.releaseListeners.add(cb);
+    return () => { this.releaseListeners.delete(cb); };
   }
 
   /** Start buffering a file so the first seek is fast. Uses a dedicated 'warm' role. */
@@ -119,6 +127,7 @@ export class MediaElementPool {
     this.entries.clear();
     this.errors.clear();
     this.listeners.clear();
+    this.releaseListeners.clear();
   }
 
   // ---------------------------------------------------------------

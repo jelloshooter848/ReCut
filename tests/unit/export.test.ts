@@ -392,6 +392,20 @@ describe('export request validation', () => {
     return q;
   };
 
+  it('refuses an output folder under /proc quickly instead of hanging the main process (BUG-1)', async () => {
+    if (process.platform !== 'linux') return;
+    const s = seq();
+    vclip(s, mediaA, 0, 24, 0);
+    const q = fakeQueue();
+    const t0 = Date.now();
+    const res = await startExportJob(q, req(s, { outputDir: '/proc/recut-nope' }));
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/Cannot create output folder/);
+    expect(q.added).toBe(0);
+    await expect(runExport(req(s, { outputDir: '/proc/recut-nope/deeper' }))).rejects.toThrow(/Cannot create output folder/);
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
   it('refuses an output (or its .part / sidecar) that is a source or proxy of the sequence (QA-03)', async () => {
     const s = seq();
     vclip(s, mediaA, 0, 24, 0);
@@ -566,7 +580,7 @@ describe('chunked export (P-01)', () => {
     const r = bigReq(s);
     const input = { req: r, startF: 0, endF: CLIPS * LEN };
     expect(shouldChunk(input, buildRenderGraph(r).inputCount)).toBe(true);
-    const chunks = planExportChunks(input);
+    const chunks = planExportChunks(input); // one boundary set for both passes
     expect(chunks.length).toBeGreaterThanOrEqual(4);
     expect(chunks[0].startF).toBe(0);
     expect(chunks[chunks.length - 1].endF).toBe(CLIPS * LEN);
@@ -587,7 +601,11 @@ describe('chunked export (P-01)', () => {
   it('exports a 400-clip sequence in chunks: exact frames, content at boundaries, exact audio, bounded ffmpeg RSS', async () => {
     const { s, transCut } = bigSeq();
     const r = bigReq(s);
-    const chunks = planExportChunks({ req: r, startF: 0, endF: CLIPS * LEN });
+    const input = { req: r, startF: 0, endF: CLIPS * LEN };
+    const chunks = planExportChunks(input, 100, 'video');
+    // Small audio chunks so the audio joins split clips (A2 spans everything).
+    const audioChunks = planExportChunks(input, 8, 'audio');
+    expect(audioChunks.length).toBeGreaterThanOrEqual(3);
     let peakKb = 0;
     const timers: NodeJS.Timeout[] = [];
     const onSpawn = (child: ChildProcess) => {
@@ -604,10 +622,11 @@ describe('chunked export (P-01)', () => {
       child.once('exit', () => clearInterval(t));
     };
     const progress: number[] = [];
-    const res = await runExport(r, (p) => progress.push(p), undefined, { onSpawn });
+    const res = await runExport(r, (p) => progress.push(p), undefined, { onSpawn, maxAudioSegmentsPerChunk: 8 });
     const peakDuringExportKb = peakKb;
     timers.forEach(clearInterval);
     expect(res.chunks).toBe(chunks.length);
+    expect(res.audioChunks).toBe(audioChunks.length);
     expect(res.chunks).toBeGreaterThanOrEqual(4);
     // Progress is monotonic across chunks.
     for (let i = 1; i < progress.length; i++) expect(progress[i]).toBeGreaterThanOrEqual(progress[i - 1] - 1e-9);
@@ -663,7 +682,7 @@ describe('chunked export (P-01)', () => {
     const refPcm = await raw(refWav);
     expect(refPcm.length).toBe(total * 2);
     let off = 0, pcmDiff = 0;
-    for (const c of chunks) {
+    for (const c of audioChunks) {
       const n = sampleIndexAt(c.endF, 0, 48000, FPS) - sampleIndexAt(c.startF, 0, 48000, FPS);
       const w = path.join(dir, `chunk-${c.startF}.wav`);
       await renderWav({ range: { startF: c.startF, endF: c.endF }, streams: 'audio', audioSamples: n }, w);
@@ -689,7 +708,7 @@ describe('chunked export (P-01)', () => {
     // ffmpeg memory stays bounded (one chunk at a time).
     expect(peakDuringExportKb).toBeGreaterThan(0);
     expect(peakDuringExportKb / 1024).toBeLessThan(1536);
-    console.log(`[chunked export] ${res.chunks} chunks, boundaries ${chunks.map((c) => c.startF).join(',')}, peak ffmpeg RSS ${(peakDuringExportKb / 1024).toFixed(0)} MB`);
+    console.log(`[chunked export] ${res.chunks} chunks, boundaries ${chunks.map((c) => c.startF).join(',')}; ${res.audioChunks} audio chunks ${audioChunks.map((c) => c.startF).join(',')}; peak ffmpeg RSS ${(peakDuringExportKb / 1024).toFixed(0)} MB`);
   }, 300000);
 
   it('cancel during a chunked export deletes temp files and the partial output', async () => {

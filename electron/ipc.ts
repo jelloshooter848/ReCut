@@ -8,8 +8,8 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
-import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { ensureDirSafe } from './safeMkdir';
 import type { AppPreferences, ID, JobInfo, MediaProbe, Project } from '../shared/model';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import type {
@@ -153,9 +153,19 @@ export function resolveFfmpeg(): { ffmpegPath: string | null; ffprobePath: strin
 
 export async function resolveCacheDir(userData: string): Promise<string> {
   const prefs = await io.readPrefs(userData);
-  const dir = prefs.cacheDir && prefs.cacheDir.trim() ? prefs.cacheDir : path.join(userData, 'cache');
-  await fsp.mkdir(dir, { recursive: true }).catch(() => undefined);
-  return dir;
+  const fallback = path.join(userData, 'cache');
+  const dir = prefs.cacheDir && prefs.cacheDir.trim() ? prefs.cacheDir : fallback;
+  // No recursive mkdir on a user path (BUG-1: it never returns under /proc). An unusable configured
+  // folder falls back to the default cache folder.
+  try {
+    await ensureDirSafe(dir);
+    return dir;
+  } catch (e) {
+    if (dir === fallback) return dir;
+    console.warn(`cache folder ${dir} is not usable (${e instanceof Error ? e.message : String(e)}); using ${fallback}`);
+    await ensureDirSafe(fallback).catch(() => undefined);
+    return fallback;
+  }
 }
 
 export function registerIpc(deps: IpcDeps): void {

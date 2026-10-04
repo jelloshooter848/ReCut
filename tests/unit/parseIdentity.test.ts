@@ -103,7 +103,9 @@ describe('import-time identity', () => {
 
   it('year without an episode → Movie; nothing recognisable → Other with empty identity', () => {
     expect(importIdentity('/m/Blade.Runner.1982.Final.Cut.2160p.UHD.mkv')).toEqual({ identity: { title: 'Blade Runner', year: 1982 }, category: 'Movie', bin: 'movies' });
-    expect(importIdentity('/m/Galaxy Saga 1 - A New Dawn.mp4')).toEqual({ identity: {}, category: 'Other', bin: null });
+    expect(importIdentity('/m/Galaxy Saga 1 - A New Dawn.mp4')).toEqual({ identity: { title: 'Galaxy Saga 1 - A New Dawn' }, category: 'Movie', bin: 'movies' }); // BUG-3
+    expect(importIdentity('/movies/x7.mp4')).toEqual({ identity: { title: 'x7' }, category: 'Movie', bin: 'movies' });
+    expect(importIdentity('/m/IMG_0042 holiday.mp4').category).toBe('Other');
     expect(importIdentity('/m/clip-001.mp4')).toEqual({ identity: {}, category: 'Other', bin: null });
   });
 
