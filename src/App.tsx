@@ -24,6 +24,7 @@ import { PreferencesDialog } from '@/app/dialogs/PreferencesDialog';
 import { SpeedDialog } from '@/app/dialogs/SpeedDialog';
 import { RelinkDialog } from '@/panels/project/RelinkDialog';
 import { FfmpegBanner } from '@/app/FfmpegBanner';
+import { ExportDialog } from '@/panels/export/ExportDialog';
 import { recutApi, setFfmpegAvailability } from '@/state';
 import '@/panels';
 
@@ -109,6 +110,8 @@ export function App() {
       <PreferencesDialog />
       <SpeedDialog />
       <RelinkDialog />
+      {/* Mounted at the root: the Jobs panel (its old host) unmounts while hidden, which made Export do nothing. */}
+      <ExportDialog />
       <DialogHost />
     </>
   );

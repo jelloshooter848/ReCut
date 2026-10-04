@@ -2,13 +2,11 @@
  * Jobs panel: "Jobs" and "Proxies" tabs. It also hosts the Export dialog as a body portal, because the
  * Jobs panel is part of every workspace and stays mounted (hidden) when its tab is inactive.
  */
-import React, { useCallback, useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useCallback, useState } from 'react';
 import { Activity, FileVideo } from 'lucide-react';
 import type { JobInfo } from '@shared/model';
 import type { PanelProps } from '@/panels/registry';
 import { Tabs } from '@/components/ui';
-import { ExportDialog } from '@/panels/export/ExportDialog';
 import { injectStyle } from '@/panels/export/injectStyle';
 import { JobsTab } from './JobsTab';
 import { ProxiesTab } from './ProxiesTab';
@@ -41,9 +39,6 @@ const CSS = `
 type TabId = 'jobs' | 'proxies';
 const activeCount = (jobs: JobInfo[]) => jobs.filter((j) => j.status === 'queued' || j.status === 'running').length;
 
-/** Only one Jobs panel instance hosts the dialog, even if the panel were ever mounted twice. */
-let dialogHost: symbol | null = null;
-
 export function JobsPanel(_props: PanelProps) {
   injectStyle('recut-jobs-panel-css', CSS);
   const [tab, setTab] = useState<TabId>(() => {
@@ -51,12 +46,6 @@ export function JobsPanel(_props: PanelProps) {
   });
   const change = useCallback((t: TabId) => { setTab(t); try { localStorage.setItem('recut.jobsPanel.tab', t); } catch { /* ignore */ } }, []);
   const active = useJobsSelect(activeCount);
-  const [me] = useState(() => Symbol('jobs-panel'));
-  const [hostsDialog, setHostsDialog] = useState(false);
-  useEffect(() => {
-    if (!dialogHost) { dialogHost = me; setHostsDialog(true); }
-    return () => { if (dialogHost === me) { dialogHost = null; } };
-  }, [me]);
 
   return (
     <div className="panel" data-testid="jobs-panel">
@@ -67,7 +56,6 @@ export function JobsPanel(_props: PanelProps) {
       <div className="panel-body col">
         {tab === 'jobs' ? <JobsTab /> : <ProxiesTab />}
       </div>
-      {hostsDialog ? createPortal(<ExportDialog />, document.body) : null}
     </div>
   );
 }
