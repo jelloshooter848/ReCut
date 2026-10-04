@@ -143,18 +143,19 @@ test('search filters by identity and tag text', async () => {
 
 test('detects scenes through the context menu and lists scene rows under the media', async () => {
   const row = page.locator('[data-row-kind="media"]', { hasText: 'S01E01' });
+  const mediaId = await row.getAttribute('data-media-id');
+  await row.click();                       // plain click: only this item is selected
   await row.click({ button: 'right' });
   await page.locator('.menu-item', { hasText: 'Detect Scenes' }).click();
   await page.getByTestId('detect-run').click();
-
-  await expect.poll(() => page.evaluate(() => {
-    const m = Object.values((window as any).__recut.store.getState().project.media).find((x: any) => x.name.includes('S01E01')) as any;
-    return m?.sceneDetectStatus;
-  }), { timeout: 90_000 }).toBe('done');
-  const scenes = page.locator('[data-row-kind="scene"]');
+  // The media row reports progress while the job runs, then the result lands in the store.
+  await expect(row).toContainText('Scenes');
+  await expect.poll(() => page.evaluate((id) => (window as any).__recut.store.getState().project.media[id]?.sceneDetectStatus, mediaId), { timeout: 90_000 }).toBe('done');
+  const scenes = page.locator(`[data-row-kind="scene"][data-media-id="${mediaId}"]`);
   await expect(scenes.first()).toBeVisible();
   const n = await scenes.count();
   expect(n).toBeGreaterThanOrEqual(2);
+  expect(await page.locator('[data-row-kind="scene"]').count()).toBe(n);   // only this media was detected
   await expect(scenes.first()).toContainText('Scene 001');
   await expect(scenes.first()).toContainText('00:00–');
   await expect(row).toContainText(`${n} scenes`);

@@ -57,7 +57,7 @@
 .tl-th-btn.patch { width: 24px; }
 .tl-th-vol { height: 16px; min-width: 60px; font-size: var(--font-size-xs); padding: 0 4px; }
 .tl-th-vol .unit { font-size: 9px; }
-.tl-th-resize { position: absolute; left: 0; right: 0; bottom: -3px; height: 6px; cursor: row-resize; z-index: 2; }
+.tl-th-resize { position: absolute; left: 0; right: 0; bottom: 0; height: 5px; cursor: row-resize; z-index: 2; }
 .tl-th-resize:hover { background: var(--accent-soft); }
 .tl-th-divider { position: absolute; left: 0; right: 0; background: var(--bg-0); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .tl-th-sub { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 4px; padding: 0 6px; font-size: var(--font-size-xs); color: var(--text-dim); background: var(--bg-2); border-bottom: 1px solid var(--bg-0); }
