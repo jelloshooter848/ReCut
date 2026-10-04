@@ -16,7 +16,7 @@ frame `floor(sourceTime*mediaFps + 0.5)`. `tests/attack/e2e/chromium-seek.spec.t
 
 ## Verdict
 
-**Not frame-exact; A/V sync is mostly sound.** Durations, frame counts and audio lengths come out exact at
+**Not frame-exact, and the preview is wrong for offset-start files; A/V sync is otherwise mostly sound.** Durations, frame counts and audio lengths come out exact at
 23.976/24/25/29.97, and so does seek math. Audio placement is sample-accurate: 50 linked inserts put every beep within
 0.00 frames of the model. The 300-clip graph builds in 10 ms and renders with 0 wrong frames. The picture does not
 always match the editor:
@@ -24,9 +24,10 @@ always match the editor:
 - **Single-clip tracks drop or duplicate frames** at 23.976, 25 and 29.97. At 29.97, 27 % of the frames are wrong. The cause is float truncation in `setpts` (M-01).
 - **MPEG-TS sources export 0.8–1 s early.** The picture is out of sync with its own audio by 1 s (M-02).
 - **When sourceIn falls off the media frame grid, the export shows a different frame than the editor.** This happens after any trim of a clip whose rate differs from the sequence's. The export dropped 50 of 50 one-frame flashes that the editor shows (M-03).
+- **Browser-playable files with a non-zero container start_time preview the wrong frames.** Real Chromium shows frame 0 where the export shows frame 100 (M-11).
 - **Stream start offsets are lost for clips that start in the first second of a file** (M-04). The **proxy ignores the selected audio stream** (M-05). **Display rotation is not in the probe** (M-06).
 
-All fixes except M-05/M-06 are a few lines in `renderGraph.ts`. Each one was validated with a patched graph:
+All fixes except M-05, M-06 and M-11 are a few lines in `renderGraph.ts`. Each one was validated with a patched graph:
 `exportPatched` in `tests/attack/helpers.ts` swaps one filter and re-runs ffmpeg exactly like `exporter.ts`.
 
 ## Findings
@@ -42,6 +43,7 @@ All fixes except M-05/M-06 are a few lines in `renderGraph.ts`. Each one was val
 | M-07 | P3 | VFR | A VFR source in a 29.97/25 sequence differs from the editor on 89/285 and 13/238 frames | `vfr.mp4` (24 fps for 5 s, then 30 fps; probe `isVfr = true`, 24 vs avg 26.96). The export is CFR with exact frame counts (✓). Attribution: the M-01 fix alone leaves **3/285 and 5/238**. The residual comes from the editor biasing its seek by 0.5/r_frame_rate (0.5/24 s), which is more than half a 1/30 s frame. | M-01. The residual is `sequencePlayer.ts:349` using r_frame_rate on a VFR file. | Fix M-01. Optionally bias by half the actual frame duration. |
 | M-08 | P3 | Waveform | The waveform of a file whose audio starts late is drawn shifted early by that offset | `sync24_adelay.mkv` (audio start_time 0.479 s): first loud bucket is **1 (0.02 s)**; it should be **25 (0.5 s)**. Plain, ts10 and TS sources are correct. | `electron/media/waveform.ts:108-125` decodes the stream from its own first sample and does not pad (audio start − format start). | Prepend `audio.start_time − format.start_time` of silence (`adelay`/`apad`), or offset the peaks. |
 | M-09 | P3 | Export performance | Each clip is decoded twice with 1 s of pre-roll | 300 clips (600 inputs, 147 KB graph, built in 9.9 ms): ffmpeg takes **33.5 s** for 25 s of 320x240 output. The same graph without pre-roll takes **15.3 s (2.2x)** with 0 wrong frames on MP4. | `renderGraph.ts:261-276`: one input per segment per kind, plus `seek = srcStart − 1`. | Share one input between the V and A of a linked clip; drop the pre-roll for MP4/MOV/MKV, where ffmpeg's accurate seek is exact; keep the M-02 handling for TS. |
+| M-11 | P1 | Editor preview / timestamps | A browser-playable source whose container start_time is not 0 previews the wrong content: frozen on frame 0 for source times before the start offset, and shifted by start_time after it. Export, thumbnails and proxies are all relative to the container start. | Real Electron/Chromium through `recut-media://` (`e2e/chromium-seek.spec.ts`). `counter24_ts10.mp4` (`-output_ts_offset 10`, ffprobe start_time 9.978): `currentTime = 4.1875`, which is what `SequencePlayer`/`SourcePlayer` set for frame 100, **lands at currentTime 9.978 and shows frame 0**; `currentTime = 9.978 + 4.1875` shows frame 99/100. Chromium `duration` = 22.458 for a 20 s file. For the same clip the export shows frame 100 (`sync.test.ts` ts10 mid-clip passes) and the thumbnail at 6.0 s shows the flash (container-relative). | `src/playback/sequencePlayer.ts:349` and `:333-336` (`clampToMedia` clamps to `[0, duration]`), and `src/playback/sourcePlayer.ts:269`, set `currentTime` to the 0-based source time. Chromium's media timeline is the absolute pts. | When playing the original (not a proxy), add the stream origin (`probe.startTime`, or better the first video pts) to every `currentTime` write and subtract it on read. Alternatively, treat `startTime > 0` as "needs remux/proxy" (the proxy is 0-based). |
 | M-10 | P4 | Thumbnails | A thumbnail requested at a frame-centre time shows the next frame | Requests at `frameCenterSeconds(k)` at 24 fps: 7/7 return frame k+1. Frame-start times: 18/18 correct (23.976). | `electron/media/thumbs.ts:71`: `-ss T` before `-i` returns the first frame with pts ≥ T. That is not the covering frame, which `<video>` shows. Latent: current callers pass frame-start times (scene boundaries, poster time). | Seek to `T − 0.5/fps`, or pick the covering frame with `select`. |
 
 ## What held up (measured, passing)
@@ -58,20 +60,20 @@ All fixes except M-05/M-06 are a few lines in `renderGraph.ts`. Each one was val
 ## Test inventory (`tests/attack`, run `npx vitest run -c tests/attack/vitest.config.ts`)
 
 Media is generated idempotently by `gen-media.sh` into the session scratchpad (`ATTACK_MEDIA_DIR` overrides).
-**Failing = demonstrates a bug.** Last full run: see the counts at the end of this section.
+**Failing = demonstrates a bug.** Last full run (vitest): **102 tests, 18 failing, 84 passing**. Playwright: 4 tests, 1 failing. `npm run typecheck` and `npm test` (444/444) pass.
 
 | File | Tests | Failing (finding) |
 |---|---|---|
 | `seek.test.ts` | 14 | none |
-| `codecs.test.ts` | 10 | rotated source probe size (M-06) |
-| `sync.test.ts` | 13 | sync24.ts mid-clip (M-02); audio-late head clip (M-04); video-late head clip (M-04) |
+| `codecs.test.ts` | 13 | rotated source probe size (M-06) |
+| `sync.test.ts` | 15 | sync24.ts mid-clip (M-02); audio-late head clip (M-04); video-late head clip (M-04) |
 | `framemap.test.ts` | 10 | 25→29.97 (M-03); 24→24 off-grid sourceIn (M-03); single long 23.976 clip (M-01); MPEG-TS sourceIn 5.0 (M-02) |
 | `timestamps.test.ts` | 5 | thumbnail at frame centre (M-10); waveform of audio-late file (M-08) |
 | `vfr.test.ts` | 4 | VFR→29.97, VFR→25 (M-07 / M-01) |
 | `proxy.test.ts` | 8 | none |
 | `exportgraph.test.ts` | 12 | none |
 | `round2.test.ts` | 21 | single clip at 25, 29.97, 23.976 (M-01); 50 inserts, both variants (M-03); proxy audio stream (M-05) |
-| `e2e/chromium-seek.spec.ts` | 4 | Playwright (`xvfb-run -a npx playwright test -c tests/attack/e2e/playwright.config.ts`); checks the editor model in real Chromium. Result below. |
+| `e2e/chromium-seek.spec.ts` | 4 | `counter24_ts10.mp4` 0-based seek (M-11). Run with `xvfb-run -a npx playwright test -c tests/attack/e2e/playwright.config.ts`; it needs `npm run build`. The passing tests confirm the editor model in real Chromium: frame-centre seeks show the covering frame at 24 and at 23.976 over 1 h (frames 0, 1, 1000, 86300). Seeking to exact frame starts shows frame k−1 for 6 of 8 k, because currentTime is truncated to µs (1→0, 2→1, 10→9, 47→46, 100→99, 239→238). |
 
 `round2.test.ts` also contains passing **ROOT CAUSE / ATTRIBUTION** tests. Each one applies the suggested fix to the
 generated graph and shows the symptom disappear: M-01 (29.97 → 0), M-02 (TS → frame 120), M-03 (0/240, 0/360,
