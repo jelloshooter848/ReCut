@@ -155,13 +155,17 @@ MP4 always has an audio track.
 
 One graph opens one ffmpeg input (demuxer + decoder) per clip segment, all at once; ffmpeg memory grows
 by about 6–13 MB per input and a 2,500-clip sequence was killed at 6 GB (docs/attack/performance.md P-01).
-When the single-pass graph would have more than **150 inputs** or more than **120 video clip segments**
-(`shouldChunk`), the exporter renders the range in chunks instead. Small sequences use the single pass
+When the single-pass graph would have more than **150 inputs**, more than **120 video clip segments**, or an
+estimated memory above 1.5 GB (`shouldChunk`), the exporter renders the range in chunks instead. Small sequences use the single pass
 unchanged.
 
 **Boundaries** (`planExportChunks`, integer sequence frames) are planned separately for the video pass
-(≤ 100 video segments per chunk, video tracks only) and the audio pass (≤ 300 audio segments, audio tracks
-only; audio-only inputs cost ~2.5 MB). A boundary is a clip edge on a rendered track and is never:
+(video tracks only: ≤ 100 segments and ≤ 1,000 MB estimated memory per chunk) and the audio pass (audio
+tracks only: ≤ 300 segments; audio-only inputs cost ~2.2 MB). ffmpeg keeps each finished segment's decoder
+and filter frame pools until it exits, so a chunk's memory grows with its segments and with resolution:
+`estimateSegmentMemoryMB = 2 + (10 · source pixels + 12 · output pixels) / 1e6` (measured, 96 segments →
+1280x720: 1.07 GB with 160x90 sources, 2.97 GB with 1080p sources; 1080p → 1080p allows ~21 segments per
+chunk). A boundary is a clip edge on a rendered track and is never:
 
 - inside a transition window (two-sided: `(cut − ⌈D/2⌉, cut + ⌈D/2⌉)`; fade in/out: over the clip edge),
   so no xfade / acrossfade / fade is split and no transition is dropped as "at the range edge";
