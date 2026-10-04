@@ -8,15 +8,16 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { sourceTimeAt } from '@shared/timeline';
 import { framesToSeconds } from '@shared/time';
 import type { MediaItem, Rational, Sequence } from '@shared/model';
-import { ensureMedia, mediaPath, makeMediaItem, makeSeq, vclip, exportSeq, readCounters, editorMediaFrame, FPS_23976, FPS_24, FPS_25, FPS_2997, countFrames } from './helpers';
+import { ensureMedia, mediaPath, makeMediaItem, makeSeq, vclip, exportSeq, exportPatched, request, readCounters, editorMediaFrame, FPS_23976, FPS_24, FPS_25, FPS_2997, countFrames } from './helpers';
 
-let c24: MediaItem, c25: MediaItem, c23976: MediaItem;
+let c24: MediaItem, c25: MediaItem, c23976: MediaItem, c24ts: MediaItem;
 
 beforeAll(async () => {
   ensureMedia();
   c24 = await makeMediaItem(mediaPath('counter24.mp4'));
   c25 = await makeMediaItem(mediaPath('counter25.mp4'));
   c23976 = await makeMediaItem(mediaPath('counter23976.mp4'));
+  c24ts = await makeMediaItem(mediaPath('counter24.ts'));
 });
 
 interface Mismatch { clip: number; j: number; got: number; want: number; sourceTime: number }
@@ -103,6 +104,32 @@ describe('export frame mapping vs editor model', () => {
     const r = await compare(seq, c23976, '23.976 long clip');
     expect(r.frames).toBe(460);
     expect(r.mismatches).toEqual([]);
+  });
+
+  it('ROOT CAUSE: the same 23.976 clip with setpts=N*den/num/TB replaced by settb+setpts=N has no drop/dup', async () => {
+    const seq = makeSeq(FPS_23976);
+    const clip = vclip(seq, c23976, 0, 460, 12 * 1001 / 24000);
+    const req = request(seq, [c23976]);
+    const re = /setpts=N\*1001\/24000\/TB/g;
+    const { outputPath, filterGraph } = await exportPatched(req, { filter: (g) => g.replace(re, 'settb=1001/24000,setpts=N') });
+    expect(filterGraph).toContain('settb=1001/24000,setpts=N');
+    const counters = await readCounters(outputPath);
+    let mism = 0;
+    for (let f = 0; f < clip.duration; f++) if (counters[f] !== editorMediaFrame(sourceTimeAt(clip, f, seq.fps), c23976.probe!.video!.fps)) mism++;
+    console.log(`[framemap 23.976 long clip, exact setpts] frames=${counters.length} mismatches=${mism}`);
+    expect(counters.length).toBe(460);
+    expect(mism).toBe(0);
+  });
+
+  it('MPEG-TS source: a clip from sourceIn 5.0 s starts on the frame the editor shows (119/120), not 20 frames earlier', async () => {
+    const seq = makeSeq(FPS_24);
+    const clip = vclip(seq, c24ts, 0, 48, 5.0);
+    const { outputPath, warnings } = await exportSeq(seq, [c24ts]);
+    const counters = await readCounters(outputPath);
+    const want = editorMediaFrame(sourceTimeAt(clip, 0, FPS_24), FPS_24); // = 120 (container start 1.462, video start 1.483: frame 120 at 6.483 covers 5.0208+1.462)
+    console.log(`[framemap TS] warnings=${warnings.join('|')} first counters=${counters.slice(0, 6).join(',')} ... [24..27]=${counters.slice(24, 28).join(',')} editor shows ${want - 1}/${want}`);
+    expect(Math.abs(counters[0] - want)).toBeLessThanOrEqual(1);
+    expect(counters[24] - counters[0]).toBe(24);
   });
 
   it('exported frame count equals the frame count of the range at every fps (no -t off-by-one)', async () => {

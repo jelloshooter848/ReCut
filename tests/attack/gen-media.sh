@@ -73,4 +73,8 @@ have small360.mp4 || $FF -f lavfi -i "testsrc=s=640x360:r=24:d=4" -f lavfi -i "s
 # cover art variants (appended): mkv attachment, mp3 with APIC
 have attach.mkv || $FF -f lavfi -i "testsrc=s=320x240:r=24:d=3" -f lavfi -i "sine=f=440:r=48000:d=3" -attach "$OUT/cover.png" -metadata:s:t:0 mimetype=image/png -metadata:s:t:0 filename=cover.png -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest "$OUT/attach.mkv"
 have cover.mp3 || $FF -f lavfi -i "sine=f=440:r=48000:d=3" -i "$OUT/cover.png" -map 0 -map 1 -c:a libmp3lame -c:v png -disposition:v:0 attached_pic -id3v2_version 3 "$OUT/cover.mp3"
+
+# counter variants for timestamp tests (appended)
+have counter24.ts || $FF -i "$OUT/counter24.mp4" -c copy -f mpegts "$OUT/counter24.ts"
+have counter24_ts10.mp4 || $FF -i "$OUT/counter24.mp4" -c copy -output_ts_offset 10 "$OUT/counter24_ts10.mp4"
 echo ok

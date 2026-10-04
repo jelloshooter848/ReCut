@@ -122,10 +122,15 @@ describe('compositing and scaling', () => {
     const { outputPath } = await exportSeq(seq, [small360], { width: 3840, height: 2160, preset: 'ultrafast' });
     const raw = await ffprobeJson(outputPath);
     expect([raw.streams[0].width, raw.streams[0].height]).toEqual([3840, 2160]);
-    // testsrc has non-black content at the corners; a letterboxed output would be black there
-    const { stdout } = await ff(['-i', outputPath, '-frames:v', '1', '-vf', 'crop=64:64:0:0,scale=1:1:flags=area', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-']);
-    console.log(`[4K upscale] top-left luma=${stdout[0]}`);
-    expect(stdout[0]).toBeGreaterThan(20);
+    // the source centre (20x20 at 310,170) has luma ~126; the same region scaled 6x must have the same luma, and the
+    // bottom-right corner region of testsrc (bright) must not be letterboxed away
+    const { stdout } = await ff(['-i', outputPath, '-frames:v', '1', '-vf', 'crop=120:120:1860:1020,scale=1:1:flags=area', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-']);
+    const { stdout: src } = await ff(['-i', small360.path, '-frames:v', '1', '-vf', 'crop=20:20:310:170,scale=1:1:flags=area', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-']);
+    const { stdout: br } = await ff(['-i', outputPath, '-frames:v', '1', '-vf', 'crop=600:300:3240:1860,scale=1:1:flags=area', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-']);
+    const { stdout: brSrc } = await ff(['-i', small360.path, '-frames:v', '1', '-vf', 'crop=100:50:540:310,scale=1:1:flags=area', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-']);
+    console.log(`[4K upscale] centre luma out=${stdout[0]} src=${src[0]}; bottom-right out=${br[0]} src=${brSrc[0]}`);
+    expect(Math.abs(stdout[0] - src[0])).toBeLessThan(12);
+    expect(Math.abs(br[0] - brSrc[0])).toBeLessThan(12);
   }, 120_000);
 
   it('bitrate mode and libx265 produce valid files of exact length', async () => {

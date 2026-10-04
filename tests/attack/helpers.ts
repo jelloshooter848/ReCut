@@ -11,6 +11,7 @@ import path from 'node:path';
 import type { Clip, ExportSettings, MediaItem, Rational, Sequence } from '@shared/model';
 import type { ExportRequest } from '@shared/ipc';
 import { createSequence } from '@shared/project';
+import { frameCenterSeconds } from '@shared/time';
 import { makeClip } from '@shared/timeline';
 import { probeMedia, classifyKind } from '../../electron/media/probe';
 import { runExport } from '../../electron/export/exporter';
@@ -190,3 +191,36 @@ export function editorMediaFrame(sourceTime: number, mediaFps: Rational): number
 }
 
 export function fmt(n: number, d = 4): string { return Number.isFinite(n) ? n.toFixed(d) : String(n); }
+
+// ---------------------------------------------------------------- patched export (root-cause experiments)
+import { buildRenderGraph, FILTER_SCRIPT_TOKEN } from '../../electron/export/renderGraph';
+
+/**
+ * Build the render graph, let `patch` rewrite the filter graph / args, and run ffmpeg exactly like exporter.ts does.
+ * Used to demonstrate root causes (e.g. replacing one filter) without modifying renderGraph.ts.
+ */
+export async function exportPatched(req: ExportRequest, patch: { filter?: (g: string) => string; args?: (a: string[]) => string[] }): Promise<{ outputPath: string; filterGraph: string }> {
+  const g = buildRenderGraph(req);
+  const filterGraph = patch.filter ? patch.filter(g.filterGraph) : g.filterGraph;
+  const script = path.join(OUT_DIR, `patched_${process.pid}_${outN++}.txt`);
+  fs.writeFileSync(script, filterGraph, 'utf8');
+  let args = g.args.map((a) => (a === FILTER_SCRIPT_TOKEN ? script : a));
+  if (patch.args) args = patch.args(args);
+  const outputPath = args[args.length - 1];
+  await exec(FFMPEG, args, { maxBuffer: 64 * 1024 * 1024 });
+  return { outputPath, filterGraph };
+}
+
+/** Editor frames (sequence of `fps`, clip sourceIn 0, speed 1) at which a source frame with absolute pts `absPts` is shown:
+ *  Chromium's time base starts at the container start_time; the player seeks to frame centers and shows the covering frame. */
+export function editorFramesShowing(absPts: number, nextAbsPts: number, containerStart: number, fps: Rational): number[] {
+  const t0 = absPts - containerStart, t1 = nextAbsPts - containerStart;
+  const out: number[] = [];
+  const first = Math.ceil((t0 - 0.5 * fps.den / fps.num) * fps.num / fps.den - 1e-9);
+  for (let f = Math.max(0, first); ; f++) {
+    const c = frameCenterSeconds(f, fps);
+    if (c >= t1) break;
+    if (c >= t0) out.push(f);
+  }
+  return out;
+}

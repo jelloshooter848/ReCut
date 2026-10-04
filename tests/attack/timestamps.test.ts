@@ -78,13 +78,16 @@ describe('waveform alignment', () => {
       expect(Math.abs(first - 0.5 * WAVEFORM_RATE)).toBeLessThanOrEqual(1);
     }
   });
-  it('plain / ts10 / TS sources: beeps land on buckets 100k', async () => {
-    for (const f of ['sync24.mp4', 'sync24_ts10.mp4', 'sync24.ts']) {
+  it('plain / ts10 / TS sources: beep buckets match (audio start - container start) + 2k s, i.e. <video> time', async () => {
+    for (const f of ['sync24.mp4', 'sync24_ts10.mp4', 'sync24.ts', 'sync24_bf.mp4']) {
       const w = await computeWaveform(mediaPath(f));
+      const raw = await ffprobeJson(mediaPath(f));
+      const aStart = Number(raw.streams.find((s) => s.codec_type === 'audio')?.start_time ?? 0) - Number(raw.format.start_time ?? 0);
       const loud: number[] = [];
       for (let i = 0; i < w.peaks.length; i++) if (w.peaks[i] > 40 && (i === 0 || w.peaks[i - 1] <= 40)) loud.push(i);
-      console.log(`[waveform ${f}] onsets buckets=${loud.slice(0, 5)} duration=${w.duration} peaks=${w.peaks.length}`);
-      expect(loud.slice(0, 4)).toEqual([0, 100, 200, 300]);
+      const want = [0, 1, 2, 3].map((k) => Math.floor((aStart + 2 * k) * WAVEFORM_RATE + 1e-6));
+      console.log(`[waveform ${f}] audio offset=${fmt(aStart, 3)} onsets buckets=${loud.slice(0, 5)} want=${want} duration=${w.duration} peaks=${w.peaks.length}`);
+      for (let k = 0; k < 4; k++) expect(Math.abs(loud[k] - want[k]), `${f} beep ${k}`).toBeLessThanOrEqual(1);
     }
   });
 });

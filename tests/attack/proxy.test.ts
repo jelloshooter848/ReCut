@@ -9,7 +9,18 @@ import { JobQueue } from '../../electron/jobs/jobQueue';
 import { startProxyJob } from '../../electron/media/proxy';
 import { probeMedia } from '../../electron/media/probe';
 import { buildRenderGraph } from '../../electron/export/renderGraph';
-import { ensureMedia, mediaPath, SCRATCH, ffprobeJson, countFrames, flashFrames, audioOnsets, readCounters, makeMediaItem, makeSeq, vclip, aclip, request, FPS_24, fmt } from './helpers';
+import { ensureMedia, mediaPath, SCRATCH, ffprobeJson, countFrames, flashFrames, audioOnsets, readCounters, makeMediaItem, makeSeq, vclip, aclip, request, FPS_24, fmt, framePts, frameLuma, editorFramesShowing } from './helpers';
+
+/** Editor frames (24 fps grid, container-relative) at which the ORIGINAL file shows its flash frames. */
+async function editorFlashFrames(file: string): Promise<number[]> {
+  const raw = await ffprobeJson(file);
+  const start = Number(raw.format.start_time ?? 0);
+  const pts = await framePts(file);
+  const luma = await frameLuma(file);
+  const out: number[] = [];
+  for (let i = 0; i < luma.length; i++) if (luma[i] > 120) out.push(...editorFramesShowing(pts[i], pts[i + 1] ?? pts[i] + 1 / 24, start, FPS_24));
+  return out;
+}
 
 const cacheDir = path.join(SCRATCH, 'cache');
 process.env.RECUT_CACHE_DIR = cacheDir;
@@ -50,8 +61,10 @@ describe('proxy time mapping', () => {
     const beeps = await audioOnsets(out, { threshold: 0.15, quiet: 0.2 });
     console.log(`[proxy ts10] proxy start_time=${raw.format.start_time} v.start=${raw.streams[0].start_time} a.start=${raw.streams[1]?.start_time} flashes=${fl.slice(0, 3)} beeps=${beeps.slice(0, 3).map((x) => fmt(x, 3))}`);
     expect(b.startTime).toBeLessThan(0.05);
-    // In the original (Chromium time base = container start 9.978) the flashes are at 0.022 + 2k s => frames 0, 48, 96 (frame 0 covers 0..0.0417)
-    expect(fl.slice(0, 3)).toEqual([0, 48, 96]);
+    // The original's video starts 22 ms after the container start (AAC priming): Chromium shows its flashes at editor frames 1, 49, 97.
+    const want = await editorFlashFrames(src);
+    console.log(`[proxy ts10] editor frames showing a flash in the original: ${want.slice(0, 4)}`);
+    expect(fl.slice(0, 3)).toEqual(want.slice(0, 3));
     expect(Math.abs(beeps[1] - 2.022)).toBeLessThan(0.03);
   });
 
@@ -63,8 +76,10 @@ describe('proxy time mapping', () => {
     const beeps = await audioOnsets(out, { threshold: 0.15, quiet: 0.2 });
     console.log(`[proxy ts] src dur=${a.duration} start=${a.startTime} | proxy dur=${b.duration} start=${b.startTime} flashes=${fl.slice(0, 3)} beeps=${beeps.slice(0, 3).map((x) => fmt(x, 3))}`);
     expect(Math.abs(b.duration - a.duration)).toBeLessThan(0.1);
-    expect(fl.slice(0, 3)).toEqual([0, 48, 96]);
-    expect(Math.abs(beeps[1] - 2.0)).toBeLessThan(0.03);
+    const want = await editorFlashFrames(src);
+    console.log(`[proxy ts] editor frames showing a flash in the original: ${want.slice(0, 4)}`);
+    expect(fl.slice(0, 3)).toEqual(want.slice(0, 3));
+    expect(Math.abs(beeps[1] - 2.021)).toBeLessThan(0.03);
   });
 
   it('audio starts 0.5 s late (mkv): proxy preserves the audio offset (beep at 0.5 s, 2.5 s)', async () => {
