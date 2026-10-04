@@ -97,11 +97,12 @@ test.describe('Chromium <video> seek semantics', () => {
       const r = await probe(file, [0, (100 + 0.5) / 24, start + (100 + 0.5) / 24, start + (300 + 0.5) / 24]);
       const lines = r.results.map((x) => `seek t=${x.t.toFixed(4)} -> currentTime=${x.currentTime.toFixed(4)} frame=${x.counter} mediaTime=${x.mediaTime === null ? 'n/a' : x.mediaTime.toFixed(4)}`);
       console.log(`[chromium ${name}] ffprobe start_time=${start} video.duration=${r.duration}\n  ${lines.join('\n  ')}`);
-      // With the offset applied (start + center) Chromium shows the intended frames:
-      expect(r.results[2].counter).toBe(100);
-      expect(r.results[3].counter).toBe(300);
-      // What SourcePlayer/SequencePlayer actually do (currentTime = 0-based source time) must also show frame 100:
-      expect(r.results[1].counter).toBe(100);
+      // What SourcePlayer/SequencePlayer actually do (currentTime = 0-based source time, no start offset added) must show frame 100
+      // (the export, which seeks relative to the container start, shows frame 100 there):
+      expect(r.results[1].counter, `0-based seek to ${r.results[1].t} landed at currentTime ${r.results[1].currentTime}`).toBe(100);
+      // With the container start added Chromium shows the intended frames (+-1: video starts 22 ms after the container):
+      expect([99, 100]).toContain(r.results[2].counter);
+      expect([299, 300]).toContain(r.results[3].counter);
     });
   }
 });

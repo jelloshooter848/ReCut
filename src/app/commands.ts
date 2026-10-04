@@ -13,7 +13,8 @@ import { COMMAND_META } from '@/keyboard/commands';
 import { registerCommand, runCommand, type CommandInput } from '@/keyboard/shortcuts';
 import { useStore } from '@/state/store';
 import { activeSequence, selectedClips } from '@/state/selectors';
-import { importMediaFiles, importSubtitleFile, recutApi } from '@/state/mediaActions';
+import { importSubtitleFile, recutApi } from '@/state/mediaActions';
+import { importPaths } from '@/panels/project/actions';
 import { useLayoutStore } from '@/components/layout/layoutStore';
 import { toast } from '@/components/ui/toastStore';
 import type { Clip, ID, Sequence, Track, TransitionType } from '@shared/model';
@@ -238,9 +239,9 @@ async function importMediaViaDialog(): Promise<void> {
   if (!api) { toast('warn', 'Importing requires the desktop app'); return; }
   const paths = await api.openFiles({ title: 'Import Media', filters: MEDIA_FILTERS, multi: true });
   if (!paths.length) return;
-  const ids = await importMediaFiles(paths, S().ui.selectedBinId);
-  if (ids.length) toast('ok', `Imported ${ids.length} file${ids.length === 1 ? '' : 's'}`);
-  else toast('info', 'Those files are already in the project');
+  // Same path as the Project panel's Import button: auto-routes into Movies / TV › Series › Season bins,
+  // picks up sidecar subtitles and reports results with its own toasts.
+  await importPaths(paths, null);
 }
 
 async function importSubtitlesViaDialog(): Promise<void> {

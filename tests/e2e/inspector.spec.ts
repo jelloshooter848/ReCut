@@ -43,6 +43,8 @@ test.beforeAll(async () => {
   mediaDir = makeTestMedia(ctx.tmp, 'short');
   const ids = await importMedia(page, [path.join(mediaDir, MEDIA.movie1), path.join(mediaDir, MEDIA.ep1)]);
   movieId = ids[0];
+  // Import selects the new media; start from an empty selection so the Inspector shows the sequence.
+  await page.evaluate(() => (window as unknown as { __recut: { store: { getState(): { selectMedia(ids: string[]): void } } } }).__recut.store.getState().selectMedia([]));
 });
 
 test.afterAll(async () => { await ctx?.app.close(); });
