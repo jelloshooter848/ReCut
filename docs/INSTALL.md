@@ -1,8 +1,10 @@
 # Installing ReCut
 
 ReCut runs from source on Linux, macOS and Windows. Verified packaged builds: the **Windows installer and portable
-exe** (built, silently installed and smoke-tested on Windows by CI, with the full unit and end-to-end suites passing
-on Windows) and the **Linux unpacked** build. macOS (dmg) and the Linux AppImage are configured but untested.
+exe** (built on Windows by CI with FFmpeg bundled; the unpacked app they are made from is smoke-tested, the installer
+is silently installed and the installed app smoke-tested; the unit and end-to-end suites also run on Windows) and the
+**Linux unpacked** build (built and run locally). macOS (dmg) and the Linux AppImage are configured but untested.
+Nothing is code-signed.
 
 ## Windows in one step
 
@@ -84,14 +86,21 @@ xvfb-run -a npx electron --no-sandbox .
 
 ```bash
 npm run package    # build + electron-builder --dir  → release/linux-unpacked/recut
-npm run dist       # build + electron-builder         → AppImage (Linux), dmg (macOS), nsis installer (Windows)
+npm run dist       # build + electron-builder         → AppImage (Linux), dmg (macOS), nsis installer + portable exe (Windows)
 ```
 
-- **Verified:** `npm run package` on Linux, which produces `release/linux-unpacked/` with the `recut` executable.
-- **Not verified:** the `npm run dist` targets (AppImage, dmg, nsis). They are configured in `package.json` → `build`
-  but have not been built or tested. Code signing and notarisation are not set up.
-- By default a package does **not** include FFmpeg, so users install it themselves as described above. To ship it
-  inside the app, see [Bundling FFmpeg](#bundling-ffmpeg).
+- **Verified on Windows, in CI:** the nsis installer and the portable exe (the `package.json` → `build.win` targets).
+  `.github/workflows/windows.yml` builds them on `windows-latest` with FFmpeg bundled, smoke-tests the unpacked app,
+  silently installs the installer and smoke-tests the installed app (see [Windows in one step](#windows-in-one-step)).
+  The portable exe contains the same app but is not launched in CI. Both are unsigned.
+- **Verified on Linux, locally:** `npm run package`, which produces `release/linux-unpacked/` with the `recut`
+  executable.
+- **Not verified:** the macOS dmg and the Linux AppImage. They are configured in `package.json` → `build` but have
+  not been built or tested. Code signing (Windows) and notarisation (macOS) are not set up.
+- A package you build yourself does **not** include FFmpeg unless `resources/ffmpeg/` exists when you build it, so
+  its users install FFmpeg themselves as described above (on Windows, `Start ReCut.cmd` may already have downloaded
+  it there). The Windows builds from CI are the only published builds that bundle FFmpeg: the workflow downloads it
+  into `resources/ffmpeg/` before packaging. To ship it inside your own package, see [Bundling FFmpeg](#bundling-ffmpeg).
 
 ### Bundling FFmpeg
 

@@ -10,10 +10,10 @@ import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { ExportSettings, MediaItem, MediaProbe, Sequence } from '../../shared/model';
+import type { Clip, ExportSettings, MediaItem, MediaProbe, Sequence, Track } from '../../shared/model';
 import type { ExportRequest } from '../../shared/ipc';
 import { useStore, resetStore } from '../../src/state/store';
-import { buildRenderGraph, FILTER_SCRIPT_TOKEN } from '../../electron/export/renderGraph';
+import { buildRenderGraph, FILTER_SCRIPT_TOKEN, type RenderGraph } from '../../electron/export/renderGraph';
 import { allTracks } from '../../shared/timeline';
 import { runExport } from '../../electron/export/exporter';
 import { planExportChunks } from '../../electron/export/chunks';
@@ -76,6 +76,71 @@ function validateGraph(args: string[], filterGraph: string, tag: string, memMB =
   });
 }
 
+/** Splits RenderGraph.inputArgs into one argument tuple per ffmpeg input (each ends with `-i <path>`). */
+function splitInputs(inputArgs: string[]): string[][] {
+  const out: string[][] = [];
+  let cur: string[] = [];
+  for (let i = 0; i < inputArgs.length; i++) {
+    cur.push(inputArgs[i]);
+    if (inputArgs[i] === '-i') { cur.push(inputArgs[++i]); out.push(cur); cur = []; }
+  }
+  expect(cur, 'trailing input args without -i').toEqual([]);
+  return out;
+}
+
+/**
+ * Input-count invariant of buildRenderGraph for a whole-sequence export of a fixture with no muted / solo tracks,
+ * no offline or missing media and no out-of-range clips (the big perf fixture):
+ *  - every enabled clip renders exactly one segment chain (`[N:v:0]...` / `[N:a:0]` or `[N:<stream>]...`), in
+ *    track order then start order, reading an input whose `-i` is the clip's media path;
+ *  - every input is read by at most one video chain and at most one audio chain, and by at least one chain;
+ *  - inputs are shared exactly when allowed (renderGraph.ts addInput: a video and an audio segment whose input
+ *    args are identical share one input), so inputCount = sum over distinct input-arg tuples of
+ *    max(video segments, audio segments) using that tuple.
+ * Returns the counts for reporting.
+ */
+function expectInputsMatchClips(seq: Sequence, media: Record<string, MediaItem>, g: RenderGraph) {
+  const enabledClips = (tracks: Track[]): Clip[] => {
+    expect(tracks.some((t) => t.muted || t.solo), 'fixture has muted/solo tracks').toBe(false);
+    return tracks.flatMap((t) => t.clips.filter((c) => c.enabled).sort((a, b) => a.start - b.start));
+  };
+  const vClips = enabledClips(seq.videoTracks);
+  const aClips = enabledClips(seq.audioTracks);
+  const inputs = splitInputs(g.inputArgs);
+  expect(inputs.length).toBe(g.inputCount);
+  const chains = g.filterGraph.split(';\n');
+  const vIdx = chains.flatMap((c) => { const m = /^\[(\d+):v:0\]/.exec(c); return m ? [Number(m[1])] : []; });
+  const aIdx = chains.flatMap((c) => { const m = /^\[(\d+):(?:a:0|\d+)\]/.exec(c); return m ? [Number(m[1])] : []; });
+  // No clip dropped or duplicated.
+  expect(vIdx.length).toBe(vClips.length);
+  expect(aIdx.length).toBe(aClips.length);
+  // Each segment reads its own clip's media.
+  const pathOf = (i: number) => inputs[i][inputs[i].length - 1];
+  expect(vIdx.map(pathOf)).toEqual(vClips.map((c) => media[c.mediaId].path));
+  expect(aIdx.map(pathOf)).toEqual(aClips.map((c) => media[c.mediaId].path));
+  // Each input: at most one video and one audio reader, and no unused input.
+  const readers = inputs.map(() => ({ v: 0, a: 0 }));
+  for (const i of vIdx) readers[i].v++;
+  for (const i of aIdx) readers[i].a++;
+  expect(readers.filter((r) => r.v > 1 || r.a > 1 || r.v + r.a === 0).length, 'inputs read by 2+ video or 2+ audio chains, or unused').toBe(0);
+  // Sharing is exact: per distinct input-arg tuple, one input per video/audio pair it can serve.
+  const perKey = new Map<string, { v: number; a: number }>();
+  const tally = (idx: number[], kind: 'v' | 'a') => {
+    for (const i of idx) {
+      const k = inputs[i].join('\u0000');
+      const e = perKey.get(k) ?? { v: 0, a: 0 };
+      e[kind]++;
+      perKey.set(k, e);
+    }
+  };
+  tally(vIdx, 'v'); tally(aIdx, 'a');
+  const expected = [...perKey.values()].reduce((n, e) => n + Math.max(e.v, e.a), 0);
+  expect(g.inputCount).toBeGreaterThanOrEqual(Math.max(vClips.length, aClips.length));
+  expect(g.inputCount).toBeLessThanOrEqual(vClips.length + aClips.length);
+  expect(g.inputCount).toBe(expected);
+  return { videoSegments: vClips.length, audioSegments: aClips.length, shared: vClips.length + aClips.length - g.inputCount, expected };
+}
+
 let big: ReturnType<typeof buildBigProject>;
 let mediaFiles: string[] = [];
 
@@ -115,7 +180,7 @@ describe('export graph @ 2500 clips', () => {
     ms('graph', 'buildRenderGraph 2500 clips (median of 5)', b.median, 200);
     record({ section: 'graph', metric: 'filter graph length (chars)', value: g.filterGraph.length, unit: 'chars' });
     record({ section: 'graph', metric: 'filter graph chains', value: g.filterGraph.split(';\n').length, unit: '' });
-    record({ section: 'graph', metric: 'ffmpeg inputs (one per clip segment)', value: g.inputCount, unit: 'inputs', threshold: 'ffmpeg must open all of them', pass: null });
+    record({ section: 'graph', metric: 'ffmpeg inputs (one per clip segment; a linked V+A pair with identical input args shares one)', value: g.inputCount, unit: 'inputs', threshold: 'ffmpeg must open all of them', pass: null });
     record({ section: 'graph', metric: 'ffmpeg argv length', value: g.args.length, unit: 'args' });
     record({ section: 'graph', metric: 'argv bytes (sum)', value: g.args.join(' ').length, unit: 'bytes' });
     record({ section: 'graph', metric: 'warnings', value: g.warnings.length, unit: '' });
@@ -130,7 +195,11 @@ describe('export graph @ 2500 clips', () => {
       const bb = bench(5, () => { buildRenderGraph(r); });
       ms('graph', `buildRenderGraph @ ${n} clips (median)`, bb.median, 100);
     }
-    expect(g.inputCount).toBeGreaterThanOrEqual(2400);
+    // Every enabled clip reaches the graph, and inputs are shared exactly as addInput allows. Not a fixed count:
+    // the 2500-clip fixture (1250 linked V+A pairs) needs 1258 inputs, 1242 of them read by one video and one
+    // audio segment with identical input args.
+    const inv = expectInputsMatchClips(seq, req.media, g);
+    record({ section: 'graph', metric: 'video / audio segments, shared inputs', value: `${inv.videoSegments} / ${inv.audioSegments}, ${inv.shared}`, unit: '', threshold: `inputs = ${inv.expected}`, pass: g.inputCount === inv.expected });
   });
 
   it('ffmpeg accepts the generated graph (parse + init, -t 0.5, null muxer)', async () => {

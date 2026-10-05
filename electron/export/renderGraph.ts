@@ -45,7 +45,7 @@ export interface RenderGraph {
   warnings: string[];
   /** SRT content to burn in (range-relative), present when settings.burnSubtitles and cues exist in range. */
   subtitleContent?: string;
-  /** Number of ffmpeg inputs (one per rendered clip segment). */
+  /** Number of ffmpeg inputs: one per rendered clip segment, except that a video and an audio segment with identical input args (a linked V+A pair) share one. */
   inputCount: number;
   /** The `-i` input args alone (flattened), as they appear in `args`. */
   inputArgs: string[];

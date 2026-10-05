@@ -57,7 +57,7 @@ Path aliases: `@shared/*` → `shared/`, `@/*` → `src/` (in `vite.config.ts` a
 | `npm run test:watch` | Vitest in watch mode. |
 | `npm run test:e2e` | Build, then Playwright over `tests/e2e` (needs a display; use xvfb). |
 | `npm run package` | Build, then `electron-builder --dir` → `release/<platform>-unpacked`. Windows installers are built by `.github/workflows/windows.yml`. |
-| `npm run dist` | Build, then electron-builder installers (AppImage / dmg / nsis). Not verified. |
+| `npm run dist` | Build, then electron-builder installers (AppImage / dmg / nsis + portable exe). The Windows nsis installer and portable exe are built in CI by `.github/workflows/windows.yml`, which smoke-tests the unpacked app and a silent install (unsigned, FFmpeg bundled); the dmg and AppImage are untested. |
 
 Run `npm run typecheck` and `npm test` before you send changes.
 
