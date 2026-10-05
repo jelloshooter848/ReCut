@@ -155,14 +155,15 @@ Test and benchmark scripts use their own variables (`ATTACK_MEDIA_DIR`, `RECUT_P
 | Data | Location |
 |---|---|
 | Preferences (recent projects, shortcut overrides, window bounds, last export folder, optional `cacheDir`) | `<userData>/prefs.json` |
-| Project | Wherever you save it: `*.recut` (JSON). Saves are atomic, and the previous version is kept as `*.recut.bak`. |
+| Project | Wherever you save it: `*.recut` (JSON). Saves are atomic, and the previous version is kept as `*.recut.bak`. A project that had to be repaired on open is copied to `*.recut.pre-repair-<time>` first; a damaged one opened from its `.bak` is kept as `*.recut.corrupt-<time>`. |
 | Autosave of a saved project | Next to it: `<project>.recut.autosave` |
 | Autosave of a never-saved project | `<userData>/autosave/untitled.recut.autosave` |
 | Cache (`thumbs/`, `waves/`, `proxies/`, `scenes/`) | `$RECUT_CACHE_DIR`, else `cacheDir` in `prefs.json`, else `<userData>/cache` |
 | Panel layouts, the Jobs tab, Inspector collapsed sections, last export settings per project | Renderer `localStorage` (inside `userData`) |
-| Export temp files | `<os tmpdir>/recut-export-<id>/`, deleted after each export |
+| Export temp files | `<os tmpdir>/recut-export-<id>/` (filter script, burn-in subtitles, chunks), deleted after each export. The render itself is written next to the output as `<name>.recut-part-<random>.mp4` and renamed at the end; if that rename fails it is kept as `<name>.recut-unsaved-<time>.mp4`. |
 
 Cache entries are keyed by file path + size + mtime, so a changed source file gets fresh thumbnails and proxies. You
-can delete the cache folder at any time; it is rebuilt on demand. Preferences › Application › **Cache folder**
-shows the current location and has a **Reveal** button. The location cannot be changed from the UI: edit
-`cacheDir` in `prefs.json` or set `RECUT_CACHE_DIR`.
+can delete the cache folder at any time; it is rebuilt on demand. Thumbnails cached by builds before 5 October 2026
+are regenerated once: the thumbnail cache version changed when anamorphic sources started getting their display
+shape. Preferences › Application › **Cache folder** shows the current location and has a **Reveal** button. The
+location cannot be changed from the UI: edit `cacheDir` in `prefs.json` or set `RECUT_CACHE_DIR`.

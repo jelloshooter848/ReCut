@@ -1,6 +1,6 @@
 # Known limitations
 
-This page describes ReCut 0.1.0 after the final polish pass (October 2026). Every item was checked against the code. Items marked **bug** are
+This page describes ReCut 0.1.0 as of 5 October 2026. Every item was checked against the code. Items marked **bug** are
 defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.md)).
 
 ## Editing and effects
@@ -21,6 +21,9 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   **Sequence**. In project, series or season scope it does not.
 - **Undo** keeps the last 200 steps per session. Playhead, zoom and In/Out are not undoable.
 - **Show source timecode on clips** is off by default. Turn it on in Preferences.
+- **Timecode display** follows the frame rate only: at 29.97 and 59.94 fps every timecode (sequence and source) is
+  SMPTE drop-frame (`HH:MM:SS;FF`), at every other rate non-drop. There is no setting to show non-drop timecode at
+  29.97 / 59.94.
 
 ## Audio
 
@@ -47,6 +50,11 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **Still images** in PNG, JPEG, WebP, GIF and BMP are drawn directly (no proxy). Other image formats (TIFF, HEIC,
   AVIF, JPEG XL, ...) export correctly, but the Program monitor lists them as missing ("convert to PNG or JPEG"). An
   animated GIF shows its first frame in the preview.
+- **Still images whose file name contains a printf pattern** such as `x%03d.png` fail with FFmpeg 6.1: its image
+  reader takes the name as a numbered image sequence. Rename the file.
+- **Anamorphic (non-square pixel) media:** export and thumbnails un-squeeze it from the probed sample aspect ratio.
+  The preview relies on Chromium applying the pixel aspect ratio itself (the `<video>` display size); this has not
+  been compared with the export for every container.
 - **VFR sources** are flagged in the Media Inspector ("timecodes may drift; consider a proxy"). In the media attack
   suite, exports of VFR clips match the editor's frame model, but Chromium's own seeking on VFR files has not been
   measured. For frame-critical work on VFR material, use a proxy or a constant-frame-rate transcode.
@@ -70,6 +78,10 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **Frame-rate conversion** (an export frame rate other than the sequence's) repeats or drops whole frames. There is
   no frame blending or motion interpolation, so 23.976 → 30 shows a regular repeat cadence and 23.976 ↔ 24 repeats
   or drops one frame about every 42 s. Duration and audio sync are not affected.
+- **AC-3 audio** is limited to 32, 44.1 and 48 kHz (the FFmpeg encoder's rates). 96 kHz is available with AAC only.
+- **Output names are compared case-insensitively on every platform.** An export (video, sidecar `.srt`, or a
+  Subtitles panel SRT/VTT export) whose path differs from a project source file only in letter case is refused,
+  also on a case-sensitive Linux volume.
 
 ## Platform and packaging
 
@@ -81,8 +93,22 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   [INSTALL](INSTALL.md#bundling-ffmpeg)). ReCut works with FFmpeg 6 through 9. When FFmpeg is missing, ReCut shows a banner and import / proxies / export stop with
   an explanation. ReCut finds FFmpeg once per session, so restart it after installing.
 - The cache location can only be changed with `RECUT_CACHE_DIR` or `cacheDir` in `prefs.json`. There is no UI for it.
-- One window and one open project at a time. Projects store **absolute** media paths, so moving media means using
-  Relink.
+- One window and one open project at a time.
+
+## Projects
+
+- Projects store **absolute** media paths, so moving media means using Relink. A media path that is not absolute
+  (for example in a hand-edited project file) is refused by probing, thumbnails, proxies and export with "media path
+  must be an absolute path".
+- **Limits on load:** timeline positions and durations are capped at 86,400,000 frames (24 h at 1000 fps, far more
+  at normal rates), clip speed at 1 %–10 000 %, and nesting at 64 levels. An invalid sequence frame rate becomes
+  23.976.
+- **Repairs are lossy.** A damaged project opens with a warning that lists the repairs, and the unrepaired file is
+  kept as `<file>.pre-repair-<time>`. Out-of-range items are dropped or pulled in, and overlapping clips are
+  shortened at their start or moved to an extra track (at most 32 extra tracks per kind; clips beyond that are
+  dropped). Check the edit before saving over the file.
+- A file saved by a newer ReCut (or without a `formatVersion`) is refused. ReCut never opens the `.bak` in its place
+  (for a file without a `formatVersion` the error names an existing `.bak`); copy it to a `.recut` name to open it.
 
 ## Scale and performance
 
@@ -99,6 +125,6 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   (safe output-folder creation; the conform prompt on Transcript inserts; Movie routing without a year; per-file
   chip counts; a toast when opening from `.bak`; redrawing the paused frame when a proxy becomes ready). The gauntlet
   has not been re-run since.
-- The `docs/attack/*.md` reports are snapshots from before the fix waves. At this commit, the `tests/attack-qa` unit repros (84
-  tests) and the `tests/attack` media measurements (102 tests) all pass. The Playwright parts of those suites were
-  not re-run. Re-run a suite before you treat a finding as open.
+- The `docs/attack/*.md` reports are snapshots from before the fix waves. When last counted (4 October 2026), the
+  `tests/attack-qa` unit repros (84 tests) and the `tests/attack` media measurements (102 tests) all passed. The
+  Playwright parts of those suites were not re-run. Re-run a suite before you treat a finding as open.

@@ -49,9 +49,9 @@ flowchart LR
 | `menu.ts` | Native menu. Items send **command ids** over `ev:menu`; the renderer runs them through its command registry (aliases in `src/app/bootstrap.ts`). |
 | `ipc.ts` | `ipcMain.handle` for dialogs, project I/O, prefs, fs helpers (stat, listDir, relink scan), media services, jobs and export. Validates arguments at the boundary. |
 | `media/protocol.ts` + `range.ts` | `recut-media://local/<encodeURIComponent(path)>` streams local files with full HTTP `Range` / `HEAD` / 206 / 416 support so `<video>` can seek. |
-| `media/ffmpeg.ts` | Resolves binaries (env → `<resources>/ffmpeg` → `PATH`), spawns ffmpeg/ffprobe with timeouts, cancellation and progress parsing. |
-| `media/probe.ts` | ffprobe JSON → `MediaProbe` (streams, rotation, start offsets, VFR flag) and the `browserPlayable` decision. |
-| `media/thumbs.ts` | Thumbnails and filmstrips. They run outside the job queue on a small **LIFO, cancellable** semaphore, so the current viewport wins and abandoned requests never start ffmpeg. |
+| `media/ffmpeg.ts` | Resolves binaries (env → `<resources>/ffmpeg` → `PATH`), spawns ffmpeg/ffprobe with timeouts, cancellation and progress parsing. `ffmpegFileArg` turns every input / output path into `file:<absolute path>` and refuses a non-absolute one ("media path must be an absolute path"), so no project path is ever read as an FFmpeg protocol. Every media service (probe, thumbnails, filmstrips, waveform, proxy, scene detection, subtitle extraction) and the exporter use it. |
+| `media/probe.ts` | ffprobe JSON → `MediaProbe` (streams, rotation, sample aspect ratio, start offsets, VFR flag) and the `browserPlayable` decision. |
+| `media/thumbs.ts` | Thumbnails and filmstrips, un-squeezed to the display shape for non-square pixels. They run outside the job queue on a small **LIFO, cancellable** semaphore, so the current viewport wins and abandoned requests never start ffmpeg. |
 | `media/waveform.ts` | Streams the audio to u8 mono peaks (O(peaks) memory, even for multi-hour files). Late-starting audio is padded. |
 | `media/proxy.ts` | H.264 / AAC proxy transcode to `<cache>/proxies/<key>_<h>p[_a<stream>].mp4`. Writes a per-job `.part` file first, then renames it. |
 | `media/sceneDetect.ts` | `select='gt(scene,T)'` + `showinfo` on a downscaled stream. Results are cached per threshold. |
@@ -60,9 +60,24 @@ flowchart LR
 | `jobs/jobQueue.ts` | Three lanes: **media** (proxies, waveforms, extraction; concurrency 2), **background** (scene detection; 1), **export** (1). Progress, cancel and `AbortSignal` per job. Snapshots are pushed at most 10×/s on `ev:jobs`. `jobs/inFlight.ts` de-duplicates identical requests (same proxy output, same scene-detect key). |
 | `export/renderGraph.ts` | Pure: `ExportRequest` → ffmpeg args + `filter_complex` script. Unit-tested. Also used by "Show FFmpeg command". |
 | `export/chunks.ts` | Pure: decides when to chunk and where the chunk boundaries go. |
-| `export/exporter.ts` | Runs the graph (single pass or chunked), parses `-progress`, handles cancel, writes `<name>.part.mp4` and renames it, writes the `.srt` sidecar, cleans temp files. Refuses an output path that is one of the inputs. |
+| `export/exporter.ts` | Runs the graph (single pass or chunked), parses `-progress`, handles cancel, renders into an exclusively created `<name>.recut-part-<random>.mp4` and moves it onto the output (kept as `<name>.recut-unsaved-<time>.mp4` if that fails), writes the `.srt` sidecar through a temp, cleans temp files. Refuses an output that is a project source file, and an existing output unless the request says `overwrite` (see [export-pipeline.md](export-pipeline.md#output-files)). |
 | `safeMkdir.ts` | Creates the output folder level by level, without recursive or blocking mkdir. Refuses `/proc`, `/sys` and `/dev`. Gives up after 5 s. |
-| `project/io.ts` | Atomic writes (temp + rename) that keep one `.bak`, load + `normalizeProject`, `.bak` fallback with `fromBackup`, refusal of newer format versions, autosave / recovery discovery, `prefs.json`, recent projects. |
+| `pathSafety.ts` | "Is this the same file as a project source?" for writes: `canonicalPath` (realpath), `fileIdentity` (device + inode) and `findSameFile`, case-folded on every platform. Used by video export and subtitle export. |
+| `fs.ts` | fs helpers for IPC (stat, listDir, relink scan) and `writeSubtitleFile` (`subtitles:export`): writes only absolute `.srt` / `.vtt` paths, refuses project source files via `pathSafety.ts`, writes atomically. There is no generic write-file IPC. |
+| `project/io.ts` | Atomic writes (temp + rename) that keep one `.bak` (written via temp + rename, so a symlink there is replaced, not followed), load + `normalizeProjectWithReport` (a repaired file is first copied to `<file>.pre-repair-<ts>`), `.bak` fallback with `fromBackup` for damaged files (the damaged file is kept as `<file>.corrupt-<ts>`), refusal of newer / non-ReCut format versions (never replaced by the `.bak`), autosave / recovery discovery, `prefs.json`, recent projects. |
+
+## Shared code
+
+| Module | Responsibility |
+|---|---|
+| `model.ts` | Data model types, `EXPORT_PRESETS`. |
+| `time.ts` | Rational fps (`isValidFps`: integer terms ≤ 1,000,000, 1–1000 fps), frames ↔ seconds, timecode format / parse including SMPTE drop-frame (`formatSequenceTimecode`, `parseSequenceTimecode`). |
+| `timeline.ts` | Pure timeline operations (see Store). |
+| `project.ts` | Factories and `normalizeProjectWithReport` / `normalizeProject`: load-time repair and migration. |
+| `limits.ts` | Ranges a loaded project must stay within (`MAX_TIMELINE_FRAMES` = 86,400,000, `MAX_SOURCE_SECONDS`, zoom, Preferences ranges, `MAX_PROJECT_DEPTH` = 64). The UI takes its ranges from here too. |
+| `media.ts` | Sample aspect ratio rules (`saneSar`: positive safe integers, 1/16–16) and `videoDisplaySize` for the export graph and the preview compositor. |
+| `pathKey.ts` | Lexical `path.resolve` + case folding for the renderer's early "is this a project source?" check (subtitle export). The main process repeats the check with realpath and inode (`electron/pathSafety.ts`). |
+| `subtitles.ts`, `ipc.ts`, `ids.ts`, `peaks.ts` | SRT / VTT parse + serialize, the IPC contract and `recut-media://` helpers, ids, waveform peaks. |
 
 ## Renderer
 
@@ -138,11 +153,12 @@ key ','  →  useShortcuts → runCommand('edit.insert')
 ### Data flow: export
 
 ```
-Export dialog → window.recut.startExport({ sequence, media, settings, subtitles })
-  main: validate → JobQueue('export') → exporter
-        shouldChunk? ── no ─→ buildRenderGraph → ffmpeg -filter_complex_script → <name>.part.mp4
+Export dialog → window.recut.startExport({ sequence, media, settings, subtitles, protectedPaths[, overwrite] })
+  main: validate (absolute folder, not a project source, exists? → code 'exists' → dialog asks "Replace it?")
+        → JobQueue('export') → exporter
+        shouldChunk? ── no ─→ buildRenderGraph → ffmpeg -filter_complex_script → <name>.recut-part-<random>.mp4
                      └─ yes ─→ per-chunk video (.mp4, closed GOP) + audio (.wav f32) → concat demuxer join
-        → rename to <name>.mp4, write .srt sidecar, delete temp dir
+        → move onto <name>.mp4, write .srt sidecar (temp + rename), delete temp dir
   progress: ffmpeg -progress → job.progress → ev:jobs → jobsStore → Export dialog / Jobs panel
 ```
 
@@ -164,6 +180,14 @@ Export dialog → window.recut.startExport({ sequence, media, settings, subtitle
     positions never move. `xfade` / `acrossfade` consume the extended segments, and the sequence length is unchanged.
   - Audio is rebased to the clip's in-point (a late-starting stream keeps its offset), converted to the output
     layout, mixed with `amix normalize=0`, and padded or trimmed to the exact length.
+  - An In/Out range edge inside a transition widens the rendered range, and the composite is trimmed back, so the
+    range renders what the full export renders.
+  - Anamorphic sources are un-squeezed before the fit scale, and everything is kept at SAR 1.
+  - An export frame rate other than the sequence's resamples only the final composite (whole frames repeated or
+    dropped); all timeline maths and the audio stay at the sequence rate.
+- **Timecode display:** one rule everywhere (`formatSequenceTimecode`): SMPTE drop-frame `HH:MM:SS;FF` at exactly
+  30000/1001 and 60000/1001, non-drop otherwise. Typed entry (`parseSequenceTimecode`) reads input the way the
+  field displays it.
 - **Chunked export:** above 150 inputs or 120 video segments, the range is split at clip edges that never fall inside
   a transition, a fade or a speed-changed audio clip. Video chunks are encoded with closed GOPs and joined with
   `-c copy`. Audio chunks are sample-exact float WAV with one final encode. This bounds FFmpeg memory on very long
@@ -182,7 +206,9 @@ Export dialog → window.recut.startExport({ sequence, media, settings, subtitle
 - On open, missing originals are flagged **offline**. A banner and the Relink dialog list them.
 - **Search folder…** calls `fs:scanForRelink`, which walks the folder and matches by file name + size.
   **Locate…** relinks one file by hand. Applying matches updates `media.path` and re-probes.
-- Clips longer than the new media are reported, not silently trimmed.
+- The first probe after a relink fits the clips to the new file: clips that run past its end are trimmed to it and
+  clips that start after it are removed, in every sequence (store `fitClipsToRelinkedMedia`, one undo step and a
+  warning toast with the counts).
 
 ## Autosave, recovery and quit
 
@@ -190,9 +216,13 @@ Export dialog → window.recut.startExport({ sequence, media, settings, subtitle
   interval (default 60 s). It is deferred while playing. It writes `<project>.recut.autosave`, or
   `<userData>/autosave/untitled.recut.autosave` for an unsaved project, from a renderer-serialised string.
 - **Recovery:** at startup, an autosave newer than its project (or the untitled autosave) is offered (**Recover** /
-  **Discard**). Corrupt autosaves are ignored.
-- **Save:** atomic temp + rename, keeping a `.bak`. A corrupt main file opens from `.bak` with a toast. A file from a
-  newer format version is refused.
+  **Discard**). Corrupt autosaves are ignored. An autosave that needed repairs is still offered, and the prompt says
+  it was repaired.
+- **Save:** atomic temp + rename, keeping a `.bak`. A structurally damaged main file opens from `.bak` with a toast.
+  A file that normalizes with repairs opens with a warning toast that names the `<file>.pre-repair-<ts>` copy. A file
+  from a newer format version (or without one) is refused and never replaced by the `.bak`.
+- **Open:** `mediaActions.openProject` is the one open path (File › Open, recent, OS open, command line). Loading or
+  creating a project closes all modal dialogs of the previous one.
 - **Quit:** main sends `ev:beforeQuit`. The renderer **acks** within 3 s (otherwise main force-quits, for a hung
   renderer), asks Save / Don't Save / Cancel if dirty, then confirms with `quit(true)`, or sends `quitCancel` to keep
   running.

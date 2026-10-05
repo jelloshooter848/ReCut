@@ -12,7 +12,7 @@ The authoritative TypeScript definitions are in `shared/model.ts`; `shared/proje
 
 | Field | Type | Notes |
 |---|---|---|
-| `formatVersion` | number | Currently `1`. Files with a higher version are refused. |
+| `formatVersion` | number | Currently `1`. Files with a higher version are refused; a missing or non-positive-integer value means "not a ReCut project". |
 | `id`, `name`, `createdAt`, `modifiedAt` | string / ms timestamps | |
 | `media` | `Record<ID, MediaItem>` | Imported sources. |
 | `bins` | `Record<ID, Bin>` | Hierarchical bins (`parentId`), with `kind` `bin` / `series` / `season` / `collection`. |
@@ -31,6 +31,12 @@ The authoritative TypeScript definitions are in `shared/model.ts`; `shared/proje
 * **Source positions are seconds** (`clip.sourceIn`, scene boundaries, media subtitle cues), because
   sources have their own frame rates. `clip.speed` is source-seconds consumed per timeline second.
   Source out = `sourceIn + duration * den/num * speed`.
+* **Valid frame rates** (`isValidFps`, `shared/time.ts`): `num` and `den` are integers from 1 to 1,000,000 and the
+  rate is 1–1000 fps. On load an invalid sequence rate is replaced by 24000/1001, an invalid snapshot rate
+  by its sequence's rate, and an invalid probe rate is stored as unknown.
+* **Limits** (`shared/limits.ts`): every frame value (clip start / duration, markers, story blocks, free cues, cue
+  offsets, view playhead / scroll / In / Out, transition durations) is a safe integer in `0..86,400,000` (24 h at
+  1000 fps); source seconds are within 10 days; `clip.speed` is 0.01–100 (1 %–10 000 %).
 
 ## MediaItem
 
@@ -48,6 +54,10 @@ The authoritative TypeScript definitions are in `shared/model.ts`; `shared/proje
   "subtitleTrackIds": ["st…"], "preferredAudioStream": 1, "tags": [], "notes": ""
 }
 ```
+
+`path` must be absolute: FFmpeg receives it as `file:<path>`, and a relative path is refused. `probe.video.sar`
+(`{num, den}`) is the sample aspect ratio; it is kept only when both terms are positive safe integers and the ratio
+is within 1/16–16, otherwise it is dropped (square pixels). Probes from older builds have none.
 
 TV identity uses `identity.series`, `identity.season`, `identity.episode`. The hierarchy is optional; media
 without identity simply lives in bins.
@@ -103,6 +113,10 @@ Sequence subtitle cues can be **attached to a clip** (`clipId`, `srcStart`, `src
 plus a frame `offset`). Their timeline position is derived from the clip's current position, so cues move
 with clips through ripple edits, trims and speed changes. Cues without `clipId` use absolute `start`/`duration`.
 
+A sequence subtitle track has `{ id, name, language, enabled, cues, sourcePaths? }`. `sourcePaths` lists the
+subtitle files whose cues were imported into it (**Import to track…**, or carried in from media subtitles). Exports
+never write over these files.
+
 ## SceneRecord
 
 `{ id, name, mediaId, in, out (seconds), characters, location, arc, tags, notes, rating (0–5), color, createdAt }`.
@@ -110,14 +124,38 @@ with clips through ripple edits, trims and speed changes. Cues without `clipId` 
 ## SubtitleTrack (media)
 
 `{ id, name, language, path?, mediaId, origin: 'srt'|'vtt'|'whisper'|'manual', cues: [{ id, start, end, text }] }`.
+`path` is the file the cues came from, including a sidecar read by the Transcript's subtitle-file provider. Exports
+never write over it.
 
 ## Autosave and recovery
 
 * Autosave writes `<project>.recut.autosave` (or `<userData>/autosave/untitled.recut.autosave` for never-saved
   projects) a few seconds after the last change and at the configured interval.
-* Saves are atomic (temp file + rename) and keep one `.bak` of the previous version; a corrupt main file falls
-  back to the `.bak` on load.
-* On launch, an autosave newer than its project is offered for recovery.
+* Saves are atomic (temp file + rename) and keep one `.bak` of the previous version; a structurally damaged main
+  file (not JSON, not an object, or a `media` / `sequences` / `scenes` / `subtitleTracks` value that is not an
+  object) falls back to the `.bak` on load, and the damaged file is copied to `<file>.corrupt-<timestamp>`. A file
+  refused for its `formatVersion` is never replaced by the `.bak`.
+* On launch, an autosave newer than its project is offered for recovery. The prompt says when it needed repairs.
+
+## Repair on load
+
+`normalizeProjectWithReport()` repairs damaged or hostile data and lists each kind of repair. When the file (or
+the `.bak` used in its place) needed repairs, the loader first copies it to `<file>.pre-repair-<timestamp>`, and
+the app shows a warning naming the repairs and the copy. Repairs include:
+
+* entries that are not objects are dropped, wrongly typed fields reset to their defaults, values nested deeper than
+  64 levels dropped;
+* frame values outside the limits above: items starting out of range are dropped, ends pulled in, view values
+  reset; fractional values rounded (both ends of a span, so touching clips stay touching);
+* overlapping clips on one track: a clip loses its overlapping head (`sourceIn` follows) when at least one frame
+  remains, otherwise it moves unchanged to an extra track of the same kind (at most 32 per kind and sequence;
+  beyond that it is dropped);
+* duplicate ids within a sequence are re-issued (the first keeps its id); references that resolve only through
+  `Object.prototype` (`"constructor"`, `"toString"`, ...) are cleared;
+* settings clamped to the Preferences ranges, clip speed clamped, reversed story blocks turned around.
+
+Valid files and expected resets (jobs that were running) report nothing, and normalizing a repaired project
+again reports nothing.
 
 ## Compatibility
 

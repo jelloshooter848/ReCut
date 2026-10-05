@@ -8,9 +8,12 @@ pieces fit together.
 ```
 shared/        Pure TypeScript shared by main and renderer. No DOM, no Node.
   model.ts       Data model (Project, MediaItem, Sequence, Track, Clip, ...), EXPORT_PRESETS
-  time.ts        Rational fps, frames <-> seconds, timecode parse/format, FPS_PRESETS
+  time.ts        Rational fps (isValidFps), frames <-> seconds, timecode parse/format (SMPTE drop-frame), FPS_PRESETS
   timeline.ts    Pure timeline ops (insert/overwrite, trims, ripple, razor, slip/slide, transitions, cue resolution)
   project.ts     Project / sequence factories, normalizeProject() (load-time repair + migration), LiveView
+  limits.ts      Value ranges for loaded projects and the UI (MAX_TIMELINE_FRAMES, zoom, Preferences ranges)
+  media.ts       Sample aspect ratio validation and display size (export graph, preview compositor)
+  pathKey.ts     Lexical path resolve + case folding for the renderer's "is this a source file?" check
   subtitles.ts   SRT / WebVTT parse + serialize
   ipc.ts         IPC channel names, request/response types, recut-media:// URL helpers
 electron/      Main process
@@ -23,6 +26,8 @@ electron/      Main process
   jobs/          JobQueue (lanes) + in-flight de-duplication
   export/        renderGraph.ts (pure graph builder), chunks.ts (chunk planner), exporter.ts (runs ffmpeg)
   safeMkdir.ts   Non-recursive, time-bounded output-folder creation
+  pathSafety.ts  realpath / device+inode "same file as a project source?" checks (video and subtitle export)
+  fs.ts          fs helpers for IPC, relink scan, guarded atomic subtitle export (writeSubtitleFile)
 src/           Renderer (React 18)
   main.tsx, App.tsx    Entry, shell, window.__recut automation hook
   state/         store.ts (single zustand + immer store), history.ts, mediaActions.ts (IPC-backed actions), selectors

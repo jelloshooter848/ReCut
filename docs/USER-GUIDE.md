@@ -25,6 +25,10 @@ The other workspaces rearrange the same panels:
 Any panel can be dragged to another zone, maximized with Ctrl+` (or a double-click on its tab), or restored with
 Alt+Shift+0.
 
+Timecodes read `HH:MM:SS:FF`. At 29.97 and 59.94 fps every timecode in the app (monitors, ruler, panels, dialogs,
+source timecode) is SMPTE drop-frame, written `HH:MM:SS;FF`: frame 1800 at 29.97 is `00:01:00;02`. Click a timecode
+field to type a value; see [SHORTCUTS](SHORTCUTS.md#timecode-entry) for what it accepts.
+
 ## 1. Import a movie or a season
 
 1. **File › Import Media…** (Ctrl+I), or **Import…** in the Project panel. You can also drag files from your file
@@ -122,6 +126,9 @@ Scenes in the library are reusable, tagged source ranges.
   under a clip. **Slide** (U) moves a clip between its neighbours. **Razor** (C) cuts (Shift cuts all tracks).
   **Track Select** (A) selects everything after a point. **Hand** (H) pans.
 - **Q** / **W** ripple-trim the previous or next edit to the playhead. **Ctrl+K** adds an edit at the playhead.
+- A ripple (ripple trim, ripple delete, Extract) never pushes clips before frame 0: a track whose clips
+  would land there is left as it is. A dragged edge stops at the end of the clip's media and never moves against
+  the drag (a clip that already runs past its media end cannot grow, and is not pulled back either).
 - **;** Lift and **'** Extract remove the In→Out range. **Shift+Delete** ripple-deletes the selection.
 - Nudge with **Alt+←/→** (add Shift for 5 frames). Hold Ctrl while dragging for an insert-move. Snapping (S) catches
   edges, markers and the playhead. Hold Alt to bypass it.
@@ -191,6 +198,9 @@ Scenes in the library are reusable, tagged source ranges.
   timing edits, **Split at playhead**, **Merge with next**, ±1-frame nudges (Shift for ±10), and **Clean up** for cues
   whose clips were removed. **Export › Export SRT… / Export VTT…** exports a track. **Import to track…** brings in an
   external file.
+- SRT/VTT export refuses a file the project reads from (media, proxies, imported subtitle files, including files
+  imported to a track or read by the Transcript) and writes through a temp file, so a failed export never leaves a
+  truncated file.
 - The Program monitor's **Subtitles** option toggles on-screen display.
 
 ## 14. Proxies and relinking
@@ -202,29 +212,47 @@ Scenes in the library are reusable, tagged source ranges.
 - Proxies affect only the preview. Export always reads the originals.
 - **Moved your media?** Open the project, and offline files are listed with a banner. Click **Relink…** › **Search
   folder…** (matches by name + size) › **Apply N matches**, or **Locate…** per file. **Check files** re-verifies.
-  ReCut warns if a relinked file is shorter than the clips that use it.
+- If a relinked file is shorter than before, clips that now run past its end are trimmed to it and clips that start
+  after its end are removed, in every sequence (one undo step, with a warning that gives the counts).
 
 ## 15. Export
 
 1. **File › Export…** (Ctrl+M).
 2. Pick a **Preset**: 1080p High Quality, 1080p Smaller File, 4K High Quality, 720p Preview, 1080p 5.1 Surround, or
    Match Sequence.
-3. Set the **File name** and **Folder** (Browse…). Optionally adjust Video (frame size, frame rate, H.264/H.265,
-   CRF or bitrate, encoder preset), Audio (AAC/AC-3, Stereo or **5.1 Surround** when a source has 6+ channels) and
+3. Set the **File name** and **Folder** (Browse…). The folder must be a full path (`/home/me/Videos`,
+   `C:\Videos`). Optionally adjust Video (frame size, frame rate, H.264/H.265, CRF or bitrate, encoder preset), Audio
+   (AAC/AC-3, Stereo or **5.1 Surround** when a source has 6+ channels; AC-3 offers 32, 44.1 and 48 kHz only) and
    **Range** (Entire sequence or In to Out).
-4. **Subtitles:** **Burn in** renders them into the picture. **Sidecar** writes a `.srt` next to the MP4.
+4. **Subtitles:** **Burn in** renders them into the picture, on exactly the frames where the Program monitor shows
+   them. **Sidecar** writes a `.srt` next to the MP4.
 5. The **Checks** list blocks the export with a reason when something is wrong (an empty sequence, offline or missing
    media, an invalid file name, folder or size). **Show FFmpeg command** previews the exact command.
-6. Click **Export**. Progress shows in the dialog and in Jobs. When it finishes, use **Reveal in Folder** or
-   **Export another**.
+6. Click **Export**. If the MP4 (or its `.srt`) already exists, ReCut asks **Replace it?** first. Progress shows in
+   the dialog and in Jobs. When it finishes, use **Reveal in Folder** or **Export another**.
 
 The MP4 has exactly the frame count of the exported range, and each frame is the one the Program monitor showed.
+An In/Out range that starts or ends inside a transition renders those frames exactly as the full export does.
+Anamorphic (non-square pixel) sources are un-squeezed, so they fill the frame as they do in the preview.
 If you pick a **Frame rate** other than the sequence's (for example 30 fps for a 23.976 sequence), the video is
 converted when it is written: frames are repeated or dropped, while the duration and audio sync stay the same. The
 dialog shows the resulting frame count; **Use <sequence rate>** switches back.
 
+Export never writes over a file the project reads from: media, proxies, and subtitle files (imported to media or to
+a sequence track, or read by the Transcript). Such a name is refused, also when it differs only in letter case or is
+a link to the same file. ReCut renders into `<name>.recut-part-<random>.mp4` next to the output and renames it at the
+end. If that final rename fails, the finished render is kept as `<name>.recut-unsaved-<time>.mp4` and the error says
+so, so you do not have to render again.
+
 ## Saving
 
 - **Ctrl+S** saves a `.recut` project. It is JSON that references your media by path and never copies it.
-- Autosave runs in the background. After a crash, ReCut offers **Recover** on the next launch.
+- Autosave runs in the background. After a crash, ReCut offers **Recover** on the next launch. If the autosave
+  had to be repaired, the prompt says so: check the recovered edit before saving over the project.
+- Opening a project repairs damaged data (invalid frame rates become 23.976, out-of-range values are dropped or
+  pulled in, overlapping clips are shortened at their start or moved to a new track) and shows a warning listing the
+  repairs. The file as it was is kept as `<file>.pre-repair-<time>`. A file too damaged to repair (not JSON, or its
+  media or sequences list unreadable) opens from its `.bak`, and the damaged file is kept as `<file>.corrupt-<time>`.
+  A file saved by a newer ReCut is refused, never replaced by the `.bak`.
+- Opening or creating a project closes open dialogs (Export, Relink, ...) that belonged to the previous one.
 - **Quit** (Ctrl+Q) asks to save unsaved changes.

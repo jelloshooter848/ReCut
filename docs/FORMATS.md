@@ -3,7 +3,10 @@
 ReCut has two media paths:
 
 - **Probe, thumbnails, waveforms, proxies, scene detection and export** use FFmpeg. Anything your FFmpeg build can
-  decode can be imported and exported.
+  decode can be imported and exported. Every file is handed to FFmpeg / FFprobe as `file:<absolute path>`, so a
+  name containing `:`, `|`, `#` or `?` is read literally and never as an FFmpeg protocol (`concat:`, `http:`,
+  `pipe:`, ...). Media paths in a project must therefore be absolute; a relative one is refused with "media path
+  must be an absolute path".
 - **Preview** (Source / Program / Compare monitors) runs inside Chromium. Only browser-decodable files play
   directly. Everything else plays from a **proxy**.
 
@@ -23,9 +26,10 @@ import are attached as sidecars when they match a video (see below). Otherwise t
 **Import Subtitles…**.
 
 The probe records the container, duration, container start time, the first video stream (codec, size, rational and
-average fps, a VFR flag, pixel format, rotation, the stream's start offset), **every** audio stream (codec, channels,
-layout, sample rate, language), and every subtitle stream. Attached pictures (cover art) and attachment streams are
-ignored. Files that fail to probe stay in the project with an **Error** badge. Missing files are marked **offline**.
+average fps, a VFR flag, pixel format, rotation, sample aspect ratio, the stream's start offset), **every** audio
+stream (codec, channels, layout, sample rate, language), and every subtitle stream. Attached pictures (cover art)
+and attachment streams are ignored. Files that fail to probe stay in the project with an **Error** badge. Missing
+files are marked **offline**.
 
 ## Preview: direct vs proxy
 
@@ -71,6 +75,9 @@ not supported by Chromium"). Typical cases:
 - Variable-frame-rate files are flagged **VFR** in the Media Inspector, which suggests a proxy. Export handles them
   frame-exactly. Chromium's own seeking on VFR originals is less predictable.
 - Display rotation (phone video) is read from the stream's side data. Width and height are reported as displayed.
+- Anamorphic (non-square pixel) video, e.g. DVD at 720×480 with SAR 32:27: thumbnails and filmstrips are
+  un-squeezed to the display shape (thumbnails cached by older builds are regenerated once), and export un-squeezes
+  it before fitting it into the frame. The monitors rely on Chromium to apply the pixel aspect ratio.
 
 ## Audio layouts
 
@@ -105,16 +112,21 @@ Media subtitle tracks feed the Transcript search. When **Carry subtitles into se
 inserting a clip copies its cues into the sequence's subtitle tracks, attached to the clip.
 
 **Output:**
-- Subtitles panel › **Export** › **Export SRT…** / **Export VTT…** writes one track.
+- Subtitles panel › **Export** › **Export SRT…** / **Export VTT…** writes one track. It only writes absolute
+  `.srt` / `.vtt` paths, refuses any file the project reads from (media, proxies, subtitle files imported to media
+  or to a sequence track, or read by the Transcript; compared case-insensitively and by file identity, so links are
+  caught), and writes through a temp file in the same folder that is renamed into place.
 - Export dialog › Subtitles › **Sidecar** writes `<name>.srt` next to the MP4 with the sequence's subtitle cues
   (all tracks merged), re-timed to the exported range.
 - Export dialog › Subtitles › **Burn in** renders them into the picture with FFmpeg's `subtitles` filter (needs
-  libass).
+  libass). Cues are snapped to the sequence frames the Program monitor shows them on, so they appear and disappear on
+  exactly those frames. The sidecar keeps the exact cue times.
 
 ## Images
 
 Stills (png, jpg, gif, bmp, webp, and anything else FFmpeg reads as an image) import as `image` media with a default
-length of 5 s when inserted. They export with `-loop 1` at the sequence frame rate.
+length of 5 s when inserted. They export with `-loop 1` at the sequence frame rate. A still whose name contains a
+printf pattern such as `x%03d.png` fails with FFmpeg 6.1 (see [LIMITATIONS](LIMITATIONS.md)).
 
 ## Export formats
 
@@ -124,8 +136,14 @@ length of 5 s when inserted. They export with `-loop 1` at the sequence frame ra
   sequence's or 23.976 / 24 / 25 / 29.97 / 30 / 50 / 59.94 / 60 (NTSC rates stay exact rationals, e.g. 30000/1001).
   A rate other than the sequence's is converted at the output by repeating or dropping frames: the timeline,
   transitions, subtitles and audio are rendered at the sequence rate, so the duration and A/V sync do not change.
-- Audio: **AAC** or **AC-3**, stereo or 5.1, 44.1 / 48 / 96 kHz.
-- Range: entire sequence or In → Out.
+- Audio: **AAC** (44.1 / 48 / 96 kHz) or **AC-3** (32 / 44.1 / 48 kHz, the encoder's limit), stereo or 5.1. Switching
+  to AC-3 lowers a higher sample rate to 48 kHz; a request that still asks for an unsupported AC-3 rate is exported
+  at 48 kHz (or the next supported rate) with a warning.
+- Range: entire sequence or In → Out. A range edge inside a transition renders the frames the full export renders.
+- Anamorphic sources are un-squeezed, and the output always has square pixels.
+- Output: an absolute folder, an existing file is only replaced after you confirm, and a project source file is
+  never written over (see [USER-GUIDE › Export](USER-GUIDE.md#15-export) and
+  [export-pipeline.md](export-pipeline.md#output-files)).
 - Presets (`shared/model.ts` → `EXPORT_PRESETS`, plus **Match Sequence**):
 
 | Preset | Size | Video | Audio |
