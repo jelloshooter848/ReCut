@@ -6,6 +6,7 @@ on:
   push:
     branches: [claude/build-recut, main]
     tags: ['v*']
+    paths-ignore: ['**/*.md', 'docs/**']
   workflow_dispatch:
 
 permissions:
