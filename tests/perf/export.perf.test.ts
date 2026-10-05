@@ -152,7 +152,8 @@ describe('export graph @ 2500 clips', () => {
     // RECUT_PERF_SKIP_FULL_EXPORT=1 skips this (it renders the whole ~26 min sequence at 1280x720).
     if (process.env.RECUT_PERF_SKIP_FULL_EXPORT) return;
     const seq = S().project.sequences[big.seqId];
-    const req = { ...requestFor(seq), settings: { ...settings(), fileName: 'perf-export-full.mp4' } };
+    // overwrite: the scratch folder persists between runs (RECUT_PERF_SCRATCH / os.tmpdir()/recut-perf).
+    const req = { ...requestFor(seq), settings: { ...settings(), fileName: 'perf-export-full.mp4' }, overwrite: true };
     const g = buildRenderGraph(req);
     const chunks = planExportChunks({ req, startF: g.startF, endF: g.endF });
     let peakKb = 0; let procs = 0;

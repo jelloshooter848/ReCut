@@ -28,6 +28,8 @@ const FFPROBE = process.env.RECUT_FFPROBE || 'ffprobe';
 const R = (num: number, den = 1): Rational => ({ num, den });
 const F23 = R(24000, 1001), F24 = R(24), F25 = R(25), F29 = R(30000, 1001), F30 = R(30), F50 = R(50), F59 = R(60000, 1001), F60 = R(60);
 const ALL = [F23, F24, F25, F29, F30, F50, F59, F60];
+/** An absolute output folder on every platform (win32: the current drive's \\out). */
+const OUT_DIR = path.resolve('/out');
 const key = (f: Rational) => `${f.num}/${f.den}`;
 const val = (f: Rational) => f.num / f.den;
 
@@ -205,7 +207,7 @@ describe('export frame-rate conversion: equal or invalid rates', () => {
     const s = createSequence('Fixed', fps, 64, 36);
     s.videoTracks[0].clips.push(makeClip({ mediaId: m.id, name: 'v', sourceIn: 1, duration: 30, kind: 'video' }, 0));
     s.audioTracks[0].clips.push(makeClip({ mediaId: m.id, name: 'a', sourceIn: 1, duration: 30, kind: 'audio', audioStream: 1 }, 0));
-    return { sequence: s, media: { [m.id]: m }, settings: { ...settings(F23), outputDir: '/out', fileName: 'x.mp4', fps: outFps as Rational } };
+    return { sequence: s, media: { [m.id]: m }, settings: { ...settings(F23), outputDir: OUT_DIR, fileName: 'x.mp4', fps: outFps as Rational } };
   };
 
   // Recorded from the renderer before output frame-rate conversion existed (sequence 23.976, export 23.976).
@@ -222,7 +224,7 @@ describe('export frame-rate conversion: equal or invalid rates', () => {
   const BEFORE_ARGS = ['-hide_banner', '-nostdin', '-y', '-copyts', '-start_at_zero', '-t', '2.50125', '-i', '/media/a.mp4',
     '-filter_complex_script', '__FILTER_SCRIPT__', '-map', '[vout]', '-map', '[aout]',
     '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '10', '-pix_fmt', 'yuv420p', '-r', '24000/1001', '-fps_mode', 'cfr',
-    '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2', '-movflags', '+faststart', '-t', '1.25125', '-f', 'mp4', '/out/x.mp4'];
+    '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2', '-movflags', '+faststart', '-t', '1.25125', '-f', 'mp4', path.join(OUT_DIR, 'x.mp4')];
 
   it('equal rates produce byte-identical args and graph to before (no fps conversion added)', () => {
     const g = buildRenderGraph(fixedReq(F23, F23));
@@ -305,7 +307,7 @@ describe('export dialog frame-rate helpers', () => {
     for (const seqFps of ALL) for (const outFps of ALL) for (const frames of [1, 2, 7, 1001, 1439]) {
       const s = createSequence('H', seqFps, 64, 36);
       s.videoTracks[0].clips.push(makeClip({ mediaId: fake.id, name: 'v', sourceIn: 0, duration: frames, kind: 'video' }, 0));
-      const g = buildRenderGraph({ sequence: s, media: { [fake.id]: fake }, settings: { ...settings(outFps), outputDir: '/out' } });
+      const g = buildRenderGraph({ sequence: s, media: { [fake.id]: fake }, settings: { ...settings(outFps), outputDir: OUT_DIR } });
       expect(exportOutputFrames(frames, s, { fps: outFps })).toBe(g.outputFrameCount);
       expect(g.outputFrameCount).toBe(Math.max(1, roundScaled(frames, seqFps, outFps)));
     }

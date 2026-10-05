@@ -129,7 +129,7 @@ describe('main-process media layer', () => {
     ms('fairness', 'proxy 540p of 60 s 720p, idle', p0.ms, 60_000, p0.status);
 
     // Export running (x264 medium 1080p uses every core) -> proxies still start (separate lane) but how fast?
-    const exp = await startExportJob(queue, { sequence: seq, media, settings });
+    const exp = await startExportJob(queue, { sequence: seq, media, settings, overwrite: true }); // scratch persists between runs
     expect(exp.ok).toBe(true);
     await sleep(1500);
     const busyThumb = await benchAsync(6, async (i) => { await getThumbnail({ path: SRC, time: 30 + i * 2.7, width: 96 }); });

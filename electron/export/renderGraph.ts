@@ -36,7 +36,10 @@ export interface RenderGraph {
   outputFrameCount: number;
   /** Duration of the output video stream (`outputFrameCount / outputFps`; `durationSec` at the sequence rate). */
   outputDurationSec: number;
-  /** Final output path (outputDir/fileName.mp4). This is the last element of `args`. */
+  /**
+   * Final output path (absolute outputDir/fileName.mp4). This is the last element of `args`; the exporter runs
+   * ffmpeg on a `file:` URL of a temp next to it instead (exporter.ts).
+   */
   outputPath: string;
   warnings: string[];
   /** SRT content to burn in (range-relative), present when settings.burnSubtitles and cues exist in range. */
@@ -65,8 +68,18 @@ export interface RenderGraphOptions {
    * based resolver). Defaults to path.resolve, keeping this module free of file-system I/O.
    */
   canonicalPath?: (p: string) => string;
-  /** Platform for case-insensitive path comparison (defaults to process.platform). */
+  /**
+   * @deprecated No effect: output and source paths are compared case-folded on every platform (Linux mounts
+   * case-insensitive volumes too: exFAT, vfat, CIFS, ext4 casefold). Kept so existing callers still compile.
+   */
   platform?: NodeJS.Platform;
+  /**
+   * What is at a path, or null when nothing is (exporter: fs.statSync(p, { bigint: true })). When given, the
+   * output and sidecar are also refused when they are a folder, when they are the same file as a project source
+   * (same `id`: hard link, case-insensitive volume, any alias realpath misses) and, unless `req.overwrite`, when
+   * they already exist (ExportOutputExistsError). Without it buildRenderGraph does no file-system I/O.
+   */
+  statPath?: (p: string) => ExportPathStat | null;
   /**
    * Render only this sub-range `[startF, endF)` (absolute sequence frames, inside the request's range).
    * Used by chunked export (exporter.ts); burn-in subtitles become relative to the sub-range.
@@ -77,6 +90,22 @@ export interface RenderGraphOptions {
   streams?: 'video' | 'audio';
   /** Make `[aout]` exactly this many samples long (padded with silence / trimmed). */
   audioSamples?: number;
+}
+
+/** Result of RenderGraphOptions.statPath. */
+export interface ExportPathStat {
+  /** File identity (`dev:ino`); undefined when the file system has no stable one (ino 0). */
+  id?: string;
+  isDirectory: boolean;
+}
+
+/** The output or sidecar already exists and the request does not say `overwrite` (ExportStartResult code 'exists'). */
+export class ExportOutputExistsError extends Error {
+  readonly code = 'exists' as const;
+  constructor(readonly path: string) {
+    super(`"${path}" already exists.`);
+    this.name = 'ExportOutputExistsError';
+  }
 }
 
 /** Output dimension limits (mirror src/panels/export/settings.ts MIN_DIMENSION / MAX_DIMENSION). */
@@ -656,9 +685,12 @@ export function sanitizeExportFileName(name: string): string {
   return cleaned || 'export';
 }
 
-/** Temp file ffmpeg writes to before the rename: `<out>.part.mp4`. */
-export function exportPartPath(outputPath: string): string {
-  return outputPath.replace(/\.mp4$/i, '') + '.part.mp4';
+/**
+ * Temp file ffmpeg writes to before the rename: `<out>.recut-part-<token>.mp4`. The exporter picks a random token
+ * and creates the file exclusively, so the temp is never a file that existed before (a user's file, a hard link).
+ */
+export function exportPartPath(outputPath: string, token: string): string {
+  return `${outputPath.replace(/\.mp4$/i, '')}.recut-part-${token}.mp4`;
 }
 
 /** Sidecar subtitle path next to the output: `<out>.srt`. */
@@ -666,16 +698,24 @@ export function exportSidecarPath(outputPath: string): string {
   return outputPath.replace(/\.mp4$/i, '') + '.srt';
 }
 
-/** Temp file the sidecar is written to before its rename: `<out>.part.srt`. */
-export function exportSidecarTempPath(outputPath: string): string {
-  return outputPath.replace(/\.mp4$/i, '') + '.part.srt';
+/** Temp file the sidecar is written to (exclusively, random token) before its rename: `<out>.recut-part-<token>.srt`. */
+export function exportSidecarTempPath(outputPath: string, token: string): string {
+  return `${outputPath.replace(/\.mp4$/i, '')}.recut-part-${token}.srt`;
 }
 
-/** Output path for a request: outputDir/fileName with a .mp4 extension (file name sanitized to a basename). */
+/**
+ * Output path for a request: outputDir/fileName with a .mp4 extension (file name sanitized to a basename).
+ * The folder must be absolute: a relative one would resolve against the main process cwd for Node while ffmpeg
+ * reads a prefix such as `tee:`, `concat:` or `pipe:` as a protocol, bypassing the source-file check.
+ */
 export function exportOutputPath(settings: ExportSettings): string {
+  const dir = typeof settings.outputDir === 'string' ? settings.outputDir : '';
+  if (!path.isAbsolute(dir)) {
+    throw new Error(`The output folder must be an absolute path (a full path such as ${process.platform === 'win32' ? 'C:\\Videos' : '/home/me/Videos'}); got "${dir}".`);
+  }
   let name = sanitizeExportFileName(settings.fileName || 'export');
   if (!/\.mp4$/i.test(name)) name = name.replace(/\.(mov|mkv|m4v|avi)$/i, '') + '.mp4';
-  return path.join(settings.outputDir, name);
+  return path.resolve(dir, name);
 }
 
 function validateDimensions(W: number, H: number): void {
@@ -695,25 +735,27 @@ function hasEnabledClipInRange(seq: Sequence, startF: number, endF: number): boo
 }
 
 /**
- * Refuse an export that would write over a project source asset: the output, its `.part` temp or the
- * sidecar `.srt` (and its temp) must not be a file the sequence reads from (ffmpeg would truncate the
- * source, and the final rename replaces it), nor any other media / proxy in `req.media` or path in
- * `req.protectedPaths` (bin media not on this timeline, imported subtitle files).
+ * Refuse an export that would write over a project source asset: the output or the sidecar `.srt` must not be a
+ * file the sequence reads from (the final rename would replace it), nor any other media / proxy in `req.media` or
+ * path in `req.protectedPaths` (bin media not on this timeline, imported subtitle files). Paths are compared
+ * canonicalized and case-folded on every platform (refusing a case variant on a case-sensitive volume is harmless).
+ * The temps (`exportPartPath` / `exportSidecarTempPath`) are random names created exclusively by the exporter, so
+ * they can never be an existing file. With `opts.statPath` (exporter) also refuses: an output / sidecar that is a
+ * folder, one that is the same file as a source (hard link, alias), and an existing one unless `req.overwrite`.
  */
 function assertOutputNotASource(req: ExportRequest, outputPath: string, opts: RenderGraphOptions): void {
-  const platform = opts.platform ?? process.platform;
-  const fold = platform === 'win32' || platform === 'darwin';
   const canon = (p: string) => {
     let c: string;
     try { c = opts.canonicalPath ? opts.canonicalPath(p) : path.resolve(p); } catch { c = path.resolve(p); }
-    return fold ? c.toLowerCase() : c;
+    return c.toLowerCase();
   };
-  const sources = new Map<string, string>();
+  const sources = new Map<string, { path: string; why: string }>();
   const add = (p: string | undefined, why: string) => {
     if (typeof p !== 'string' || !p) return;
     const k = canon(p);
-    if (!sources.has(k)) sources.set(k, `${why} (${p})`);
+    if (!sources.has(k)) sources.set(k, { path: p, why });
   };
+  const describe = (s: { path: string; why: string }) => `${s.why} (${s.path})`;
   const tracks = [...req.sequence.videoTracks, ...req.sequence.audioTracks];
   for (const t of tracks) {
     for (const c of t.clips) {
@@ -723,12 +765,33 @@ function assertOutputNotASource(req: ExportRequest, outputPath: string, opts: Re
   }
   for (const m of Object.values(req.media)) if (m) for (const p of [m.path, m.proxy?.path]) add(p, 'a source file of the project');
   if (Array.isArray(req.protectedPaths)) for (const p of req.protectedPaths) add(p, 'a source file of the project');
-  const outputs = [outputPath, exportPartPath(outputPath)];
-  if (req.settings.exportSubtitleSidecar) outputs.push(exportSidecarPath(outputPath), exportSidecarTempPath(outputPath));
+  const outputs = [outputPath];
+  if (req.settings.exportSubtitleSidecar) outputs.push(exportSidecarPath(outputPath));
   for (const o of outputs) {
     const hit = sources.get(canon(o));
-    if (hit) throw new Error(`Refusing to export to "${o}": that file is ${hit}. Choose a different file name or folder.`);
+    if (hit) throw new Error(`Refusing to export to "${o}": that file is ${describe(hit)}. Choose a different file name or folder.`);
   }
+
+  if (!opts.statPath) return;
+  const stat = (p: string): ExportPathStat | null => { try { return opts.statPath!(p); } catch { return null; } };
+  // The sidecar is only written when there are cues to write.
+  const written = req.settings.exportSubtitleSidecar && req.subtitles?.length ? outputs : [outputPath];
+  const existing = written.map((o) => ({ o, st: stat(o) })).filter((e): e is { o: string; st: ExportPathStat } => e.st !== null);
+  for (const { o, st } of existing) {
+    if (st.isDirectory) throw new Error(`Cannot export to "${o}": "${o}" is a folder. Choose a different file name or folder.`);
+  }
+  if (existing.some((e) => e.st.id !== undefined)) {
+    const byId = new Map<string, { path: string; why: string }>();
+    for (const s of sources.values()) {
+      const id = stat(s.path)?.id;
+      if (id !== undefined && !byId.has(id)) byId.set(id, s);
+    }
+    for (const { o, st } of existing) {
+      const hit = st.id !== undefined ? byId.get(st.id) : undefined;
+      if (hit) throw new Error(`Refusing to export to "${o}": that is the same file as ${describe(hit)} (a hard link or another name for it). Choose a different file name or folder.`);
+    }
+  }
+  if (!req.overwrite && existing.length) throw new ExportOutputExistsError(existing[0].o);
 }
 
 export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = {}): RenderGraph {

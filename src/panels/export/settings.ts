@@ -256,6 +256,15 @@ export type ExportField = 'fileName' | 'outputDir' | 'width' | 'height' | 'video
 export interface ValidationIssue { field: ExportField; message: string }
 export interface ValidationResult { ok: boolean; issues: ValidationIssue[] }
 
+/**
+ * Absolute folder path on POSIX (`/…`) or Windows (`C:\…`, `C:/…`, `\\server\share`). The main process requires
+ * one (electron/export/renderGraph.ts exportOutputPath): a relative folder would let ffmpeg read a prefix such as
+ * `tee:` or `concat:` as a protocol.
+ */
+function isAbsoluteFolder(dir: string): boolean {
+  return /^(\/|[A-Za-z]:[\\/]|\\\\[^\\])/.test(dir);
+}
+
 export function validateExportSettings(settings: ExportSettings): ValidationResult {
   const issues: ValidationIssue[] = [];
   const name = (settings.fileName ?? '').trim();
@@ -263,6 +272,9 @@ export function validateExportSettings(settings: ExportSettings): ValidationResu
   else if (/[\\/]/.test(name)) issues.push({ field: 'fileName', message: 'The file name cannot contain path separators.' });
   else if (/[:*?"<>|\u0000-\u001f]/.test(name)) issues.push({ field: 'fileName', message: 'The file name contains characters that are not allowed.' });
   if (!(settings.outputDir ?? '').trim()) issues.push({ field: 'outputDir', message: 'Choose an output folder.' });
+  else if (!isAbsoluteFolder(settings.outputDir)) {
+    issues.push({ field: 'outputDir', message: 'The output folder must be an absolute (full) path, such as /home/me/Videos or C:\\Videos.' });
+  }
   for (const field of ['width', 'height'] as const) {
     const v = settings[field];
     const label = field === 'width' ? 'Width' : 'Height';

@@ -1,5 +1,5 @@
 /**
- * Export finalize step: the rendered <name>.part.mp4 replaces <name>.mp4. A previous file at the output path
+ * Export finalize step: the rendered <name>.recut-part-<random>.mp4 replaces <name>.mp4. A previous file at the output path
  * must survive when the replace fails (file locked by a player on Windows, EXDEV, EPERM, ...), and the error must
  * reach the caller. The success path replaces the old file and leaves no .part behind.
  */
@@ -70,13 +70,13 @@ describe('runExport finalize', () => {
   it('replaces a previous export and leaves no .part file', async () => {
     const out = freshDir('replace');
     fs.writeFileSync(path.join(out, 'edit.mp4'), OLD);
-    const res = await exporter.runExport(request(out, 'edit.mp4'));
+    const res = await exporter.runExport({ ...request(out, 'edit.mp4'), overwrite: true });
     expect(res.outputPath).toBe(path.join(out, 'edit.mp4'));
     expect(fs.readFileSync(res.outputPath).subarray(4, 8).toString('latin1')).toBe('ftyp');
     expect(fs.readdirSync(out)).toEqual(['edit.mp4']);
   }, 30000);
 
-  it('keeps the previous file intact and reports the error when the final rename fails', async () => {
+  it('keeps the previous file intact, keeps the render and reports the error when the final rename fails', async () => {
     const out = freshDir('locked');
     const target = path.join(out, 'edit.mp4');
     fs.writeFileSync(target, OLD);
@@ -86,14 +86,20 @@ describe('runExport finalize', () => {
       if (String(to) === target || String(from) === target) throw errno('EBUSY');
       return real(from, to);
     });
-    await expect(exporter.runExport(request(out, 'edit.mp4'))).rejects.toThrow(/EBUSY/);
+    const err = await exporter.runExport({ ...request(out, 'edit.mp4'), overwrite: true }).then(() => null, (e: Error) => e);
+    expect(err?.message).toMatch(/EBUSY/);
     expect(fs.readFileSync(target, 'utf8')).toBe(OLD);
-    expect(fs.readdirSync(out)).toEqual(['edit.mp4']);
+    // The finished render is kept next to the output (named in the error) so the user does not have to re-render.
+    const files = fs.readdirSync(out).sort();
+    expect(files).toHaveLength(2);
+    expect(files[0]).toBe('edit.mp4');
+    expect(files[1]).toMatch(/^edit\.recut-unsaved-.*\.mp4$/);
+    expect(err?.message).toContain(path.join(out, files[1]));
   }, 30000);
 });
 
 describe('finalizeExportOutput', () => {
-  const realOps = { renameSync: fs.renameSync, unlinkSync: fs.unlinkSync, existsSync: fs.existsSync };
+  const realOps = { renameSync: fs.renameSync, unlinkSync: fs.unlinkSync, lstatSync: fs.lstatSync };
 
   function setup(name: string) {
     const d = freshDir(name);
@@ -141,5 +147,39 @@ describe('finalizeExportOutput', () => {
     exporter.finalizeExportOutput(part, target, ops);
     expect(fs.readFileSync(target, 'utf8')).toBe('new render');
     expect(fs.readdirSync(d)).toEqual(['edit.mp4']);
+  });
+
+  it('keeps the backup and names it in the error when the backup cannot be restored', () => {
+    const { d, part, target } = setup('fin-restore-fail');
+    let backup = '';
+    const ops = { ...realOps, renameSync: (from: fs.PathLike, to: fs.PathLike) => {
+      if (String(from) === part) throw errno('EPERM'); // the render can never be moved in
+      if (String(from) === target) backup = String(to);
+      else if (String(to) === target) throw errno('EACCES'); // ... and the backup cannot be moved back
+      realOps.renameSync(from, to);
+    } };
+    let err: Error | null = null;
+    try { exporter.finalizeExportOutput(part, target, ops); } catch (e) { err = e as Error; }
+    expect(err?.message).toMatch(/EPERM/);
+    expect(backup).toMatch(/edit\.mp4\.recut-old-/);
+    expect(err?.message).toContain(`The previous file was kept as "${backup}"`);
+    expect(fs.readFileSync(backup, 'utf8')).toBe(OLD);
+    expect(fs.existsSync(target)).toBe(false);
+    expect(fs.readdirSync(d).sort()).toEqual(['edit.part.mp4', path.basename(backup)].sort());
+  });
+
+  it('throws the first error and moves nothing aside when the first rename fails and there is no target', () => {
+    const d = freshDir('fin-no-target');
+    const part = path.join(d, 'edit.part.mp4');
+    const target = path.join(d, 'edit.mp4');
+    fs.writeFileSync(part, 'new render');
+    const calls: string[] = [];
+    const ops = { ...realOps, renameSync: (from: fs.PathLike, to: fs.PathLike) => {
+      calls.push(`${String(from)} -> ${String(to)}`);
+      throw errno('EXDEV');
+    } };
+    expect(() => exporter.finalizeExportOutput(part, target, ops)).toThrow(/Could not write the export to ".*edit\.mp4": EXDEV/);
+    expect(calls).toEqual([`${part} -> ${target}`]);
+    expect(fs.readdirSync(d)).toEqual(['edit.part.mp4']);
   });
 });

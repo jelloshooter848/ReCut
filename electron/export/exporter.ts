@@ -2,31 +2,89 @@
  * Export runner: turns an ExportRequest into an ffmpeg process, reports progress, handles cancel,
  * and integrates with the main-process job queue.
  *
- * Temp files (filter script, burn-in SRT) live in os.tmpdir()/recut-export-<id>/ and are removed when
- * the run finishes. Output is written to <name>.part.mp4 and renamed on success.
+ * Temp files (filter script, burn-in SRT) live in a fresh os.tmpdir()/recut-export-XXXXXX/ and are removed when
+ * the run finishes. Output is written to <name>.recut-part-<random>.mp4 (created exclusively) and renamed on success.
+ * Every path handed to ffmpeg as an input or output is a `file:` URL, so no protocol prefix is ever interpreted.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ExportRequest, ExportStartResult } from '@shared/ipc';
 import type { ID, JobInfo } from '@shared/model';
 import {
-  buildRenderGraph, buildSubtitleSrt, exportPartPath, exportSidecarPath, exportSidecarTempPath, FILTER_SCRIPT_TOKEN, outputFrameIndex, sec, type RenderGraph,
+  buildRenderGraph, buildSubtitleSrt, exportPartPath, exportSidecarPath, exportSidecarTempPath, ExportOutputExistsError, FILTER_SCRIPT_TOKEN,
+  outputFrameIndex, sec, type ExportPathStat, type RenderGraph,
 } from './renderGraph';
 import { ensureDirSafe } from '../safeMkdir';
+import { canonicalPath, fileIdentity } from '../pathSafety';
 import { adaptFfmpegArgs, ffmpegMajorVersionSync, getFfmpegPath } from '../media/ffmpeg';
 import { ffmpegMissingMessage } from '../../shared/ipc';
 import { CHUNK_MAX_AUDIO_SEGMENTS, CHUNK_MAX_SEGMENTS, planExportChunks, sampleIndexAt, shouldChunk, type ExportChunk } from './chunks';
 
+// Canonical form of a path for comparisons (realpath, else realpath(dir)/basename, else path.resolve); renderGraph
+// folds case. Shared with the subtitle export check (electron/pathSafety.ts).
+export { canonicalPath };
+
+/** File identity key (`dev:ino`, the same rule as the subtitle export check), undefined without one. */
+function identityKey(p: string): string | undefined {
+  const id = fileIdentity(p);
+  return id ? `${id.dev}:${id.ino}` : undefined;
+}
+
 /**
- * Canonical form of a path for comparisons: realpath when it exists, else realpath(dir)/basename,
- * else path.resolve (renderGraph folds case on win32/darwin).
+ * What is at `p` for the output checks (RenderGraphOptions.statPath): its identity (following symlinks) and
+ * whether it is a folder; null when nothing is there (a dangling symlink counts as existing).
  */
-export function canonicalPath(p: string): string {
-  const abs = path.resolve(p);
-  try { return fs.realpathSync.native(abs); } catch { /* does not exist (yet) */ }
-  try { return path.join(fs.realpathSync.native(path.dirname(abs)), path.basename(abs)); } catch { return abs; }
+export function exportStatPath(p: string): ExportPathStat | null {
+  if (!fs.lstatSync(p, { throwIfNoEntry: false })) return null;
+  let isDirectory = false;
+  try { isDirectory = fs.statSync(p).isDirectory(); } catch { /* dangling or looping symlink: not a folder */ }
+  return { id: identityKey(p), isDirectory };
+}
+
+/** ffmpeg input / output argument for a file path: a `file:` URL, so `tee:`, `concat:`, `http:` ... are never protocols. */
+function ffmpegFile(p: string): string {
+  return `file:${p}`;
+}
+
+/** `args` with every `-i` value as a `file:` URL. */
+function fileInputs(args: string[]): string[] {
+  return args.map((a, i) => (i > 0 && args[i - 1] === '-i' ? ffmpegFile(a) : a));
+}
+
+function randomToken(): string {
+  return crypto.randomBytes(8).toString('hex');
+}
+
+/**
+ * Creates a new empty render temp next to the output with O_EXCL (never an existing file, symlink or hard link)
+ * and returns its path and identity. ffmpeg then writes into this file (it is the only file at that name).
+ */
+function reserveRenderTemp(outputPath: string): { path: string; id: string | undefined } {
+  for (let attempt = 0; ; attempt++) {
+    const p = exportPartPath(outputPath, randomToken());
+    let fd: number;
+    try {
+      fd = fs.openSync(p, 'wx');
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST' && attempt < 4) continue;
+      throw e;
+    }
+    fs.closeSync(fd);
+    return { path: p, id: identityKey(p) };
+  }
+}
+
+/**
+ * The final move failed: keep the finished render under `<name>.recut-unsaved-<time>.mp4` (or, if even that rename
+ * fails, under its temp name) so the user does not have to render again. Returns where it is.
+ */
+function keepUnsavedRender(partPath: string, outputPath: string): string {
+  const kept = `${outputPath.replace(/\.mp4$/i, '')}.recut-unsaved-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomToken().slice(0, 4)}.mp4`;
+  if (exportStatPath(kept)) return partPath;
+  try { fs.renameSync(partPath, kept); return kept; } catch { return partPath; }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -115,9 +173,10 @@ function inlineFilter(graph: RenderGraph): string[] {
 export async function startExportJob(queue: ExportJobQueue, req: ExportRequest): Promise<ExportStartResult> {
   let graph: RenderGraph;
   try {
-    graph = buildRenderGraph(req, { canonicalPath });
+    graph = buildRenderGraph(req, { canonicalPath, statPath: exportStatPath });
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    const error = e instanceof Error ? e.message : String(e);
+    return e instanceof ExportOutputExistsError ? { ok: false, error, code: 'exists' } : { ok: false, error };
   }
   if (!getFfmpegPath()) return { ok: false, error: ffmpegMissingMessage('ffmpeg') };
   try {
@@ -147,25 +206,28 @@ export function cancelExportJob(queue: ExportJobQueue, jobId: ID): void {
 export interface FinalizeFsOps {
   renameSync(from: string, to: string): void;
   unlinkSync(p: string): void;
-  existsSync(p: string): boolean;
+  lstatSync(p: string): { isFile(): boolean };
 }
 
 /**
- * Moves the finished render (<name>.part.mp4) onto the output path, replacing a previous file there.
+ * Moves the finished render (<name>.recut-part-*.mp4) onto the output path, replacing a previous file there.
  *
  * rename replaces an existing target atomically on POSIX and on Windows (libuv uses MoveFileEx with
  * MOVEFILE_REPLACE_EXISTING), so the previous file is never deleted up front: if the move fails (file open in a
  * player, EXDEV, EPERM, ...) the user keeps it and the error is thrown. Only when the in-place replace fails and a
  * previous file exists (e.g. a read-only target on Windows, which MoveFileEx refuses to replace) is the old file
  * moved aside to a backup, the render moved in, and the backup deleted; if the render still cannot be moved in, the
- * backup is moved back. The .part file is left for the caller to clean up on failure.
+ * backup is moved back. Only a regular file is ever moved aside: anything else at the output path (a folder, a
+ * symlink) is left alone and the error thrown. The render temp is left for the caller on failure.
  */
 export function finalizeExportOutput(partPath: string, outputPath: string, ops: FinalizeFsOps = fs): void {
   let firstError: unknown;
   try { ops.renameSync(partPath, outputPath); return; } catch (e) { firstError = e; }
   const fail = (e: unknown, extra = ''): Error =>
     new Error(`Could not write the export to "${outputPath}": ${e instanceof Error ? e.message : String(e)}${extra}`);
-  if (!ops.existsSync(outputPath)) throw fail(firstError);
+  let existing: { isFile(): boolean };
+  try { existing = ops.lstatSync(outputPath); } catch { throw fail(firstError); }
+  if (!existing.isFile()) throw fail(firstError, '. What is at that path is not a file (a folder?); it was left unchanged.');
 
   const backup = `${outputPath}.recut-old-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   try { ops.renameSync(outputPath, backup); } catch { throw fail(firstError, '. The existing file was left unchanged.'); }
@@ -185,19 +247,18 @@ export function finalizeExportOutput(partPath: string, outputPath: string, ops: 
  * stderr lines) or cancel (message "Export canceled").
  */
 export async function runExport(req: ExportRequest, onProgress?: ExportProgress, signal?: AbortSignal, opts: ExportRunOptions = {}): Promise<ExportRunResult> {
-  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  const tmpDir = path.join(os.tmpdir(), `recut-export-${id}`);
-  fs.mkdirSync(tmpDir, { recursive: true });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-export-'));
   const subtitleFilePath = path.join(tmpDir, 'subtitles.srt');
   let partPath: string | null = null;
   let sidecarTemp: string | null = null;
   try {
     if (signal?.aborted) throw new Error('Export canceled');
-    const graph = buildRenderGraph(req, { subtitleFilePath, canonicalPath });
+    const graph = buildRenderGraph(req, { subtitleFilePath, canonicalPath, statPath: exportStatPath });
     try { await ensureDirSafe(path.dirname(graph.outputPath)); } catch (e) {
       throw new Error(`Cannot create output folder: ${e instanceof Error ? e.message : String(e)}`);
     }
-    partPath = exportPartPath(graph.outputPath);
+    const reserved = reserveRenderTemp(graph.outputPath);
+    partPath = reserved.path;
     const planInput = { req, startF: graph.startF, endF: graph.endF };
     const chunked = opts.chunked ?? shouldChunk(planInput, graph.inputCount);
     const chunks = chunked ? mergeChunksWithoutOutputFrames(planExportChunks(planInput, opts.maxSegmentsPerChunk ?? CHUNK_MAX_SEGMENTS, 'video'), req, graph) : [];
@@ -209,24 +270,46 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
       if (graph.subtitleContent) fs.writeFileSync(subtitleFilePath, graph.subtitleContent, 'utf8');
       const scriptPath = path.join(tmpDir, 'filter.txt');
       fs.writeFileSync(scriptPath, graph.filterGraph, 'utf8');
-      const args = graph.args.map((a) => (a === FILTER_SCRIPT_TOKEN ? scriptPath : a));
-      args[args.length - 1] = partPath;
+      const args = fileInputs(graph.args.map((a) => (a === FILTER_SCRIPT_TOKEN ? scriptPath : a)));
+      args[args.length - 1] = ffmpegFile(partPath);
       onProgress?.(0, 'Starting ffmpeg');
       await runFfmpeg(args, graph.durationSec, onProgress, signal, opts.onSpawn);
     }
 
-    finalizeExportOutput(partPath, graph.outputPath);
+    // ffmpeg wrote into the file reserved above; never move anything else onto the output.
+    if (exportStatPath(partPath)?.id !== reserved.id) {
+      const foreign = partPath;
+      partPath = null;
+      throw new Error(`The render file "${foreign}" was replaced by another file during the export. It was left untouched; export again.`);
+    }
+    try {
+      // Something created at the output path while rendering is not replaced without the user's consent.
+      if (!req.overwrite && exportStatPath(graph.outputPath)) throw new ExportOutputExistsError(graph.outputPath);
+      finalizeExportOutput(partPath, graph.outputPath);
+    } catch (e) {
+      const kept = keepUnsavedRender(partPath, graph.outputPath);
+      partPath = null;
+      throw new Error(`${e instanceof Error ? e.message : String(e)} The finished render was kept as "${kept}".`);
+    }
     partPath = null;
 
-    // Sidecar: both its path and its temp were checked against the project's sources by buildRenderGraph.
-    // Written to a temp in the same folder and renamed, so a failed write never leaves a truncated .srt.
+    // Sidecar: its path was checked against the project's sources by buildRenderGraph. Written to a new temp
+    // (random name, created exclusively) in the same folder and renamed, so a failed write never leaves a
+    // truncated .srt and no existing file is ever written through.
     let sidecarPath: string | undefined;
     if (req.settings.exportSubtitleSidecar && req.subtitles?.length) {
       const srt = buildSubtitleSrt(req);
       if (srt) {
         const target = exportSidecarPath(graph.outputPath);
-        sidecarTemp = exportSidecarTempPath(graph.outputPath);
-        fs.writeFileSync(sidecarTemp, srt, 'utf8');
+        if (!req.overwrite && exportStatPath(target)) throw new ExportOutputExistsError(target);
+        const temp = exportSidecarTempPath(graph.outputPath, randomToken());
+        try {
+          fs.writeFileSync(temp, srt, { encoding: 'utf8', flag: 'wx' });
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== 'EEXIST') sidecarTemp = temp; // ours (possibly partial): clean up
+          throw e;
+        }
+        sidecarTemp = temp;
         fs.renameSync(sidecarTemp, target);
         sidecarTemp = null;
         sidecarPath = target;
@@ -335,8 +418,8 @@ async function runChunkedExport(
     const script = path.join(tmpDir, `v-${tag}.txt`);
     fs.writeFileSync(script, g.filterGraph, 'utf8');
     const out = path.join(tmpDir, `chunk-${tag}.mp4`);
-    const args = ['-hide_banner', '-nostdin', '-y', '-filter_complex_threads', '2', ...oneThread(g.inputArgs), '-filter_complex_script', script, '-map', '[vout]',
-      ...g.videoCodecArgs, ...chunkGopArgs(g.videoCodecArgs), '-an', '-t', sec(Math.max(g.durationSec, g.outputDurationSec)), '-f', 'mp4', out];
+    const args = ['-hide_banner', '-nostdin', '-y', '-filter_complex_threads', '2', ...fileInputs(oneThread(g.inputArgs)), '-filter_complex_script', script, '-map', '[vout]',
+      ...g.videoCodecArgs, ...chunkGopArgs(g.videoCodecArgs), '-an', '-t', sec(Math.max(g.durationSec, g.outputDurationSec)), '-f', 'mp4', ffmpegFile(out)];
     await step(i, c, 'video', args, g.durationSec, W_VIDEO * (c.endF - c.startF) / total);
     try { fs.unlinkSync(script); } catch { /* best effort */ }
     videoFiles.push(out);
@@ -349,8 +432,8 @@ async function runChunkedExport(
     const script = path.join(tmpDir, `a-${tag}.txt`);
     fs.writeFileSync(script, g.filterGraph, 'utf8');
     const out = path.join(tmpDir, `chunk-${tag}.wav`);
-    const args = ['-hide_banner', '-nostdin', '-y', '-filter_complex_threads', '2', ...oneThread(g.inputArgs), '-filter_complex_script', script, '-map', '[aout]',
-      '-c:a', 'pcm_f32le', '-ar', String(g.sampleRate), '-ac', String(g.channels), '-vn', '-f', 'wav', out];
+    const args = ['-hide_banner', '-nostdin', '-y', '-filter_complex_threads', '2', ...fileInputs(oneThread(g.inputArgs)), '-filter_complex_script', script, '-map', '[aout]',
+      '-c:a', 'pcm_f32le', '-ar', String(g.sampleRate), '-ac', String(g.channels), '-vn', '-f', 'wav', ffmpegFile(out)];
     await step(i, c, 'audio', args, (c.endF - c.startF) * fd, W_AUDIO * (c.endF - c.startF) / total);
     try { fs.unlinkSync(script); } catch { /* best effort */ }
     audioFiles.push(out);
@@ -362,9 +445,9 @@ async function runChunkedExport(
   fs.writeFileSync(aList, concatList(audioFiles), 'utf8');
   const hevc = full.videoCodecArgs.includes('libx265');
   const args = ['-hide_banner', '-nostdin', '-y',
-    '-f', 'concat', '-safe', '0', '-i', vList, '-f', 'concat', '-safe', '0', '-i', aList,
+    '-f', 'concat', '-safe', '0', '-i', ffmpegFile(vList), '-f', 'concat', '-safe', '0', '-i', ffmpegFile(aList),
     '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', ...(hevc ? ['-tag:v', 'hvc1'] : []), ...full.audioCodecArgs,
-    '-movflags', '+faststart', '-t', sec(Math.max(full.durationSec, full.outputDurationSec)), '-f', 'mp4', partPath];
+    '-movflags', '+faststart', '-t', sec(Math.max(full.durationSec, full.outputDurationSec)), '-f', 'mp4', ffmpegFile(partPath)];
   try {
     if (signal?.aborted) throw new Error('Export canceled');
     await runFfmpeg(args, full.durationSec, (p) => report(W_MUX, p, `Joining ${n} chunks`), signal, onSpawn);

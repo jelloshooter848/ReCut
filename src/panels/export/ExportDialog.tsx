@@ -12,6 +12,7 @@ import { useStore, activeSequence, recutApi, ffmpegUnavailable } from '@/state';
 import { useJob } from '@/app/jobsStore';
 import { Button, Dialog, NumberField, ProgressBar, Select, Slider, TextField, Toggle } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
+import { confirm } from '@/app/dialogs/ConfirmDialog';
 import { injectStyle } from './injectStyle';
 import { buildExportRequest } from './request';
 import {
@@ -84,6 +85,7 @@ export function ExportDialog() {
   const seq = useStore(activeSequence);
   const media = useStore((s) => s.project.media);
   const subtitleTracks = useStore((s) => s.project.subtitleTracks);
+  const sequences = useStore((s) => s.project.sequences);
   const projectId = useStore((s) => s.project.id);
   const projectPath = useStore((s) => s.projectPath);
   const projectUsesProxies = useStore((s) => s.project.settings.useProxies);
@@ -155,7 +157,7 @@ export function ExportDialog() {
         if (!api) { setCommandError('IPC unavailable'); return; }
         setCommand(null); setCommandError(null);
         try {
-          const args = await api.previewExportCommand(buildRequest(seq, { media, subtitleTracks }, settings));
+          const args = await api.previewExportCommand(buildRequest(seq, { media, subtitleTracks, sequences }, settings));
           setCommand(['ffmpeg', ...args.map(shellQuote)].join(' '));
         } catch (e) { setCommandError(e instanceof Error ? e.message : String(e)); }
       }}
@@ -175,7 +177,17 @@ export function ExportDialog() {
         const noFfmpeg = ffmpegUnavailable('ffmpeg');
         if (noFfmpeg) { setStartError(noFfmpeg); setStarting(false); return; }
         try {
-          const res = await api.startExport(buildRequest(seq, { media, subtitleTracks }, final));
+          const req = buildRequest(seq, { media, subtitleTracks, sequences }, final);
+          let res = await api.startExport(req);
+          if (!res.ok && res.code === 'exists') {
+            // The output (or its sidecar .srt) is already there: replace it only when the user says so.
+            const choice = await confirm({
+              type: 'warning', title: 'Replace file?', message: `${res.error} Replace it?`,
+              buttons: ['Replace', 'Cancel'], defaultId: 1, cancelId: 1, testId: 'export-replace-confirm',
+            });
+            if (choice !== 0) return;
+            res = await api.startExport({ ...req, overwrite: true });
+          }
           if (res.ok) { setFinalJob(null); setPhase({ kind: 'job', jobId: res.jobId, outputPath: res.outputPath }); }
           else setStartError(res.error);
         } catch (e) { setStartError(e instanceof Error ? e.message : String(e)); }

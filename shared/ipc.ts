@@ -146,8 +146,16 @@ export interface ExportRequest {
    * media and everything in `media` are always protected).
    */
   protectedPaths?: string[];
+  /**
+   * Replace an existing output file / sidecar .srt (the user confirmed). Without it the export is refused with
+   * code 'exists' when either already exists. Never allows writing over a project source or a folder.
+   */
+  overwrite?: boolean;
 }
-export type ExportStartResult = { ok: true; jobId: ID; outputPath: string } | { ok: false; error: string }
+export type ExportStartResult =
+  | { ok: true; jobId: ID; outputPath: string }
+  /** `code: 'exists'`: the output or sidecar exists; ask the user and resend with `overwrite: true`. */
+  | { ok: false; error: string; code?: 'exists' }
 
 export type MenuCommand = string;
 

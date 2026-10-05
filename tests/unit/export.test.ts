@@ -418,12 +418,13 @@ describe('export request validation', () => {
     const r = await startExportJob(q, req(s, { outputDir: srcDir, fileName: base }));
     expect(r.ok).toBe(false);
     expect(q.added).toBe(0);
-    // .part temp equal to a source
+    // A source named like the old fixed <name>.part.mp4 temp: the temp is <name>.recut-part-<random>.mp4 now,
+    // created exclusively, so it can never be this file (tests/unit/export-file-safety.test.ts).
     const partVictim = path.join(dir, 'victim.part.mp4');
     fs.copyFileSync(mediaA.path, partVictim);
     const m2 = { ...mediaA, id: 'pv', path: partVictim };
     const s2 = seq(); vclip(s2, m2, 0, 24, 0);
-    expect(() => buildRenderGraph({ sequence: s2, media: { pv: m2 }, settings: settings({ fileName: 'victim.mp4' }) })).toThrow(/used by the sequence/);
+    expect(() => buildRenderGraph({ sequence: s2, media: { pv: m2 }, settings: settings({ fileName: 'victim.mp4' }) })).not.toThrow();
     // sidecar .srt / proxy path
     const m3 = { ...mediaA, id: 'px', proxy: { status: 'ready' as const, path: path.join(dir, 'prx.mp4') } };
     const s3 = seq(); vclip(s3, m3, 0, 24, 0);
@@ -434,13 +435,13 @@ describe('export request validation', () => {
     expect(() => buildRenderGraph({ sequence: s4, media: { sc: m4 }, settings: settings({ fileName: 'cap.mp4' }) })).not.toThrow();
   });
 
-  it('compares case-insensitively on win32/darwin and through symlinks via realpath', async () => {
+  it('compares case-insensitively on every platform and through symlinks via realpath', async () => {
     const s = seq();
     vclip(s, mediaA, 0, 24, 0);
     const upper = path.basename(mediaA.path).toUpperCase();
     const r = req(s, { outputDir: path.dirname(mediaA.path), fileName: upper });
     expect(() => buildRenderGraph(r, { platform: 'darwin' })).toThrow(/used by the sequence/);
-    expect(() => buildRenderGraph(r, { platform: 'linux' })).not.toThrow();
+    expect(() => buildRenderGraph(r, { platform: 'linux' })).toThrow(/used by the sequence/);
     const link = path.join(dir, 'linkdir');
     try { fs.symlinkSync(path.dirname(mediaA.path), link, 'dir'); } catch { return; }
     const res = await startExportJob(fakeQueue(), req(s, { outputDir: link, fileName: path.basename(mediaA.path) }));

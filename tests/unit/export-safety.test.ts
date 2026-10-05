@@ -3,7 +3,7 @@
  * on the exported timeline, and proxies. Requests are built the way the Export dialog builds them
  * (src/panels/export/request.ts) and run through the real exporter.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
@@ -13,7 +13,7 @@ import type { ExportSettings, MediaItem, MediaProbe, Project, Sequence, Subtitle
 import { createMediaItem, createProject, createSequence } from '@shared/project';
 import { makeClip } from '@shared/timeline';
 import { adaptFfmpegArgs, ffmpegMajorVersionSync } from '../../electron/media/ffmpeg';
-import { buildRenderGraph, exportSidecarTempPath } from '../../electron/export/renderGraph';
+import { buildRenderGraph } from '../../electron/export/renderGraph';
 import { runExport, startExportJob, type ExportJobQueue, type ExportJobSpec } from '../../electron/export/exporter';
 import { buildExportRequest, projectSourcePaths } from '../../src/panels/export/request';
 
@@ -51,6 +51,7 @@ beforeAll(async () => {
 }, 60000);
 
 afterAll(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ } });
+afterEach(() => { vi.restoreAllMocks(); });
 
 /** A project with `red` on the timeline (1 s) and one sequence subtitle cue, like a real fan edit. */
 function fixture(): { project: Project; seq: Sequence } {
@@ -126,13 +127,15 @@ describe('export never overwrites project source assets', () => {
     expect(fs.readFileSync(victim.path).equals(before)).toBe(true);
   }, 30000);
 
-  it('refuses an output whose .part temp is a project media file not on the timeline', async () => {
+  it('never touches a project media file named like the old <name>.part.mp4 temp (temps are unique, created exclusively)', async () => {
     const { project, seq } = fixture();
     const victim = binOnlyMedia(project, path.join(dir, 'victim.part.mp4'));
     const before = fs.readFileSync(victim.path);
     const req = buildExportRequest(project, seq, settings({ fileName: 'victim.mp4' }));
-    expect(() => buildRenderGraph(req)).toThrow(/victim\.part\.mp4/);
-    await expect(runExport(req)).rejects.toThrow(/Refusing to export/);
+    // The render temp is <name>.recut-part-<random>.mp4 now, so this name is no longer a collision.
+    expect(() => buildRenderGraph(req)).not.toThrow();
+    const res = await runExport(req);
+    expect(fs.readFileSync(res.outputPath).subarray(4, 8).toString('latin1')).toBe('ftyp');
     expect(fs.readFileSync(victim.path).equals(before)).toBe(true);
   }, 30000);
 
@@ -150,18 +153,18 @@ describe('export never overwrites project source assets', () => {
     expect(fs.readFileSync(proxy).equals(before)).toBe(true);
   }, 30000);
 
-  it('matches project source paths case-insensitively on win32 (and not on linux)', () => {
+  it('matches project source paths case-insensitively on every platform (Linux mounts exFAT / vfat / CIFS / casefold)', () => {
     const { project, seq } = fixture();
     importSubtitle(project, path.join(dir, 'Dialogue.SRT'), 'x');
     const subReq = buildExportRequest(project, seq, settings({ fileName: 'dialogue.mp4', exportSubtitleSidecar: true }));
     expect(() => buildRenderGraph(subReq, { platform: 'win32' })).toThrow(/Dialogue\.SRT/);
-    expect(() => buildRenderGraph(subReq, { platform: 'linux' })).not.toThrow();
+    expect(() => buildRenderGraph(subReq, { platform: 'linux' })).toThrow(/Dialogue\.SRT/);
 
     const { project: p2, seq: s2 } = fixture();
     binOnlyMedia(p2, path.join(dir, 'BinCase.MP4'));
     const mediaReq = buildExportRequest(p2, s2, settings({ fileName: 'bincase.mp4' }));
     expect(() => buildRenderGraph(mediaReq, { platform: 'win32' })).toThrow(/BinCase\.MP4/);
-    expect(() => buildRenderGraph(mediaReq, { platform: 'linux' })).not.toThrow();
+    expect(() => buildRenderGraph(mediaReq, { platform: 'linux' })).toThrow(/BinCase\.MP4/);
   });
 
   it('the dialog request lists every project source path (media, proxies, subtitle files)', () => {
@@ -174,13 +177,38 @@ describe('export never overwrites project source assets', () => {
     expect(projectSourcePaths(project)).toEqual(req.protectedPaths);
   });
 
-  it('refuses a sidecar temp that is a protected path, and keeps the old behaviour without protectedPaths', () => {
+  it('refuses a sidecar that is a protected path, and keeps the old behaviour without protectedPaths', () => {
     const { project, seq } = fixture();
-    const out = path.join(dir, 'temp-victim.mp4');
     const req = buildExportRequest(project, seq, settings({ fileName: 'temp-victim.mp4', exportSubtitleSidecar: true }));
-    expect(() => buildRenderGraph({ ...req, protectedPaths: [exportSidecarTempPath(out)] })).toThrow(/temp-victim\.part\.srt/);
+    expect(() => buildRenderGraph({ ...req, protectedPaths: [path.join(dir, 'temp-victim.srt')] })).toThrow(/temp-victim\.srt/);
+    // The sidecar temp is <name>.recut-part-<random>.srt created exclusively: the old fixed name is not written.
+    expect(() => buildRenderGraph({ ...req, protectedPaths: [path.join(dir, 'temp-victim.part.srt')] })).not.toThrow();
     expect(() => buildRenderGraph({ ...req, protectedPaths: undefined })).not.toThrow();
     expect(() => buildRenderGraph({ ...req, protectedPaths: undefined, settings: { ...req.settings, fileName: 'red.mp4' } })).toThrow(/used by the sequence/);
+  });
+
+  it('the dialog request (media, subtitleTracks, sequences) protects subtitle files imported into another sequence', () => {
+    const { project, seq } = fixture();
+    const other = createSequence('Other', FPS, 320, 240);
+    const otherSrt = path.join(dir, 'other-seq.srt');
+    fs.writeFileSync(otherSrt, 'imported into another sequence', 'utf8');
+    other.subtitleTracks.push({ id: 'o', name: 'o', language: 'en', enabled: true, cues: [], sourcePaths: [otherSrt] });
+    project.sequences[other.id] = other;
+    const s = settings({ fileName: 'other-seq.mp4', exportSubtitleSidecar: true });
+    // Exactly what ExportDialog passes (src/panels/export/ExportDialog.tsx).
+    const { media, subtitleTracks, sequences } = project;
+    const req = buildExportRequest({ media, subtitleTracks, sequences }, seq, s);
+    expect(req.protectedPaths).toContain(otherSrt);
+    expect(() => buildRenderGraph(req)).toThrow(/Refusing to export to ".*other-seq\.srt".*a source file of the project/);
+    // Without `sequences` (the dialog before this fix) the file was not protected.
+    expect(buildExportRequest({ media, subtitleTracks }, seq, s).protectedPaths).not.toContain(otherSrt);
+  });
+
+  it('protects every req.media item even without protectedPaths (direct IPC callers)', () => {
+    const { project, seq } = fixture();
+    binOnlyMedia(project, path.join(dir, 'binonly-noprot.mp4'));
+    const req = buildExportRequest(project, seq, settings({ fileName: 'binonly-noprot.mp4' }));
+    expect(() => buildRenderGraph({ ...req, protectedPaths: undefined })).toThrow(/Refusing to export to ".*binonly-noprot\.mp4".*a source file of the project/);
   });
 
   it('writes the sidecar atomically: replaces a previous export sidecar and leaves no temp file', async () => {
@@ -189,10 +217,47 @@ describe('export never overwrites project source assets', () => {
     fs.mkdirSync(outDir, { recursive: true });
     const sidecar = path.join(outDir, 'edit.srt');
     fs.writeFileSync(sidecar, 'stale sidecar from a previous export', 'utf8');
-    const req = buildExportRequest(project, seq, settings({ outputDir: outDir, fileName: 'edit.mp4', exportSubtitleSidecar: true }));
+    const req = { ...buildExportRequest(project, seq, settings({ outputDir: outDir, fileName: 'edit.mp4', exportSubtitleSidecar: true })), overwrite: true };
+    const writes: string[] = [];
+    const renames: [string, string][] = [];
+    const realWrite = fs.writeFileSync;
+    const realRename = fs.renameSync;
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(((p: fs.PathOrFileDescriptor, data: string | NodeJS.ArrayBufferView, o?: fs.WriteFileOptions) => {
+      writes.push(String(p));
+      return realWrite(p, data, o);
+    }) as typeof fs.writeFileSync);
+    vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => { renames.push([String(from), String(to)]); return realRename(from, to); });
     const res = await runExport(req);
     expect(res.sidecarPath).toBe(sidecar);
     expect(fs.readFileSync(sidecar, 'utf8')).toMatch(/Export cue/);
+    expect(fs.readdirSync(outDir).sort()).toEqual(['edit.mp4', 'edit.srt']);
+    // The sidecar content goes to a temp in the same folder, which is then renamed onto edit.srt; edit.srt itself is never written.
+    expect(writes).not.toContain(sidecar);
+    const toSidecar = renames.filter(([, to]) => to === sidecar);
+    expect(toSidecar).toHaveLength(1);
+    const temp = toSidecar[0][0];
+    expect(path.dirname(temp)).toBe(outDir);
+    expect(path.basename(temp)).toMatch(/^edit\.recut-part-[0-9a-f]+\.srt$/);
+    expect(writes).toContain(temp);
+  }, 30000);
+
+  it('a failed sidecar temp write leaves the previous .srt unchanged and no temp behind', async () => {
+    const { project, seq } = fixture();
+    const outDir = path.join(dir, 'sidecar-fail');
+    fs.mkdirSync(outDir, { recursive: true });
+    const sidecar = path.join(outDir, 'edit.srt');
+    fs.writeFileSync(sidecar, 'stale sidecar from a previous export', 'utf8');
+    const req = { ...buildExportRequest(project, seq, settings({ outputDir: outDir, fileName: 'edit.mp4', exportSubtitleSidecar: true })), overwrite: true };
+    const realWrite = fs.writeFileSync;
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(((p: fs.PathOrFileDescriptor, data: string | NodeJS.ArrayBufferView, o?: fs.WriteFileOptions) => {
+      if (/\.recut-part-[0-9a-f]+\.srt$/.test(String(p))) {
+        realWrite(p, String(data).slice(0, 5), o); // a partial write, then the disk fills up
+        throw Object.assign(new Error('ENOSPC: simulated'), { code: 'ENOSPC' });
+      }
+      return realWrite(p, data, o);
+    }) as typeof fs.writeFileSync);
+    await expect(runExport(req)).rejects.toThrow(/ENOSPC/);
+    expect(fs.readFileSync(sidecar, 'utf8')).toBe('stale sidecar from a previous export');
     expect(fs.readdirSync(outDir).sort()).toEqual(['edit.mp4', 'edit.srt']);
   }, 30000);
 });
