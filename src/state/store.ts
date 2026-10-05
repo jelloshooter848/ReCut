@@ -77,10 +77,15 @@ export function initialUi(): UIState {
   };
 }
 
-/** Selection-ish UI state that is reset when a different project is loaded. */
+/**
+ * Selection-ish UI state that is reset when a different project is loaded. Modal dialogs close too: they hold
+ * state read from the project that was open (e.g. the Export dialog's settings / range / output name).
+ */
 function resetSelectionUi(ui: UIState): UIState {
+  const dialogs = { ...ui.dialogs };
+  for (const k of Object.keys(dialogs) as (keyof UIState['dialogs'])[]) dialogs[k] = false;
   return {
-    ...ui,
+    ...ui, dialogs,
     selectedClipIds: [], selectedTransitionId: null, selectedMediaIds: [], selectedSceneIds: [],
     selectedBinId: null, selectedMarkerId: null, sourceClip: null,
     filters: { characters: [], plotlines: [], locations: [], tags: [], mode: ui.filters.mode },
@@ -288,6 +293,49 @@ export const useStore = create<RecutStore>()((set, get) => {
     return out;
   };
 
+  /** Media relinked since their last probe result: the next probe fits their clips to the new file. */
+  const relinkAwaitingProbe = new Set<ID>();
+  /**
+   * After a relink to a shorter file: clips that now run past the media end are trimmed to it, and clips that
+   * start past it are removed (one undo step, with a warning toast). Locked tracks are included: the clips
+   * would otherwise reference source time the file does not have (playback freezes, export clones the last
+   * frame). Returns { trimmed, removed }.
+   */
+  const fitClipsToRelinkedMedia = (mediaId: ID): { trimmed: number; removed: number } => {
+    const res = { trimmed: 0, removed: 0 };
+    const m = get().project.media[mediaId];
+    const dur = m?.probe?.duration;
+    if (!m || m.kind === 'image' || typeof dur !== 'number' || !Number.isFinite(dur) || dur <= 0) return res;
+    commit('Fit clips to relinked media', (d) => {
+      for (const seq of Object.values(d.sequences)) {
+        const removed = new Set<ID>();
+        let changed = false;
+        for (const t of allTracks(seq)) {
+          const before = removed.size;
+          for (const c of t.clips) {
+            if (c.mediaId !== mediaId) continue;
+            const fit = maxDurationFrom(c.sourceIn, c.speed, dur, seq.fps);
+            if (c.duration <= fit) continue;
+            changed = true;
+            if (fit >= MIN_CLIP_FRAMES) { c.duration = fit; res.trimmed++; } else { removed.add(c.id); res.removed++; }
+          }
+          if (removed.size !== before) t.clips = t.clips.filter((c) => !removed.has(c.id));
+        }
+        if (!changed) continue;
+        if (removed.size) for (const st of seq.subtitleTracks) st.cues = st.cues.filter((c) => !(c.clipId && removed.has(c.clipId)));
+        reconcileAll(seq);
+      }
+    });
+    if (res.trimmed || res.removed) {
+      const n = (k: number) => `${k} clip${k === 1 ? '' : 's'}`;
+      const parts: string[] = [];
+      if (res.trimmed) parts.push(`trimmed ${n(res.trimmed)} that ran past the end of the file`);
+      if (res.removed) parts.push(`removed ${n(res.removed)} that started past the end of the file`);
+      get().toast('warning', `"${m.name}" is shorter after the relink: ${parts.join(', ')}`);
+    }
+    return res;
+  };
+
   const setUi = (patch: Partial<UIState> | ((ui: UIState) => Partial<UIState>)) =>
     set((s) => ({ ui: { ...s.ui, ...(typeof patch === 'function' ? patch(s.ui) : patch) } }));
 
@@ -384,12 +432,14 @@ export const useStore = create<RecutStore>()((set, get) => {
 
     // ---------------------------------------------------------------- project
     newProject(name = 'Untitled Project') {
+      relinkAwaitingProbe.clear();
       set((s) => ({
         project: createProject(name), projectPath: null, dirty: false, history: emptyHistory(s.history.limit),
         transaction: null, ui: resetSelectionUi(s.ui), playback: { playing: false, rate: 1 },
       }));
     },
     loadProjectData(project, path) {
+      relinkAwaitingProbe.clear();
       set((s) => ({
         project, projectPath: path, dirty: false, history: emptyHistory(s.history.limit), transaction: null,
         ui: pruneUi(project, resetSelectionUi(s.ui)), playback: { playing: false, rate: 1 },
@@ -506,6 +556,7 @@ export const useStore = create<RecutStore>()((set, get) => {
     },
     setMediaProbe(id, result) {
       // Probe results arrive asynchronously after the import step: a job mirror, not an undo step.
+      const afterRelink = relinkAwaitingProbe.delete(id);
       quiet((d) => {
         const m = d.media[id];
         if (!m) return;
@@ -516,6 +567,8 @@ export const useStore = create<RecutStore>()((set, get) => {
         m.kind = kindFromProbe(result, m.path);
         if (m.preferredAudioStream === undefined && result.audio.length) m.preferredAudioStream = result.audio[0].index;
       }, { dirty: true });
+      // The first probe of a relinked file: fit clips that now run past its end (an undoable step of its own).
+      if (afterRelink && !('error' in result)) fitClipsToRelinkedMedia(id);
     },
     // Job/status mirrors are quiet: they arrive asynchronously and must not become undo steps (nor clear redo).
     setProxy(id, proxy) { quiet((d) => { const m = d.media[id]; if (m) m.proxy = proxy; }, { dirty: true }); },
@@ -588,6 +641,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       commit('Delete scene', (d) => { const m = d.media[mediaId]; if (m) m.detectedScenes = m.detectedScenes.filter((s) => s.id !== sceneId); });
     },
     relinkMedia(id, newPath, stat) {
+      if (get().project.media[id]) relinkAwaitingProbe.add(id);
       quiet((d) => {
         const m = d.media[id];
         if (!m) return;
@@ -692,7 +746,13 @@ export const useStore = create<RecutStore>()((set, get) => {
         const inS = Math.max(0, Math.min(o.in, o.out));
         const outS = Math.max(o.in, o.out);
         const speed = o.extra?.speed && o.extra.speed > 0 ? o.extra.speed : 1;
-        const duration = Math.max(MIN_CLIP_FRAMES, secondsToFrames((outS - inS) / speed, seq.fps));
+        // Rounding may add a frame the media does not have (a whole-clip insert: 240.72 frames -> 241). The trim
+        // limits count whole frames available (floor): cap there, as the three-point edit does. A range that is
+        // itself past the media end keeps plain rounding.
+        const exact = (outS - inS) / speed * seq.fps.num / seq.fps.den;
+        let duration = Math.max(MIN_CLIP_FRAMES, secondsToFrames((outS - inS) / speed, seq.fps));
+        const fit = maxDurationFrom(inS, speed, mediaDurationLookup(d)(o.mediaId), seq.fps);
+        if (duration > fit && Math.floor(exact + 1e-6) <= fit) duration = Math.max(MIN_CLIP_FRAMES, fit);
         const unprobed = media.kind === 'unknown' && !media.probe;
         const hasVideo = media.kind === 'video' || media.kind === 'image' || !!media.probe?.video || unprobed;
         const hasAudio = media.kind === 'audio' || (media.probe?.audio.length ?? 0) > 0 || unprobed;
@@ -746,6 +806,12 @@ export const useStore = create<RecutStore>()((set, get) => {
             if (!target) {
               target = { id: uid('sst'), name: trackName, language: st.language, enabled: true, cues: [] };
               seq.subtitleTracks.push(target);
+            }
+            // The subtitle file stays a project source (exports never overwrite it) even after the media
+            // track is removed (projectSourcePaths in src/panels/export/request.ts).
+            if (typeof st.path === 'string' && st.path) {
+              const sources = target.sourcePaths ?? [];
+              if (!sources.includes(st.path)) target.sourcePaths = [...sources, st.path];
             }
             for (const cue of overlapping) {
               const s = anchor.start + Math.round((cue.start - inS) / speed * seq.fps.num / seq.fps.den);
@@ -878,7 +944,8 @@ export const useStore = create<RecutStore>()((set, get) => {
       const clips = selectedIn(seq, get().ui.selectedClipIds);
       if (!clips.length || deltaFrames === 0) return;
       let delta = Math.round(deltaFrames);
-      const minStart = Math.min(...clips.map((c) => c.start));
+      let minStart = Infinity; // a loop, not Math.min(...spread): huge selections would overflow the stack
+      for (const c of clips) if (c.start < minStart) minStart = c.start;
       if (minStart + delta < 0) delta = -minStart;
       if (delta === 0) return;
       const moves = clips.map((c) => ({ clipId: c.id, toTrackId: findClip(seq, c.id)!.track.id, toStart: c.start + delta }));
@@ -1228,7 +1295,10 @@ export const useStore = create<RecutStore>()((set, get) => {
       commit('Merge subtitles', (d) => {
         const seq = d.sequences[seqId];
         if (!seq) return;
-        const found = cueIds.map((id) => findCue(seq, id)).filter((x): x is NonNullable<typeof x> => !!x);
+        // One index over every cue (findCue per id would be quadratic for a large selection).
+        const byId = new Map<ID, { track: SequenceSubtitleTrack; cue: SequenceSubtitleCue }>();
+        for (const track of seq.subtitleTracks) for (const cue of track.cues) if (!byId.has(cue.id)) byId.set(cue.id, { track, cue });
+        const found = [...new Set(cueIds)].map((id) => byId.get(id)).filter((x): x is NonNullable<typeof x> => !!x);
         if (found.length < 2) return;
         const resolved = found.map((f) => ({ f, r: cueFrames(seq, f.cue) })).filter((x): x is { f: typeof x.f; r: NonNullable<typeof x.r> } => !!x.r);
         if (resolved.length < 2) return;
@@ -1237,12 +1307,15 @@ export const useStore = create<RecutStore>()((set, get) => {
         const text = resolved.map((x) => x.f.cue.text).join('\n');
         const sameClip = resolved.every((x) => x.f.cue.clipId && x.f.cue.clipId === first.f.cue.clipId);
         const cue = first.f.cue;
+        // Loops, not Math.min/max(...spread): huge selections would overflow the stack.
         if (sameClip) {
-          cue.srcStart = Math.min(...resolved.map((x) => x.f.cue.srcStart ?? Infinity));
-          cue.srcEnd = Math.max(...resolved.map((x) => x.f.cue.srcEnd ?? -Infinity));
+          let srcStart = Infinity; let srcEnd = -Infinity;
+          for (const x of resolved) { srcStart = Math.min(srcStart, x.f.cue.srcStart ?? Infinity); srcEnd = Math.max(srcEnd, x.f.cue.srcEnd ?? -Infinity); }
+          cue.srcStart = srcStart;
+          cue.srcEnd = srcEnd;
         } else {
-          const start = Math.min(...resolved.map((x) => x.r.start));
-          const end = Math.max(...resolved.map((x) => x.r.end));
+          let start = Infinity; let end = -Infinity;
+          for (const x of resolved) { start = Math.min(start, x.r.start); end = Math.max(end, x.r.end); }
           cue.clipId = undefined; cue.srcStart = undefined; cue.srcEnd = undefined;
           cue.start = start; cue.duration = Math.max(1, end - start); cue.offset = 0;
         }

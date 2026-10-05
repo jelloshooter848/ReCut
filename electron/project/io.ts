@@ -331,8 +331,10 @@ async function recoveryFrom(autosavePath: string, projectPath: string | null): P
   const st = await statOrNull(autosavePath);
   if (!st || !st.isFile() || st.size === 0) return null;
   try {
-    const project = await readProjectJson(autosavePath);
-    return { autosavePath, projectPath, savedAt: st.mtimeMs, project };
+    // No pre-repair copy (this runs on every launch): log, and let the recovery prompt say so.
+    const { project, repairs } = await readProjectJsonWithReport(autosavePath);
+    if (repairs.length) console.warn(`[recovery] ${autosavePath} needed repairs: ${repairs.join('; ')}`);
+    return { autosavePath, projectPath, savedAt: st.mtimeMs, project, ...(repairs.length ? { repaired: repairs } : {}) };
   } catch (e) {
     console.warn(`[recovery] ignoring unreadable autosave ${autosavePath}: ${errMsg(e)}`);
     return null; // corrupt autosave: nothing to recover

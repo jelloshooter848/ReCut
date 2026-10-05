@@ -11,8 +11,9 @@ import { Button, EmptyState, ProgressBar, Select, Toggle } from '@/components/ui
 import { toast } from '@/components/ui/toastStore';
 import { jobEq, useJobsSelect } from './useJobsSelect';
 import { isStillImage, mediaNeedsProxyForPreview } from '@/playback/mediaSource';
+import { PROXY_HEIGHTS } from '@shared/limits';
 
-const PROXY_HEIGHTS = [{ value: '540', label: '540p' }, { value: '720', label: '720p' }, { value: '1080', label: '1080p' }];
+const PROXY_HEIGHT_OPTIONS = PROXY_HEIGHTS.map((h) => ({ value: String(h), label: `${h}p` }));
 
 const isActiveJob = (j: JobInfo) => j.status === 'queued' || j.status === 'running';
 
@@ -98,7 +99,7 @@ export function ProxiesTab() {
         <Toggle checked={useProxies} onChange={(v) => setSettings({ useProxies: v })} label={<span className="text-sm nowrap">Playback proxies</span>} title="Play ready proxies instead of originals in the monitors (export always uses originals)" />
         <span className="row gap-4 nowrap">
           <span className="text-dim text-sm">Size</span>
-          <Select size="sm" value={String(PROXY_HEIGHTS.some((h) => Number(h.value) === proxyHeight) ? proxyHeight : 540)} options={PROXY_HEIGHTS} onChange={(v) => setSettings({ proxyHeight: Number(v) })} title="Height of newly generated proxies" style={{ width: 64 }} />
+          <Select size="sm" value={String(PROXY_HEIGHTS.includes(proxyHeight) ? proxyHeight : PROXY_HEIGHTS[0])} options={PROXY_HEIGHT_OPTIONS} onChange={(v) => setSettings({ proxyHeight: Number(v) })} title="Height of newly generated proxies" style={{ width: 64 }} />
         </span>
         <span className="ml-auto text-faint text-xs nowrap" title={cacheDir ? `Proxy cache: ${cacheDir}/proxies` : undefined}>{ready}/{media.filter(proxyEligible).length} ready</span>
         {cacheDir ? <span className="text-faint text-xs ellipsis" style={{ flexBasis: '100%' }} title={cacheDir}>Cache: {cacheDir}</span> : null}

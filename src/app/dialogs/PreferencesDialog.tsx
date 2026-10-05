@@ -14,9 +14,15 @@ import { COMMAND_IDS } from '@/keyboard/commandIds';
 import type { AppInfo } from '@shared/ipc';
 import type { ProjectSettings } from '@shared/model';
 import { toast } from '@/components/ui/toastStore';
+import {
+  AUTOSAVE_INTERVAL_MAX_SEC, AUTOSAVE_INTERVAL_MIN_SEC, DEFAULT_TRANSITION_FRAMES_MAX, DEFAULT_TRANSITION_FRAMES_MIN, PROXY_HEIGHTS,
+} from '@shared/limits';
 
-const PROXY_HEIGHTS = [{ value: '540', label: '540p' }, { value: '720', label: '720p' }, { value: '1080', label: '1080p' }];
+// Ranges come from shared/limits.ts (the same bounds normalizeProject enforces on load).
+const PROXY_HEIGHT_OPTIONS = PROXY_HEIGHTS.map((h) => ({ value: String(h), label: `${h}p` }));
 const PLAYBACK_RES = [{ value: 'full', label: 'Full' }, { value: '1/2', label: '1/2' }, { value: '1/4', label: '1/4' }];
+
+const clampInt = (v: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(v)));
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -58,7 +64,7 @@ export function PreferencesDialog() {
             <Toggle checked={settings.useProxies} onChange={(v) => set({ useProxies: v })} />
           </Row>
           <Row label="Proxy height">
-            <Select value={String(settings.proxyHeight)} options={PROXY_HEIGHTS} onChange={(v) => set({ proxyHeight: Number(v) })} />
+            <Select value={String(settings.proxyHeight)} options={PROXY_HEIGHT_OPTIONS} onChange={(v) => set({ proxyHeight: Number(v) })} />
           </Row>
           <Row label="Playback resolution">
             <Select value={settings.playbackResolution} options={PLAYBACK_RES} onChange={(v) => set({ playbackResolution: v as ProjectSettings['playbackResolution'] })} />
@@ -71,10 +77,10 @@ export function PreferencesDialog() {
 
         <Section title="Project — editing">
           <Row label="Autosave interval">
-            <NumberField value={settings.autosaveIntervalSec} min={5} max={3600} step={5} unit="s" onChange={(v) => set({ autosaveIntervalSec: Math.max(5, Math.round(v)) })} />
+            <NumberField value={settings.autosaveIntervalSec} min={AUTOSAVE_INTERVAL_MIN_SEC} max={AUTOSAVE_INTERVAL_MAX_SEC} step={5} unit="s" onChange={(v) => set({ autosaveIntervalSec: clampInt(v, AUTOSAVE_INTERVAL_MIN_SEC, AUTOSAVE_INTERVAL_MAX_SEC) })} />
           </Row>
           <Row label="Default transition" hint="Length of transitions added with Ctrl+D / Ctrl+Shift+D">
-            <NumberField value={settings.defaultTransitionFrames} min={1} max={600} step={1} unit="frames" onChange={(v) => set({ defaultTransitionFrames: Math.max(1, Math.round(v)) })} />
+            <NumberField value={settings.defaultTransitionFrames} min={DEFAULT_TRANSITION_FRAMES_MIN} max={DEFAULT_TRANSITION_FRAMES_MAX} step={1} unit="frames" onChange={(v) => set({ defaultTransitionFrames: clampInt(v, DEFAULT_TRANSITION_FRAMES_MIN, DEFAULT_TRANSITION_FRAMES_MAX) })} />
           </Row>
           <Row label="Snapping"><Toggle checked={settings.snapping} onChange={(v) => set({ snapping: v })} /></Row>
           <Row label="Carry subtitles into sequence" hint="Copy the media's subtitle cues onto new clips">

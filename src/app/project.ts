@@ -5,15 +5,17 @@
  * Every `window.recut` access is guarded so this module is importable under vitest/node.
  */
 import { useStore } from '@/state/store';
-import { autosaveProject, recutApi, saveProject, verifyMediaOnline } from '@/state/mediaActions';
+import {
+  DEFAULT_PROJECT_NAME, autosaveProject, openProject, projectNameFromPath, recutApi, repairedMessage, saveProject, verifyMediaOnline,
+} from '@/state/mediaActions';
 import { activeSequence } from '@/state/selectors';
 import { normalizeProject } from '@shared/project';
-import type { Project } from '@shared/model';
+import type { RecoveryInfo } from '@shared/ipc';
 import { useShellStore } from './shellStore';
 import { setBeforeQuitHandler, setOpenProjectPathHandler } from './bootstrap';
 import { registerCommand } from '@/keyboard/shortcuts';
 import { toast } from '@/components/ui/toastStore';
-import { confirm, confirmInApp } from './dialogs/ConfirmDialog';
+import { confirm, confirmInApp, type ConfirmOptions } from './dialogs/ConfirmDialog';
 
 export const PROJECT_FILTERS = [{ name: 'ReCut Project', extensions: ['recut'] }];
 /** Debounce after the last change before an autosave is written. */
@@ -27,12 +29,8 @@ function fileName(p: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
-export const DEFAULT_PROJECT_NAME = 'Untitled Project';
-
-/** `/a/b/My Edit.recut` -> `My Edit` (empty when nothing is left). */
-export function projectNameFromPath(p: string): string {
-  return fileName(p).replace(/\.recut$/i, '').trim();
-}
+// One definition (src/state/mediaActions.ts) shared by every open path.
+export { DEFAULT_PROJECT_NAME, projectNameFromPath, repairedMessage };
 
 /** A still-default project name is replaced by the file's basename (first save / Save As / open). */
 function adoptFileName(target: string): void {
@@ -111,14 +109,6 @@ export async function checkMissingMedia(): Promise<string[]> {
   } catch { return []; }
 }
 
-/** Toast text for a load that had to repair damaged data (LoadResult.repaired / preRepairPath). */
-export function repairedMessage(repaired: string[], preRepairPath?: string): string {
-  const n = repaired.length;
-  const what = `${repaired.slice(0, 3).join('; ')}${n > 3 ? `; and ${n - 3} more` : ''}`;
-  const kept = preRepairPath ? `The original file was kept as ${fileName(preRepairPath)}.` : 'Could not keep a copy of the original file.';
-  return `Some project data was damaged and has been repaired (${what}). ${kept}`;
-}
-
 /** Open a project from `path`, or ask for one. Resolves true when a project was loaded. */
 export async function requestOpenProject(path?: string): Promise<boolean> {
   const api = recutApi();
@@ -131,22 +121,10 @@ export async function requestOpenProject(path?: string): Promise<boolean> {
       target = picked[0];
     }
     if (!target) return false;
-    const res = await api.loadProject(target);
+    // Same load + backup / repair warnings as actions.openProject; warnings use the shell toasts here.
+    const res = await openProject(target, { notify: (kind, text, ms) => { toast(kind, text, ms); } });
     if (!res.ok) { toast('error', res.error); return false; }
-    let project: Project;
-    try { project = normalizeProject(res.project); } catch (e) { toast('error', errText(e)); return false; }
-    if (project.name === DEFAULT_PROJECT_NAME) {
-      const name = projectNameFromPath(res.path);
-      if (name) project = { ...project, name };
-    }
-    useStore.getState().loadProjectData(project, res.path);
-    if (res.fromBackup) {
-      const when = res.backupMtime ? new Date(res.backupMtime).toLocaleString() : 'an earlier save';
-      toast('warn', `Opened the backup from ${when}; the project file was damaged`);
-    } else if (!res.repaired?.length) {
-      toast('ok', `Opened ${project.name}`);
-    }
-    if (res.repaired?.length) toast('warn', repairedMessage(res.repaired, res.preRepairPath), 12000);
+    if (!res.warned) toast('ok', `Opened ${res.project.name}`);
     void checkMissingMedia();
     return true;
   } catch (e) { toast('error', `Open failed: ${errText(e)}`); return false; }
@@ -224,20 +202,31 @@ export function autosaveNow(): Promise<void> { return runAutosave(true); }
 // Recovery
 // ------------------------------------------------------------------
 
+/** The startup recovery prompt; warns when the autosave needed repairs to load (RecoveryInfo.repaired). */
+export function recoveryPrompt(info: RecoveryInfo): ConfirmOptions {
+  const when = new Date(info.savedAt).toLocaleString();
+  const what = info.projectPath ? `"${info.project?.name ?? fileName(info.projectPath)}" (${fileName(info.projectPath)})` : 'an unsaved project';
+  const repaired = Array.isArray(info.repaired) ? info.repaired : [];
+  const n = repaired.length;
+  const damage = n
+    ? ` The autosave was damaged and has been repaired (${repaired.slice(0, 3).join('; ')}${n > 3 ? `; and ${n - 3} more` : ''}): check the recovered edit before saving over the project.`
+    : '';
+  return {
+    title: 'Recover unsaved changes?',
+    message: `Recover unsaved changes from ${when}?`,
+    detail: `ReCut found an autosave for ${what} that is newer than the last save.${damage}`,
+    buttons: ['Recover', 'Discard'], defaultId: 0, cancelId: 1, testId: 'recovery-dialog',
+    ...(n ? { type: 'warning' as const } : {}),
+  };
+}
+
 export async function checkStartupRecovery(): Promise<boolean> {
   const api = recutApi();
   if (!api?.checkRecovery) return false;
   let info: Awaited<ReturnType<typeof api.checkRecovery>> = null;
   try { info = await api.checkRecovery(); } catch (e) { console.warn('[recovery] check failed', e); return false; }
   if (!info) return false;
-  const when = new Date(info.savedAt).toLocaleString();
-  const what = info.projectPath ? `"${info.project?.name ?? fileName(info.projectPath)}" (${fileName(info.projectPath)})` : 'an unsaved project';
-  const choice = await confirmInApp({
-    title: 'Recover unsaved changes?',
-    message: `Recover unsaved changes from ${when}?`,
-    detail: `ReCut found an autosave for ${what} that is newer than the last save.`,
-    buttons: ['Recover', 'Discard'], defaultId: 0, cancelId: 1, testId: 'recovery-dialog',
-  });
+  const choice = await confirmInApp(recoveryPrompt(info));
   if (choice === 0) {
     try {
       const project = normalizeProject(info.project);

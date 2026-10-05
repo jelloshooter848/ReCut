@@ -111,7 +111,11 @@ export type LoadResult =
   }
   | { ok: false; error: string }
 
-export interface RecoveryInfo { autosavePath: string; projectPath: string | null; savedAt: number; project: Project }
+export interface RecoveryInfo {
+  autosavePath: string; projectPath: string | null; savedAt: number; project: Project;
+  /** What had to be repaired to load the autosave (one line per kind of repair); absent when nothing was. No copy is kept. */
+  repaired?: string[];
+}
 
 export interface RelinkCandidate { missingMediaId: ID; path: string; confidence: 'name+size' | 'name' }
 export interface RelinkScanRequest { folder: string; missing: { mediaId: ID; fileName: string; size?: number }[] }
