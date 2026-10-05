@@ -102,7 +102,7 @@ describe('autosave & recovery', () => {
   it('computes autosave locations', () => {
     expect(autosavePathFor('/p/a.recut', userData)).toBe(path.resolve('/p/a.recut') + '.autosave');
     expect(autosavePathFor(null, userData)).toBe(path.join(userData, 'autosave', 'untitled.recut.autosave'));
-    expect(projectPathForAutosave('/p/a.recut.autosave', userData)).toBe(path.resolve('/p/a.recut'));
+    expect(projectPathForAutosave('/p/a.recut.autosave', userData)).toBe('/p/a.recut');
     expect(projectPathForAutosave(untitledAutosavePath(userData), userData)).toBeNull();
   });
 
@@ -204,8 +204,8 @@ describe('prefs & recent projects', () => {
     expect(list.length).toBe(MAX_RECENT);
     expect(list[0]).toBe(path.resolve('/p/19.recut'));
     const stored = await addRecentProject(userData, '/x/one.recut');
-    expect(stored).toEqual(['/x/one.recut']);
-    expect((await readPrefs(userData)).recentProjects).toEqual(['/x/one.recut']);
+    expect(stored).toEqual([path.resolve('/x/one.recut')]);
+    expect((await readPrefs(userData)).recentProjects).toEqual([path.resolve('/x/one.recut')]);
   });
 });
 

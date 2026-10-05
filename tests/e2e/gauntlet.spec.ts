@@ -1022,13 +1022,15 @@ test.describe.serial('TEST 4 — Failure Recovery', () => {
       return text.replace(/\s+/g, ' ').trim();
     };
 
-    await g.step('Start an export to an unwritable directory (/proc/recut-nope) → error shown, app continues', 'UI+API', async () => {
+    await g.step('Start an export to an unwritable directory (/proc/recut-nope on Linux, a path inside a file elsewhere) → error shown, app continues', 'UI+API', async () => {
       const n0 = errorsBefore();
       await evalStore(page, '(s, id) => { s.insertFromSource(s.project.activeSequenceId, { mediaId: id, in: 1, out: 3, atFrame: 0, mode: "insert" }); s.openDialog("export"); }', movieId);
-      const text = await exportExpectingFailure('/proc/recut-nope');
+      // /proc is only unwritable on Linux; elsewhere use a folder "inside" an existing file, which no OS can create.
+      const unwritable = process.platform === 'linux' ? '/proc/recut-nope' : path.join(mediaDir, MEDIA.movie1, 'recut-nope');
+      const text = await exportExpectingFailure(unwritable);
       g.note(`export error surfaced as: ${text.slice(0, 160)}`);
-      expect(text).toMatch(/Cannot create output folder|failed|ENOENT|EACCES|No such file/i);
-      expect(fs.existsSync('/proc/recut-nope')).toBe(false);
+      expect(text).toMatch(/Cannot create output folder|failed|ENOENT|EACCES|ENOTDIR|No such file|not a folder/i);
+      expect(fs.existsSync(unwritable)).toBe(false);
       expect(L.errors.length - n0).toBe(0);
     }, {
       note: 'sequence seeded through the store; dialog opened through the store (Ctrl+M path covered in TEST 1–3)',

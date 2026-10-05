@@ -1,5 +1,8 @@
 /* Compare panel */
 .compare-panel { --cmp-a: var(--accent); --cmp-b: var(--accent-2); }
+.panel.compare-panel { overflow-y: auto; }
+/* On short windows the monitors would otherwise squeeze the structure list to nothing: keep it usable and let the
+   whole panel scroll instead. */
 .cmp-header { display: flex; flex-direction: column; gap: 4px; padding: 5px 6px; background: var(--bg-2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .cmp-header-row { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .cmp-header-row .select { min-width: 0; flex: 1; }
@@ -38,7 +41,7 @@
 .cmp-delta.pos .mono:first-of-type { color: var(--ok); }
 
 /* body */
-.cmp-body { flex: 1; min-height: 0; }
+.cmp-body { flex: 1 0 auto; min-height: 200px; }
 .cmp-section { border-bottom: 1px solid var(--border); }
 .cmp-section-head { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; color: var(--text-dim); font-size: var(--font-size-xs); text-transform: uppercase; letter-spacing: 0.06em; background: var(--bg-2); position: sticky; top: 0; z-index: 1; }
 .cmp-section-head > svg { flex-shrink: 0; }

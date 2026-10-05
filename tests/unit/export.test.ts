@@ -727,8 +727,11 @@ describe('chunked export (P-01)', () => {
     expect(Math.sqrt(sq / a.length)).toBeLessThan(0.003);
 
     // ffmpeg memory stays bounded (one chunk at a time).
-    expect(peakDuringExportKb).toBeGreaterThan(0);
-    expect(peakDuringExportKb / 1024).toBeLessThan(1536);
+    // (RSS is sampled from /proc, so this part only runs on Linux.)
+    if (process.platform === 'linux') {
+      expect(peakDuringExportKb).toBeGreaterThan(0);
+      expect(peakDuringExportKb / 1024).toBeLessThan(1536);
+    }
     console.log(`[chunked export] ${res.chunks} chunks, boundaries ${chunks.map((c) => c.startF).join(',')}; ${res.audioChunks} audio chunks ${audioChunks.map((c) => c.startF).join(',')}; peak ffmpeg RSS ${(peakDuringExportKb / 1024).toFixed(0)} MB`);
   }, 300000);
 
