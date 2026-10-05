@@ -16,6 +16,7 @@ ReCut is an Electron + React + TypeScript non-linear video editor for fan edits.
 - Run `npm run typecheck` and `npm test` before reporting done.
 - Agents own only the files named in their task. Do not edit other files; report needed changes instead.
 - Bugs are filed and closed as Markdown files under `bugs/` (see `bugs/README.md`, copy `bugs/TEMPLATE.md`).
+- Versioning and releases: see docs/RELEASING.md. Feature and bug PRs never change the version.
 
 ## Commands
 - `npm run dev` — vite + electron. `npm run build` — build both. `npm run typecheck`, `npm test`, `npm run test:e2e`.

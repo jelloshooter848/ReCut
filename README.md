@@ -6,7 +6,8 @@ timeline, and three-point editing. On top of that it adds tools for working acro
 of dialogue in any episode, keep a library of tagged scenes, compare two alternate cuts structurally, and always know
 the original source timecode of every frame.
 
-Electron + React + TypeScript. FFmpeg does all media work. Version 0.1.0.
+Electron + React + TypeScript. FFmpeg does all media work. See [CHANGELOG.md](CHANGELOG.md) for releases and
+[docs/RELEASING.md](docs/RELEASING.md) for how versions are numbered.
 
 ![ReCut editing workspace](docs/screenshots/project.png)
 
@@ -75,7 +76,7 @@ Electron + React + TypeScript. FFmpeg does all media work. Version 0.1.0.
 ## Windows: install and run
 
 - **Installer (easiest):** open the repository's [Releases](https://github.com/jelloshooter848/ReCut/releases) page,
-  download `ReCut-Setup-<version>.exe` from the newest release and run it. It adds Start-menu and desktop shortcuts.
+  download `ReCut-Setup-<version>.exe` from the release marked **Latest** and run it. It adds Start-menu and desktop shortcuts.
   FFmpeg is bundled, so nothing else is needed. `ReCut-Portable-<version>.exe` runs without installing.
   The app is not code-signed, so Windows may show "Windows protected your PC": click **More info › Run anyway**.
 - **From a clone:** double-click **`Start ReCut.cmd`** in the repository folder. The first run checks for Node.js
