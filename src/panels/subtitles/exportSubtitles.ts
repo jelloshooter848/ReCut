@@ -5,7 +5,7 @@
 import type { ID, Project, Sequence } from '../../../shared/model';
 import { framesToSeconds, secondsToFrames } from '../../../shared/time';
 import { resolveSubtitleCues, type ResolvedCue } from '../../../shared/timeline';
-import { parseSubtitles, serializeSrt, serializeVtt } from '../../../shared/subtitles';
+import { parseSubtitles, serializeSrt, serializeVtt, writableCues } from '../../../shared/subtitles';
 import { uid } from '../../../shared/ids';
 import { findSamePath, resolveAbsolutePath } from '../../../shared/pathKey';
 import { useStore, recutApi } from '@/state';
@@ -26,8 +26,9 @@ export function sequenceCuesInSeconds(seq: Sequence, trackId?: ID): { start: num
   return resolved.map((c) => ({ start: framesToSeconds(c.start, seq.fps), end: framesToSeconds(c.end, seq.fps), text: c.text }));
 }
 
+/** `count` is the number of cues actually written (cues ending at or before 0 are dropped: writableCues). */
 export function serializeSequenceSubtitles(seq: Sequence, format: SubtitleFormat, trackId?: ID): { content: string; count: number } {
-  const cues = sequenceCuesInSeconds(seq, trackId);
+  const cues = writableCues(sequenceCuesInSeconds(seq, trackId));
   return { content: format === 'vtt' ? serializeVtt(cues) : serializeSrt(cues), count: cues.length };
 }
 

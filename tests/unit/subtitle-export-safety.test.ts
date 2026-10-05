@@ -17,7 +17,7 @@ import path from 'node:path';
 import type { Project, Sequence } from '@shared/model';
 import { createMediaItem, createProject, createSequence } from '@shared/project';
 import { useStore, resetStore } from '../../src/state/store';
-import { exportSequenceSubtitles, writeSequenceSubtitles } from '../../src/panels/subtitles/exportSubtitles';
+import { exportSequenceSubtitles, serializeSequenceSubtitles, writeSequenceSubtitles } from '../../src/panels/subtitles/exportSubtitles';
 import { findSamePath, pathCompareKey, resolveAbsolutePath } from '@shared/pathKey';
 import { writeSubtitleFile } from '../../electron/fs';
 import { IPC } from '@shared/ipc';
@@ -315,6 +315,39 @@ describe('writeSequenceSubtitles (pure, injected writer)', () => {
     });
     expect(res).toEqual({ ok: false, error: 'Refusing: canonical match' });
     expect(sent).toEqual([expect.arrayContaining(['/media/Show/clip.mp4', '/media/Show/clip.en.srt'])]);
+  });
+});
+
+describe('serializeSequenceSubtitles counts the cues it writes', () => {
+  it('cues nudged to end at or before 0 are dropped and not counted; one straddling 0 is clipped and counted', () => {
+    const seq = createSequence('Edit', FPS);
+    seq.subtitleTracks.push({
+      id: 't', name: 'T', language: 'en', enabled: true, cues: [
+        { id: 'gone', start: 0, duration: 24, offset: -48, text: 'Before zero' },
+        { id: 'edge', start: 0, duration: 24, offset: -24, text: 'Ends at zero' },
+        { id: 'clip', start: 12, duration: 24, offset: -24, text: 'Straddles zero' },
+        { id: 'ok', start: 48, duration: 24, offset: 0, text: 'Normal' },
+      ],
+    });
+    for (const format of ['srt', 'vtt'] as const) {
+      const { content, count } = serializeSequenceSubtitles(seq, format);
+      expect(count).toBe(2);
+      expect(content).toContain('Straddles zero');
+      expect(content).toContain('Normal');
+      expect(content).not.toMatch(/Before zero|Ends at zero/);
+    }
+    expect(serializeSequenceSubtitles(seq, 'srt').content).toBe(
+      '1\n00:00:00,000 --> 00:00:00,500\nStraddles zero\n\n2\n00:00:02,000 --> 00:00:03,000\nNormal\n',
+    );
+  });
+
+  it('an export reports the written count', async () => {
+    const { project, seq } = fixture();
+    seq.subtitleTracks[0].cues.push({ id: 'neg', start: 0, duration: 12, offset: -24, text: 'Before zero' });
+    useStore.setState({ project });
+    const out = path.join(dir, 'Counted.srt');
+    expect(await exportSequenceSubtitles({ path: out })).toEqual({ ok: true, path: out, count: 1 });
+    expect(fs.readFileSync(out, 'utf8')).not.toContain('Before zero');
   });
 });
 
