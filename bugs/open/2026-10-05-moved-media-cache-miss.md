@@ -67,7 +67,7 @@ Thumbnails (`thumbs.ts:222`, `:266`), proxies (`proxy.ts:92`, `:148`), waveforms
 - A content-identity key (for example size + mtime + a hash of the first and last few MB; the file name alone is
   not enough) would survive moves without hashing whole files. Do not hash whole sources (40 GB remuxes). Keep old-key
   entries readable or migrate them.
-- Collect / Consolidate Project and relative media roots (`docs/ROADMAP.md` §14, §15) depend on this.
+- Collect / Consolidate Project and relative media roots (`docs/ROADMAP.md` §16, §17) depend on this.
 - Documented in `docs/LIMITATIONS.md` → Projects.
 
 ---
