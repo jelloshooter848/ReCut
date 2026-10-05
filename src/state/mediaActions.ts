@@ -332,20 +332,54 @@ export async function saveProject(path?: string): Promise<{ ok: true; path: stri
   return res;
 }
 
-export async function openProject(path: string): Promise<{ ok: true; project: Project } | { ok: false; error: string }> {
+/** The name a still-untitled project takes from its file (`/a/My Edit.recut` -> `My Edit`). */
+export const DEFAULT_PROJECT_NAME = 'Untitled Project';
+export function projectNameFromPath(p: string): string {
+  return fileNameOf(p).replace(/\.recut$/i, '').trim();
+}
+
+/** Warning text for a load that had to repair damaged data (LoadResult.repaired / preRepairPath). */
+export function repairedMessage(repaired: string[], preRepairPath?: string): string {
+  const n = repaired.length;
+  const what = `${repaired.slice(0, 3).join('; ')}${n > 3 ? `; and ${n - 3} more` : ''}`;
+  const kept = preRepairPath ? `The original file was kept as ${fileNameOf(preRepairPath)}.` : 'Could not keep a copy of the original file.';
+  return `Some project data was damaged and has been repaired (${what}). ${kept}`;
+}
+
+/** How open reports what happened: kind, text and (optionally) how long the message stays up. */
+export type OpenNotify = (kind: 'ok' | 'warn', text: string, timeoutMs?: number) => void;
+
+/**
+ * Load the project at `path` into the store: the one open path behind both `actions.openProject` and the
+ * File › Open / recent / OS open requests (src/app/project.ts requestOpenProject). Normalizes the data, gives a
+ * still-untitled project its file name, and warns when the backup was opened or the data had to be repaired.
+ * `warned` is true when a warning was shown (callers skip their success message then).
+ */
+export async function openProject(path: string, opts: { notify?: OpenNotify } = {}): Promise<{ ok: true; project: Project; path: string; warned: boolean } | { ok: false; error: string }> {
   const api = recutApi();
   if (!api) return { ok: false, error: 'IPC unavailable' };
+  const notify: OpenNotify = opts.notify ?? ((kind, text) => say(kind, text));
   const res = await api.loadProject(path);
   if (!res.ok) return res;
   try {
-    const project = normalizeProject(res.project);
+    let project = normalizeProject(res.project);
+    if (project.name === DEFAULT_PROJECT_NAME) {
+      const name = projectNameFromPath(res.path);
+      if (name) project = { ...project, name };
+    }
     useStore.getState().loadProjectData(project, res.path);
-    // BUG-5: tell the user the newest edits were lost (same wording as requestOpenProject, which does not call this).
+    let warned = false;
+    // BUG-5: tell the user the newest edits were lost.
     if (res.fromBackup) {
       const when = res.backupMtime ? new Date(res.backupMtime).toLocaleString() : 'an earlier save';
-      say('warn', `Opened the backup from ${when}; the project file was damaged`);
+      notify('warn', `Opened the backup from ${when}; the project file was damaged`);
+      warned = true;
     }
-    return { ok: true, project };
+    if (res.repaired?.length) {
+      notify('warn', repairedMessage(res.repaired, res.preRepairPath), 12000);
+      warned = true;
+    }
+    return { ok: true, project, path: res.path, warned };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }

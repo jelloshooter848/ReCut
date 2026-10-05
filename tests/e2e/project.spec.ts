@@ -302,12 +302,16 @@ test('import: routing by identity, sidecar subtitles, de-dupe, missing files, pr
   expect(log.some((t) => /Generating proxies for 1 file the preview can't decode/.test(t))).toBe(true);
   await page.evaluate(() => (window as any).__recut.store.getState().setSettings({ useProxies: false }));
 
-  // QA-22: relink to a shorter file → clips past the end are reported.
+  // QA-22: relink to a shorter file → clips past the end are trimmed to the new media (and reported).
+  // (Was: only reported, "will freeze on the last frame"; attack-qa media-proxy-export requires the trim.)
   const short = path.join(scratch, 'short.mp4');
   execSync(`ffmpeg -hide_banner -loglevel error -y -i "${ep}" -t 2 -c copy "${short}"`);
   await page.evaluate((id) => { const st = (window as any).__recut.store.getState(); st.insertFromSource(st.project.activeSequenceId, { mediaId: id, in: 0, out: 10, atFrame: 0, mode: 'overwrite' }); }, byPath[ep].id);
   await expect.poll(() => page.evaluate(() => !!(window as any).__recut.projectActions)).toBe(true);
-  expect(await page.evaluate(({ id, p }) => (window as any).__recut.projectActions.relinkWithPath(id, p), { id: byPath[ep].id, p: short })).toBe(true);
   expect(await page.evaluate((id) => (window as any).__recut.projectActions.clipsPastEnd(id, 2), byPath[ep].id)).toBeGreaterThan(0);
-  await expect(page.locator('.toast-host')).toContainText(/clips? extends? past the new media and will freeze on the last frame/);
+  expect(await page.evaluate(({ id, p }) => (window as any).__recut.projectActions.relinkWithPath(id, p), { id: byPath[ep].id, p: short })).toBe(true);
+  const shortDur: number = await page.evaluate((id) => (window as any).__recut.store.getState().project.media[id].probe.duration, byPath[ep].id);
+  expect(shortDur).toBeLessThan(5);
+  expect(await page.evaluate(({ id, d }) => (window as any).__recut.projectActions.clipsPastEnd(id, d), { id: byPath[ep].id, d: shortDur })).toBe(0);
+  await expect(page.locator('.toast-host')).toContainText(/shorter after the relink: trimmed \d+ clips? that ran past the end/);
 });

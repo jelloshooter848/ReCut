@@ -6,7 +6,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Copy, FolderOpen, Info, Loader2, Terminal, XCircle } from 'lucide-react';
 import type { ExportSettings, JobInfo, Sequence } from '@shared/model';
 import type { ExportRequest } from '@shared/ipc';
-import { FPS_PRESETS, fpsEquals, fpsLabel, formatTimecode } from '@shared/time';
+import { FPS_PRESETS, fpsEquals, fpsLabel, formatSequenceTimecode } from '@shared/time';
 import { allTracks } from '@shared/timeline';
 import { useStore, activeSequence, recutApi, ffmpegUnavailable } from '@/state';
 import { useJob } from '@/app/jobsStore';
@@ -16,11 +16,11 @@ import { confirm } from '@/app/dialogs/ConfirmDialog';
 import { injectStyle } from './injectStyle';
 import { buildExportRequest } from './request';
 import {
-  CRF_MAX, CRF_MIN, CUSTOM, ENCODER_PRESETS, MAX_DIMENSION, MIN_DIMENSION, applyPreset, checklistBlocks, crfLabel,
+  AC3_SAMPLE_RATES, CRF_MAX, CRF_MIN, CUSTOM, ENCODER_PRESETS, MAX_DIMENSION, MIN_DIMENSION, applyPreset, checklistBlocks, crfLabel,
   effectiveExportFps, estimateEtaSeconds, estimateFileSize, exportChecklist, exportOutputFrames, exportRange, formatBytes,
   formatDuration, fpsConversionNote, fpsFromOptionValue,
   fpsOptionValue, hasInOut, initialExportSettings, loadSavedExportSettings, maxSourceChannels, outputPathFor,
-  presetNameFor, presetsFor, saveExportSettings, sanitizeFileName, sequenceHasSubtitles, validateExportSettings, withMp4,
+  clampSampleRateForCodec, presetNameFor, presetsFor, sampleRateSupported, saveExportSettings, sanitizeFileName, sequenceHasSubtitles, validateExportSettings, withMp4,
 } from './settings';
 
 const CSS = `
@@ -66,6 +66,22 @@ const QUALITY_OPTIONS = [{ value: 'crf', label: 'Constant quality (CRF)' }, { va
 const AUDIO_CODEC_OPTIONS = [{ value: 'aac', label: 'AAC' }, { value: 'ac3', label: 'AC-3 (Dolby Digital)' }] as const;
 const AUDIO_BITRATES = [96, 128, 160, 192, 256, 320, 384, 448, 640];
 const SAMPLE_RATES = [44100, 48000, 96000];
+
+/**
+ * Sample rates offered for `codec`: AC-3 gets 32 / 44.1 / 48 kHz only; others the common rates. The current
+ * rate stays selectable when the codec supports it (e.g. a sequence at 22.05 kHz).
+ */
+export function sampleRateChoices(codec: ExportSettings['audioCodec'], current: number): number[] {
+  const base = codec === 'ac3' ? AC3_SAMPLE_RATES : SAMPLE_RATES;
+  const vals = base.filter((r) => sampleRateSupported(codec, r));
+  if (current > 0 && !vals.includes(current) && sampleRateSupported(codec, current)) vals.push(current);
+  return vals.sort((a, b) => a - b);
+}
+
+/** A settings edit from the dialog: proxies stay off, and the sample rate follows the audio codec (AC-3 ≤ 48 kHz). */
+export function patchExportSettings(settings: ExportSettings, patch: Partial<ExportSettings>): ExportSettings {
+  return clampSampleRateForCodec({ ...settings, ...patch, useProxies: false });
+}
 const ENCODER_OPTIONS = ENCODER_PRESETS.map((p) => ({ value: p, label: p }));
 
 type Phase = { kind: 'edit' } | { kind: 'job'; jobId: string; outputPath: string };
@@ -125,7 +141,7 @@ export function ExportDialog() {
 
   const onClose = useCallback(() => closeDialog('export'), [closeDialog]);
   const update = useCallback((patch: Partial<ExportSettings>) => {
-    setSettings((s) => (s ? { ...s, ...patch, useProxies: false } : s));
+    setSettings((s) => (s ? patchExportSettings(s, patch) : s));
     setCommand(null); setCommandError(null);
   }, []);
 
@@ -259,9 +275,9 @@ function SettingsView(p: SettingsViewProps) {
     return vals.map((v) => ({ value: String(v), label: `${v} kbps` }));
   }, [settings.audioBitrateKbps]);
   const sampleRateOptions = useMemo(() => {
-    const vals = SAMPLE_RATES.includes(settings.sampleRate) ? SAMPLE_RATES : [...SAMPLE_RATES, settings.sampleRate].sort((a, b) => a - b);
-    return vals.map((v) => ({ value: String(v), label: `${(v / 1000).toFixed(1).replace(/\.0$/, '')} kHz` }));
-  }, [settings.sampleRate]);
+    return sampleRateChoices(settings.audioCodec, settings.sampleRate)
+      .map((v) => ({ value: String(v), label: `${(v / 1000).toFixed(1).replace(/\.0$/, '')} kHz` }));
+  }, [settings.audioCodec, settings.sampleRate]);
 
   const footer = (
     <>
@@ -287,7 +303,7 @@ function SettingsView(p: SettingsViewProps) {
               <dt>Format</dt><dd>{seq.width}×{seq.height} · {fpsLabel(seq.fps)} fps</dd>
               <dt>Audio</dt><dd>{seq.channels === 6 ? '5.1' : 'Stereo'} · {(seq.sampleRate / 1000).toFixed(1).replace(/\.0$/, '')} kHz</dd>
               <dt>Clips</dt><dd>{clipCount(seq)}</dd>
-              <dt>Length</dt><dd className="mono">{formatTimecode(exportRange(seq, { rangeMode: 'entire' }).frames, seq.fps)}</dd>
+              <dt>Length</dt><dd className="mono">{formatSequenceTimecode(exportRange(seq, { rangeMode: 'entire' }).frames, seq.fps)}</dd>
             </dl>
           </div>
           <div>
@@ -297,7 +313,7 @@ function SettingsView(p: SettingsViewProps) {
               <dt>Quality</dt><dd>{settings.qualityMode === 'crf' ? `CRF ${settings.crf} (${crfLabel(settings.crf)})` : `${settings.videoBitrateKbps} kbps`} · {settings.preset}</dd>
               <dt>Audio</dt><dd>{settings.audioCodec.toUpperCase().replace('AC3', 'AC-3')} · {settings.audioBitrateKbps} kbps · {settings.audioChannels === 6 ? '5.1' : 'Stereo'}</dd>
               <dt>Range</dt><dd>{range.usesInOut ? 'In → Out' : 'Entire sequence'}</dd>
-              <dt>Duration</dt><dd className="mono">{formatTimecode(range.frames, seq.fps)} · {outFramesLabel}</dd>
+              <dt>Duration</dt><dd className="mono">{formatSequenceTimecode(range.frames, seq.fps)} · {outFramesLabel}</dd>
               <dt>Est. size</dt><dd data-testid="export-size">{size.approximate ? '≈ ' : ''}{formatBytes(size.bytes)}</dd>
               <dt>File</dt><dd className="wrap xd-path" title={outPath}>{outPath}</dd>
             </dl>
@@ -429,7 +445,7 @@ function SettingsView(p: SettingsViewProps) {
               <div className="ctl">
                 <Select value={settings.rangeMode} onChange={(v) => update({ rangeMode: v })}
                   options={[{ value: 'entire', label: 'Entire sequence' }, { value: 'inOut', label: hasInOut(seq) ? 'In to Out' : 'In to Out (not set)', disabled: !hasInOut(seq) }]} />
-                <span className="xd-hint mono">{formatTimecode(range.frames, seq.fps)} · {outFramesLabel} · {size.approximate ? '≈ ' : ''}{formatBytes(size.bytes)}</span>
+                <span className="xd-hint mono">{formatSequenceTimecode(range.frames, seq.fps)} · {outFramesLabel} · {size.approximate ? '≈ ' : ''}{formatBytes(size.bytes)}</span>
               </div>
             </div>
           </section>
