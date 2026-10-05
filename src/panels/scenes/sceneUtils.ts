@@ -5,6 +5,7 @@
 import type { ID, MediaItem, Rational, SceneRecord } from '@shared/model';
 import { formatSequenceSecondsTimecode, formatClock, secondsToFrames, validFpsOr } from '@shared/time';
 import { uid } from '@shared/ids';
+import { clipEnd, findClip } from '@shared/timeline';
 import { useStore, identityLabel } from '@/state';
 import { activeSequence } from '@/state/selectors';
 import { setClipDrag, type ClipDragPayload } from '@/app/dnd';
@@ -199,7 +200,13 @@ export function insertScenesAtPlayhead(scenes: SceneRecord[], mode: 'insert' | '
   let at = seq.view.playhead;
   for (const scene of scenes) {
     const ids = s.insertFromSource(seq.id, { mediaId: scene.mediaId, in: scene.in, out: scene.out, atFrame: at, mode, extra: sceneClipExtra(scene) });
-    if (ids.length) at += Math.max(1, secondsToFrames(sceneDuration(scene), seq.fps));
+    if (!ids.length) continue;
+    // Advance by what was actually placed: inserts are capped at the media end, so the rounded scene length
+    // (secondsToFrames) can be a frame longer than the clip and would leave a gap.
+    const placed = useStore.getState().project.sequences[seq.id];
+    let end = -Infinity;
+    if (placed) for (const id of ids) { const loc = findClip(placed, id); if (loc) end = Math.max(end, clipEnd(loc.clip)); }
+    at = Number.isFinite(end) ? end : at + Math.max(1, secondsToFrames(sceneDuration(scene), seq.fps));
   }
   if (scenes.length) s.setView(seq.id, { playhead: at });
 }

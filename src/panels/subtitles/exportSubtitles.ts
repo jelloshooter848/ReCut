@@ -42,7 +42,8 @@ export type SubtitleExportOptions = { seqId?: ID; trackId?: ID; path: string; fo
  * (projectSourcePaths: media, proxies, imported subtitle files), compared lexically like the video exporter
  * does. This is the early, friendly check; the main process repeats it on canonical paths (symlinks, hard
  * links) before writing (electron/fs.ts writeSubtitleFile).
- * `platform` is the main process's `process.platform`; unknown compares case-insensitively.
+ * `platform` is the main process's `process.platform`: it only decides the path syntax (Windows drive / UNC vs
+ * POSIX; undefined guesses from the path). Case is folded on every platform, like the main-process check.
  */
 export function subtitleExportPathError(project: ExportProjectSources, path: string, platform: string | undefined): string | null {
   if (resolveAbsolutePath(path, platform) === null) return `Subtitle export needs a full file path, not "${path}".`;
@@ -98,7 +99,7 @@ function mainProcessPlatform(api: NonNullable<ReturnType<typeof recutApi>>): Pro
 export async function exportSequenceSubtitles(opts: SubtitleExportOptions): Promise<ExportResult> {
   const api = recutApi();
   if (!api) return { ok: false, error: 'IPC unavailable' };
-  // Paths compare like the main process will see them; an unknown platform compares case-insensitively.
+  // Paths resolve with the main process's path syntax (its platform); case folds on every platform.
   const platform = await mainProcessPlatform(api);
   return writeSequenceSubtitles(useStore.getState().project, opts, { exportSubtitleFile: (p, c, prot) => api.exportSubtitleFile(p, c, prot), platform });
 }

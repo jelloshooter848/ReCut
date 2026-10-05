@@ -6,12 +6,14 @@
  */
 import type { Rational, Track } from '../../../shared/model';
 import { formatSequenceTimecode, fpsValue } from '../../../shared/time';
+import { VIEW_ZOOM_MAX, VIEW_ZOOM_MIN } from '../../../shared/limits';
 
 /** Default lower zoom bound (px per frame); long sequences lower it dynamically (see minZoomFor). */
 export const MIN_ZOOM = 0.01;
-/** Absolute lower bound: ~2.3 days @24 fps in a 500 px lane. */
-export const ZOOM_FLOOR = 1e-4;
-export const MAX_ZOOM = 50;
+/** Absolute lower bound: ~2.3 days @24 fps in a 500 px lane. The same bounds normalizeProject clamps a loaded
+ *  view's zoom to (shared/limits.ts), so a loaded zoom is always reachable here. */
+export const ZOOM_FLOOR = VIEW_ZOOM_MIN;
+export const MAX_ZOOM = VIEW_ZOOM_MAX;
 /** Pixels within which an edge/snap target grabs the pointer. */
 export const EDGE_PX = 6;
 export const SNAP_PX = 8;

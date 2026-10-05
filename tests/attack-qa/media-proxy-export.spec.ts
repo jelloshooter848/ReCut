@@ -39,6 +39,20 @@ async function waitJob(id: string, timeout = 120_000) {
   await expect.poll(async () => (await jobsOf()).find((j) => j.id === id)?.status, { timeout }).toMatch(/done|failed|canceled/);
   return (await jobsOf()).find((j) => j.id === id);
 }
+/**
+ * Import `file` and return its media id. Tests share one app per worker, so a file an earlier test already
+ * imported yields no new id (imports skip duplicates): then return the existing item's id for that path.
+ */
+async function importOrFind(file: string): Promise<string> {
+  const [id] = await importMedia(app.page, [file]);
+  if (id) return id;
+  const existing: string | undefined = await app.page.evaluate((file) => {
+    const all = Object.values((window as unknown as W).__recut.store.getState().project.media) as any[];
+    return all.find((m) => m.path === file)?.id;
+  }, file);
+  expect(existing, `${file} was neither imported nor already in the project`).toBeTruthy();
+  return existing!;
+}
 const media = (id: string) => app.page.evaluate((id) => (window as unknown as W).__recut.store.getState().project.media[id], id);
 const startProxy = (id: string) => app.page.evaluate(async (id) => {
   const w = window as unknown as W; const m = w.__recut.store.getState().project.media[id];
@@ -203,7 +217,15 @@ test('export with a path-traversal file name through IPC lands outside the chose
 });
 
 test('kill the app mid-proxy: no finished proxy is left behind, relaunch shows status none, .part is cleaned on retry', async () => {
-  const [id] = await importMedia(app.page, [longSrc]);
+  // longSrc is already in the project when the cancel/retry test above ran in this worker.
+  const id = await importOrFind(longSrc);
+  // The cancel/retry test above also finished a proxy for longSrc in this worker. A cached proxy makes the job
+  // return at once ('Cached') without ever writing a .part to kill: remove it so this job really encodes.
+  const cached = (await media(id)).proxy?.path as string | undefined;
+  if (cached) {
+    fs.rmSync(cached, { force: true });
+    await app.page.evaluate((id) => (window as unknown as W).__recut.store.getState().invalidateProxy(id), id);
+  }
   const projectPath = path.join(tmp, 'kill.recut');
   // make the project reference the long file, save, then start the proxy and kill the process
   await app.page.evaluate(async (p) => (window as unknown as W).__recut.actions.saveProject(p), projectPath);

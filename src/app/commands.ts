@@ -371,7 +371,11 @@ export function buildEditingCommands(): CommandInput[] {
       const seq = seqNow(); if (!seq) return;
       const sel = selectedClips(S());
       let range: { start: number; end: number } | null = null;
-      if (sel.length) range = { start: Math.min(...sel.map((c) => c.start)), end: Math.max(...sel.map(clipEnd)) };
+      if (sel.length) {
+        // Loops, not Math.min/max(...spread): huge selections would overflow the stack.
+        range = { start: Infinity, end: -Infinity };
+        for (const c of sel) { if (c.start < range.start) range.start = c.start; if (clipEnd(c) > range.end) range.end = clipEnd(c); }
+      }
       else { const hit = topmostClipAt(seq, seq.view.playhead); if (hit) range = { start: hit.clip.start, end: clipEnd(hit.clip) }; }
       if (!range) { toast('info', 'No clip under the playhead'); return; }
       S().setView(seq.id, { inPoint: range.start, outPoint: range.end });

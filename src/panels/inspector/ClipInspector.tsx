@@ -155,8 +155,9 @@ function SourceAtPlayhead({ clip, fps, media }: { clip: Clip; fps: Rational; med
 function SourceSection({ seqId: _seqId, fps, clips, media }: { seqId: ID; fps: Rational; clips: Clip[]; media: MediaItem | undefined }) {
   const single = clips.length === 1 ? clips[0] : null;
   const mediaFps = validFpsOr(media?.probe?.video?.fps, fps);
-  const start = Math.min(...clips.map((c) => c.start));
-  const end = Math.max(...clips.map((c) => clipEnd(c)));
+  // Loops, not Math.min/max(...spread): huge selections would overflow the stack.
+  let start = Infinity, end = -Infinity;
+  for (const c of clips) { if (c.start < start) start = c.start; if (clipEnd(c) > end) end = clipEnd(c); }
   if (!single) {
     return (
       <Section id="source" title="Source" badge={`${clips.length} clips`}>
@@ -288,7 +289,8 @@ function AudioSection({ seqId, fps, targets, selectedIds }: { seqId: ID; fps: Ra
   const commit = () => finish('Audio');
   const same = (pick: (a: ClipAudio) => number | boolean) => allSame(targets, (c) => pick(c.audio));
   const reset = (fn: (a: ClipAudio) => void) => { set(fn); finish('Reset audio'); };
-  const maxFade = Math.min(...targets.map((c) => c.duration));
+  let maxFade = Infinity; // a loop, not Math.min(...spread): huge selections would overflow the stack
+  for (const c of targets) if (c.duration < maxFade) maxFade = c.duration;
   const linkedOnly = targets.every((t) => !selectedIds.includes(t.id));
   return (
     <Section id="audio" title="Audio" badge={linkedOnly ? 'linked audio' : targets.length > 1 ? `${targets.length} clips` : undefined}

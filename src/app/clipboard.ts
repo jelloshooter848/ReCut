@@ -26,7 +26,11 @@ export function copyClipsToClipboard(seq: Sequence, ids: ID[]): number {
   const entries: ClipboardEntry[] = [];
   seq.videoTracks.forEach((t, i) => { for (const c of t.clips) if (want.has(c.id)) entries.push({ clip: plain(c), trackId: t.id, trackKind: 'video', trackIndex: i }); });
   seq.audioTracks.forEach((t, i) => { for (const c of t.clips) if (want.has(c.id)) entries.push({ clip: plain(c), trackId: t.id, trackKind: 'audio', trackIndex: i }); });
-  if (entries.length) clipboard = { entries, origin: Math.min(...entries.map((e) => e.clip.start)), sequenceId: seq.id };
+  if (entries.length) {
+    let origin = Infinity; // a loop, not Math.min(...spread): huge selections would overflow the stack
+    for (const e of entries) if (e.clip.start < origin) origin = e.clip.start;
+    clipboard = { entries, origin, sequenceId: seq.id };
+  }
   return entries.length;
 }
 

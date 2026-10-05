@@ -200,13 +200,10 @@ export async function relinkWithPath(mediaId: ID, newPath: string): Promise<bool
   invalidateMediaPath(oldPath);
   invalidateMediaPath(newPath);
   if (probe) useStore.getState().setMediaProbe(mediaId, probe);
-  else probe = await probeMedia(mediaId);
+  else await probeMedia(mediaId);
   toast('ok', `Relinked ${fileNameOf(newPath)}`);
-  const after = useStore.getState().project.media[mediaId];
-  if (probe && after && after.kind !== 'image' && Number.isFinite(probe.duration) && probe.duration > 0) {
-    const past = clipsPastEnd(mediaId, probe.duration);
-    if (past) toast('warn', `${past} clip${past === 1 ? '' : 's'} extend${past === 1 ? 's' : ''} past the new media and will freeze on the last frame`);
-  }
+  // Clips that run past a shorter file's end are fitted to it by the store on this first probe (setMediaProbe ->
+  // one undo step + its own "shorter after the relink" warning); nothing is left to freeze, so no warning here.
   return true;
 }
 
