@@ -1,7 +1,7 @@
 # Roadmap omits stem separation, under-ranks nested sequences and OCR, and lacks a performance gate
 
 > **Not a code defect.** At the project owner's direction, this is filed as a bug *in the roadmap*. The bugs folder is
-> the current channel for reporting to the purchasing agent. Nothing below claims that ReCut's code misbehaves.
+> the current channel for reporting to the orchestrating agent. Nothing below claims that ReCut's code misbehaves.
 > "Fixing" this report means revising `docs/ROADMAP.md` (and `docs/LIMITATIONS.md` where noted), not changing code.
 
 | Field | Value |
