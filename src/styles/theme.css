@@ -1,0 +1,58 @@
+/* ReCut theme tokens — dark NLE palette (Premiere Pro / Resolve inspired). */
+:root {
+  --bg-0: #141414;
+  --bg-1: #1e1e1e;
+  --bg-2: #232323;
+  --bg-3: #2b2b2b;
+  --bg-4: #333333;
+  --bg-5: #3d3d3d;
+  --border: #3a3a3a;
+  --border-strong: #4a4a4a;
+  --text: #d4d4d4;
+  --text-bright: #f0f0f0;
+  --text-dim: #a3a3a3;
+  --text-faint: #8c8c8c;
+  --accent: #4d7cfe;
+  --accent-hover: #6a92ff;
+  --accent-soft: rgba(77, 124, 254, 0.18);
+  --accent-2: #e8a33d;
+  --accent-2-soft: rgba(232, 163, 61, 0.2);
+  --danger: #e05252;
+  --danger-soft: rgba(224, 82, 82, 0.18);
+  --ok: #4caf50;
+  --warn: #e8a33d;
+  --clip-video: #3b5a8a;
+  --clip-video-bright: #4f73ab;
+  --clip-audio: #3f7a5a;
+  --clip-audio-bright: #53997a;
+  --clip-title: #7a5a8a;
+  --clip-adjust: #8a6a3b;
+
+  --label-violet: #8e6cf0;
+  --label-iris: #5b7cf5;
+  --label-caribbean: #2bb3c0;
+  --label-lavender: #c47ad6;
+  --label-cerulean: #3f8de0;
+  --label-forest: #4caf6e;
+  --label-rose: #e0609a;
+  --label-mango: #f0a040;
+
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', 'Roboto Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --font-size: 12px;
+  --font-size-sm: 11px;
+  --font-size-xs: 10px;
+
+  --control-h: 22px;
+  --control-h-sm: 20px;
+  --radius: 3px;
+  --radius-lg: 5px;
+  --tab-h: 26px;
+  --topbar-h: 34px;
+  --panel-header-h: 26px;
+  --splitter: 6px;
+
+  --shadow-pop: 0 6px 24px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
+  --focus-ring: 0 0 0 1px var(--accent);
+  --transition: 90ms ease-out;
+}

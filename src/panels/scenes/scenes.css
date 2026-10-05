@@ -1,0 +1,106 @@
+/* Scene Library panel */
+.scn-panel:focus { outline: none; }
+.scn-panel:focus-visible { box-shadow: none; }
+
+.scn-toolbar {
+  display: flex; align-items: center; gap: 3px; min-height: var(--panel-header-h); padding: 2px 4px;
+  background: var(--bg-2); border-bottom: 1px solid var(--border); flex-shrink: 0; min-width: 0;
+}
+.scn-toolbar .input-wrap { flex: 1 1 80px; min-width: 60px; }
+.scn-toolbar .btn-group .btn { padding: 0 5px; }
+.scn-select { max-width: 150px; flex: 0 1 auto; }
+
+.scn-filters {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 4px; background: var(--bg-2); border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.scn-filters .select { width: 100%; }
+.scn-color-filter { grid-column: 1 / -1; padding: 2px 0; flex-wrap: wrap; }
+.scn-color-filter .swatch:disabled { opacity: 0.25; }
+.scn-swatch-any { background: repeating-linear-gradient(45deg, var(--bg-5) 0 3px, var(--bg-3) 3px 6px); }
+
+.scn-import {
+  display: flex; align-items: center; gap: 6px; padding: 3px 8px; background: var(--accent-2-soft); border-bottom: 1px solid var(--border);
+  color: var(--text); font-size: var(--font-size-sm); flex-shrink: 0;
+}
+.scn-import > svg { color: var(--accent-2); flex-shrink: 0; }
+
+.scn-body { display: flex; flex-direction: column; }
+.scn-group { display: flex; flex-direction: column; }
+.scn-group-head {
+  display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; background: var(--bg-2); border-bottom: 1px solid var(--border);
+  color: var(--text); font-weight: 600; font-size: var(--font-size-sm); position: sticky; top: 0; z-index: 2;
+}
+.scn-group-head > svg { color: var(--text-dim); flex-shrink: 0; }
+.scn-group-head:hover { background: var(--bg-3); }
+
+/* list rows */
+.scn-list { padding-bottom: 2px; }
+.scn-row {
+  display: flex; align-items: stretch; gap: 8px; padding: 5px 8px 5px 6px; min-width: 0; border-bottom: 1px solid var(--border); position: relative;
+  cursor: default;
+}
+.scn-row:hover { background: var(--bg-3); }
+.scn-row.selected { background: var(--accent-soft); }
+.scn-row.selected::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+.scn-row.missing .scn-thumb { opacity: 0.5; }
+.scn-row-color { width: 3px; border-radius: 2px; flex-shrink: 0; align-self: stretch; }
+.scn-thumb {
+  width: 64px; height: 36px; border-radius: 3px; background: var(--bg-0); border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; align-self: center;
+  display: flex; align-items: center; justify-content: center;
+}
+.scn-thumb img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.scn-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; justify-content: center; }
+.scn-name { color: var(--text-bright); font-weight: 500; }
+.scn-range { line-height: 1.2; }
+.scn-chips { display: flex; flex-wrap: wrap; gap: 3px; min-width: 0; }
+.scn-chips .tag { max-width: 140px; overflow: hidden; text-overflow: ellipsis; display: inline-block; line-height: 14px; }
+.scn-chip-loc { border-color: var(--label-forest); color: var(--label-forest); }
+.scn-chip-arc { border-color: var(--label-lavender); color: var(--label-lavender); }
+
+/* stars */
+.scn-stars { display: inline-flex; align-items: center; gap: 0; color: var(--text-faint); flex-shrink: 0; }
+.scn-star { background: none; border: none; padding: 0 1px; color: inherit; display: inline-flex; line-height: 0; cursor: default; }
+.scn-star.on { color: var(--accent-2); }
+.scn-stars.editable .scn-star:hover, .scn-stars.editable .scn-star:hover ~ .scn-star { color: var(--text-faint); }
+.scn-stars.editable:hover .scn-star { color: var(--accent-2); }
+.scn-stars.editable:hover .scn-star:hover ~ .scn-star { color: var(--text-faint); }
+.scn-star:disabled { opacity: 1; }
+
+/* grid cards */
+.scn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; padding: 6px; }
+.scn-card {
+  position: relative; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-2); overflow: hidden; min-width: 0;
+}
+.scn-card:hover { border-color: var(--border-strong); background: var(--bg-3); }
+.scn-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.scn-card-thumb { aspect-ratio: 16 / 9; width: 100%; background: var(--bg-0); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.scn-card-thumb img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.scn-card-dur { position: absolute; right: 4px; top: 4px; padding: 0 4px; border-radius: 2px; background: rgba(0,0,0,0.7); color: #fff; font-size: var(--font-size-xs); }
+.scn-card-color { position: absolute; left: 0; top: 0; width: 100%; height: 2px; }
+.scn-card-body { display: flex; flex-direction: column; gap: 1px; padding: 4px 6px 5px; min-width: 0; }
+
+/* editor sheet */
+.scn-editor {
+  flex: 0 0 auto; max-height: 55%; display: flex; flex-direction: column; border-top: 1px solid var(--border-strong); background: var(--bg-2); min-height: 0;
+  box-shadow: 0 -4px 12px rgba(0,0,0,0.25); z-index: 3;
+}
+.scn-editor-head { display: flex; align-items: center; gap: 6px; height: var(--panel-header-h); padding: 0 6px 0 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; font-weight: 600; }
+.scn-editor-swatch { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.scn-form {
+  display: grid; grid-template-columns: 68px 1fr; gap: 5px 8px; align-items: center; padding: 8px; overflow: auto; min-height: 0;
+}
+.scn-form > label { color: var(--text-dim); font-size: var(--font-size-sm); text-align: right; }
+.scn-form .taginput { min-height: var(--control-h-sm); }
+.scn-form .scn-tc { min-width: 88px; height: var(--control-h-sm); font-size: var(--font-size-sm); }
+.scn-form textarea.scn-notes { min-height: 44px; font-size: var(--font-size-sm); }
+.scn-form .swatches { flex-wrap: wrap; }
+
+/* virtualised body (P-09): fixed row heights, see ScenesPanel VRow */
+.scn-body:has(> .scn-vlist) { overflow: hidden; }
+.scn-vlist { flex: 1; min-height: 0; height: 100%; }
+.scn-vlist .scn-row { height: 100%; box-sizing: border-box; overflow: hidden; }
+.scn-vlist .scn-chips { flex-wrap: nowrap; overflow: hidden; }
+.scn-vlist.grid { padding-top: 6px; box-sizing: border-box; }
+.scn-grid.scn-grid-row { padding: 0 6px 6px; height: 100%; box-sizing: border-box; }
+.scn-grid-row .scn-card { height: 100%; box-sizing: border-box; }
+.scn-grid-row .scn-card-thumb { flex-shrink: 0; }

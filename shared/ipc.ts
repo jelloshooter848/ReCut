@@ -9,6 +9,8 @@ export const IPC = {
   // app
   appInfo: 'app:info',
   appQuit: 'app:quit',
+  appQuitAck: 'app:quitAck',
+  appQuitCancel: 'app:quitCancel',
   openExternal: 'app:openExternal',
   showItemInFolder: 'app:showItemInFolder',
   toggleFullscreen: 'app:toggleFullscreen',
@@ -21,6 +23,7 @@ export const IPC = {
   projectSave: 'project:save',
   projectLoad: 'project:load',
   projectAutosave: 'project:autosave',
+  projectAutosaveJson: 'project:autosaveJson',
   projectCheckRecovery: 'project:checkRecovery',
   projectDiscardRecovery: 'project:discardRecovery',
   projectRecent: 'project:recent',
@@ -30,13 +33,15 @@ export const IPC = {
   // files
   fsStat: 'fs:stat',
   fsReadText: 'fs:readText',
-  fsWriteText: 'fs:writeText',
+  /** Write a subtitle export (.srt / .vtt only), refused when it is the same file as a protected path. */
+  subtitlesExport: 'subtitles:export',
   fsScanForRelink: 'fs:scanForRelink',
   fsListDir: 'fs:listDir',
   // media
   mediaProbe: 'media:probe',
   mediaThumbnail: 'media:thumbnail',
   mediaFilmstrip: 'media:filmstrip',
+  mediaThumbCancel: 'media:thumbCancel',
   mediaWaveform: 'media:waveform',
   mediaProxyStart: 'media:proxyStart',
   mediaSceneDetectStart: 'media:sceneDetectStart',
@@ -57,6 +62,17 @@ export const IPC = {
   evBeforeQuit: 'ev:beforeQuit',
 } as const;
 
+/** How to fix a missing FFmpeg (shown in the startup banner and in import / export / proxy errors). */
+export const FFMPEG_INSTALL_HELP =
+  'Install FFmpeg (it provides both ffmpeg and ffprobe) and restart ReCut: `sudo apt install ffmpeg` on Debian/Ubuntu, '
+  + '`brew install ffmpeg` on macOS, or `winget install Gyan.FFmpeg` on Windows. Or point ReCut at the binaries with the '
+  + 'RECUT_FFMPEG and RECUT_FFPROBE environment variables. See docs/INSTALL.md.';
+
+/** Clear error for a missing ffmpeg / ffprobe binary. */
+export function ffmpegMissingMessage(binary: 'ffmpeg' | 'ffprobe'): string {
+  return `${binary} was not found, so ReCut cannot ${binary === 'ffprobe' ? 'read media files' : 'process media'}. ${FFMPEG_INSTALL_HELP}`;
+}
+
 export interface AppInfo {
   version: string;
   platform: string;
@@ -65,8 +81,13 @@ export interface AppInfo {
   ffmpegVersion: string | null;
   cacheDir: string;
   userDataDir: string;
+  /** The user's home directory (fallback output location for exports). */
+  homeDir: string;
   isDev: boolean;
 }
+
+/** Structural stand-in for the DOM `File` (shared/ is compiled without the DOM lib); a real File satisfies it. */
+export interface DroppedFile { name: string; size: number; type: string }
 
 export interface FileFilter { name: string; extensions: string[] }
 
@@ -76,16 +97,35 @@ export interface MessageOptions { type?: 'none' | 'info' | 'error' | 'question' 
 
 export interface FileStat { exists: boolean; size?: number; mtimeMs?: number; isDirectory?: boolean }
 
-export type SaveResult = { ok: true; path: string } | { ok: false; error: string }
-export type LoadResult = { ok: true; path: string; project: Project } | { ok: false; error: string }
+/** Result of `exportSubtitleFile`: refusals (project source, not .srt/.vtt, not absolute) come back as `ok: false`. */
+export type SubtitleWriteResult = { ok: true; path: string } | { ok: false; error: string };
 
-export interface RecoveryInfo { autosavePath: string; projectPath: string | null; savedAt: number; project: Project }
+export type SaveResult = { ok: true; path: string } | { ok: false; error: string }
+export type LoadResult =
+  | {
+    ok: true; path: string; project: Project; fromBackup?: boolean; backupMtime?: number;
+    /** What had to be repaired to open the file (one line per kind of repair); absent when nothing was. */
+    repaired?: string[];
+    /** Copy of the file as it was before the repairs (`<file>.pre-repair-<ts>`), when `repaired` is set and the copy worked. */
+    preRepairPath?: string;
+  }
+  | { ok: false; error: string }
+
+export interface RecoveryInfo {
+  autosavePath: string; projectPath: string | null; savedAt: number; project: Project;
+  /** What had to be repaired to load the autosave (one line per kind of repair); absent when nothing was. No copy is kept. */
+  repaired?: string[];
+}
 
 export interface RelinkCandidate { missingMediaId: ID; path: string; confidence: 'name+size' | 'name' }
 export interface RelinkScanRequest { folder: string; missing: { mediaId: ID; fileName: string; size?: number }[] }
 
 export interface ThumbnailRequest { path: string; time: number; width?: number; mediaId?: ID }
-export interface FilmstripRequest { path: string; times: number[]; width: number; mediaId?: ID }
+export interface FilmstripRequest {
+  path: string; times: number[]; width: number; mediaId?: ID;
+  /** Names this request so `cancelThumbnails([requestId])` can drop its still-queued frames. */
+  requestId?: string;
+}
 
 export interface WaveformData {
   /** peaks per second */
@@ -95,7 +135,11 @@ export interface WaveformData {
   duration: number;
 }
 
-export interface ProxyRequest { mediaId: ID; path: string; height: number; audioChannels?: number }
+export interface ProxyRequest {
+  mediaId: ID; path: string; height: number; audioChannels?: number;
+  /** Absolute ffprobe index of the audio stream to carry (the media's preferredAudioStream); default: first audio stream. */
+  audioStream?: number;
+}
 export interface SceneDetectRequest { mediaId: ID; path: string; threshold: number; duration: number; minSceneSeconds?: number }
 export interface SceneDetectResult { boundaries: number[]; duration: number }
 
@@ -105,17 +149,38 @@ export interface ExportRequest {
   settings: ExportSettings;
   /** Sequence subtitle cues, already resolved to seconds. */
   subtitles?: { start: number; end: number; text: string }[];
+  /**
+   * Every project source asset the export must never write over (or next to, via its `.part` temp or
+   * sidecar `.srt`): all project media paths and proxy paths (used by this sequence or not) and imported
+   * subtitle track files. Filled by the Export dialog; optional for other callers (the sequence's own
+   * media and everything in `media` are always protected).
+   */
+  protectedPaths?: string[];
+  /**
+   * Replace an existing output file / sidecar .srt (the user confirmed). Without it the export is refused with
+   * code 'exists' when either already exists. Never allows writing over a project source or a folder.
+   */
+  overwrite?: boolean;
 }
-export type ExportStartResult = { ok: true; jobId: ID; outputPath: string } | { ok: false; error: string }
+export type ExportStartResult =
+  | { ok: true; jobId: ID; outputPath: string }
+  /** `code: 'exists'`: the output or sidecar exists; ask the user and resend with `overwrite: true`. */
+  | { ok: false; error: string; code?: 'exists' }
 
 export type MenuCommand = string;
 
 export interface RecutApi {
   appInfo(): Promise<AppInfo>;
   quit(force?: boolean): Promise<void>;
+  /** Acknowledge ev:beforeQuit (the renderer is alive and handling it; cancels the force-quit fallback). */
+  quitAck(): Promise<void>;
+  /** The renderer decided not to quit (Cancel / failed save): clear the pending quit and stay open. */
+  quitCancel(): Promise<void>;
   openExternal(url: string): Promise<void>;
   showItemInFolder(path: string): Promise<void>;
   toggleFullscreen(): Promise<boolean>;
+  /** Filesystem path of a File dropped from the OS (Electron >= 32 no longer exposes `File.path`). '' when unknown. */
+  pathForFile(file: DroppedFile): string;
 
   openFiles(opts: OpenFilesOptions): Promise<string[]>;
   openFolder(opts?: { title?: string; defaultPath?: string }): Promise<string | null>;
@@ -126,6 +191,12 @@ export interface RecutApi {
   loadProject(path: string): Promise<LoadResult>;
   /** Writes <projectPath>.autosave (or an app-data file when the project has never been saved). */
   autosaveProject(path: string | null, project: Project): Promise<SaveResult>;
+  /**
+   * Same as autosaveProject with the project already serialized (JSON.stringify in the renderer): a string
+   * crosses contextBridge/IPC without a structured clone of the whole object graph. Written as-is
+   * (atomically, no re-parse / normalize).
+   */
+  autosaveProjectJson(path: string | null, json: string): Promise<SaveResult>;
   checkRecovery(): Promise<RecoveryInfo | null>;
   discardRecovery(autosavePath: string): Promise<void>;
   recentProjects(): Promise<string[]>;
@@ -135,7 +206,12 @@ export interface RecutApi {
 
   stat(path: string): Promise<FileStat>;
   readText(path: string): Promise<string>;
-  writeText(path: string, content: string): Promise<void>;
+  /**
+   * Atomically write subtitle text to `path` (.srt / .vtt only). The main process refuses a target that is
+   * the same file as any of `protectedPaths` (the project's source files) by canonical path (symlinks
+   * resolved, case-folded on Windows / macOS) or device + inode.
+   */
+  exportSubtitleFile(path: string, content: string, protectedPaths: string[]): Promise<SubtitleWriteResult>;
   listDir(path: string): Promise<{ name: string; path: string; isDirectory: boolean; size: number }[]>;
   scanForRelink(req: RelinkScanRequest): Promise<RelinkCandidate[]>;
 
@@ -143,6 +219,8 @@ export interface RecutApi {
   /** Returns a recut-media:// URL to a cached JPEG. */
   thumbnail(req: ThumbnailRequest): Promise<string>;
   filmstrip(req: FilmstripRequest): Promise<string[]>;
+  /** Drop the still-queued frames of filmstrip requests (by `requestId`); running extractions finish and are cached. */
+  cancelThumbnails(requestIds: string[]): Promise<void>;
   waveform(path: string, mediaId?: ID): Promise<WaveformData>;
   startProxy(req: ProxyRequest): Promise<JobInfo>;
   startSceneDetect(req: SceneDetectRequest): Promise<JobInfo>;

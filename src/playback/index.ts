@@ -1,0 +1,13 @@
+export { resolvePlaybackPath, mediaFps, mediaDurationSeconds, mediaSize, hasAudio } from './mediaSource';
+export type { PlaybackPathResolution } from './mediaSource';
+export { PlaybackClock, MAX_RATE } from './clock';
+export { MediaElementPool, poolKey, describeMediaError, whenReady } from './elementPool';
+export type { PooledElement, MediaLoadError } from './elementPool';
+export { planFrame, contributionsAt, activeTracks, fadeEnvelope, dbToLinear, transitionAt } from './planner';
+export type { FramePlan, LayerPlan, AudioPlan, MissingMedia } from './planner';
+export { SourcePlayer } from './sourcePlayer';
+export type { SourcePlayerState, SourcePlayerStatus } from './sourcePlayer';
+export { SequencePlayer, DRIFT_TOLERANCE, MAX_NATIVE_RATE } from './sequencePlayer';
+export type { SequencePlayerSettings, SequencePlayerOptions, SequencePlayerState } from './sequencePlayer';
+export { SyncGroup } from './sync';
+export { ThumbnailCache, WaveformCache, peaksForRange, normalizeWaveform } from './thumbnails';

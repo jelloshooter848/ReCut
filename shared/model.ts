@@ -42,6 +42,18 @@ export interface VideoStreamInfo {
   pixFmt?: string;
   isVfr: boolean;
   colorSpace?: string;
+  /** Display rotation in degrees (0/90/180/270). `width`/`height` are the display size. Absent on old probes. */
+  rotation?: number;
+  /** Coded (storage) size before rotation. */
+  codedWidth?: number;
+  codedHeight?: number;
+  /** Video stream start relative to the container start (seconds, >= 0). */
+  startTime?: number;
+  /**
+   * Sample (pixel) aspect ratio of the stored picture; `width`/`height` are storage pixels, so the display width
+   * is `width * sar` (for SAR > 1). Absent on old probes and treated as 1:1; readers must validate it.
+   */
+  sar?: Rational;
 }
 
 export interface SubtitleStreamInfo { index: number; codec: string; language?: string; title?: string }
@@ -69,6 +81,8 @@ export interface ProxyInfo {
   error?: string;
   width?: number;
   height?: number;
+  /** Audio stream index baked into the proxy (undefined: the source's first audio stream / unknown). */
+  audioStream?: number;
 }
 
 export interface DetectedScene {
@@ -231,6 +245,8 @@ export interface SequenceSubtitleTrack {
   language: string;
   enabled: boolean;
   cues: SequenceSubtitleCue[];
+  /** Subtitle files whose cues were imported into this track (project sources: exports never overwrite them). */
+  sourcePaths?: string[];
 }
 
 export interface StoryBlock {
@@ -269,9 +285,11 @@ export interface Sequence {
   createdAt: number;
   modifiedAt: number;
   binId: ID | null;
-  /** Editor state that is nice to persist (not undoable) */
-  view: { playhead: number; zoom: number; scroll: number; inPoint: number | null; outPoint: number | null };
+  /** Editor state that is nice to persist (not undoable). See `LiveView` in project.ts. */
+  view: SequenceView;
 }
+
+export interface SequenceView { playhead: number; zoom: number; scroll: number; inPoint: number | null; outPoint: number | null }
 
 export interface SceneRecord {
   id: ID;

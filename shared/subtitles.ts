@@ -5,7 +5,7 @@ export interface ParseResult { cues: SubtitleCue[]; warnings: string[]; format: 
 
 function parseTime(s: string): number | null {
   // 00:01:02,345  |  00:01:02.345  |  01:02.345
-  const m = s.trim().match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{1,2})[,.](\d{1,3})$/);
+  const m = s.trim().match(/^(?:(\d{1,3}):)?(\d{1,2}):(\d{1,2})[,.](\d{1,3})$/);
   if (!m) return null;
   const h = m[1] ? parseInt(m[1], 10) : 0;
   const mi = parseInt(m[2], 10); const se = parseInt(m[3], 10);
@@ -28,7 +28,7 @@ export function parseSubtitles(content: string): ParseResult {
     const blocks = text.split(/\n\n+/);
     blocks.shift();
     text = blocks.filter((b) => !/^(NOTE|STYLE|REGION)\b/.test(b.trim())).join('\n\n');
-  } else if (/\d{1,2}:\d{2}:\d{2},\d{1,3}\s*-->/.test(text)) format = 'srt';
+  } else if (/\d{1,3}:\d{2}:\d{2},\d{1,3}\s*-->/.test(text)) format = 'srt';
 
   const cues: SubtitleCue[] = [];
   const blocks = text.split(/\n\n+/);
@@ -38,7 +38,8 @@ export function parseSubtitles(content: string): ParseResult {
     if (lines.length === 0) continue;
     n++;
     let idx = 0;
-    if (/^\d+$/.test(lines[0].trim()) && lines.length > 1 && lines[1].includes('-->')) idx = 1;
+    // SRT numeric index, or a WebVTT cue identifier (any text), precedes the timing line.
+    if (lines.length > 1 && !lines[0].includes('-->') && lines[1].includes('-->')) idx = 1;
     const timing = lines[idx];
     if (!timing || !timing.includes('-->')) { warnings.push(`Block ${n}: missing timing line`); continue; }
     const [a, bRaw] = timing.split('-->');
@@ -52,22 +53,42 @@ export function parseSubtitles(content: string): ParseResult {
   }
   cues.sort((x, y) => x.start - y.start);
   if (cues.length === 0 && format === 'unknown') warnings.unshift('No subtitle cues recognised; expected SRT or WebVTT.');
+  else if (cues.length === 0 && warnings.length === 0) warnings.push('The file contains no subtitle cues.');
   return { cues, warnings, format };
 }
 
 function fmtSrt(t: number): string {
-  const ms = Math.round(t * 1000);
+  const ms = Math.max(0, Math.round(t * 1000));
   const h = Math.floor(ms / 3600000); const m = Math.floor((ms % 3600000) / 60000); const s = Math.floor((ms % 60000) / 1000); const r = ms % 1000;
   const p = (n: number, w = 2) => String(n).padStart(w, '0');
   return `${p(h)}:${p(m)}:${p(s)},${p(r, 3)}`;
 }
 
-export function serializeSrt(cues: { start: number; end: number; text: string }[]): string {
-  return cues.map((c, i) => `${i + 1}\n${fmtSrt(c.start)} --> ${fmtSrt(c.end)}\n${c.text}\n`).join('\n');
+/** SRT/VTT blocks end at the first blank line, so cue text cannot contain one: collapse them (and trim). */
+function cueBody(text: string): string {
+  return text.replace(/\r\n?/g, '\n').replace(/\n[ \t]*(?:\n[ \t]*)+/g, '\n').trim();
 }
 
-export function serializeVtt(cues: { start: number; end: number; text: string }[]): string {
-  return 'WEBVTT\n\n' + cues.map((c) => `${fmtSrt(c.start).replace(',', '.')} --> ${fmtSrt(c.end).replace(',', '.')}\n${c.text}\n`).join('\n');
+type TimedText = { start: number; end: number; text: string };
+
+/**
+ * Cues an SRT/VTT file can hold: times are written in whole milliseconds and cannot be negative, so a cue
+ * starting before 0 is clipped to 0 and one ending at or before 0 ms (or with a non-finite time) is dropped.
+ */
+export function writableCues(cues: TimedText[]): TimedText[] {
+  return cues
+    .filter((c) => Number.isFinite(c.start) && Number.isFinite(c.end) && Math.round(c.end * 1000) > 0)
+    .map((c) => (c.start < 0 ? { ...c, start: 0 } : c));
+}
+
+/** SRT for `cues` (see writableCues: cues before 0 are clipped or dropped; blocks are numbered 1..n). */
+export function serializeSrt(cues: TimedText[]): string {
+  return writableCues(cues).map((c, i) => `${i + 1}\n${fmtSrt(c.start)} --> ${fmtSrt(c.end)}\n${cueBody(c.text)}\n`).join('\n');
+}
+
+/** WebVTT for `cues` (see writableCues). */
+export function serializeVtt(cues: TimedText[]): string {
+  return 'WEBVTT\n\n' + writableCues(cues).map((c) => `${fmtSrt(c.start).replace(',', '.')} --> ${fmtSrt(c.end).replace(',', '.')}\n${cueBody(c.text)}\n`).join('\n');
 }
 
 /** Simple case-insensitive search with surrounding context. */
