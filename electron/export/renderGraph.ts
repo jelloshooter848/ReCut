@@ -45,7 +45,14 @@ export interface RenderGraph {
   warnings: string[];
   /** SRT content to burn in (range-relative), present when settings.burnSubtitles and cues exist in range. */
   subtitleContent?: string;
-  /** Number of ffmpeg inputs: one per rendered clip segment, except that a video and an audio segment with identical input args (a linked V+A pair) share one. */
+  /** Output chapters (the sequence's Chapter markers in the range); empty for a sub-range (chunk) graph. */
+  chapters: ExportChapter[];
+  /**
+   * FFMETADATA1 file content for `chapters`, present when there are chapters. With `chaptersFilePath` the file is
+   * the last input (`-f ffmetadata -i <path>`) and `-map_chapters` reads it.
+   */
+  chaptersContent?: string;
+  /** Number of media inputs (the chapters file is not counted): one per rendered clip segment, except that a video and an audio segment with identical input args (a linked V+A pair) share one. */
   inputCount: number;
   /** The `-i` input args alone (flattened), as they appear in `args`. */
   inputArgs: string[];
@@ -87,6 +94,8 @@ export interface RenderGraphOptions {
    * The "nothing enabled in range" check is skipped (a chunk may be all gap).
    */
   range?: { startF: number; endF: number };
+  /** Path of the FFMETADATA file the caller wrote `chaptersContent` to; enables chapters in the output. */
+  chaptersFilePath?: string;
   /** Build only the video (`[vout]`) or only the audio (`[aout]`) part of the graph. Default: both. */
   streams?: 'video' | 'audio';
   /** Make `[aout]` exactly this many samples long (padded with silence / trimmed). */
@@ -734,6 +743,71 @@ export function buildSubtitleSrt(req: ExportRequest, range?: { startF: number; e
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Chapters and metadata
+// ---------------------------------------------------------------------------------------------------
+
+/** One output chapter, in seconds from the start of the export (sequence timeline time). */
+export interface ExportChapter {
+  start: number;
+  end: number;
+  title: string;
+}
+
+/**
+ * The output chapters of `[startF, endF)`: the sequence's Chapter markers (kind 'chapter'; other kinds are editor
+ * notes), relative to the range start. A chapter marker at or before `startF` covers the range start (the latest
+ * one wins); markers at or after `endF` are dropped. Each chapter ends where the next one starts, the last at
+ * `endSec` (the output duration). The first chapter always starts at 0: MP4 chapter text tracks cannot leave a gap
+ * before the first chapter (FFmpeg reads such a file back with the first chapter at 0). Two markers on one frame:
+ * the later one in the marker list wins. Times are sequence time, so an output frame-rate conversion does not move
+ * them.
+ */
+export function exportChapters(seq: Pick<Sequence, 'markers' | 'fps'>, startF: number, endF: number, endSec: number): ExportChapter[] {
+  const marks = (Array.isArray(seq.markers) ? seq.markers : [])
+    .map((m, i) => ({ m, i }))
+    .filter(({ m }) => m && m.kind === 'chapter' && Number.isFinite(m.time) && m.time < endF)
+    .sort((a, b) => a.m.time - b.m.time || a.i - b.i);
+  const starts: { f: number; title: string }[] = [];
+  for (const { m } of marks) {
+    const f = Math.max(startF, Math.round(m.time));
+    if (f >= endF) continue;
+    const title = typeof m.name === 'string' ? m.name : String(m.name ?? '');
+    if (starts.length && starts[starts.length - 1].f === f) starts[starts.length - 1].title = title;
+    else starts.push({ f, title });
+  }
+  return starts.map((c, i) => ({
+    start: i === 0 ? 0 : framesToSeconds(c.f - startF, seq.fps),
+    end: i + 1 < starts.length ? framesToSeconds(starts[i + 1].f - startF, seq.fps) : endSec,
+    title: c.title,
+  }));
+}
+
+/**
+ * A value for an FFMETADATA1 file: `=`, `;`, `#`, `\` and line breaks are backslash-escaped, NULs removed.
+ * Trailing backslashes are dropped: FFmpeg's reader (6.1 to 9.0) takes a line break after an escaped backslash
+ * as escaped, so a value cannot end in a backslash.
+ */
+export function ffmetadataEscape(value: string): string {
+  return value.replace(/\0/g, '').replace(/\\+$/, '').replace(/[=;#\\\n\r]/g, (c) => `\\${c}`);
+}
+
+/** FFMETADATA1 file content with `chapters` (no global tags), times in microseconds. */
+export function ffmetadataChapters(chapters: ExportChapter[]): string {
+  const us = (s: number) => String(Math.max(0, Math.round(s * 1e6)));
+  return ';FFMETADATA1\n' + chapters.map((c) =>
+    `[CHAPTER]\nTIMEBASE=1/1000000\nSTART=${us(c.start)}\nEND=${us(c.end)}\ntitle=${ffmetadataEscape(c.title)}\n`).join('');
+}
+
+/**
+ * Output metadata args: no global or stream metadata from any input (FFmpeg copies the first input's title,
+ * comment, ... and its chapters by default), and chapters only from input `chaptersInput` (the FFMETADATA file),
+ * or none. `-map_metadata -1` is not used because it also drops the chapter titles of `-map_chapters`.
+ */
+export function outputMetadataArgs(chaptersInput: number | null): string[] {
+  return ['-map_metadata:g', '-1', '-map_metadata:s', '-1', '-map_chapters', chaptersInput === null ? '-1' : String(chaptersInput)];
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------------------------------
 
@@ -1075,18 +1149,32 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   const acodec = settings.audioCodec === 'ac3' ? 'ac3' : 'aac';
   const audioCodecArgs = ['-c:a', acodec, '-b:a', `${Math.round(settings.audioBitrateKbps || (channels === 6 ? 640 : 192))}k`, '-ar', String(SR), '-ac', String(channels)];
 
+  // A converted video can end up to half an output frame after the audio: never cut its last frame.
+  const outputSec = wantVideo ? Math.max(durationSec, outputDurationSec) : durationSec;
+  // Chapters: the whole export only (a chunked export writes them when joining the chunks, exporter.ts).
+  const chapters = opts.range ? [] : exportChapters(seq, startF, endF, outputSec);
+  const chaptersContent = chapters.length ? ffmetadataChapters(chapters) : undefined;
+  let chaptersInput: number | null = null;
   const args: string[] = ['-hide_banner', '-nostdin', '-y', ...inputArgs];
+  if (chaptersContent) {
+    if (opts.chaptersFilePath) {
+      args.push('-f', 'ffmetadata', '-i', opts.chaptersFilePath);
+      chaptersInput = ctx.inputs.length;
+    } else {
+      warnings.push('Chapter markers present but no chapters file path was provided; chapters are not written.');
+    }
+  }
   args.push('-filter_complex_script', FILTER_SCRIPT_TOKEN);
   if (wantVideo) args.push('-map', '[vout]');
   if (wantAudio) args.push('-map', '[aout]');
+  args.push(...outputMetadataArgs(chaptersInput));
   if (wantVideo) args.push(...videoCodecArgs); else args.push('-vn');
   if (wantAudio) args.push(...audioCodecArgs); else args.push('-an');
-  // A converted video can end up to half an output frame after the audio: never cut its last frame.
-  args.push('-movflags', '+faststart', '-t', sec(wantVideo ? Math.max(durationSec, outputDurationSec) : durationSec), '-f', 'mp4', outputPath);
+  args.push('-movflags', '+faststart', '-t', sec(outputSec), '-f', 'mp4', outputPath);
 
   return {
     args, filterGraph: ctx.chains.join(';\n'), durationSec, frameCount, outputFps: outFps, outputFrameCount, outputDurationSec, outputPath, warnings,
-    subtitleContent, inputCount: ctx.inputs.length,
+    subtitleContent, chapters, chaptersContent, inputCount: ctx.inputs.length,
     inputArgs, videoCodecArgs, audioCodecArgs, sampleRate: SR, channels, startF, endF,
   };
 }

@@ -141,6 +141,10 @@ printf pattern such as `x%03d.png` fails with FFmpeg 6.1 (see [LIMITATIONS](LIMI
   at 48 kHz (or the next supported rate) with a warning.
 - Range: entire sequence or In → Out. A range edge inside a transition renders the frames the full export renders.
 - Anamorphic sources are un-squeezed, and the output always has square pixels.
+- Chapters: the sequence's **Chapter** markers in the range (names and times from the range start; ordinary and
+  continuity markers are not exported). No chapter markers, no chapters. No metadata is copied from the sources:
+  no global tags (title, comment, artist, date, ...), no source chapters, no stream titles, handler names or
+  languages (streams carry FFmpeg's defaults: `und`, `VideoHandler` / `SoundHandler`).
 - Output: an absolute folder, an existing file is only replaced after you confirm, and a project source file is
   never written over (see [USER-GUIDE › Export](USER-GUIDE.md#15-export) and
   [export-pipeline.md](export-pipeline.md#output-files)).
