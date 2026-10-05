@@ -1,7 +1,9 @@
 import { build } from 'esbuild';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+// fileURLToPath, not URL.pathname: on Windows .pathname is "/D:/..." and resolves to "D:\\D:\\...".
+const root = fileURLToPath(new URL('..', import.meta.url));
 const common = {
   bundle: true,
   platform: 'node',
