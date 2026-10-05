@@ -6,7 +6,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Palette, StickyNote, Trash2 } from 'lucide-react';
 import type { Sequence, StoryBlock } from '@shared/model';
 import { clipEnd, sequenceDuration } from '@shared/timeline';
-import { formatTimecode, fpsValue } from '@shared/time';
+import { formatSequenceTimecode, fpsValue } from '@shared/time';
 import { useStore, usePlayhead } from '@/state';
 import { filterMatches, filtersActive } from '@/state/selectors';
 import type { FilterState } from '@/state/types';
@@ -345,7 +345,7 @@ export function StoryStrip({ seq, zoom, onZoomChange, palette, filters, snapping
               {t.label ? <span>{t.label}</span> : null}
             </div>
           ))}
-          {durationF > 0 ? <div className="sl-duration-end" style={{ left: durationF * ppf }} title={`Sequence end ${formatTimecode(durationF, fps)}`} /> : null}
+          {durationF > 0 ? <div className="sl-duration-end" style={{ left: durationF * ppf }} title={`Sequence end ${formatSequenceTimecode(durationF, fps)}`} /> : null}
         </div>
 
         {/* story blocks */}
@@ -363,7 +363,7 @@ export function StoryStrip({ seq, zoom, onZoomChange, palette, filters, snapping
                 className={`sl-block ${isSel ? 'selected' : ''}`}
                 data-block={b.id}
                 data-testid="story-block"
-                title={`${b.name}\n${formatTimecode(b.start, fps)} – ${formatTimecode(b.end, fps)} (${formatMS(b.end - b.start, fps)})${b.notes ? `\n${b.notes}` : ''}`}
+                title={`${b.name}\n${formatSequenceTimecode(b.start, fps)} – ${formatSequenceTimecode(b.end, fps)} (${formatMS(b.end - b.start, fps)})${b.notes ? `\n${b.notes}` : ''}`}
                 style={{ left, width: w, top: 3 + row * BLOCK_ROW_H, height: BLOCK_ROW_H - 3, background: b.color, color: txt }}
               >
                 <div className="sl-block-handle l" data-handle="start" data-block={b.id} style={{ width: HANDLE_PX }} />
@@ -402,7 +402,7 @@ export function StoryStrip({ seq, zoom, onZoomChange, palette, filters, snapping
               <div
                 key={c.id}
                 className={`sl-clip ${c.enabled ? '' : 'disabled'} ${match ? '' : 'dim'}`}
-                title={`${c.name}${c.characters.length ? ` · ${c.characters.join(', ')}` : ''}\n${formatTimecode(c.start, fps)} – ${formatTimecode(clipEnd(c), fps)}${c.enabled ? '' : '\n(disabled)'}`}
+                title={`${c.name}${c.characters.length ? ` · ${c.characters.join(', ')}` : ''}\n${formatSequenceTimecode(c.start, fps)} – ${formatSequenceTimecode(clipEnd(c), fps)}${c.enabled ? '' : '\n(disabled)'}`}
                 style={{ left: c.start * ppf, width: Math.max(1, c.duration * ppf - 1), top: 2 + (trackCount - 1 - i) * DENSITY_ROW_H, height: DENSITY_ROW_H - 1, background: clipColor(c, palette) }}
               />
             );
@@ -412,7 +412,7 @@ export function StoryStrip({ seq, zoom, onZoomChange, palette, filters, snapping
         {/* markers */}
         <div className="sl-lane sl-markers" data-lane="markers" style={{ top: RULER_H + blockLaneH + densityH, height: MARKER_H }}>
           {seq.markers.map((m) => (
-            <div key={m.id} className={`sl-marker ${m.kind}`} title={`${m.name || m.kind} · ${formatTimecode(m.time, fps)}${m.note ? `\n${m.note}` : ''}`}
+            <div key={m.id} className={`sl-marker ${m.kind}`} title={`${m.name || m.kind} · ${formatSequenceTimecode(m.time, fps)}${m.note ? `\n${m.note}` : ''}`}
               style={{ left: m.time * ppf, width: Math.max(2, m.duration * ppf), background: m.color || 'var(--accent-2)' }} />
           ))}
         </div>

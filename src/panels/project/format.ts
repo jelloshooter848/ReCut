@@ -1,5 +1,5 @@
 import type { MediaItem, MediaProbe, Rational, Sequence } from '@shared/model';
-import { formatClock, formatTimecode, fpsLabel } from '@shared/time';
+import { formatClock, formatSequenceTimecode, fpsLabel } from '@shared/time';
 import { sequenceDuration } from '@shared/timeline';
 import { identityLabel } from '@/state/selectors';
 import { episodeLabel } from './parseIdentity';
@@ -72,7 +72,7 @@ export function shortIdentity(m: MediaItem): string {
 export function fullIdentity(m: MediaItem): string { return identityLabel(m); }
 
 export function sequenceDurationLabel(seq: Sequence): string {
-  return formatTimecode(sequenceDuration(seq), seq.fps);
+  return formatSequenceTimecode(sequenceDuration(seq), seq.fps);
 }
 
 export function rationalLabel(r: Rational): string { return fpsLabel(r); }

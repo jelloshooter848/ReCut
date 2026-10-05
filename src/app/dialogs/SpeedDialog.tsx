@@ -7,7 +7,7 @@ import { NumberField } from '@/components/ui/NumberField';
 import { Toggle } from '@/components/ui/Toggle';
 import { useStore } from '@/state/store';
 import { activeSequence, selectedClips } from '@/state/selectors';
-import { formatTimecode } from '@shared/time';
+import { formatSequenceTimecode } from '@shared/time';
 import { clampSpeedPercent, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN } from '@shared/timeline';
 import { toast } from '@/components/ui/toastStore';
 
@@ -53,8 +53,8 @@ export function SpeedDialog() {
         {first && seq ? (
           <div className="row" style={{ gap: 8 }}>
             <label className="text-dim" style={{ width: 90 }}>Duration</label>
-            <span className="mono">{formatTimecode(newDuration, seq.fps)}</span>
-            <span className="text-faint text-sm">(was {formatTimecode(first.duration, seq.fps)})</span>
+            <span className="mono">{formatSequenceTimecode(newDuration, seq.fps)}</span>
+            <span className="text-faint text-sm">(was {formatSequenceTimecode(first.duration, seq.fps)})</span>
           </div>
         ) : null}
         <Toggle checked={ripple} onChange={setRipple} label="Ripple edit, shifting trailing clips" />

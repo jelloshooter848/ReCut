@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Captions, Download, Eraser, Eye, EyeOff, FileUp, ListPlus, LocateFixed, Merge, Minus, Plus, Scissors, Trash2 } from 'lucide-react';
 import type { ID, Sequence, SequenceSubtitleCue } from '../../../shared/model';
-import { formatTimecode, secondsToFrames } from '../../../shared/time';
+import { formatSequenceTimecode, secondsToFrames } from '../../../shared/time';
 import { allTracks, type ResolvedCue } from '../../../shared/timeline';
 import { useStore, recutApi } from '@/state';
 import { Button, EmptyState, IconButton, MenuButton, Select, toast, type MenuItem } from '@/components/ui';
@@ -49,8 +49,8 @@ function CueRow({ seq, cue, raw, next, originLabel, current }: RowProps) {
     <div className={['st-row', current ? 'current' : ''].filter(Boolean).join(' ')} data-testid="subtitle-cue" data-cue-id={cue.id}
       onClick={() => st().setView(seq.id, { playhead: cue.start })}>
       <div className="st-tc mono">
-        <span className="st-tc-start" title="Start" data-testid="subtitle-cue-start">{formatTimecode(cue.start, fps)}</span>
-        <span className="st-tc-end text-dim" title="End">{formatTimecode(cue.end, fps)}</span>
+        <span className="st-tc-start" title="Start" data-testid="subtitle-cue-start">{formatSequenceTimecode(cue.start, fps)}</span>
+        <span className="st-tc-end text-dim" title="End">{formatSequenceTimecode(cue.end, fps)}</span>
         <span className="st-tc-dur text-faint" title="Duration">{cue.end - cue.start}f{raw?.offset ? ` · ${raw.offset > 0 ? '+' : ''}${raw.offset}` : ''}</span>
       </div>
       <CueText value={cue.text} onCommit={(text) => st().updateCue(seq.id, cue.id, { text })} />

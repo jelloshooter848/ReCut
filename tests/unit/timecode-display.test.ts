@@ -192,11 +192,11 @@ describe('readouts agree with the Program monitor', () => {
 
   // Every frame-timecode readout in these panels must go through the shared display helpers, never a bare
   // formatTimecode / formatSecondsTimecode (which are non-drop unless asked).
-  it('owned panels use the shared display helpers', () => {
+  it('panels use the shared display helpers', () => {
     const root = join(__dirname, '..', '..');
-    const files: string[] = [join(root, 'src/state/selectors.ts')];
+    const files: string[] = ['src/state/selectors.ts', 'src/app/dialogs/SpeedDialog.tsx', 'src/panels/project/format.ts'].map((f) => join(root, f));
     const walk = (d: string) => { for (const n of readdirSync(d)) { const p = join(d, n); if (statSync(p).isDirectory()) walk(p); else if (/\.tsx?$/.test(n)) files.push(p); } };
-    for (const d of ['timeline', 'program', 'source', 'markers', 'inspector', 'transcript', 'scenes', 'compare']) walk(join(root, 'src/panels', d));
+    for (const d of ['timeline', 'program', 'source', 'markers', 'inspector', 'transcript', 'scenes', 'compare', 'subtitles', 'continuity', 'storyline']) walk(join(root, 'src/panels', d));
     const offenders = files.flatMap((p) => readFileSync(p, 'utf8').split('\n').map((l, i) => [p, i + 1, l] as const))
       .filter(([, , l]) => /\bformat(Seconds)?Timecode\(/.test(l))
       .map(([p, n]) => `${relative(root, p)}:${n}`);

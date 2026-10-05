@@ -5,7 +5,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, ChevronRight, ClipboardCopy, Film, Plus, Trash2, X } from 'lucide-react';
 import type { ID, Marker, Sequence } from '@shared/model';
-import { formatTimecode } from '@shared/time';
+import { formatSequenceTimecode } from '@shared/time';
 import { findClip } from '@shared/timeline';
 import type { PanelProps } from '@/panels/registry';
 import { useStore } from '@/state';
@@ -47,7 +47,7 @@ function sequenceRows(seq: Sequence): IssueRow[] {
   const ms = seq.markers.filter((m) => m.kind === 'continuity').sort((a, b) => a.time - b.time);
   for (const m of ms) {
     const clip = m.clipId ? findClip(seq, m.clipId)?.clip : undefined;
-    rows.push({ seq, marker: m, clipName: clip?.name ?? null, timecode: formatTimecode(m.time, seq.fps) });
+    rows.push({ seq, marker: m, clipName: clip?.name ?? null, timecode: formatSequenceTimecode(m.time, seq.fps) });
   }
   rowsCache.set(seq, rows);
   return rows;
@@ -207,7 +207,7 @@ export function ContinuityPanel({ active }: PanelProps) {
             const time = s.project.sequences[activeSeq.id]?.view.playhead ?? 0;
             const id = s.addContinuityNote(activeSeq.id, { time, ...input });
             setAddOpen(false);
-            if (id) { s.selectMarker(id); setFocusedId(id); toast.ok(`Continuity note added at ${formatTimecode(time, activeSeq.fps)}`); }
+            if (id) { s.selectMarker(id); setFocusedId(id); toast.ok(`Continuity note added at ${formatSequenceTimecode(time, activeSeq.fps)}`); }
           }} />
       ) : null}
     </div>
@@ -299,7 +299,7 @@ function AddNoteDialog({ open, seq, selectedClip, onClose, onAdd }: { open: bool
   useEffect(() => { if (open) { setName(''); setNote(''); setCategory('other'); setLink(true); } }, [open]);
   const submit = () => { if (!name.trim()) return; onAdd({ name: name.trim(), note, category, clipId: link && selectedClip ? selectedClip.id : undefined }); };
   return (
-    <Dialog open={open} title={<span className="row gap-6"><AlertTriangle size={14} className="text-accent-2" />Continuity note at {formatTimecode(playhead, seq.fps)}</span>} onClose={onClose} width={420}
+    <Dialog open={open} title={<span className="row gap-6"><AlertTriangle size={14} className="text-accent-2" />Continuity note at {formatSequenceTimecode(playhead, seq.fps)}</span>} onClose={onClose} width={420}
       footer={<>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="primary" disabled={!name.trim()} onClick={submit} data-testid="continuity-dialog-add">Add note</Button>

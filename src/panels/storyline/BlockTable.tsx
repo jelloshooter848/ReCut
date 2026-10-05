@@ -4,7 +4,7 @@
 import React from 'react';
 import { Pencil, Trash2 } from 'lucide-react';
 import type { Sequence, StoryBlock } from '@shared/model';
-import { formatTimecode } from '@shared/time';
+import { formatSequenceTimecode } from '@shared/time';
 import { useStore } from '@/state';
 import { TextField } from '@/components/ui/TextField';
 import { IconButton } from '@/components/ui/IconButton';
@@ -57,8 +57,8 @@ export function BlockTable({ seq, totalFrames, palette, selectedBlockId, onSelec
                     onClick={(e) => e.stopPropagation()} />
                 </div>
               </td>
-              <td className="mono">{formatTimecode(b.start, seq.fps)}</td>
-              <td className="mono">{formatTimecode(b.end, seq.fps)}</td>
+              <td className="mono">{formatSequenceTimecode(b.start, seq.fps)}</td>
+              <td className="mono">{formatSequenceTimecode(b.end, seq.fps)}</td>
               <td className="mono">{formatMS(b.end - b.start, seq.fps)}</td>
               <td className="num mono">
                 <div className="sl-pct">

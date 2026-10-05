@@ -3,7 +3,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import type { Rational, StoryBlock } from '@shared/model';
-import { formatTimecode } from '@shared/time';
+import { formatSequenceTimecode } from '@shared/time';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { ColorSwatchPicker, LABEL_COLORS } from '@/components/ui/ColorSwatch';
@@ -59,9 +59,9 @@ export function BlockDialog({ state, fps, nextColor, onClose, onSubmit }: BlockD
         </div>
         <div className="row gap-8">
           <span className="text-dim text-sm" style={{ width: 60 }}>Range</span>
-          <span className="mono">{formatTimecode(start, fps)}</span>
+          <span className="mono">{formatSequenceTimecode(start, fps)}</span>
           <span className="text-faint">→</span>
-          <span className="mono">{formatTimecode(end, fps)}</span>
+          <span className="mono">{formatSequenceTimecode(end, fps)}</span>
           <span className="text-dim mono">({formatMS(end - start, fps)})</span>
         </div>
         <div className="row gap-8">
