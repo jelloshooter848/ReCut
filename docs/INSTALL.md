@@ -8,8 +8,8 @@ Nothing is code-signed.
 
 ## Windows in one step
 
-- **Installer:** download `ReCut-Setup-<version>.exe` from the newest
-  [GitHub Release](https://github.com/jelloshooter848/ReCut/releases) and run it (per-user install, no admin rights,
+- **Installer:** download `ReCut-Setup-<version>.exe` from the release marked **Latest** on
+  [GitHub Releases](https://github.com/jelloshooter848/ReCut/releases) and run it (per-user install, no admin rights,
   Start-menu and desktop shortcuts, `.recut` files open in ReCut, uninstall from *Settings › Apps*).
   `ReCut-Portable-<version>.exe` is the same app without installing. FFmpeg is bundled in both.
   Builds are unsigned: if SmartScreen says "Windows protected your PC", choose **More info › Run anyway**.
@@ -20,7 +20,8 @@ Nothing is code-signed.
 
 Releases are produced by `.github/workflows/windows.yml`, which builds on `windows-latest`, bundles the current FFmpeg release (gyan.dev essentials, BtbN as fallback;
 see `scripts/windows/get-ffmpeg.ps1`), smoke-tests both the unpacked app and a silent install (media protocol, FFmpeg encode + probe,
-UI mounted), and publishes a prerelease named `v<version>-win.<run>`. The same workflow checks `Start ReCut.cmd`
+UI mounted), and publishes a release `v<version>` when a version tag is pushed, or a test-build prerelease
+`v<version>-dev.<run>` for a branch push (see [RELEASING.md](RELEASING.md)). The same workflow checks `Start ReCut.cmd`
 from a fresh clone and runs the unit and end-to-end suites on Windows.
 
 ## Prerequisites

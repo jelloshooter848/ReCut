@@ -2,10 +2,22 @@ name: Windows build
 
 # Builds the Windows installer + portable exe on a real Windows machine, smoke-tests them, and publishes them
 # as a GitHub Release. Also checks that "Start ReCut.cmd" works from a fresh clone and runs the test suites on Windows.
+#
+# Release naming (docs/RELEASING.md):
+#   - push to a branch:            prerelease  v<version>-dev.<run_number>  "ReCut <version>-dev.<run> (Windows test build)"
+#   - push of a tag v<MAJOR.MINOR.PATCH>: release v<version>  "ReCut <version>", marked Latest, notes from CHANGELOG.md.
+#     The tag must equal "v" + package.json version, and CHANGELOG.md must have a "## [<version>]" section.
+#
+# Trigger notes:
+#   - Only plain semver tags (v0.2.0, v1.10.3) trigger a tag build. GitHub filter patterns treat '.' literally and '+'
+#     as "one or more of the preceding character", so v*-dev.* / v*-win.* prerelease tags never match.
+#     (Tags the release step creates with GITHUB_TOKEN would not trigger a workflow anyway.)
+#   - paths-ignore applies to branch pushes only: GitHub does not evaluate path filters for tag pushes, so a release
+#     tag on a commit that changed only CHANGELOG.md / docs still builds.
 on:
   push:
     branches: [claude/build-recut, main]
-    tags: ['v*']
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
     paths-ignore: ['**/*.md', 'docs/**']
   workflow_dispatch:
 
@@ -23,6 +35,65 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      # Runs first so a mistagged release fails in seconds, not after the build. Publishing happens at the end,
+      # after the smoke and install checks, in both cases.
+      - name: Release metadata (verify tag, extract changelog section)
+        id: rel
+        shell: pwsh
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { Write-Host "::error::package.json version '$v' is not MAJOR.MINOR.PATCH"; exit 1 }
+          $install = @(
+            "**ReCut-Setup-$v.exe** — installer. Adds Start-menu and desktop shortcuts, opens ``.recut`` projects, and can be removed from *Settings › Apps*.",
+            "**ReCut-Portable-$v.exe** — no install; double-click to run (starts a little slower).",
+            '',
+            'FFmpeg is bundled, so nothing else needs to be installed. The app is not code-signed: if Windows shows',
+            '"Windows protected your PC", click **More info › Run anyway**.',
+            '',
+            "Built from $env:SHA. This build launched, encoded and probed a test clip on a Windows runner before publishing."
+          ) -join "`n"
+          if ($env:REF_TYPE -eq 'tag') {
+            $tag = $env:REF_NAME
+            if ($tag -cne "v$v") {
+              Write-Host "::error::Tag '$tag' does not match package.json version '$v' (expected tag 'v$v'). Tag the merge commit of the release PR that bumped package.json, or fix the version in a new release PR. See docs/RELEASING.md."
+              exit 1
+            }
+            # The section runs from the "## [<version>]" heading to the next "## [" heading (or a link-reference
+            # block / end of file).
+            $lines = @(Get-Content CHANGELOG.md -Encoding utf8)
+            $head = '^## \[' + [regex]::Escape($v) + '\](\s|$)'
+            $start = -1; $end = $lines.Count
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($start -lt 0) { if ($lines[$i] -match $head) { $start = $i } }
+              elseif ($lines[$i] -match '^## \[' -or $lines[$i] -match '^\[[^\]]+\]:\s') { $end = $i; break }
+            }
+            if ($start -lt 0) { Write-Host "::error::CHANGELOG.md has no '## [$v]' section. Add it in the release PR (see docs/RELEASING.md)."; exit 1 }
+            $section = ''
+            if ($end - $start -ge 2) { $section = ($lines[($start + 1)..($end - 1)] -join "`n").Trim() }
+            if (-not $section) { Write-Host "::error::The '## [$v]' section of CHANGELOG.md is empty."; exit 1 }
+            # Repository-relative links (bugs/closed/...) do not resolve in a release body: point them at the tag.
+            $section = [regex]::Replace($section, '\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:|#|/)([^)\s]+)\)', "](https://github.com/$env:REPO/blob/$tag/`$1)")
+            $body = "$section`n`n---`n`n$install"
+            $name = "ReCut $v"; $pre = 'false'; $latest = 'true'
+          } else {
+            $tag = "v$v-dev.$env:RUN_NUMBER"
+            $name = "ReCut $v-dev.$env:RUN_NUMBER (Windows test build)"
+            $body = "Test build of an unreleased commit, not a release. For the current release, use the release marked **Latest**.`n`n$install"
+            $pre = 'true'; $latest = 'false'
+          }
+          $notes = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          Set-Content -Path $notes -Value $body -Encoding utf8
+          Write-Host "Release: $name (tag $tag, prerelease $pre)"; Get-Content $notes
+          Add-Content -Path $env:GITHUB_OUTPUT -Value @("version=$v", "tag=$tag", "name=$name", "prerelease=$pre", "latest=$latest", "notes=$notes")
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -83,13 +154,6 @@ jobs:
           $r = Get-Content $out -Raw
           if ($r -cmatch 'FAILED|layout=MISSING' -or $r -notmatch 'encode\+probe ok') { throw 'installed-app smoke test failed' }
 
-      - name: Read version
-        id: ver
-        shell: pwsh
-        run: |
-          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          "version=$v" >> $env:GITHUB_OUTPUT
-
       - uses: actions/upload-artifact@v4
         with:
           name: ReCut-windows
@@ -102,21 +166,15 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.ver.outputs.version }}-win.${{ github.run_number }}
+          tag_name: ${{ steps.rel.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          name: ReCut ${{ steps.ver.outputs.version }} for Windows (build ${{ github.run_number }})
-          prerelease: true
+          name: ${{ steps.rel.outputs.name }}
+          prerelease: ${{ steps.rel.outputs.prerelease }}
+          make_latest: ${{ steps.rel.outputs.latest }}
+          body_path: ${{ steps.rel.outputs.notes }}
           files: |
             release/ReCut-Setup-*.exe
             release/ReCut-Portable-*.exe
-          body: |
-            **ReCut-Setup-${{ steps.ver.outputs.version }}.exe** — installer. Adds Start-menu and desktop shortcuts, opens `.recut` projects, and can be removed from *Settings › Apps*.
-            **ReCut-Portable-${{ steps.ver.outputs.version }}.exe** — no install; double-click to run (starts a little slower).
-
-            FFmpeg is bundled, so nothing else needs to be installed. The app is not code-signed: if Windows shows
-            "Windows protected your PC", click **More info › Run anyway**.
-
-            Built from ${{ github.sha }}. This build launched, encoded and probed a test clip on a Windows runner before publishing.
 
   launcher:
     name: Start ReCut.cmd from a fresh clone
