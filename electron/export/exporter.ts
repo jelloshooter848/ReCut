@@ -143,6 +143,43 @@ export function cancelExportJob(queue: ExportJobQueue, jobId: ID): void {
   queue.cancel(jobId);
 }
 
+/** File operations used by finalizeExportOutput (injectable for tests). */
+export interface FinalizeFsOps {
+  renameSync(from: string, to: string): void;
+  unlinkSync(p: string): void;
+  existsSync(p: string): boolean;
+}
+
+/**
+ * Moves the finished render (<name>.part.mp4) onto the output path, replacing a previous file there.
+ *
+ * rename replaces an existing target atomically on POSIX and on Windows (libuv uses MoveFileEx with
+ * MOVEFILE_REPLACE_EXISTING), so the previous file is never deleted up front: if the move fails (file open in a
+ * player, EXDEV, EPERM, ...) the user keeps it and the error is thrown. Only when the in-place replace fails and a
+ * previous file exists (e.g. a read-only target on Windows, which MoveFileEx refuses to replace) is the old file
+ * moved aside to a backup, the render moved in, and the backup deleted; if the render still cannot be moved in, the
+ * backup is moved back. The .part file is left for the caller to clean up on failure.
+ */
+export function finalizeExportOutput(partPath: string, outputPath: string, ops: FinalizeFsOps = fs): void {
+  let firstError: unknown;
+  try { ops.renameSync(partPath, outputPath); return; } catch (e) { firstError = e; }
+  const fail = (e: unknown, extra = ''): Error =>
+    new Error(`Could not write the export to "${outputPath}": ${e instanceof Error ? e.message : String(e)}${extra}`);
+  if (!ops.existsSync(outputPath)) throw fail(firstError);
+
+  const backup = `${outputPath}.recut-old-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  try { ops.renameSync(outputPath, backup); } catch { throw fail(firstError, '. The existing file was left unchanged.'); }
+  try {
+    ops.renameSync(partPath, outputPath);
+  } catch (e) {
+    try { ops.renameSync(backup, outputPath); } catch {
+      throw fail(e, `. The previous file was kept as "${backup}".`);
+    }
+    throw fail(e, '. The existing file was left unchanged.');
+  }
+  try { ops.unlinkSync(backup); } catch { /* stale backup next to the output; harmless */ }
+}
+
 /**
  * Runs an export to completion without a queue. Rejects on ffmpeg failure (message carries the last
  * stderr lines) or cancel (message "Export canceled").
@@ -178,9 +215,7 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
       await runFfmpeg(args, graph.durationSec, onProgress, signal, opts.onSpawn);
     }
 
-    // Replace the final file atomically-ish.
-    try { fs.unlinkSync(graph.outputPath); } catch { /* did not exist */ }
-    fs.renameSync(partPath, graph.outputPath);
+    finalizeExportOutput(partPath, graph.outputPath);
     partPath = null;
 
     // Sidecar: both its path and its temp were checked against the project's sources by buildRenderGraph.
