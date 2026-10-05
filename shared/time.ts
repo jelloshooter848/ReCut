@@ -13,6 +13,27 @@ export const FPS_PRESETS: { label: string; fps: Rational }[] = [
 
 export function fpsValue(fps: Rational): number { return fps.num / fps.den; }
 
+/** Bounds for a usable frame rate (see isValidFps). */
+export const MIN_FPS = 1;
+export const MAX_FPS = 1000;
+/** Largest numerator / denominator accepted (keeps frame * den / num products well inside 2^53). */
+export const MAX_FPS_TERM = 1_000_000;
+
+/**
+ * The single frame-rate invariant: `num` and `den` are positive integers no larger than MAX_FPS_TERM and
+ * the rate lies within [MIN_FPS, MAX_FPS]. Every frame <-> seconds conversion divides by one of the terms,
+ * so anything else (0, negative, non-integer, NaN / Infinity, strings, null) must never reach the timeline.
+ */
+export function isValidFps(r: unknown): r is Rational {
+  if (!r || typeof r !== 'object') return false;
+  const { num, den } = r as { num?: unknown; den?: unknown };
+  if (typeof num !== 'number' || typeof den !== 'number') return false;
+  if (!Number.isInteger(num) || !Number.isInteger(den)) return false;
+  if (num < 1 || den < 1 || num > MAX_FPS_TERM || den > MAX_FPS_TERM) return false;
+  const v = num / den;
+  return v >= MIN_FPS && v <= MAX_FPS;
+}
+
 export function framesToSeconds(frames: number, fps: Rational): number {
   return (frames * fps.den) / fps.num;
 }
@@ -35,12 +56,14 @@ export function fpsEquals(a: Rational, b: Rational): boolean {
   return a.num * b.den === b.num * a.den;
 }
 
-export function parseFps(value: number): Rational {
+/** A frame rate from a decimal value (e.g. 23.976), or null when the result would not pass isValidFps. */
+export function parseFps(value: number): Rational | null {
+  if (!Number.isFinite(value)) return null;
   const candidates = FPS_PRESETS.map((p) => p.fps);
   // Snap to a preset within 0.01 so rounded labels (23.98, 29.97, 59.94) resolve to the exact NTSC rational.
   for (const c of candidates) if (Math.abs(fpsValue(c) - value) < 0.01) return c;
-  if (Number.isInteger(value)) return { num: value, den: 1 };
-  return { num: Math.round(value * 1000), den: 1000 };
+  const r = Number.isInteger(value) ? { num: value, den: 1 } : { num: Math.round(value * 1000), den: 1000 };
+  return isValidFps(r) ? r : null;
 }
 
 export function fpsLabel(fps: Rational): string {
@@ -83,21 +106,26 @@ export function formatClock(seconds: number, ms = false): string {
 
 /**
  * Parse a timecode into frames. Fields fill right-to-left like Premiere's timecode entry:
- * "HH:MM:SS:FF", "MM:SS:FF", "SS:FF", "FF", or "+/-N" (frames relative to `current`). Returns null if invalid.
+ * "HH:MM:SS:FF", "MM:SS:FF", "SS:FF", "FF" (separators ':' ';' '.'), or "+N" / "-N" (frames relative to
+ * `current`). Surrounding whitespace is ignored. Every field must be ASCII digits only; empty fields, more than
+ * four fields, or a result that is not a safe integer give null (nothing is guessed or truncated).
  */
 export function parseTimecode(input: string, fps: Rational, current = 0): number | null {
   const str = input.trim();
   if (!str) return null;
+  const rel = /^([+-])([0-9]+)$/.exec(str);
+  if (rel) {
+    const n = current + (rel[1] === '-' ? -1 : 1) * Number(rel[2]);
+    return Number.isSafeInteger(n) ? n : null;
+  }
+  const fields = str.split(/[:;.]/);
+  if (fields.length > 4 || !fields.every((p) => /^[0-9]+$/.test(p))) return null;
+  const parts = fields.map(Number);
+  while (parts.length < 4) parts.unshift(0);
+  const [h, m, s, f] = parts;
   const nominal = Math.round(fpsValue(fps));
-  if (/^[+-]\d+$/.test(str)) return current + parseInt(str, 10);
-  const parts = str.split(/[:;.]/).map((p) => parseInt(p, 10));
-  if (parts.some((n) => Number.isNaN(n))) return null;
-  let h = 0, m = 0, s = 0, f = 0;
-  if (parts.length === 1) [f] = parts;
-  else if (parts.length === 2) [s, f] = parts;
-  else if (parts.length === 3) [m, s, f] = parts;
-  else [h, m, s, f] = parts.slice(-4);
-  return ((h * 3600 + m * 60 + s) * nominal) + f;
+  const total = ((h * 3600 + m * 60 + s) * nominal) + f;
+  return Number.isSafeInteger(total) ? total : null;
 }
 
 export function clamp(v: number, lo: number, hi: number): number { return v < lo ? lo : v > hi ? hi : v; }

@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { ensureDirSafe } from '../safeMkdir';
-import { normalizeProject, serializeProject } from '../../shared/project';
+import { normalizeProject, serializeProject, ProjectIncompatibleError } from '../../shared/project';
 import type { AppPreferences, Project } from '../../shared/model';
 import type { LoadResult, RecoveryInfo, SaveResult } from '../../shared/ipc';
 
@@ -53,15 +53,21 @@ export async function atomicWriteFile(target: string, data: string | Uint8Array,
   const buf = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;
   const fh = await fsp.open(tmp, 'w');
   try {
-    let off = 0;
-    while (off < buf.byteLength) {
-      const { bytesWritten } = await fh.write(buf, off, buf.byteLength - off);
-      if (bytesWritten <= 0) throw new Error('short write');
-      off += bytesWritten;
+    try {
+      let off = 0;
+      while (off < buf.byteLength) {
+        const { bytesWritten } = await fh.write(buf, off, buf.byteLength - off);
+        if (bytesWritten <= 0) throw new Error('short write');
+        off += bytesWritten;
+      }
+      try { await fh.sync(); } catch { /* fsync unsupported on some filesystems */ }
+    } finally {
+      await fh.close();
     }
-    try { await fh.sync(); } catch { /* fsync unsupported on some filesystems */ }
-  } finally {
-    await fh.close();
+  } catch (e) {
+    // A failed write / close must not leave the hidden partial temp file beside the target.
+    await fsp.rm(tmp, { force: true }).catch(() => undefined);
+    throw e;
   }
   try {
     if (opts.backup !== false) {
@@ -109,20 +115,30 @@ export async function readProjectJson(filePath: string): Promise<Project> {
   return normalizeProject(raw);
 }
 
-/** Thrown for content that cannot be a project at all (unreadable / not JSON / not an object). */
+/** Thrown for damaged content: unreadable, not JSON, not an object, or a JSON object normalization could not repair. */
 class DamagedProjectError extends Error {}
 
-/** Read + parse; damaged content throws DamagedProjectError, a valid-but-refused project (e.g. newer format) throws Error. */
+/**
+ * Read + parse + normalize. Throws ENOENT as is; ProjectIncompatibleError (newer / missing formatVersion) as is;
+ * everything else is damage and throws DamagedProjectError (with the original error as `cause`).
+ */
 async function readProjectStrict(filePath: string): Promise<Project> {
   let text: string;
   try { text = await fsp.readFile(filePath, 'utf8'); } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw e;
-    throw new DamagedProjectError(errMsg(e));
+    throw new DamagedProjectError(errMsg(e), { cause: e });
   }
   let raw: unknown;
-  try { raw = JSON.parse(text); } catch (e) { throw new DamagedProjectError(`Not valid JSON: ${errMsg(e)}`); }
+  try { raw = JSON.parse(text); } catch (e) { throw new DamagedProjectError(`Not valid JSON: ${errMsg(e)}`, { cause: e }); }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new DamagedProjectError('Project file is not a JSON object');
-  return normalizeProject(raw);
+  try {
+    return normalizeProject(raw);
+  } catch (e) {
+    if (e instanceof ProjectIncompatibleError) throw e;
+    // normalizeProject repairs what it can; whatever it still throws on (a structurally broken file, or a
+    // failure nobody anticipated) means this file's content is unusable, so it is damage and the .bak is tried.
+    throw new DamagedProjectError(errMsg(e), { cause: e });
+  }
 }
 
 /** Path the damaged project file is copied to before a backup is used: `<path>.corrupt-<timestamp>`. */
@@ -131,10 +147,11 @@ export function corruptCopyPath(filePath: string, now = Date.now()): string {
 }
 
 /**
- * Load a project. Falls back to `<path>.bak` only when the main file is damaged (unreadable / not
- * JSON); a project refused by `normalizeProject` (e.g. saved by a newer ReCut) is reported as an
- * error so a stale backup never silently replaces it. On fallback the damaged file is copied aside
- * (it would otherwise become the next `.bak` on save) and the result says `fromBackup`.
+ * Load a project. Falls back to `<path>.bak` only when the main file is damaged (unreadable / not JSON /
+ * not an object / content normalizeProject cannot repair). A project this build refuses
+ * (ProjectIncompatibleError: saved by a newer ReCut, or no formatVersion) is reported as an error so a
+ * stale backup never silently replaces it. On fallback the damaged file is copied aside (it would
+ * otherwise become the next `.bak` on save) and the result says `fromBackup`.
  */
 export async function loadProjectFile(filePath: string): Promise<LoadResult> {
   const resolved = path.resolve(filePath);
@@ -144,7 +161,8 @@ export async function loadProjectFile(filePath: string): Promise<LoadResult> {
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return { ok: false, error: `Project file not found: ${resolved}` };
-    if (!(e instanceof DamagedProjectError)) return { ok: false, error: `Could not open project: ${errMsg(e)}` };
+    if (e instanceof ProjectIncompatibleError) return { ok: false, error: `Could not open project: ${errMsg(e)}` };
+    if (!(e instanceof DamagedProjectError)) throw e; // readProjectStrict classifies every failure; anything else is a bug
     const bak = resolved + BACKUP_EXT;
     try {
       const project = await readProjectJson(bak);

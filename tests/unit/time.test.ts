@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   framesToSeconds, secondsToFrames, secondsToFramesFloor, frameCenterSeconds, formatTimecode, formatSecondsTimecode,
-  formatClock, parseTimecode, parseFps, fpsLabel, fpsEquals, fpsValue, clamp, FPS_PRESETS,
+  formatClock, parseTimecode, parseFps, fpsLabel, fpsEquals, fpsValue, clamp, FPS_PRESETS, isValidFps,
 } from '../../shared/time';
 import type { Rational } from '../../shared/model';
 
@@ -147,5 +147,92 @@ describe('fps helpers', () => {
     expect(clamp(5, 0, 3)).toBe(3);
     expect(clamp(-1, 0, 3)).toBe(0);
     expect(clamp(2, 0, 3)).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// BUG 5: parseTimecode must reject partial-digit components and over-long timecodes instead of guessing.
+// ---------------------------------------------------------------------------------------------------
+describe('parseTimecode strictness (BUG 5)', () => {
+  it('rejects components that are not entirely ASCII digits', () => {
+    for (const bad of ['12abc', 'abc12', '10foo:20', '1:2x', '1e3', '0x10', '1_000', '1,5', '１２', '٣', '1:٣', '²', '12 34', '1: 2', '+1:00', '++5', '+-5', '- 5', '+ 5', '5-', '-', '1.5e2', 'Infinity', 'NaN']) {
+      expect(parseTimecode(bad, F24), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it('rejects empty components and more than four components', () => {
+    for (const bad of ['1::2', ':12', '12:', ':', '1:2:3:4:5', '1.5.5.5.5', '00:00:00:00:00', '1;2;3;4;5', '1:2:3:4:5:6']) {
+      expect(parseTimecode(bad, F24), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it('rejects values that are not representable as a safe integer frame count', () => {
+    expect(parseTimecode('99999999999999999999', F24)).toBeNull();
+    expect(parseTimecode('+99999999999999999999', F24)).toBeNull();
+    expect(parseTimecode('99999999999999:00:00:00', F24)).toBeNull();
+  });
+
+  it('keeps the supported shorthand: FF, SS:FF, MM:SS:FF, HH:MM:SS:FF with : ; . separators', () => {
+    expect(parseTimecode('0', F24)).toBe(0);
+    expect(parseTimecode('12', F24)).toBe(12);
+    expect(parseTimecode('1.5', F24)).toBe(29);          // SS.FF
+    expect(parseTimecode('1;05', F24)).toBe(29);
+    expect(parseTimecode('2:01:05', F24)).toBe(2 * 60 * 24 + 24 + 5);
+    expect(parseTimecode('01.00.00.00', F24)).toBe(86400);
+    expect(parseTimecode('1:2.3;4', F24)).toBe((3600 + 120 + 3) * 24 + 4);
+    expect(parseTimecode('00:00:01:30', F24)).toBe(54);   // frame overflow carries, as before
+    expect(parseTimecode('007', F24)).toBe(7);           // leading zeros are fine
+  });
+
+  it('trims surrounding whitespace (spaces, tabs, newlines)', () => {
+    expect(parseTimecode('  1:00  ', F24)).toBe(24);
+    expect(parseTimecode('\t12\n', F24)).toBe(12);
+    expect(parseTimecode(' -5 ', F24, 10)).toBe(5);
+  });
+
+  it('relative frames: +N / -N only (sign directly followed by ASCII digits)', () => {
+    expect(parseTimecode('-5', F24, 100)).toBe(95);
+    expect(parseTimecode('+5', F24, 100)).toBe(105);
+    expect(parseTimecode('+0', F24, 7)).toBe(7);
+    expect(parseTimecode('-200', F24, 100)).toBe(-100);  // callers clamp
+    expect(parseTimecode('- 5', F24, 100)).toBeNull();
+    expect(parseTimecode('+５', F24, 100)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// BUG 4: one central frame-rate validator.
+// ---------------------------------------------------------------------------------------------------
+describe('isValidFps (BUG 4)', () => {
+  it('accepts the presets and unusual but real rates', () => {
+    for (const p of FPS_PRESETS) expect(isValidFps(p.fps), p.label).toBe(true);
+    const ok: Rational[] = [
+      { num: 1, den: 1 }, { num: 12, den: 1 }, { num: 15, den: 1 }, { num: 48, den: 1 }, { num: 120, den: 1 }, { num: 240, den: 1 },
+      { num: 1000, den: 1 }, { num: 24000, den: 1001 }, { num: 30000, den: 1001 }, { num: 48000, den: 1001 }, { num: 60000, den: 1001 },
+      { num: 120000, den: 1001 }, { num: 12500, den: 1000 }, { num: 2997, den: 100 }, { num: 48000, den: 2002 }, { num: 240000, den: 1000 },
+    ];
+    for (const r of ok) expect(isValidFps(r), `${r.num}/${r.den}`).toBe(true);
+  });
+
+  it('rejects zero / negative / non-integer / non-finite / absurd / wrongly typed values', () => {
+    const bad: unknown[] = [
+      null, undefined, 24, '24', [], [24, 1], {}, { num: 24 }, { den: 1 },
+      { num: 0, den: 1 }, { num: 24, den: 0 }, { num: -24, den: 1 }, { num: 24, den: -1 }, { num: -24, den: -1 },
+      { num: '24', den: 1 }, { num: 24, den: '1' }, { num: null, den: 1 }, { num: true, den: 1 },
+      { num: NaN, den: 1 }, { num: 24, den: NaN }, { num: Infinity, den: 1 }, { num: 24, den: Infinity }, { num: -Infinity, den: 1 },
+      { num: 23.976, den: 1 }, { num: 24, den: 1.5 },
+      { num: 1, den: 2 }, { num: 1000, den: 1001 },          // below 1 fps
+      { num: 1001, den: 1 }, { num: 1e6, den: 1 },           // above 1000 fps
+      { num: 2e6, den: 2e6 / 24 }, { num: 24e6, den: 1e6 },  // terms too large
+      { num: 2 ** 53, den: 2 ** 53 / 24 },
+    ];
+    for (const r of bad) expect(isValidFps(r), JSON.stringify(r) ?? String(r)).toBe(false);
+  });
+
+  it('parseFps never returns an invalid rate', () => {
+    for (const v of [0, -24, NaN, Infinity, -Infinity, 0.5, 0.999, 1001, 1e9]) expect(parseFps(v), String(v)).toBeNull();
+    expect(parseFps(1)).toEqual({ num: 1, den: 1 });
+    expect(parseFps(1000)).toEqual({ num: 1000, den: 1 });
+    expect(parseFps(119.88)).toEqual({ num: 119880, den: 1000 });
   });
 });

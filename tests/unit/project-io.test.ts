@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -416,5 +416,63 @@ describe('autosave format and safe folder creation (P-06, BUG-1)', () => {
     const r = await saveProjectFile('/proc/recut-nope/p.recut', createProject('x'));
     expect(r.ok).toBe(false);
     expect(Date.now() - t0).toBeLessThan(1000);
+  });
+});
+
+describe('atomicWriteFile removes its temp file when the write itself fails', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  /** Make the next fsp.open return a real handle whose write fails after `okWrites` successful partial writes. */
+  function failWritesAfter(okWrites: number, failOn: 'write' | 'close' = 'write') {
+    const realOpen = fsp.open.bind(fsp);
+    vi.spyOn(fsp, 'open').mockImplementationOnce(async (...args: Parameters<typeof fsp.open>) => {
+      const fh = await realOpen(...args);
+      let writes = 0;
+      const realWrite = fh.write.bind(fh) as (...a: unknown[]) => Promise<{ bytesWritten: number }>;
+      const realClose = fh.close.bind(fh);
+      Object.assign(fh, {
+        write: async (buf: Uint8Array, off: number, len: number) => {
+          if (failOn === 'write' && writes++ >= okWrites) throw Object.assign(new Error('EIO: i/o error, write'), { code: 'EIO' });
+          return realWrite(buf, off, Math.min(len, 4)); // short writes so the loop runs several times
+        },
+        close: async () => { await realClose(); if (failOn === 'close') throw Object.assign(new Error('EIO: i/o error, close'), { code: 'EIO' }); },
+      });
+      return fh;
+    });
+  }
+  const tmpLeftovers = async () => (await fsp.readdir(tmp)).filter((n) => n.includes('.tmp-'));
+
+  it('a write that fails partway leaves no hidden temp file and keeps the old target', async () => {
+    const target = path.join(tmp, 'w.recut');
+    await fsp.writeFile(target, 'old');
+    failWritesAfter(2);
+    await expect(atomicWriteFile(target, 'new content that takes several writes')).rejects.toThrow(/EIO/);
+    expect(await tmpLeftovers()).toEqual([]);
+    expect(await fsp.readFile(target, 'utf8')).toBe('old');
+    expect(fs.existsSync(target + '.bak')).toBe(false);
+  });
+
+  it('a write that fails immediately (backup: false) leaves no temp file and no target', async () => {
+    const target = path.join(tmp, 'fresh.txt');
+    failWritesAfter(0);
+    await expect(atomicWriteFile(target, 'x', { backup: false })).rejects.toThrow(/EIO/);
+    expect(await tmpLeftovers()).toEqual([]);
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it('a failing close leaves no temp file', async () => {
+    const target = path.join(tmp, 'c.txt');
+    failWritesAfter(0, 'close');
+    await expect(atomicWriteFile(target, 'abc')).rejects.toThrow(/EIO/);
+    expect(await tmpLeftovers()).toEqual([]);
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it('saveProjectFile reports the failure and leaves no temp file', async () => {
+    const file = path.join(tmp, 'p.recut');
+    failWritesAfter(1);
+    const res = await saveProjectFile(file, createProject('p'));
+    expect(res.ok).toBe(false);
+    expect(await tmpLeftovers()).toEqual([]);
   });
 });
