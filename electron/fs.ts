@@ -3,7 +3,7 @@
  */
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { ensureDirSafe } from './safeMkdir';
+import { atomicWriteFile } from './project/io';
 import type { FileStat, RelinkCandidate, RelinkScanRequest } from '../shared/ipc';
 
 export interface DirEntry { name: string; path: string; isDirectory: boolean; size: number }
@@ -21,9 +21,13 @@ export async function readText(p: string): Promise<string> {
   return fsp.readFile(p, 'utf8');
 }
 
+/**
+ * Write UTF-8 text atomically (temp file in the same folder, fsync, rename over `p`; parent folders created
+ * safely), so a failure part-way never leaves a truncated file. No `.bak` is left next to user files.
+ * Callers that must not overwrite project sources check that in the renderer (exportSubtitles.ts).
+ */
 export async function writeText(p: string, content: string): Promise<void> {
-  await ensureDirSafe(path.dirname(p));
-  await fsp.writeFile(p, content, 'utf8');
+  await atomicWriteFile(p, content, { backup: false });
 }
 
 export async function listDir(p: string): Promise<DirEntry[]> {

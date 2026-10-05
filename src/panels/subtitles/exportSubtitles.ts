@@ -2,13 +2,15 @@
  * Sequence subtitle export / import (pure-ish helpers around the store; dialogs are separated so tests can call
  * the path-taking functions directly). Exposed on `window.__recut.subtitles` for automation.
  */
-import type { ID, Sequence } from '../../../shared/model';
+import type { ID, Project, Sequence } from '../../../shared/model';
 import { framesToSeconds, secondsToFrames } from '../../../shared/time';
 import { resolveSubtitleCues, type ResolvedCue } from '../../../shared/timeline';
 import { parseSubtitles, serializeSrt, serializeVtt } from '../../../shared/subtitles';
 import { uid } from '../../../shared/ids';
+import { findSamePath, resolveAbsolutePath } from '../../../shared/pathKey';
 import { useStore, recutApi } from '@/state';
 import { fileNameOf } from '@/state/selectors';
+import { projectSourcePaths } from '@/panels/export/request';
 
 export type SubtitleFormat = 'srt' | 'vtt';
 
@@ -30,22 +32,64 @@ export function serializeSequenceSubtitles(seq: Sequence, format: SubtitleFormat
 
 export type ExportResult = { ok: true; path: string; count: number } | { ok: false; error: string };
 
-/** Write the sequence's subtitles to `path`. No dialogs. */
-export async function exportSequenceSubtitles(opts: { seqId?: ID; trackId?: ID; path: string; format?: SubtitleFormat }): Promise<ExportResult> {
-  const api = recutApi();
-  if (!api) return { ok: false, error: 'IPC unavailable' };
-  const st = useStore.getState();
-  const seqId = opts.seqId ?? st.project.activeSequenceId;
-  const seq = seqId ? st.project.sequences[seqId] : undefined;
+export type SubtitleExportOptions = { seqId?: ID; trackId?: ID; path: string; format?: SubtitleFormat };
+
+/**
+ * Why `path` must not be written by a subtitle export, or null when it may. Refuses relative paths (they
+ * would resolve against the main process's working directory) and every project source file
+ * (projectSourcePaths: media, proxies, imported subtitle files), compared like the video exporter does.
+ * `platform` is the main process's `process.platform`; unknown compares case-insensitively.
+ */
+export function subtitleExportPathError(
+  project: Pick<Project, 'media' | 'subtitleTracks'>, path: string, platform: string | undefined,
+): string | null {
+  if (resolveAbsolutePath(path, platform) === null) return `Subtitle export needs a full file path, not "${path}".`;
+  const hit = findSamePath(path, projectSourcePaths(project), platform);
+  if (hit !== undefined) {
+    return `Refusing to export subtitles to "${path}": that file is a source file of the project (${hit}). Choose a different file name or folder.`;
+  }
+  return null;
+}
+
+/**
+ * Serialize a sequence's subtitles and hand them to `io.writeText`, unless the target is a project source
+ * file. Pure apart from `io` (no store, no IPC) so the safety check is unit-testable.
+ */
+export async function writeSequenceSubtitles(
+  project: Pick<Project, 'media' | 'subtitleTracks' | 'sequences' | 'activeSequenceId'>,
+  opts: SubtitleExportOptions,
+  io: { writeText(path: string, content: string): Promise<void>; platform?: string },
+): Promise<ExportResult> {
+  const seqId = opts.seqId ?? project.activeSequenceId;
+  const seq = seqId ? project.sequences[seqId] : undefined;
   if (!seq) return { ok: false, error: 'No sequence' };
+  const refused = subtitleExportPathError(project, opts.path, io.platform);
+  if (refused) return { ok: false, error: refused };
   const format: SubtitleFormat = opts.format ?? (/\.vtt$/i.test(opts.path) ? 'vtt' : 'srt');
   const { content, count } = serializeSequenceSubtitles(seq, format, opts.trackId);
   try {
-    await api.writeText(opts.path, content);
+    await io.writeText(opts.path, content);
     return { ok: true, path: opts.path, count };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+let mainPlatform: Promise<string | undefined> | undefined;
+
+/** The main process's `process.platform` (asked once); undefined if it cannot be asked (then retried next time). */
+function mainProcessPlatform(api: NonNullable<ReturnType<typeof recutApi>>): Promise<string | undefined> {
+  mainPlatform ??= api.appInfo().then((i) => i.platform, () => { mainPlatform = undefined; return undefined; });
+  return mainPlatform;
+}
+
+/** Write the sequence's subtitles to `path`. No dialogs. Never writes over a project source file. */
+export async function exportSequenceSubtitles(opts: SubtitleExportOptions): Promise<ExportResult> {
+  const api = recutApi();
+  if (!api) return { ok: false, error: 'IPC unavailable' };
+  // Paths compare like the main process will see them; an unknown platform compares case-insensitively.
+  const platform = await mainProcessPlatform(api);
+  return writeSequenceSubtitles(useStore.getState().project, opts, { writeText: (p, c) => api.writeText(p, c), platform });
 }
 
 /** Save dialog → exportSequenceSubtitles. */
