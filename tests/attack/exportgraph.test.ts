@@ -103,19 +103,33 @@ describe('transitions at the edges', () => {
     expect(beeps.map((b) => Math.round(b * 24))).toEqual([24, 72]);
   });
 
-  it('inOut range whose boundary falls inside a transition: hard cut with a warning, frames exact', async () => {
+  it('inOut range whose boundary falls inside a transition renders exactly like the full export', async () => {
     const seq = makeSeq(FPS_24);
     vclip(seq, counter24, 0, 48, 2.0); vclip(seq, counter24, 48, 48, 8.0);
-    expect(addTransition(seq, seq.videoTracks[0].id, 48, 'crossDissolve', 24)).toBeTruthy();
-    seq.view.inPoint = 40; seq.view.outPoint = 70; // straddles the cut at 48 but not the transition's full extent
+    expect(addTransition(seq, seq.videoTracks[0].id, 48, 'crossDissolve', 24)).toBeTruthy(); // dissolve spans 36..60
+    seq.view.inPoint = 40; seq.view.outPoint = 70; // starts inside the dissolve, ends after it
     const g = buildRenderGraph(request(seq, [counter24], { rangeMode: 'inOut' }));
     console.log(`[inOut straddle] frameCount=${g.frameCount} warnings=${g.warnings.join(' | ')}`);
-    const { outputPath } = await exportSeq(seq, [counter24], { rangeMode: 'inOut' });
-    const c = await readCounters(outputPath);
+    const full = await exportSeq(seq, [counter24]);
+    const io = await exportSeq(seq, [counter24], { rangeMode: 'inOut' });
+    const cFull = await readCounters(full.outputPath);
+    const c = await readCounters(io.outputPath);
+    const lFull = await frameLuma(full.outputPath);
+    const l = await frameLuma(io.outputPath);
+    console.log(`[inOut straddle] inOut counters=${c.join(',')} | full[40..70)=${cFull.slice(40, 70).join(',')}`);
     expect(c.length).toBe(30);
-    // range starts at timeline 40 => clip A frame 40 => media 48+40 = 88; after the cut at range frame 8 => media 192
-    expect(c[0]).toBe(88);
+    expect(l.length).toBe(30);
+    // the In/Out export is the same frames as the full export (transitions computed on the full timeline)
+    expect(c).toEqual(cFull.slice(40, 70));
+    // blended dissolve frames the counter reader cannot read: compare per-frame luma
+    const lumaDiffs = l.map((x, i) => Math.abs(x - lFull[40 + i]));
+    expect(Math.max(...lumaDiffs)).toBeLessThanOrEqual(1);
+    // first frame after the dissolve (timeline 60 => range index 20) is clip B frame 12 => media 192+12 = 204
+    expect(c[20]).toBe(204);
     expect(c[29]).toBe(8 * 24 + 21);
+    // handles are sufficient: the transition is not shortened
+    expect(io.warnings.some((w) => /shortened/i.test(w))).toBe(false);
+    expect(g.warnings.some((w) => /shortened/i.test(w))).toBe(false);
   });
 });
 
