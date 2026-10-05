@@ -194,6 +194,7 @@ export function fmt(n: number, d = 4): string { return Number.isFinite(n) ? n.to
 
 // ---------------------------------------------------------------- patched export (root-cause experiments)
 import { buildRenderGraph, FILTER_SCRIPT_TOKEN } from '../../electron/export/renderGraph';
+import { adaptFfmpegArgs, ffmpegMajorVersionSync } from '../../electron/media/ffmpeg';
 
 /**
  * Build the render graph, let `patch` rewrite the filter graph / args, and run ffmpeg exactly like exporter.ts does.
@@ -207,7 +208,7 @@ export async function exportPatched(req: ExportRequest, patch: { filter?: (g: st
   let args = g.args.map((a) => (a === FILTER_SCRIPT_TOKEN ? script : a));
   if (patch.args) args = patch.args(args);
   const outputPath = args[args.length - 1];
-  await exec(FFMPEG, args, { maxBuffer: 64 * 1024 * 1024 });
+  await exec(FFMPEG, adaptFfmpegArgs(args, ffmpegMajorVersionSync(FFMPEG)), { maxBuffer: 64 * 1024 * 1024 });
   return { outputPath, filterGraph };
 }
 
