@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import type { Clip, Marker, MarkerKind, MediaItem, Rational, Track } from '@shared/model';
-import { formatSecondsTimecode, formatTimecode } from '@shared/time';
+import { formatSecondsTimecode, formatTimecode, validFpsOr } from '@shared/time';
 import { clipSourceOut } from '@shared/timeline';
 import { useStore, originalTimecode } from '@/state';
 import { Button } from '@/components/ui/Button';
@@ -118,7 +118,7 @@ export function TagsDialog({ seqId, clip, onClose }: { seqId: string; clip: Clip
 
 // ------------------------------------------------------------------ properties
 export function PropertiesPopover({ clip, track, media, fps, playhead, x, y, onClose }: { clip: Clip; track: Track; media: MediaItem | undefined; fps: Rational; playhead: number; x: number; y: number; onClose: () => void }) {
-  const mediaFps = media?.probe?.video?.fps ?? fps;
+  const mediaFps = validFpsOr(media?.probe?.video?.fps, fps);
   const atPlayhead = originalTimecode(clip, playhead, fps, media);
   const inside = playhead >= clip.start && playhead < clip.start + clip.duration;
   return (

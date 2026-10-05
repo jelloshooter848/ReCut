@@ -34,6 +34,11 @@ export function isValidFps(r: unknown): r is Rational {
   return v >= MIN_FPS && v <= MAX_FPS;
 }
 
+/** `r` when it passes isValidFps, else `fallback` (e.g. a probe's "unknown" rate {num:0,den:1} → the sequence rate). */
+export function validFpsOr(r: unknown, fallback: Rational): Rational {
+  return isValidFps(r) ? r : fallback;
+}
+
 export function framesToSeconds(frames: number, fps: Rational): number {
   return (frames * fps.den) / fps.num;
 }

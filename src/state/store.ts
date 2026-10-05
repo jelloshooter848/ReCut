@@ -16,7 +16,7 @@ import type {
   SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock, Track, Transition, TransitionType, TagVocabulary, SequenceView,
 } from '../../shared/model';
 import { uid } from '../../shared/ids';
-import { secondsToFrames } from '../../shared/time';
+import { isValidFps, secondsToFrames } from '../../shared/time';
 import { createProject, LiveView } from '../../shared/project';
 import {
   MIN_CLIP_FRAMES, allTracks, clipEnd, clipSourceOut, findClip, findTrack, linkedClips, makeClip, placeClips,
@@ -29,12 +29,34 @@ import {
 import { emptyHistory, pushHistory, undoHistory, redoHistory, changedSequenceIds, undoLabel, redoLabel } from './history';
 import { proxyStreamStale } from '../playback/mediaSource';
 import type {
-  RecutStore, StoreState, UIState, Recipe, SelectMode, Tool, DialogName, ToastKind,
+  RecutStore, StoreState, UIState, Recipe, SelectMode, Tool, DialogName, ToastKind, SequenceSettingsPatch,
 } from './types';
 
 // ------------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------------
+
+function isPosInt(v: unknown): v is number { return Number.isSafeInteger(v) && (v as number) > 0; }
+
+/**
+ * A sequence settings patch keeps the invariants normalizeProject enforces on load (shared/project.ts
+ * repairSequence): fps passes isValidFps; width / height / sampleRate / channels are positive safe integers;
+ * name is a string; versionLabel a string or undefined; binId a string or null. Any other key or value: false.
+ */
+export function isValidSequenceSettingsPatch(patch: SequenceSettingsPatch): boolean {
+  if (!patch || typeof patch !== 'object') return false;
+  for (const [k, v] of Object.entries(patch)) {
+    switch (k) {
+      case 'fps': if (!isValidFps(v)) return false; break;
+      case 'width': case 'height': case 'sampleRate': case 'channels': if (!isPosInt(v)) return false; break;
+      case 'name': if (typeof v !== 'string') return false; break;
+      case 'versionLabel': if (v !== undefined && typeof v !== 'string') return false; break;
+      case 'binId': if (v !== null && typeof v !== 'string') return false; break;
+      default: return false;
+    }
+  }
+  return true;
+}
 
 export function initialUi(): UIState {
   return {
@@ -651,7 +673,12 @@ export const useStore = create<RecutStore>()((set, get) => {
       commit('Delete snapshot', (d) => { const seq = d.sequences[seqId]; if (seq) seq.snapshots = seq.snapshots.filter((s) => s.id !== snapshotId); });
     },
     updateSequenceSettings(seqId, patch) {
-      commit('Sequence settings', (d) => { const seq = d.sequences[seqId]; if (seq) Object.assign(seq, patch); });
+      // An invalid patch is ignored as a whole (never half-applied, no undo step).
+      if (!isValidSequenceSettingsPatch(patch)) return;
+      commit('Sequence settings', (d) => {
+        const seq = d.sequences[seqId];
+        if (seq) Object.assign(seq, patch.fps ? { ...patch, fps: { num: patch.fps.num, den: patch.fps.den } } : patch);
+      });
     },
 
     // ---------------------------------------------------------------- timeline

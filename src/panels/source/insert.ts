@@ -8,7 +8,7 @@
  *    "Change sequence to match clip?" and conforms the sequence before inserting.
  */
 import type { ID, MediaItem, Sequence } from '@shared/model';
-import { fpsEquals, fpsLabel } from '@shared/time';
+import { fpsEquals, fpsLabel, isValidFps } from '@shared/time';
 import { sequenceDuration } from '@shared/timeline';
 import { useStore } from '@/state';
 import type { InsertFromSourceOptions } from '@/state/types';
@@ -53,10 +53,10 @@ export function resetConformMemory(): void { conformAnswers.clear(); }
 
 export interface ConformTarget { fps: Sequence['fps']; width: number; height: number }
 
-/** Settings the sequence should change to for `media`, or null when it already matches / nothing to match. */
+/** Settings the sequence should change to for `media`, or null when it already matches / nothing to match (unknown or unusable rate / size). */
 export function conformTargetFor(seq: Sequence, media: MediaItem | undefined): ConformTarget | null {
   const v = media?.probe?.video;
-  if (!media || media.kind !== 'video' || !v || !(v.width > 0) || !(v.height > 0) || !(v.fps?.num > 0)) return null;
+  if (!media || media.kind !== 'video' || !v || !Number.isSafeInteger(v.width) || !(v.width > 0) || !Number.isSafeInteger(v.height) || !(v.height > 0) || !isValidFps(v.fps)) return null;
   if (sequenceDuration(seq) > 0) return null;
   if (fpsEquals(seq.fps, v.fps) && seq.width === v.width && seq.height === v.height) return null;
   return { fps: { num: v.fps.num, den: v.fps.den }, width: v.width, height: v.height };

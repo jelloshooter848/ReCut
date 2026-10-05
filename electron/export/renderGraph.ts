@@ -12,7 +12,7 @@ import path from 'node:path';
 import type { Clip, ExportSettings, ID, MediaItem, Rational, Sequence, Track, Transition, VideoStreamInfo } from '@shared/model';
 import type { ExportRequest } from '@shared/ipc';
 import { clipEnd, sequenceDuration, sourceTimeAt } from '@shared/timeline';
-import { framesToSeconds } from '@shared/time';
+import { framesToSeconds, isValidFps } from '@shared/time';
 import { serializeSrt } from '@shared/subtitles';
 
 /** Placeholder in `args` for the path of the filter script file (see exporter.ts). */
@@ -96,11 +96,6 @@ function num(x: number): string {
   return String(Math.round(x * 1e4) / 1e4);
 }
 function fpsStr(fps: Rational): string { return `${fps.num}/${fps.den}`; }
-
-/** A usable frame rate: numerator and denominator are positive finite integers. */
-export function isValidFps(fps: Rational | null | undefined): fps is Rational {
-  return !!fps && Number.isSafeInteger(fps.num) && Number.isSafeInteger(fps.den) && fps.num > 0 && fps.den > 0;
-}
 
 function sameRate(a: Rational, b: Rational): boolean {
   return BigInt(a.num) * BigInt(b.den) === BigInt(b.num) * BigInt(a.den);

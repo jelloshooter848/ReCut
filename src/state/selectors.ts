@@ -4,7 +4,7 @@
  */
 import type { Clip, ID, Marker, MediaItem, Rational, SceneRecord, Sequence, SubtitleCue } from '../../shared/model';
 import { allTracks, clipEnd, findClip, sourceTimeAt } from '../../shared/timeline';
-import { formatSecondsTimecode } from '../../shared/time';
+import { formatSecondsTimecode, validFpsOr } from '../../shared/time';
 import type { FilterState, StoreState } from './types';
 
 export function activeSequence(state: StoreState): Sequence | null {
@@ -189,7 +189,7 @@ export function identityLabel(media: MediaItem | undefined): string {
 export function originalTimecode(clip: Clip, frame: number, fps: Rational, media: MediaItem | undefined): OriginalTimecode {
   const f = Math.max(clip.start, Math.min(clipEnd(clip) - 1, frame));
   const sourceSeconds = Math.max(0, sourceTimeAt(clip, f, fps));
-  const mediaFps = media?.probe?.video?.fps ?? fps;
+  const mediaFps = validFpsOr(media?.probe?.video?.fps, fps);
   return {
     sourceSeconds,
     sourceTimecode: formatSecondsTimecode(sourceSeconds, mediaFps),

@@ -8,7 +8,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { FolderOpen, Link2, Plus, RotateCcw, Unlink2, X } from 'lucide-react';
 import type { Clip, ClipAudio, ClipTransform, ID, MediaItem, Rational, TagVocabulary, Track, Transition, TransitionType } from '@shared/model';
 import { clampSpeedPercent, clipEnd, clipSourceOut, defaultAudio, defaultTransform, findClip, linkedClips, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN, transitionsForClip } from '@shared/timeline';
-import { formatSecondsTimecode, fpsEquals, fpsLabel } from '@shared/time';
+import { formatSecondsTimecode, fpsEquals, fpsLabel, validFpsOr } from '@shared/time';
 import { activeSequence, identityLabel, originalTimecode, selectedClips, useStore } from '@/state';
 import type { StoreState } from '@/state';
 import { Button, ColorSwatchPicker, IconButton, NumberField, Slider, TagInput, TextField, Toggle, labelColorHex } from '@/components/ui';
@@ -154,7 +154,7 @@ function SourceAtPlayhead({ clip, fps, media }: { clip: Clip; fps: Rational; med
 
 function SourceSection({ seqId: _seqId, fps, clips, media }: { seqId: ID; fps: Rational; clips: Clip[]; media: MediaItem | undefined }) {
   const single = clips.length === 1 ? clips[0] : null;
-  const mediaFps = media?.probe?.video?.fps ?? fps;
+  const mediaFps = validFpsOr(media?.probe?.video?.fps, fps);
   const start = Math.min(...clips.map((c) => c.start));
   const end = Math.max(...clips.map((c) => clipEnd(c)));
   if (!single) {

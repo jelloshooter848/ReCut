@@ -26,13 +26,14 @@ export interface TimecodeFieldProps {
 /**
  * Premiere-style entry for an unseparated digit string: fields fill FF, SS, MM, HH from the right in pairs
  * ("1512" → "15:12", "500" → "5:00", "11500" → "1:15:00"). Anything else ("+24", "1:00", "1.10") is returned as is.
+ * More than eight digits gives more than four fields, which parseTimecode rejects (nothing is truncated).
  */
 export function expandTimecodeDigits(input: string): string {
   const t = input.trim();
   if (!/^\d+$/.test(t)) return t;
   const parts: string[] = [];
   for (let end = t.length; end > 0; end -= 2) parts.unshift(t.slice(Math.max(0, end - 2), end));
-  return parts.slice(-4).join(':');
+  return parts.join(':');
 }
 
 /** Parse typed timecode text (see `expandTimecodeDigits`; "+N" / "-N" stay frames relative to `current`). */

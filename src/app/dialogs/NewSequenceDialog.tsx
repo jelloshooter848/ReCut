@@ -11,8 +11,8 @@ import { NumberField } from '@/components/ui/NumberField';
 import { useStore } from '@/state/store';
 import { activeSequence } from '@/state/selectors';
 import { createSequence } from '@shared/project';
-import { FPS_PRESETS, fpsEquals, fpsLabel } from '@shared/time';
-import type { ID, Rational, Sequence } from '@shared/model';
+import { FPS_PRESETS, MAX_FPS, MIN_FPS, fpsEquals, fpsLabel, isValidFps } from '@shared/time';
+import type { ID, MediaProbe, Rational, Sequence } from '@shared/model';
 import { toast } from '@/components/ui/toastStore';
 
 export const RESOLUTION_PRESETS: { id: string; label: string; width: number; height: number }[] = [
@@ -41,7 +41,30 @@ function presetForSize(w: number, h: number): string {
   return RESOLUTION_PRESETS.find((p) => p.width === w && p.height === h)?.id ?? 'custom';
 }
 
-interface FormState { name: string; fps: Rational; width: number; height: number; sampleRate: number; channels: number }
+export interface FormState { name: string; fps: Rational; width: number; height: number; sampleRate: number; channels: number }
+
+const isPosInt = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) > 0;
+
+/**
+ * "Match Media": the form with the probed media's format. Only usable values are taken: the frame rate (average
+ * rate for VFR media, else the nominal rate, whichever passes isValidFps), a positive size and sample rate;
+ * anything unknown (e.g. a probe rate of {num:0,den:1}) keeps the form's current value.
+ */
+export function matchMediaSettings(p: MediaProbe, f: FormState): FormState {
+  const v = p.video;
+  const fps = v ? [v.isVfr ? v.avgFps : v.fps, v.fps, v.avgFps].find((r) => isValidFps(r)) : undefined;
+  const audioCh = Math.max(0, ...p.audio.map((a) => a.channels));
+  const sr = p.audio[0]?.sampleRate;
+  const sized = !!v && isPosInt(v.width) && isPosInt(v.height);
+  return {
+    ...f,
+    fps: fps ? { num: fps.num, den: fps.den } : f.fps,
+    width: sized ? v.width : f.width,
+    height: sized ? v.height : f.height,
+    sampleRate: isPosInt(sr) ? sr : f.sampleRate,
+    channels: audioCh >= 6 ? 6 : 2,
+  };
+}
 
 function initialForm(edit: Sequence | null, count: number): FormState {
   if (edit) return { name: edit.name, fps: edit.fps, width: edit.width, height: edit.height, sampleRate: edit.sampleRate, channels: edit.channels };
@@ -73,16 +96,7 @@ export function NewSequenceDialog() {
     const media = id ? st.project.media[id] : undefined;
     if (!media?.probe) { toast('info', 'Select a probed media item in the Project panel first'); return; }
     const p = media.probe;
-    const v = p.video;
-    const audioCh = Math.max(0, ...p.audio.map((a) => a.channels));
-    setForm((f) => ({
-      ...f,
-      fps: v ? (v.isVfr ? v.avgFps : v.fps) : f.fps,
-      width: v?.width ?? f.width,
-      height: v?.height ?? f.height,
-      sampleRate: p.audio[0]?.sampleRate ?? f.sampleRate,
-      channels: audioCh >= 6 ? 6 : 2,
-    }));
+    setForm((f) => matchMediaSettings(p, f));
     setCustomFps(false);
     if (!form.name.trim() || /^Sequence \d+$/.test(form.name)) setForm((f) => ({ ...f, name: media.name.replace(/\.[^.]+$/, '') }));
   };
@@ -90,6 +104,7 @@ export function NewSequenceDialog() {
   const submit = () => {
     const name = form.name.trim() || 'Sequence';
     const width = Math.max(16, Math.round(form.width)); const height = Math.max(16, Math.round(form.height));
+    if (!isValidFps(form.fps)) { toast('error', `Choose a frame rate between ${MIN_FPS} and ${MAX_FPS} fps`); return; }
     const st = useStore.getState();
     if (editSeq) {
       st.updateSequenceSettings(editSeq.id, { name, fps: form.fps, width, height, sampleRate: form.sampleRate, channels: form.channels });

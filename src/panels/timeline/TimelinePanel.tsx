@@ -5,7 +5,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { Clip, ID, Marker, Sequence, Track, TransitionType } from '@shared/model';
-import { formatSecondsTimecode, formatTimecode, fpsLabel } from '@shared/time';
+import { formatSecondsTimecode, formatTimecode, fpsLabel, validFpsOr } from '@shared/time';
 import { clipEnd, clipSourceOut, editPoints, findClip, removableDisabledClipIds, resolveSubtitleCues, sequenceDuration, sourceTimeAt } from '@shared/timeline';
 import { useStore, filterMatches, filtersActive, usePlayhead } from '@/state';
 import { hasClipDrag, readClipDrag } from '@/app/dnd';
@@ -676,7 +676,7 @@ function StatusStrip({ seq, selectedClip, selectedCount, media, duration, zoom }
   seq: { name: string; fps: { num: number; den: number } }; selectedClip: Clip | undefined; selectedCount: number; media: ReturnType<typeof useStore.getState>['project']['media'][string] | undefined; duration: number; zoom: number;
 }) {
   const fps = seq.fps;
-  const mediaFps = media?.probe?.video?.fps ?? fps;
+  const mediaFps = validFpsOr(media?.probe?.video?.fps, fps);
   return (
     <div className="toolbar toolbar-bottom tl-status" data-status>
       {selectedClip ? (

@@ -18,7 +18,7 @@ import { importPaths } from '@/panels/project/actions';
 import { useLayoutStore } from '@/components/layout/layoutStore';
 import { toast } from '@/components/ui/toastStore';
 import type { Clip, ID, Sequence, Track, TransitionType } from '@shared/model';
-import { secondsToFrames } from '@shared/time';
+import { secondsToFrames, validFpsOr } from '@shared/time';
 import { addTransition, allTracks, clipAt, clipEnd, findClip, nextEdit, prevEdit, removableDisabledClipIds, sequenceDuration, sourceTimeAt } from '@shared/timeline';
 import { MAX_ZOOM, MIN_ZOOM, minZoomFor, zoomAround, zoomToFit } from '@/panels/timeline/viewMath';
 import { useTimelineUi } from '@/panels/timeline/timelineStore';
@@ -185,7 +185,8 @@ function sourceSceneBoundaries(): { seconds: number[]; time: number; fps: { num:
   const set = new Set<number>([0]);
   for (const s of media.detectedScenes) { set.add(s.start); set.add(s.end); }
   if (media.probe?.duration) set.add(media.probe.duration);
-  const fps = media.probe?.video?.fps ?? activeSequence(st)?.fps ?? { num: 24000, den: 1001 };
+  // An unknown probe rate ({num:0,den:1}) would make every boundary frame 0: use the sequence rate instead.
+  const fps = validFpsOr(media.probe?.video?.fps, validFpsOr(activeSequence(st)?.fps, { num: 24000, den: 1001 }));
   return { seconds: [...set].sort((a, b) => a - b), time: sc.time, fps };
 }
 

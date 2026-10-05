@@ -3,7 +3,7 @@
  */
 import { useMemo } from 'react';
 import type { ID, MediaItem, Rational } from '../../../shared/model';
-import { formatSecondsTimecode } from '../../../shared/time';
+import { formatSecondsTimecode, validFpsOr } from '../../../shared/time';
 import { performSourceEdit } from '@/panels/source/insert';
 import { useStore, importSubtitleFile, importEmbeddedSubtitles, recutApi } from '@/state';
 import { toast, dismissToast } from '@/components/ui';
@@ -22,9 +22,9 @@ export function useTranscriptIndex(): TranscriptIndex {
   return useMemo(() => buildTranscriptIndex(useStore.getState().project), [subtitleTracks, media]);
 }
 
-/** Frame rate used to display a media item's source timecodes. */
+/** Frame rate used to display a media item's source timecodes (`fallback` when the probed rate is unknown / unusable). */
 export function mediaFps(media: MediaItem | undefined, fallback?: Rational): Rational {
-  return media?.probe?.video?.fps ?? fallback ?? DEFAULT_FPS;
+  return validFpsOr(media?.probe?.video?.fps, validFpsOr(fallback, DEFAULT_FPS));
 }
 
 export function sourceTimecode(seconds: number, media: MediaItem | undefined, fallback?: Rational): string {

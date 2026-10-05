@@ -3,7 +3,7 @@
  * store-facing actions (load in Source, insert at playhead, drag payload) shared by rows, cards and menus.
  */
 import type { ID, MediaItem, Rational, SceneRecord } from '@shared/model';
-import { formatSecondsTimecode, formatClock, secondsToFrames } from '@shared/time';
+import { formatSecondsTimecode, formatClock, secondsToFrames, validFpsOr } from '@shared/time';
 import { uid } from '@shared/ids';
 import { useStore, identityLabel } from '@/state';
 import { activeSequence } from '@/state/selectors';
@@ -34,8 +34,9 @@ export function filtersActive(f: SceneFilters): boolean {
   return !!(f.query || f.character || f.location || f.arc || f.tag || f.minRating > 0 || f.mediaId || f.color);
 }
 
+/** The media's video frame rate, or `fallback` when it is unknown / unusable (a probe stores {num:0,den:1} for unknown). */
 export function mediaFps(media: MediaItem | undefined, fallback: Rational = DEFAULT_FPS): Rational {
-  return media?.probe?.video?.fps ?? fallback;
+  return validFpsOr(media?.probe?.video?.fps, fallback);
 }
 
 export function sourceLabel(media: MediaItem | undefined): string {

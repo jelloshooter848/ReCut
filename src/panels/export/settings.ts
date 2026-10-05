@@ -4,7 +4,7 @@
  */
 import type { ExportPreset, ExportSettings, ID, MediaItem, Rational, Sequence } from '@shared/model';
 import { EXPORT_PRESETS } from '@shared/model';
-import { FPS_PRESETS, fpsEquals, fpsLabel, fpsValue, framesToSeconds } from '@shared/time';
+import { FPS_PRESETS, fpsEquals, fpsLabel, fpsValue, framesToSeconds, isValidFps } from '@shared/time';
 import { allTracks, sequenceDuration } from '@shared/timeline';
 
 export const MATCH_SEQUENCE = 'Match Sequence';
@@ -163,14 +163,9 @@ export function hasInOut(seq: Sequence): boolean {
   return i !== null && o !== null && o > i;
 }
 
-/** A usable export frame rate: numerator and denominator are positive finite integers (mirrors renderGraph isValidFps). */
-export function isValidExportFps(fps: Rational | null | undefined): fps is Rational {
-  return !!fps && Number.isSafeInteger(fps.num) && Number.isSafeInteger(fps.den) && fps.num > 0 && fps.den > 0;
-}
-
-/** Frame rate the export is encoded at: settings.fps when valid, otherwise the sequence rate (like the render graph). */
+/** Frame rate the export is encoded at: settings.fps when it passes the shared isValidFps, otherwise the sequence rate (like the render graph). */
 export function effectiveExportFps(settings: Pick<ExportSettings, 'fps'>, seq: Sequence): Rational {
-  return isValidExportFps(settings.fps) ? settings.fps : seq.fps;
+  return isValidFps(settings.fps) ? settings.fps : seq.fps;
 }
 
 /**
@@ -203,7 +198,7 @@ export function estimateFileSize(settings: ExportSettings, durationSec: number):
   const crf = Number.isFinite(settings.crf) ? settings.crf : 18;
   const base = settings.videoCodec === 'libx265' ? 0.045 : 0.07;
   const bpp = base * Math.pow(0.89, crf - 23);
-  const fps = isValidExportFps(settings.fps) ? fpsValue(settings.fps) : 24;
+  const fps = isValidFps(settings.fps) ? fpsValue(settings.fps) : 24;
   const videoBps = Math.max(2, settings.width) * Math.max(2, settings.height) * fps * bpp;
   const bytes = (videoBps + audioKbps * 1000) / 8 * d;
   return { bytes: Math.round(bytes), approximate: true };
@@ -327,7 +322,7 @@ export function exportChecklist(seq: Sequence, media: Record<ID, MediaItem>, set
   if (pending.length) items.push({ level: 'warning', text: `Media not analyzed yet: ${pending.map((m) => m.name).join(', ')}.` });
   if (settings.rangeMode === 'inOut' && !hasInOut(seq)) items.push({ level: 'warning', text: 'In/Out range is not set; the entire sequence will be exported.' });
   // A different (valid) export frame rate is converted at the output (see fpsConversionNote); nothing to check.
-  if (!isValidExportFps(settings.fps)) items.push({ level: 'warning', text: `The export frame rate is not valid; the sequence frame rate (${fpsLabel(seq.fps)} fps) is used.` });
+  if (!isValidFps(settings.fps)) items.push({ level: 'warning', text: `The export frame rate is not valid; the sequence frame rate (${fpsLabel(seq.fps)} fps) is used.` });
   if (settings.audioChannels === 6 && maxSourceChannels(seq, media) < 6) items.push({ level: 'warning', text: 'No source has 6 audio channels; 5.1 output will be upmixed from stereo.' });
   if ((settings.burnSubtitles || settings.exportSubtitleSidecar) && !sequenceHasSubtitles(seq)) items.push({ level: 'warning', text: 'The sequence has no subtitle tracks; nothing will be burned in or written.' });
   const readyProxies = ids.map((id) => media[id]).filter((m): m is MediaItem => !!m && m.proxy.status === 'ready');
@@ -380,7 +375,7 @@ export function initialExportSettings(seq: Sequence, saved: SavedExportSettings 
   const s = { ...defaults, ...saved.settings, useProxies: false as const };
   if (saved.sequenceId !== seq.id) { s.fileName = defaults.fileName; }
   if (!s.outputDir) s.outputDir = defaults.outputDir;
-  if (!isValidExportFps(s.fps)) s.fps = seq.fps;
+  if (!isValidFps(s.fps)) s.fps = seq.fps;
   return s;
 }
 
