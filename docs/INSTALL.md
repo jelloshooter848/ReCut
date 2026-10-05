@@ -20,8 +20,8 @@ Nothing is code-signed.
 
 Releases are produced by `.github/workflows/windows.yml`, which builds on `windows-latest`, bundles the current FFmpeg release (gyan.dev essentials, BtbN as fallback;
 see `scripts/windows/get-ffmpeg.ps1`), smoke-tests both the unpacked app and a silent install (media protocol, FFmpeg encode + probe,
-UI mounted), and publishes a release `v<version>` when a version tag is pushed, or a test-build prerelease
-`v<version>-dev.<run>` for a branch push (see [RELEASING.md](RELEASING.md)). The same workflow checks `Start ReCut.cmd`
+UI mounted), and publishes a release `v<version>` automatically when a release PR (version bump + changelog entry) is merged to
+`main`, or a test-build prerelease `v<version>-dev.<run>` for any other push (see [RELEASING.md](RELEASING.md)). The same workflow checks `Start ReCut.cmd`
 from a fresh clone and runs the unit and end-to-end suites on Windows.
 
 ## Prerequisites
