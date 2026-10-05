@@ -11,7 +11,7 @@
 import path from 'node:path';
 import type { Clip, ExportSettings, ID, MediaItem, Rational, Sequence, Track, Transition, VideoStreamInfo } from '@shared/model';
 import type { ExportRequest } from '@shared/ipc';
-import { clipEnd, sequenceDuration, sourceTimeAt } from '@shared/timeline';
+import { clipEnd, sequenceDuration, sourceTimeAt, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN } from '@shared/timeline';
 import { framesToSeconds, isValidFps } from '@shared/time';
 import { serializeSrt } from '@shared/subtitles';
 
@@ -111,9 +111,18 @@ function gcd(a: number, b: number): number { while (b) { [a, b] = [b, a % b]; } 
  * sequence frame on screen at the middle of output frame n. Exact integer maths (BigInt).
  */
 export function outputFrameIndex(relFrame: number, seqFps: Rational, outFps: Rational): number {
-  const n = BigInt(Math.round(relFrame)) * BigInt(seqFps.den) * BigInt(outFps.num);
+  if (!Number.isSafeInteger(relFrame)) throw new Error(`Output frame index: frame ${relFrame} is not a whole number of frames.`);
+  for (const f of [seqFps, outFps]) {
+    if (!Number.isSafeInteger(f.num) || !Number.isSafeInteger(f.den) || f.num <= 0 || f.den <= 0) {
+      throw new Error(`Output frame index: frame rate ${f.num}/${f.den} is not valid.`);
+    }
+  }
+  const n = BigInt(relFrame) * BigInt(seqFps.den) * BigInt(outFps.num);
   const d = BigInt(seqFps.num) * BigInt(outFps.den);
-  return Number((2n * n + d) / (2n * d));
+  // floor((2n + d) / 2d): BigInt division truncates toward zero, so step down for negative non-exact quotients.
+  const a = 2n * n + d, b = 2n * d;
+  const q = a / b;
+  return Number(a % b !== 0n && a < 0n ? q - 1n : q);
 }
 
 /**
@@ -143,15 +152,30 @@ export function activeTracks(tracks: Track[]): Track[] {
   return solo.length ? solo : live;
 }
 
+/** Longest export accepted (seconds): anything longer is a corrupt In/Out point or clip position. */
+export const MAX_EXPORT_SECONDS = 24 * 3600;
+/** Largest source position (seconds) a clip may read from (about 115 days). */
+const MAX_SOURCE_SECONDS = 1e7;
+
 function resolveRange(seq: Sequence, settings: ExportSettings, warnings: string[]): { startF: number; endF: number } {
+  const check = (r: { startF: number; endF: number }) => {
+    if (!Number.isSafeInteger(r.startF) || !Number.isSafeInteger(r.endF)) {
+      throw new Error(`The export range ${String(r.startF)}..${String(r.endF)} is not valid: check the In/Out points and clip positions.`);
+    }
+    const sec = framesToSeconds(r.endF - r.startF, seq.fps);
+    if (sec > MAX_EXPORT_SECONDS) {
+      throw new Error(`The export range is too long (${Math.round(sec / 3600)} h; the maximum is ${MAX_EXPORT_SECONDS / 3600} h): check the In/Out points and clip positions.`);
+    }
+    return r;
+  };
   const total = sequenceDuration(seq);
   if (settings.rangeMode === 'inOut') {
     const i = seq.view.inPoint, o = seq.view.outPoint;
-    if (i !== null && o !== null && o > i) return { startF: Math.max(0, Math.round(i)), endF: Math.round(o) };
+    if (i !== null && o !== null && o > i) return check({ startF: Math.max(0, Math.round(i)), endF: Math.round(o) });
     warnings.push('In/Out range is not set or empty; exporting the entire sequence instead.');
   }
   if (total <= 0) throw new Error('Nothing to export: the sequence is empty.');
-  return { startF: 0, endF: total };
+  return check({ startF: 0, endF: total });
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -198,7 +222,7 @@ function collectTrackSegments(
     .sort((a, b) => a.start - b.start);
   let cursor = startF;
   for (const clip of sorted) {
-    const m = media[clip.mediaId];
+    const m = Object.hasOwn(media, clip.mediaId) ? media[clip.mediaId] : undefined; // "constructor" etc. are not media
     if (!m) { warnings.push(`Clip "${clip.name}" on ${track.name}: media is missing from the project; rendered as ${need === 'video' ? 'black' : 'silence'}.`); continue; }
     if (m.offline) { warnings.push(`Clip "${clip.name}" on ${track.name}: media "${m.name}" is offline; rendered as ${need === 'video' ? 'black' : 'silence'}.`); continue; }
     if (need === 'video' && m.probe && !m.probe.video) { warnings.push(`Clip "${clip.name}" on ${track.name}: media "${m.name}" has no video stream; rendered as black.`); continue; }
@@ -206,10 +230,17 @@ function collectTrackSegments(
     if (need === 'audio' && clip.audio.muted) continue; // muted clip => silence
     let speed = clip.speed;
     if (!(speed > 0) || !Number.isFinite(speed)) { warnings.push(`Clip "${clip.name}": invalid speed ${clip.speed}; using 1.0.`); speed = 1; }
+    if (speed < (SPEED_PERCENT_MIN / 100) * (1 - 1e-9) || speed > (SPEED_PERCENT_MAX / 100) * (1 + 1e-9)) {
+      throw new Error(`Clip "${clip.name}" on ${track.name}: speed ${speed * 100}% is out of range (${SPEED_PERCENT_MIN}% to ${SPEED_PERCENT_MAX}%). Fix the clip speed and export again.`);
+    }
     const segStartAbs = Math.max(clip.start, startF, cursor);
     const segEndAbs = Math.min(clipEnd(clip), endF);
     if (segEndAbs <= segStartAbs) continue;
     if (segStartAbs > Math.max(clip.start, startF)) warnings.push(`Clip "${clip.name}" overlaps the previous clip on ${track.name}; the overlap is trimmed.`);
+    const srcStart = sourceTimeAt({ ...clip, speed }, segStartAbs, fps);
+    if (!Number.isFinite(srcStart) || Math.abs(srcStart) > MAX_SOURCE_SECONDS) {
+      throw new Error(`Clip "${clip.name}" on ${track.name}: source position ${String(clip.sourceIn)} s is not valid. Fix the clip and export again.`);
+    }
     const mediaDur = mediaDurationSec(m);
     if (Number.isFinite(mediaDur)) {
       const srcEnd = sourceTimeAt({ ...clip, speed }, segEndAbs, fps);
@@ -220,7 +251,7 @@ function collectTrackSegments(
     clipSegs.push({
       kind: 'clip', clip, media: m,
       start: segStartAbs - startF, frames: segEndAbs - segStartAbs,
-      srcStart: sourceTimeAt({ ...clip, speed }, segStartAbs, fps),
+      srcStart,
       extBefore: 0, extAfter: 0, isImage: isImageMedia(m), speed, input: -1,
     });
     cursor = segEndAbs;
@@ -233,7 +264,7 @@ function collectTrackSegments(
     const typeOk = wantAudio ? (tr.type === 'audioCrossfade' || tr.type === 'crossDissolve') : (tr.type === 'crossDissolve' || tr.type === 'dipToBlack');
     if (!typeOk) continue;
     const D = Math.max(0, Math.round(tr.duration));
-    if (D <= 0) continue;
+    if (!Number.isFinite(D) || D <= 0) continue;
     const outSeg = tr.outClipId ? byId.get(tr.outClipId) : undefined;
     const inSeg = tr.inClipId ? byId.get(tr.inClipId) : undefined;
     if (tr.outClipId && tr.inClipId) {
@@ -247,9 +278,15 @@ function collectTrackSegments(
       const srcOut = outSeg.srcStart + outSeg.frames * fd * outSeg.speed;
       const handleOut = Number.isFinite(outDur) ? Math.floor(((outDur - srcOut) / outSeg.speed) / fd + 1e-6) : Infinity;
       const handleIn = inSeg.isImage ? Infinity : Math.floor((inSeg.srcStart / inSeg.speed) / fd + 1e-6);
-      const h = Math.max(0, Math.min(Math.floor(D / 2), outSeg.frames, inSeg.frames, handleOut, handleIn));
-      if (h < 1) { warnings.push(`Transition between "${outSeg.clip.name}" and "${inSeg.clip.name}" dropped: not enough source handles.`); continue; }
-      if (2 * h < D) warnings.push(`Transition between "${outSeg.clip.name}" and "${inSeg.clip.name}" shortened from ${D} to ${2 * h} frames (source handles).`);
+      // Centered on the cut: an odd duration renders D - 1 frames (not reported).
+      const hClips = Math.min(Math.floor(D / 2), outSeg.frames, inSeg.frames);
+      const hSource = Math.min(handleOut, handleIn);
+      const h = Math.max(0, Math.min(hClips, hSource));
+      const names = `"${outSeg.clip.name}" and "${inSeg.clip.name}"`;
+      if (h < 1) { warnings.push(`Transition between ${names} dropped: ${hSource < 1 ? 'not enough source handles' : 'too short to render'}.`); continue; }
+      if (h < Math.floor(D / 2)) {
+        warnings.push(`Transition between ${names} shortened from ${D} to ${2 * h} frames (${hSource < hClips ? 'source handles' : 'the clips are shorter than the transition'}).`);
+      }
       outSeg.extAfter = h;
       inSeg.extBefore = h;
       inSeg.transIn = { type: tr.type, frames: 2 * h };
@@ -431,11 +468,30 @@ function transformFilters(ctx: Ctx, seg: ClipSeg): string[] {
   const px = Math.round(ox + X), py = Math.round(oy + Y);
   // Place on a transparent canvas centered on the sequence frame, then crop the frame out of it.
   f.push(`pad=w='max(${W},ceil((iw+2*${Math.abs(px)})/2)*2+2)':h='max(${H},ceil((ih+2*${Math.abs(py)})/2)*2+2)':x='(ow-iw)/2+${px}':y='(oh-ih)/2+${py}':color=black@0`);
-  f.push(`crop=${W}:${H}`);
+  // The even-rounding crop / scale above leave a non-square SAR, which concat and xfade refuse to join (D1).
+  f.push(`crop=${W}:${H}`, 'setsar=1');
   return f;
 }
 
 function clamp01(v: number): number { return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0; }
+
+/**
+ * Fit the source into the W x H frame (letterbox / pillarbox), with square pixels.
+ *
+ * Non-square pixels (anamorphic DVD / HDV, SAR from the stream) are first un-squeezed to their display shape
+ * (the editor preview draws the video element, whose size is the display size), widening when SAR > 1 and
+ * heightening when SAR < 1; a square-pixel source passes through that scale untouched. The fit scale rounds to
+ * even sizes, which changes the SAR slightly: `setsar=1` keeps every segment, gap and transition input at SAR 1
+ * (concat and xfade fail on mismatched SARs, D1).
+ */
+function fitFilters(ctx: Ctx): string[] {
+  return [
+    "scale=w='if(gt(sar,1.000001),max(2,round(iw*sar/2)*2),iw)':h='if(lt(sar,0.999999),max(2,round(ih/sar/2)*2),ih)':flags=bicubic",
+    'setsar=1',
+    `scale=${ctx.W}:${ctx.H}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic`,
+    'setsar=1',
+  ];
+}
 
 /** Builds the exact-length video stream for a clip segment. Returns its label. */
 function videoSegment(ctx: Ctx, seg: ClipSeg): string {
@@ -470,7 +526,7 @@ function videoSegment(ctx: Ctx, seg: ClipSeg): string {
       if (hideBefore > 0) f.push(`lut=a=0:enable='lt(t,${sec(hideBefore)})'`);
     }
   }
-  f.push(`scale=${ctx.W}:${ctx.H}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic`);
+  f.push(...fitFilters(ctx));
   f.push(...transformFilters(ctx, seg));
   const op = seg.clip.transform.opacity;
   if (Number.isFinite(op) && op < 1) f.push(`lut=a='val*${num(Math.max(0, op))}'`);
@@ -731,6 +787,68 @@ function assertOutputNotASource(req: ExportRequest, outputPath: string, opts: Re
   }
 }
 
+/** Sample rates the FFmpeg AC-3 encoder accepts. */
+const AC3_SAMPLE_RATES = [32000, 44100, 48000];
+
+/**
+ * Widens `[startF, endF)` so it never starts or ends inside a transition window (D2). A transition is laid out
+ * on the full timeline (centered on its cut, its length limited by the clips and their handles); a range edge
+ * inside it would shorten it, turn it into a hard cut or restart a fade. The caller renders the widened range
+ * and trims the composite back to `[startF, endF)`, so the frames are the full export's. Windows are the ones
+ * chunks.ts never puts a chunk boundary in (only the export range edges can be inside one).
+ */
+function widenRangeForTransitions(seq: Sequence, startF: number, endF: number): { startF: number; endF: number } {
+  const windows: [number, number][] = [];
+  for (const t of [...activeTracks(seq.videoTracks), ...activeTracks(seq.audioTracks)]) {
+    const byId = new Map(t.clips.filter((c) => c.enabled).map((c) => [c.id, c] as const));
+    for (const tr of t.transitions) {
+      const D = Math.max(0, Math.round(tr.duration));
+      if (!Number.isFinite(D) || D <= 0) continue;
+      const outC = tr.outClipId ? byId.get(tr.outClipId) : undefined;
+      const inC = tr.inClipId ? byId.get(tr.inClipId) : undefined;
+      const h = Math.ceil(D / 2);
+      if (outC && inC) {
+        const cut = clipEnd(outC);
+        windows.push([cut - Math.min(h, outC.duration), cut + Math.min(h, inC.duration)]);
+      } else if (inC && !tr.outClipId) {
+        windows.push([inC.start, inC.start + Math.min(D, inC.duration)]);
+      } else if (outC && !tr.inClipId) {
+        windows.push([clipEnd(outC) - Math.min(D, outC.duration), clipEnd(outC)]);
+      }
+    }
+  }
+  let s = startF, e = endF, changed = true;
+  while (changed) {
+    changed = false;
+    for (const [lo, hi] of windows) {
+      if (lo < s && s < hi) { s = Math.max(0, lo); changed = true; }
+      if (lo < e && e < hi) { e = hi; changed = true; }
+    }
+  }
+  return { startF: s, endF: e };
+}
+
+/**
+ * Burn-in SRT for `[startF, endF)` (relative to startF). Cues are snapped to the sequence frames the editor shows
+ * them on (start frame inclusive, end frame exclusive) and written at frame midpoints, half a frame before those
+ * frames: libass picks cues by frame time in whole milliseconds, so exact frame times (rounded to the nearest
+ * millisecond in the SRT) showed or hid about half the cue edges one frame late or early (D3). Burn-in runs on the
+ * sequence-rate frames, before any output frame-rate conversion. The sidecar keeps exact times (buildSubtitleSrt).
+ */
+function buildBurnInSrt(req: ExportRequest, startF: number, endF: number): string | null {
+  const cues = req.subtitles;
+  if (!cues || cues.length === 0) return null;
+  const { num, den } = req.sequence.fps;
+  const fd = den / num;
+  const out = cues
+    .filter((c) => Number.isFinite(c.start) && Number.isFinite(c.end) && c.text.trim().length > 0)
+    .map((c) => ({ a: Math.max(startF, Math.round((c.start * num) / den)), b: Math.min(endF, Math.round((c.end * num) / den)), text: c.text }))
+    .filter((c) => c.b > c.a)
+    .sort((x, y) => x.a - y.a)
+    .map((c) => ({ start: Math.max(0, (c.a - startF - 0.5) * fd), end: (c.b - startF - 0.5) * fd, text: c.text }));
+  return out.length ? serializeSrt(out) : null;
+}
+
 export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = {}): RenderGraph {
   const { sequence: seq, media, settings } = req;
   const warnings: string[] = [];
@@ -751,7 +869,13 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   const W = Math.round(Number(settings.width) || seq.width);
   const H = Math.round(Number(settings.height) || seq.height);
   validateDimensions(W, H);
-  const SR = settings.sampleRate > 0 ? Math.round(settings.sampleRate) : seq.sampleRate || 48000;
+  let SR = settings.sampleRate > 0 ? Math.round(settings.sampleRate) : seq.sampleRate || 48000;
+  if (settings.audioCodec === 'ac3' && !AC3_SAMPLE_RATES.includes(SR)) {
+    // The AC-3 encoder only takes 32 / 44.1 / 48 kHz: fail-safe for IPC callers (the dialog validates this).
+    const to = SR > 48000 ? 48000 : AC3_SAMPLE_RATES.find((r) => r >= SR) ?? 48000;
+    warnings.push(`AC-3 audio supports 32, 44.1 and 48 kHz only; exporting at ${to} Hz instead of ${SR} Hz.`);
+    SR = to;
+  }
   const channels = settings.audioChannels === 6 ? 6 : 2;
   const layout = channels === 6 ? '5.1' : 'stereo';
 
@@ -782,9 +906,14 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   }
   const outputDurationSec = convert ? outputFrameCount * (outFps.den / outFps.num) : durationSec;
 
+  // Render [renderStartF, renderEndF) so no transition is cut by the range, then trim the composite (D2).
+  const { startF: renderStartF, endF: renderEndF } = widenRangeForTransitions(seq, startF, endF);
+  const lead = startF - renderStartF;
+  const renderFrames = renderEndF - renderStartF;
+
   const ctx: Ctx = {
     seq, settings, W, H, fps: seq.fps, fd: seqFd, SR, layout,
-    inputs: [], chains: [], warnings, labelCounter: 0, rangeStartF: startF, inputKeys: new Map(),
+    inputs: [], chains: [], warnings, labelCounter: 0, rangeStartF: renderStartF, inputKeys: new Map(),
   };
 
   // ---- Video
@@ -792,11 +921,11 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   let subtitleContent: string | undefined;
   if (wantVideo) {
     for (const track of activeTracks(seq.videoTracks)) {
-      const plan = collectTrackSegments(track, seq, media, startF, endF, 'video', warnings);
+      const plan = collectTrackSegments(track, seq, media, renderStartF, renderEndF, 'video', warnings);
       const label = videoTrack(ctx, plan);
       if (label) videoLabels.push(label);
     }
-    ctx.chains.push(`color=c=black:s=${W}x${H}:r=${fpsStr(seq.fps)}:d=${sec(durationSec + seqFd)},format=yuv420p,trim=end_frame=${frameCount},setpts=PTS-STARTPTS[vbase]`);
+    ctx.chains.push(`color=c=black:s=${W}x${H}:r=${fpsStr(seq.fps)}:d=${sec((renderFrames + 1) * seqFd)},format=yuv420p,trim=end_frame=${renderFrames},setpts=PTS-STARTPTS[vbase]`);
     let vcur = '[vbase]';
     videoLabels.forEach((lbl, i) => {
       const out = i === videoLabels.length - 1 ? '[vcomp]' : `[vc${i}]`;
@@ -804,8 +933,9 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
       vcur = out;
     });
     const finalVideo: string[] = [];
+    if (renderFrames !== frameCount) finalVideo.push(`trim=start_frame=${lead}:end_frame=${lead + frameCount}`, 'setpts=PTS-STARTPTS');
     if (settings.burnSubtitles) {
-      const srt = buildSubtitleSrt(req, opts.range ? { startF, endF } : undefined);
+      const srt = buildBurnInSrt(req, startF, endF);
       if (srt) {
         subtitleContent = srt;
         if (opts.subtitleFilePath) finalVideo.push(`subtitles=filename=${escapeFilterPath(opts.subtitleFilePath)}`);
@@ -816,10 +946,12 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
     if (convert) {
       // Output frame-rate conversion. Frames get their absolute sequence index (pts in 1/seqFps units), so
       // `fps` places output frame n on the last sequence frame i with round(i * out / seq) <= n (see
-      // outputFrameIndex) whatever chunk renders it. One cloned frame past the end lets `fps` emit the last
-      // output frames; trim keeps exactly outputFrameCount.
+      // outputFrameIndex) whatever chunk renders it. Cloned frames past the end (at least one output frame's worth:
+      // `fps` stops at the output slot of the end of its input, D4) let `fps` emit the last output frames; trim keeps
+      // exactly outputFrameCount.
+      const pad = Math.ceil((seq.fps.num * outFps.den) / (seq.fps.den * outFps.num)) + 1;
       finalVideo.push(
-        'tpad=stop=1:stop_mode=clone', `settb=${seq.fps.den}/${seq.fps.num}`,
+        `tpad=stop=${pad}:stop_mode=clone`, `settb=${seq.fps.den}/${seq.fps.num}`,
         `setpts=N${startF - exportStartF > 0 ? `+${startF - exportStartF}` : ''}`,
         `fps=fps=${fpsStr(outFps)}`, `trim=end_frame=${outputFrameCount}`, 'setpts=PTS-STARTPTS',
       );
@@ -831,19 +963,22 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   if (wantAudio) {
     const audioLabels: string[] = [];
     for (const track of activeTracks(seq.audioTracks)) {
-      const plan = collectTrackSegments(track, seq, media, startF, endF, 'audio', warnings);
+      const plan = collectTrackSegments(track, seq, media, renderStartF, renderEndF, 'audio', warnings);
       const label = audioTrack(ctx, plan);
       if (label) audioLabels.push(label);
     }
     // Exact sample count (chunked export: sample-exact chunk boundaries).
     const N = opts.audioSamples !== undefined ? Math.max(0, Math.round(opts.audioSamples)) : -1;
     const tail = N >= 0 ? `,apad=whole_len=${N},atrim=end_sample=${N}` : '';
+    // Widened render (D2): keep the samples of [startF, endF).
+    const sampleAt = (f: number) => Math.round((f * SR * seq.fps.den) / seq.fps.num);
+    const cut = renderFrames !== frameCount ? `,atrim=start_sample=${sampleAt(lead)}:end_sample=${sampleAt(lead + frameCount)},asetpts=PTS-STARTPTS` : '';
     if (audioLabels.length === 0) {
       ctx.chains.push(`anullsrc=r=${SR}:cl=${layout}:d=${sec(durationSec + 0.1)},aformat=sample_fmts=fltp,atrim=duration=${sec(durationSec)},asetpts=PTS-STARTPTS${tail}[aout]`);
     } else if (audioLabels.length === 1) {
-      ctx.chains.push(`${audioLabels[0]}aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=${layout}${tail}[aout]`);
+      ctx.chains.push(`${audioLabels[0]}aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=${layout}${cut}${tail}[aout]`);
     } else {
-      ctx.chains.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:normalize=0:duration=longest,aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=${layout}${tail}[aout]`);
+      ctx.chains.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:normalize=0:duration=longest,aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=${layout}${cut}${tail}[aout]`);
     }
   }
 

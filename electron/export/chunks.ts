@@ -79,6 +79,11 @@ function renderedClips(t: Track, startF: number, endF: number): Clip[] {
   return t.clips.filter((c) => c.enabled && c.start < endF && clipEnd(c) > startF);
 }
 
+/** The request's media item for an id; ids like "constructor" are not media (B7). */
+function mediaOf(req: ExportRequest, id: string): MediaItem | undefined {
+  return Object.hasOwn(req.media, id) ? req.media[id] : undefined;
+}
+
 function mediaDurationSec(m: MediaItem | undefined): number {
   if (!m || m.kind === 'image') return Infinity;
   const d = m.probe?.duration;
@@ -109,7 +114,7 @@ export function estimateVideoMemoryMB({ req, startF, endF }: ChunkPlanInput): nu
   const outH = Math.round(Number(req.settings.height) || seq.height);
   let mb = 0;
   for (const t of activeTracks(seq.videoTracks)) for (const c of renderedClips(t, startF, endF)) {
-    const v = req.media[c.mediaId]?.probe?.video;
+    const v = mediaOf(req, c.mediaId)?.probe?.video;
     mb += estimateSegmentMemoryMB(v && v.width > 0 ? v.width : 1920, v && v.height > 0 ? v.height : 1080, outW, outH);
   }
   return mb;
@@ -148,7 +153,7 @@ export function planExportChunks(
   const outW = Math.round(Number(req.settings.width) || seq.width);
   const outH = Math.round(Number(req.settings.height) || seq.height);
   const memOf = (c: Clip) => {
-    const v = req.media[c.mediaId]?.probe?.video;
+    const v = mediaOf(req, c.mediaId)?.probe?.video;
     const w = v && v.width > 0 ? v.width : 1920, h = v && v.height > 0 ? v.height : 1080;
     return estimateSegmentMemoryMB(w, h, outW, outH);
   };
@@ -171,7 +176,7 @@ export function planExportChunks(
     const byId = new Map(t.clips.map((c) => [c.id, c] as const));
     for (const tr of t.transitions) {
       const D = Math.max(0, Math.round(tr.duration));
-      if (D <= 0) continue;
+      if (!Number.isFinite(D) || D <= 0) continue;
       const outC = tr.outClipId ? byId.get(tr.outClipId) : undefined;
       const inC = tr.inClipId ? byId.get(tr.inClipId) : undefined;
       if (outC && inC) {
@@ -192,7 +197,7 @@ export function planExportChunks(
         if (c.audio.fadeOut > 0) forbidden.push([e - c.audio.fadeOut, e]);
         if (Math.abs(c.speed - 1) > 1e-9) forbidden.push([s, e]);
       }
-      const md = mediaDurationSec(req.media[c.mediaId]);
+      const md = mediaDurationSec(mediaOf(req, c.mediaId));
       if (Number.isFinite(md)) {
         const speed = c.speed > 0 && Number.isFinite(c.speed) ? c.speed : 1;
         if (sourceTimeAt({ ...c, speed }, e, fps) > md - fd * speed) forbidden.push([s, e]);

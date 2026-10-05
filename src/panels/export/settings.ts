@@ -106,7 +106,26 @@ export function matchSequencePreset(seq: Sequence): ExportPreset {
 export function applyPreset(settings: ExportSettings, preset: ExportPreset): ExportSettings {
   const next: ExportSettings = { ...settings, ...preset.settings, useProxies: false };
   if (preset.settings.audioChannels === 6 && !preset.settings.audioCodec) next.audioCodec = 'ac3';
-  return next;
+  return clampSampleRateForCodec(next);
+}
+
+/** Sample rates the AC-3 encoder accepts (FFmpeg `ac3`: 48, 44.1 and 32 kHz). */
+export const AC3_SAMPLE_RATES = [32000, 44100, 48000];
+
+/** True when `sampleRate` can be encoded with `codec`. */
+export function sampleRateSupported(codec: ExportSettings['audioCodec'], sampleRate: number): boolean {
+  return codec !== 'ac3' || AC3_SAMPLE_RATES.includes(sampleRate);
+}
+
+/**
+ * Settings with a sample rate the audio codec supports: AC-3 above 48 kHz becomes 48 kHz (other unsupported
+ * AC-3 rates the next supported one). Returns `settings` itself when nothing changes.
+ */
+export function clampSampleRateForCodec(settings: ExportSettings): ExportSettings {
+  const sr = settings.sampleRate;
+  if (!(sr > 0) || sampleRateSupported(settings.audioCodec, sr)) return settings;
+  const to = sr > 48000 ? 48000 : AC3_SAMPLE_RATES.find((r) => r >= sr) ?? 48000;
+  return { ...settings, sampleRate: to };
 }
 
 /** All selectable presets for a sequence: built-ins followed by Match Sequence. */
@@ -274,6 +293,9 @@ export function validateExportSettings(settings: ExportSettings): ValidationResu
   if (settings.qualityMode === 'crf' && !(settings.crf >= 0 && settings.crf <= 51)) issues.push({ field: 'crf', message: 'CRF must be between 0 and 51.' });
   if (!(settings.audioBitrateKbps > 0)) issues.push({ field: 'audioBitrateKbps', message: 'Audio bitrate must be greater than 0.' });
   if (!(settings.sampleRate > 0)) issues.push({ field: 'sampleRate', message: 'Sample rate must be greater than 0.' });
+  else if (!sampleRateSupported(settings.audioCodec, settings.sampleRate)) {
+    issues.push({ field: 'sampleRate', message: 'AC-3 audio supports 32, 44.1 and 48 kHz only: choose 48 kHz or less, or AAC.' });
+  }
   return { ok: issues.length === 0, issues };
 }
 
@@ -376,7 +398,7 @@ export function initialExportSettings(seq: Sequence, saved: SavedExportSettings 
   if (saved.sequenceId !== seq.id) { s.fileName = defaults.fileName; }
   if (!s.outputDir) s.outputDir = defaults.outputDir;
   if (!isValidFps(s.fps)) s.fps = seq.fps;
-  return s;
+  return clampSampleRateForCodec(s);
 }
 
 function evenDown(n: number): number {
