@@ -188,12 +188,34 @@ MP4 always has an audio track.
 -fps_mode cfr -c:a aac|ac3 -b:a Nk -ar SR -ac N -movflags +faststart -t <duration> -f mp4 <outputDir>/<fileName>.mp4`.
 `-shortest` is never used: durations are controlled in the graph; `-t` is only a safety clamp.
 
+### Metadata and chapters
+
+FFmpeg copies the first input's global tags (title, comment, artist, ...) and chapters into the output unless told
+otherwise, so every export process (single pass, each chunk, the chunk join) passes `outputMetadataArgs`:
+`-map_metadata:g -1 -map_metadata:s -1 -map_chapters <N|-1>`. No global or stream metadata comes from any input;
+the streams carry FFmpeg's defaults (`language=und`, `VideoHandler` / `SoundHandler`). `-map_metadata -1` is not
+used: it also drops the chapter titles that `-map_chapters` copies.
+
+Chapters (`exportChapters`) are the sequence's markers of kind `chapter` in `[startF, endF)` (kinds `marker` and
+`continuity` are editor notes): times in sequence seconds from the range start, so an output frame-rate conversion
+does not move them; the latest chapter marker at or before `startF` covers the range start; two on one frame, the
+later in the list wins; each chapter ends where the next starts, the last at the output duration (the `-t` value).
+The first chapter starts at 0, because an MP4 chapter track cannot leave a gap before it (FFmpeg reads such a file
+back with the first chapter at 0). `buildRenderGraph` returns them in `chapters` and as an FFMETADATA1 file in
+`chaptersContent` (`ffmetadataChapters`, `TIMEBASE=1/1000000`, names escaped by `ffmetadataEscape`: `=`, `;`, `#`,
+`\` and line breaks get a backslash; a trailing backslash is dropped, since FFmpeg 6.1–9.0 read a line break after
+an escaped backslash as escaped). With `chaptersFilePath` the file is the last input, `-f ffmetadata -i <file>`, and
+`-map_chapters` names it (`inputCount` does not count it). The MP4 muxer stores them as a `chpl` atom plus a chapter
+text track (ffprobe lists it as a `data` stream; the probe ignores it). Chunk graphs carry no chapters; the chunked
+join adds the same file as its third input.
+
 ## Running it
 
 - The graph is always passed via `-filter_complex_script <file>` (Windows has a 32k command-line limit).
   `args` contains the `__FILTER_SCRIPT__` token which the exporter replaces with the temp file path;
   `buildExportCommand()` inlines the graph for display instead.
-- Temp files live in `os.tmpdir()/recut-export-<id>/` and are deleted afterwards.
+- Temp files (filter script, burn-in SRT, `chapters.txt`) live in `os.tmpdir()/recut-export-<id>/` and are deleted
+  afterwards. The command preview shows the chapters file as `os.tmpdir()/recut-export/chapters.txt`.
 - Progress is parsed from `-progress pipe:1` (`out_time_us` / duration). Failure rejects with the last 30
   stderr lines; cancel sends SIGKILL and deletes the partial file.
 - Burn-in: `buildRenderGraph` returns range-relative SRT in `subtitleContent`; the exporter writes it and
@@ -281,8 +303,10 @@ boundary (e.g. a 44.1 kHz source in a 48 kHz export, or 29.97 fps where a frame 
 of that clip in the next chunk can be offset by less than one source sample (≤ 11 µs); inaudible.
 
 **Join**: one ffmpeg reads both lists with the concat demuxer (`ffconcat`, relative names) — video
-`-c:v copy`, the PCM through one final AAC/AC-3 encode with the export's audio args —
-`-movflags +faststart -t <duration>` → `<name>.recut-part-<random>.mp4`, moved into place as usual.
+`-c:v copy`, the PCM through one final AAC/AC-3 encode with the export's audio args, the chapters file (when the
+range has chapter markers) as a third input with `-map_chapters 2`, no metadata from the chunk files —
+`-movflags +faststart -t <duration>` → `<name>.recut-part-<random>.mp4`, moved into place as usual. The chapters are
+those of the single pass.
 
 Progress is weighted (video 80 % by frames, audio 12 %, join 8 %) and monotonic. Cancel kills the current
 ffmpeg; the temp folder (chunk files, lists, scripts) is removed in all cases. An error names the step:

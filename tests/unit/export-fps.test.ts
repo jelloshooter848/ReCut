@@ -223,6 +223,7 @@ describe('export frame-rate conversion: equal or invalid rates', () => {
   ].join(';\n');
   const BEFORE_ARGS = ['-hide_banner', '-nostdin', '-y', '-copyts', '-start_at_zero', '-t', '2.50125', '-i', '/media/a.mp4',
     '-filter_complex_script', '__FILTER_SCRIPT__', '-map', '[vout]', '-map', '[aout]',
+    '-map_metadata:g', '-1', '-map_metadata:s', '-1', '-map_chapters', '-1',
     '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '10', '-pix_fmt', 'yuv420p', '-r', '24000/1001', '-fps_mode', 'cfr',
     '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2', '-movflags', '+faststart', '-t', '1.25125', '-f', 'mp4', path.join(OUT_DIR, 'x.mp4')];
 

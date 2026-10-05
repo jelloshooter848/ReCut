@@ -238,6 +238,14 @@ If you pick a **Frame rate** other than the sequence's (for example 30 fps for a
 converted when it is written: frames are repeated or dropped, while the duration and audio sync stay the same. The
 dialog shows the resulting frame count; **Use <sequence rate>** switches back.
 
+**Chapters:** markers of kind **Chapter** (marker dialog or Markers panel) become the MP4's chapters, with their
+names. Only chapter markers inside the exported range count; times are measured from the start of the range. A chapter
+marker before the In point that is still current at In becomes the first chapter, and the first chapter always starts
+at the beginning of the file. Each chapter runs to the next one, the last to the end of the file. Ordinary markers and
+continuity notes are not exported. A trailing backslash in a chapter name is dropped (FFmpeg cannot store it).
+Nothing else is copied from your source files: no title, comment, artist or other tags, no chapters, no stream names
+or languages.
+
 Export never writes over a file the project reads from: media, proxies, and subtitle files (imported to media or to
 a sequence track, or read by the Transcript). Such a name is refused, also when it differs only in letter case or is
 a link to the same file. ReCut renders into `<name>.recut-part-<random>.mp4` next to the output and renames it at the
