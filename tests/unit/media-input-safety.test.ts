@@ -3,7 +3,9 @@
  * path like `concat:/a|/b`, `subfile,,…:/x`, `http://…` or `pipe:0` must not make ffmpeg read other files,
  * the network or stdin). Every media service refuses a non-absolute media path with a clear error and hands
  * ffmpeg / ffprobe `file:<absolute path>`; FFmpeg's file protocol takes the rest literally, so names with
- * spaces, '#', '?', '%', ':' and unicode still work. Uses the real ffmpeg on PATH.
+ * spaces, '#', '?', '%', ':', '&', ';', '[]', quotes and unicode still work. Uses the real ffmpeg on PATH.
+ * On Windows, names with characters the file system forbids ('<>:"|?*', a trailing dot or space) cannot exist,
+ * so only those individual names are left out there (or the forbidden character dropped from a folder name).
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -141,11 +143,36 @@ describe('protocol-looking media paths are refused (never reach ffmpeg as a prot
   });
 });
 
+const WIN = process.platform === 'win32';
+/** A file / folder name Windows refuses: a forbidden or control character, or a trailing dot or space. */
+const WIN_ILLEGAL_NAME = /[<>:"|?*\x00-\x1f]|[. ]$/;
+/** True when `name` can exist as a single file name on this platform. */
+const legalHere = (name: string): boolean => !/[/\0]/.test(name) && !(WIN && WIN_ILLEGAL_NAME.test(name));
+/** `name` with the characters this platform forbids removed (unchanged on Linux / macOS). */
+const nameHere = (name: string): string => (WIN ? name.replace(/[<>:"|?*\x00-\x1f]/g, '').replace(/[. ]+$/, '') : name);
+
 describe('ordinary absolute paths with unusual characters still work', () => {
-  const names = ['clip with spaces.ts', 'hash #1.ts', 'what?x=1.ts', '100% done.ts', 'pct%41%2F.ts', 'colon:name.ts', 'ünïcödé 日本語 🎬.ts'];
+  const allNames = [
+    'clip with spaces.ts', 'hash #1.ts', 'what?x=1.ts', '100% done.ts', 'pct%41%2F.ts', 'colon:name.ts', 'ünïcödé 日本語 🎬.ts',
+    // Legal on every platform (Windows included); meaningful to shells, URL parsers or ffmpeg's option syntax.
+    'amp & semi; comma,.ts', '[brackets] {braces}.ts', "it's ^caret =eq.ts", 'concat~a.ts!b.ts', 'dot. inside.ts',
+  ];
+  const names = allNames.filter(legalHere);
+  const dirName = nameHere('odd dir #?%');
+
+  it('the chosen names are legal here, and only Windows-impossible ones are left out', () => {
+    for (const n of [...names, dirName]) expect(WIN && WIN_ILLEGAL_NAME.test(n), n).toBe(false);
+    if (WIN) {
+      expect(allNames.filter((n) => !legalHere(n))).toEqual(['what?x=1.ts', 'colon:name.ts']);
+      expect(dirName).toBe('odd dir #%');
+    } else {
+      expect(names).toEqual(allNames);
+      expect(dirName).toBe('odd dir #?%');
+    }
+  });
 
   it.each(names)('%s: probe, thumbnail, filmstrip, waveform', async (name) => {
-    const dir = path.join(tmp, 'odd dir #?%');
+    const dir = path.join(tmp, dirName);
     fs.mkdirSync(dir, { recursive: true });
     const p = path.join(dir, name);
     fs.copyFileSync(A, p);
@@ -161,10 +188,11 @@ describe('ordinary absolute paths with unusual characters still work', () => {
     expect(wave.peaks.length).toBeGreaterThan(0);
   }, 60_000);
 
-  it('proxy, scene detection and subtitle extraction on a "#?%" + unicode path', async () => {
-    const dir = path.join(tmp, 'jobs #?% ü');
+  it('proxy, scene detection and subtitle extraction on a "#?%" (Windows: "#%&;") + unicode path', async () => {
+    const dir = path.join(tmp, nameHere('jobs #?% ü'));
     fs.mkdirSync(dir, { recursive: true });
-    const p = path.join(dir, 'clip 100%?#.ts');
+    const p = path.join(dir, WIN ? 'clip 100%#&;.ts' : 'clip 100%?#.ts');
+    expect(legalHere(path.basename(p)) && legalHere(path.basename(dir)), p).toBe(true);
     fs.copyFileSync(A, p);
     const q = new JobQueue({ throttleMs: 10 });
     const { job } = await startProxyJob(q, { mediaId: 'm', path: p, height: 120 });
@@ -173,7 +201,7 @@ describe('ordinary absolute paths with unusual characters still work', () => {
     const sjob = startSceneDetectJob(q, { mediaId: 'm', path: p, threshold: 0.4, duration: 0 });
     const sfinal = await q.waitFor(sjob.id);
     expect(sfinal.status, sfinal.error).toBe('done');
-    const srt = path.join(dir, 'subs 50%?#.srt');
+    const srt = path.join(dir, WIN ? 'subs 50%#&;.srt' : 'subs 50%?#.srt');
     fs.copyFileSync(SRT_A, srt);
     const text = await extractSubtitles(srt, 0);
     expect(text).toContain('SECRET ALPHA');

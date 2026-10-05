@@ -202,14 +202,24 @@ describe('exporter file arguments go through ffmpegFileArg', () => {
   }, 60_000);
 
   it('a relative media path is refused, not read relative to the main process cwd (single pass and chunked)', async () => {
-    const rel = path.relative(process.cwd(), files.red);
-    expect(path.isAbsolute(rel)).toBe(false);
-    expect(fs.existsSync(path.resolve(rel))).toBe(true); // ffmpeg would find it relative to the cwd
-    for (const chunked of [false, true]) {
-      const out = fs.mkdtempSync(path.join(tmp, 'rel-'));
-      await expect(runExport(request(rel, out), undefined, undefined, { chunked }), String(chunked)).rejects.toThrow(/absolute path/);
-      expect(fs.readdirSync(out), String(chunked)).toEqual([]); // no output, no reserved temp left behind
+    // The media lives in a folder under the cwd, so the relative path is genuinely relative on every platform
+    // (on Windows the OS temp dir and the checkout can be on different drives, where path.relative is absolute).
+    const local = fs.mkdtempSync(path.join(process.cwd(), '.tmp-relmedia-'));
+    try {
+      fs.copyFileSync(files.red, path.join(local, 'red.mp4'));
+      const rel = path.relative(process.cwd(), path.join(local, 'red.mp4'));
+      expect(path.isAbsolute(rel)).toBe(false);
+      expect(rel.startsWith('..')).toBe(false);
+      expect(fs.existsSync(path.resolve(rel))).toBe(true); // ffmpeg would find it relative to the cwd
+      for (const chunked of [false, true]) {
+        const out = fs.mkdtempSync(path.join(tmp, 'rel-'));
+        await expect(runExport(request(rel, out), undefined, undefined, { chunked }), String(chunked)).rejects.toThrow(/absolute path/);
+        expect(fs.readdirSync(out), String(chunked)).toEqual([]); // no output, no reserved temp left behind
+      }
+    } finally {
+      fs.rmSync(local, { recursive: true, force: true });
     }
+    expect(fs.existsSync(local)).toBe(false);
   }, 60_000);
 });
 
