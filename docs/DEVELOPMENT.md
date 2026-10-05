@@ -51,7 +51,7 @@ Path aliases: `@shared/*` → `shared/`, `@/*` → `src/` (in `vite.config.ts` a
 | `npm test` | Vitest over `tests/unit/**/*.test.ts` (node environment). Some tests run real FFmpeg. |
 | `npm run test:watch` | Vitest in watch mode. |
 | `npm run test:e2e` | Build, then Playwright over `tests/e2e` (needs a display; use xvfb). |
-| `npm run package` | Build, then `electron-builder --dir` → `release/linux-unpacked` (the only verified package). |
+| `npm run package` | Build, then `electron-builder --dir` → `release/<platform>-unpacked`. Windows installers are built by `.github/workflows/windows.yml`. |
 | `npm run dist` | Build, then electron-builder installers (AppImage / dmg / nsis). Not verified. |
 
 Run `npm run typecheck` and `npm test` before you send changes.

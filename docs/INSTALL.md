@@ -1,7 +1,8 @@
 # Installing ReCut
 
-ReCut runs from source on Linux, macOS and Windows. Only the **Linux unpacked** packaged build has been verified so
-far (see [Packaged builds](#packaged-builds)).
+ReCut runs from source on Linux, macOS and Windows. Verified packaged builds: the **Windows installer and portable
+exe** (built, silently installed and smoke-tested on Windows by CI, with the full unit and end-to-end suites passing
+on Windows) and the **Linux unpacked** build. macOS (dmg) and the Linux AppImage are configured but untested.
 
 ## Windows in one step
 

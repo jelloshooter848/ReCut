@@ -70,11 +70,12 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 
 ## Platform and packaging
 
-- **Only the Linux unpacked build** (`npm run package` → `release/linux-unpacked`) has been verified. The AppImage,
-  dmg and nsis targets are configured but untested. Nothing is signed or notarised.
-- **FFmpeg is not bundled by default.** Install it yourself, or drop static binaries into `resources/ffmpeg/` before
-  `npm run package` / `npm run dist` (see [INSTALL](INSTALL.md#bundling-ffmpeg)). Bundling has only been exercised
-  with the Linux unpacked build. When FFmpeg is missing, ReCut shows a banner and import / proxies / export stop with
+- **Verified packages:** the Windows installer and portable exe (built, installed and smoke-tested on Windows in CI,
+  where the unit and end-to-end suites also pass) and the Linux unpacked build. The macOS dmg and Linux AppImage are
+  configured but untested. Nothing is signed or notarised, so Windows SmartScreen warns on first launch.
+- **FFmpeg is bundled only in the Windows release builds** (and fetched by `Start ReCut.cmd`). Elsewhere, install it
+  yourself or drop static binaries into `resources/ffmpeg/` before `npm run package` / `npm run dist` (see
+  [INSTALL](INSTALL.md#bundling-ffmpeg)). ReCut works with FFmpeg 6 through 9. When FFmpeg is missing, ReCut shows a banner and import / proxies / export stop with
   an explanation. ReCut finds FFmpeg once per session, so restart it after installing.
 - The cache location can only be changed with `RECUT_CACHE_DIR` or `cacheDir` in `prefs.json`. There is no UI for it.
 - One window and one open project at a time. Projects store **absolute** media paths, so moving media means using
