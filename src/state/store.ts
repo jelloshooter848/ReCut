@@ -19,7 +19,7 @@ import { uid } from '../../shared/ids';
 import { isValidFps, secondsToFrames } from '../../shared/time';
 import { createProject, LiveView } from '../../shared/project';
 import {
-  MIN_CLIP_FRAMES, allTracks, clipEnd, clipSourceOut, findClip, findTrack, linkedClips, makeClip, placeClips,
+  MIN_CLIP_FRAMES, allTracks, clipEnd, clipSourceOut, findClip, maxDurationFrom, findTrack, linkedClips, makeClip, placeClips,
   razorAt, removeClips as tlRemoveClips, rippleDeleteClips, rippleDeleteDisabledClips, removableDisabledClipIds, liftRange, extractRange, trimStart, trimEnd,
   rippleTrimStart, rippleTrimEnd, rollEdit as tlRollEdit, slipClip, slideClip, moveClips as tlMoveClips,
   addTransition as tlAddTransition, removeTransition as tlRemoveTransition, addTrack as tlAddTrack,
@@ -930,17 +930,27 @@ export const useStore = create<RecutStore>()((set, get) => {
         const group = linkedClips(seq, loc.clip);
         const groupIds = new Set(group.map((g) => g.id));
         const oldEnd = clipEnd(loc.clip);
-        const newDur = Math.max(MIN_CLIP_FRAMES, Math.round(loc.clip.duration * loc.clip.speed / speed));
+        const mediaDur = mediaDurationLookup(d);
+        // Duration that keeps the clip's source range at the new speed. Rounding may not add a frame the
+        // media does not have (the trim limits count whole frames available): when the exact length fits,
+        // cap at that. A clip already past its media end keeps plain rounding.
+        const speedDur = (g: Clip): number => {
+          const exact = g.duration * g.speed / speed;
+          const want = Math.max(MIN_CLIP_FRAMES, Math.round(exact));
+          const fit = maxDurationFrom(g.sourceIn, speed, mediaDur(g.mediaId), seq.fps);
+          return want > fit && Math.floor(exact + 1e-6) <= fit ? Math.max(MIN_CLIP_FRAMES, fit) : want;
+        };
+        const newDur = speedDur(loc.clip);
         const delta = newDur - loc.clip.duration;
         if (opts.ripple) {
           if (delta > 0) rippleShift(seq, oldEnd, delta, { except: groupIds });
-          for (const g of group) { g.duration = Math.max(MIN_CLIP_FRAMES, Math.round(g.duration * g.speed / speed)); g.speed = speed; }
+          for (const g of group) { g.duration = speedDur(g); g.speed = speed; }
           if (delta < 0) rippleShift(seq, oldEnd, delta, { except: groupIds });
         } else {
           for (const g of group) {
             const gl = findClip(seq, g.id)!;
             const next = gl.track.clips[gl.index + 1];
-            let dur = Math.max(MIN_CLIP_FRAMES, Math.round(g.duration * g.speed / speed));
+            let dur = speedDur(g);
             if (next) dur = Math.max(MIN_CLIP_FRAMES, Math.min(dur, next.start - g.start));
             g.duration = dur; g.speed = speed;
           }
@@ -1165,7 +1175,12 @@ export const useStore = create<RecutStore>()((set, get) => {
         const f = seq && findCue(seq, cueId);
         if (!f) return;
         if (patch.text !== undefined) f.cue.text = patch.text;
-        if (patch.offset !== undefined) f.cue.offset = Math.round(patch.offset);
+        if (patch.offset !== undefined && Number.isFinite(patch.offset)) {
+          // A nudge may not move the cue before the sequence start: start + offset >= 0.
+          const base = cueFrames(seq, { ...f.cue, offset: 0 });
+          const minOffset = !base ? -Infinity : base.start > 0 ? -base.start : 0;
+          f.cue.offset = Math.max(minOffset, Math.round(patch.offset)) || 0; // never -0
+        }
       });
     },
     addManualCue(seqId, trackId, cue) {

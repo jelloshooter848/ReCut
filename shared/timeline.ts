@@ -110,6 +110,15 @@ export function maxDurationFrom(sourceIn: number, speed: number, mediaDuration: 
   return Math.max(0, Math.floor(avail * fps.num / fps.den + 1e-6));
 }
 
+/**
+ * Latest frame the clip's tail may be extended to by its media. Never before the clip's current end: a clip
+ * that already runs past its media end (e.g. after a relink to a shorter file) cannot grow, but dragging its
+ * tail outward must not pull it back either.
+ */
+export function maxClipEnd(clip: Clip, mediaDuration: number, fps: Rational): number {
+  return Math.max(clipEnd(clip), clip.start + maxDurationFrom(clip.sourceIn, clip.speed, mediaDuration, fps));
+}
+
 // ------------------------------------------------------------------
 // Transition maintenance
 // ------------------------------------------------------------------
@@ -258,8 +267,8 @@ export function removeTransition(seq: Sequence, transitionId: ID): void {
 
 /**
  * Shift clips starting at or after `fromFrame` by `delta` on all unlocked tracks.
- * A track is skipped if shifting would cause a collision (a clip spanning fromFrame on that track).
- * Returns the ids of tracks that were shifted.
+ * A track is skipped if shifting would cause a collision (a clip spanning fromFrame on that track) or would
+ * move its earliest mover before frame 0. Returns the ids of tracks that were shifted.
  */
 export function rippleShift(seq: Sequence, fromFrame: number, delta: number, opts: { onlyTrackIds?: Set<ID>; except?: Set<ID>; skipTrackIds?: Set<ID> } = {}): ID[] {
   const shifted: ID[] = [];
@@ -271,9 +280,11 @@ export function rippleShift(seq: Sequence, fromFrame: number, delta: number, opt
     const movers = track.clips.filter((c) => c.start >= fromFrame && !(opts.except?.has(c.id)));
     if (movers.length === 0) continue;
     if (delta < 0) {
-      // Leftward shift: block the whole track if a non-moving clip would be overlapped by the
-      // earliest mover after the shift (e.g. a clip spanning the gap being closed).
-      const firstMover = Math.min(...movers.map((c) => c.start));
+      // Leftward shift: block the whole track if the earliest mover would land before frame 0, or if a
+      // non-moving clip would be overlapped by it after the shift (e.g. a clip spanning the gap being closed).
+      let firstMover = Infinity;
+      for (const c of movers) if (c.start < firstMover) firstMover = c.start; // no spread: tracks can hold 100k+ clips
+      if (firstMover + delta < 0) continue;
       const blocker = track.clips.find((c) => !opts.except?.has(c.id) && c.start < fromFrame && clipEnd(c) > firstMover + delta);
       if (blocker) continue;
     }
@@ -305,12 +316,14 @@ export interface ClearRangeResult {
   splits: { head: Clip; tail: Clip }[];
 }
 
-/** Remove the [start,end) range from a track's clips (splitting clips that straddle boundaries). */
-export function clearRange(track: Track, start: number, end: number, except: Set<ID> = new Set()): ClearRangeResult {
+/**
+ * Remove the [start,end) range from a track's clips (splitting clips that straddle boundaries). `fps` is the
+ * owning sequence's frame rate (needed to advance the sourceIn of the kept tails).
+ */
+export function clearRange(track: Track, start: number, end: number, fps: Rational, except: Set<ID> = new Set()): ClearRangeResult {
   const res: ClearRangeResult = { removed: [], splits: [] };
   if (end <= start) return res;
   const result: Clip[] = [];
-  const fps = track._fps as Rational | undefined; // injected by callers via withFps
   for (const c of track.clips) {
     if (except.has(c.id) || clipEnd(c) <= start || c.start >= end) { result.push(c); continue; }
     const cEnd = clipEnd(c);
@@ -329,7 +342,7 @@ export function clearRange(track: Track, start: number, end: number, except: Set
         id: c.start < start ? uid('clip') : c.id,
         start: end,
         duration: cEnd - end,
-        sourceIn: c.sourceIn + consumed * (fps ? fps.den / fps.num : 0) * c.speed,
+        sourceIn: c.sourceIn + consumed * (fps.den / fps.num) * c.speed,
       };
       if (c.start < start) {
         // Cut in two: the tail is a new clip, so the out-transition (if any) must follow it.
@@ -372,24 +385,17 @@ export function splitCuesAt(seq: Sequence, headId: ID, headEndSrc: number, tail:
       extra.push({ ...cue, id: uid('scue'), clipId: tail.id, srcStart: tailStartSrc });
       cue.srcEnd = headEndSrc;
     }
-    if (extra.length) st.cues.push(...extra);
+    for (const e of extra) st.cues.push(e);
   }
 }
 
 /** clearRange on a track of `seq`, keeping attached subtitle cues consistent. */
 function clearRangeIn(seq: Sequence, track: Track, start: number, end: number, except?: Set<ID>): void {
-  withFps(seq);
-  const res = clearRange(track, start, end, except);
-  stripFps(seq);
+  const res = clearRange(track, start, end, seq.fps, except);
   dropCuesForClips(seq, res.removed);
   const spf = seq.fps.den / seq.fps.num;
   for (const { head, tail } of res.splits) splitCuesAt(seq, head.id, head.sourceIn + head.duration * spf * head.speed, tail, tail.sourceIn);
 }
-
-// Tracks need the sequence fps for source math in clearRange; we attach it transiently.
-declare module './model' { interface Track { _fps?: Rational } }
-function withFps(seq: Sequence): void { for (const t of allTracks(seq)) t._fps = seq.fps; }
-function stripFps(seq: Sequence): void { for (const t of allTracks(seq)) delete t._fps; }
 
 // ------------------------------------------------------------------
 // Placing clips
@@ -475,8 +481,9 @@ export function placeClips(seq: Sequence, placements: { trackId: ID; clip: Clip 
     for (const p of placements) overwriteClip(seq, p.trackId, p.clip);
     return true;
   }
-  const start = Math.min(...placements.map((p) => p.clip.start));
-  const length = Math.max(...placements.map((p) => clipEnd(p.clip))) - start;
+  let start = Infinity, end = -Infinity;
+  for (const p of placements) { start = Math.min(start, p.clip.start); end = Math.max(end, clipEnd(p.clip)); }
+  const length = end - start;
   splitTracksAt(seq, allTracks(seq).filter((t) => !t.locked), start);
   rippleShift(seq, start, length);
   for (const p of placements) {
@@ -511,6 +518,8 @@ export function splitClip(seq: Sequence, track: Track, clip: Clip, frame: number
   for (const tr of track.transitions) if (tr.outClipId === clip.id) tr.outClipId = tail.id;
   track.clips.push(tail);
   sortTrack(track);
+  // Both halves are shorter than the original: a transition on either side may now exceed its clip.
+  reconcileTransitions(track);
   // subtitle cues attached to this clip: those after the split point move to the tail, straddlers are duplicated
   splitCuesAt(seq, clip.id, tail.sourceIn, tail, tail.sourceIn);
   return tail;
@@ -636,11 +645,14 @@ export function trimLimits(seq: Sequence, track: Track, clip: Clip, mediaDur: nu
   const next = track.clips[idx + 1];
   const handleBefore = Math.floor((clip.sourceIn / clip.speed) * seq.fps.num / seq.fps.den + 1e-6); // frames of media available before sourceIn
   const maxDur = maxDurationFrom(clip.sourceIn, clip.speed, mediaDur, seq.fps);
+  // The limits only ever bound how far an edge may move outward: they never lie on the inner side of the
+  // edge's current position (a clip already past its media end, or one overlapping a neighbour on a track
+  // that was not repaired, keeps its edge instead of being pulled back / getting a negative duration).
   return {
-    minStart: Math.max(prev ? clipEnd(prev) : 0, clip.start - handleBefore, 0),
+    minStart: Math.min(clip.start, Math.max(prev ? clipEnd(prev) : 0, clip.start - handleBefore, 0)),
     maxStart: clipEnd(clip) - MIN_CLIP_FRAMES,
     minEnd: clip.start + MIN_CLIP_FRAMES,
-    maxEnd: Math.min(next ? next.start : Number.MAX_SAFE_INTEGER, clip.start + maxDur),
+    maxEnd: Math.max(clipEnd(clip), Math.min(next ? next.start : Number.MAX_SAFE_INTEGER, clip.start + maxDur)),
   };
 }
 
@@ -666,7 +678,7 @@ export function trimEnd(seq: Sequence, clipId: ID, newEnd: number, mediaDur: Med
   if (!loc || loc.track.locked) return NaN;
   const { track, clip } = loc;
   const lim = trimLimits(seq, track, clip, mediaDur(clip.mediaId));
-  const maxEnd = opts.ignoreNeighbors ? clip.start + maxDurationFrom(clip.sourceIn, clip.speed, mediaDur(clip.mediaId), seq.fps) : lim.maxEnd;
+  const maxEnd = opts.ignoreNeighbors ? maxClipEnd(clip, mediaDur(clip.mediaId), seq.fps) : lim.maxEnd;
   const target = Math.max(lim.minEnd, Math.min(maxEnd, newEnd));
   clip.duration = target - clip.start;
   reconcileTransitions(track);
@@ -707,11 +719,11 @@ export function rippleTrimEnd(seq: Sequence, clipId: ID, newEnd: number, mediaDu
   const loc = findClip(seq, clipId);
   if (!loc || loc.track.locked) return NaN;
   const oldEnd = clipEnd(loc.clip);
-  const group = linkedClips(seq, loc.clip).filter((c) => clipEnd(c) === oldEnd);
+  // Like rippleTrimStart: linked clips on locked tracks are left alone (their track does not ripple either).
+  const group = linkedClips(seq, loc.clip).filter((c) => clipEnd(c) === oldEnd && !findClip(seq, c.id)!.track.locked);
   let target = newEnd;
   for (const g of group) {
-    const maxEnd = g.start + maxDurationFrom(g.sourceIn, g.speed, mediaDur(g.mediaId), seq.fps);
-    target = Math.max(g.start + MIN_CLIP_FRAMES, Math.min(maxEnd, target));
+    target = Math.max(g.start + MIN_CLIP_FRAMES, Math.min(maxClipEnd(g, mediaDur(g.mediaId), seq.fps), target));
   }
   const delta = target - oldEnd;
   if (delta === 0) return oldEnd;
@@ -728,7 +740,7 @@ export function rollEdit(seq: Sequence, outClipId: ID, inClipId: ID, newFrame: n
   if (!a || !b || a.track.locked || b.track.locked) return NaN;
   const cut = clipEnd(a.clip);
   if (b.clip.start !== cut) return NaN;
-  const maxA = a.clip.start + maxDurationFrom(a.clip.sourceIn, a.clip.speed, mediaDur(a.clip.mediaId), seq.fps);
+  const maxA = maxClipEnd(a.clip, mediaDur(a.clip.mediaId), seq.fps); // never left of the cut
   const handleB = Math.floor((b.clip.sourceIn / b.clip.speed) * seq.fps.num / seq.fps.den + 1e-6);
   const minB = b.clip.start - handleB;
   const target = Math.max(a.clip.start + MIN_CLIP_FRAMES, minB, Math.min(maxA, clipEnd(b.clip) - MIN_CLIP_FRAMES, newFrame));
@@ -746,7 +758,7 @@ export function rollEdit(seq: Sequence, outClipId: ID, inClipId: ID, newFrame: n
 export function slipClip(seq: Sequence, clipId: ID, deltaFrames: number, mediaDur: MediaDurationLookup): number {
   const loc = findClip(seq, clipId);
   if (!loc || loc.track.locked) return 0;
-  const group = linkedClips(seq, loc.clip);
+  const group = linkedClips(seq, loc.clip).filter((g) => !findClip(seq, g.id)!.track.locked); // locked tracks never change
   let d = deltaFrames;
   for (const g of group) {
     const handleBefore = Math.floor((g.sourceIn / g.speed) * seq.fps.num / seq.fps.den + 1e-6);
@@ -770,10 +782,9 @@ export function slideClip(seq: Sequence, clipId: ID, deltaFrames: number, mediaD
   if (prev) {
     const gap = clip.start - clipEnd(prev);
     if (gap === 0) {
-      const maxPrevEnd = prev.start + maxDurationFrom(prev.sourceIn, prev.speed, mediaDur(prev.mediaId), seq.fps);
-      d = Math.min(d, maxPrevEnd - clipEnd(prev));            // prev can extend this much
+      d = Math.min(d, maxClipEnd(prev, mediaDur(prev.mediaId), seq.fps) - clipEnd(prev)); // prev can extend this much (>= 0)
       d = Math.max(d, -(prev.duration - MIN_CLIP_FRAMES));    // prev can shrink this much
-    } else d = Math.max(d, -gap);
+    } else d = Math.max(d, -Math.max(0, gap));
   } else d = Math.max(d, -clip.start);
   if (next) {
     const gap = next.start - clipEnd(clip);
@@ -781,7 +792,7 @@ export function slideClip(seq: Sequence, clipId: ID, deltaFrames: number, mediaD
       const handleNext = Math.floor((next.sourceIn / next.speed) * seq.fps.num / seq.fps.den + 1e-6);
       d = Math.max(d, -handleNext);                           // next can extend backwards this much
       d = Math.min(d, next.duration - MIN_CLIP_FRAMES);       // next can shrink this much
-    } else d = Math.min(d, gap);
+    } else d = Math.min(d, Math.max(0, gap));
   }
   if (d === 0) return 0;
   if (prev && clipEnd(prev) === clip.start) prev.duration += d;
@@ -812,7 +823,9 @@ export interface MoveSpec { clipId: ID; toTrackId: ID; toStart: number }
 export function moveClips(seq: Sequence, moves: MoveSpec[], mode: 'overwrite' | 'insert'): boolean {
   if (moves.length === 0) return false;
   const lifted: { clip: Clip; toTrackId: ID; toStart: number; fromTrackId: ID; fromStart: number }[] = [];
-  const shift = Math.max(0, -Math.min(...moves.map((m) => m.toStart)));
+  let minTo = Infinity;
+  for (const m of moves) minTo = Math.min(minTo, m.toStart); // no spread: a select-all move can hold 100k+ clips
+  const shift = Math.max(0, -minTo);
   for (const m of moves) {
     const loc = findClip(seq, m.clipId);
     const dest = findTrack(seq, m.toTrackId);
@@ -850,8 +863,8 @@ export function moveClips(seq: Sequence, moves: MoveSpec[], mode: 'overwrite' | 
     }
     const adj = first.toStart - mapped;
     for (const l of lifted) l.toStart = Math.max(0, l.toStart - adj);
-    const start = Math.min(...lifted.map((l) => l.toStart));
-    const end = Math.max(...lifted.map((l) => l.toStart + l.clip.duration));
+    let start = Infinity, end = -Infinity;
+    for (const l of lifted) { start = Math.min(start, l.toStart); end = Math.max(end, l.toStart + l.clip.duration); }
     splitTracksAt(seq, allTracks(seq).filter((t) => !t.locked), start);
     rippleShift(seq, start, end - start);
   }
@@ -963,7 +976,11 @@ export function resolveSubtitleCues(seq: Sequence): ResolvedCue[] {
         if (ce <= cs) continue;
         out.push({ id: cue.id, trackId: st.id, start: cs, end: ce, text: cue.text, clipId: clip.id, orphan: false });
       } else {
-        out.push({ id: cue.id, trackId: st.id, start: cue.start + cue.offset, end: cue.start + cue.duration + cue.offset, text: cue.text, orphan: false });
+        // An offset may not move a cue before the sequence start: clamp at 0, drop what is left of nothing.
+        const start = Math.max(0, cue.start + cue.offset);
+        const end = cue.start + cue.duration + cue.offset;
+        if (!(end > start)) continue;
+        out.push({ id: cue.id, trackId: st.id, start, end, text: cue.text, orphan: false });
       }
     }
   }

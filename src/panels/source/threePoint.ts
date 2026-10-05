@@ -11,6 +11,7 @@
  */
 import type { Rational } from '@shared/model';
 import { framesToSeconds, secondsToFrames } from '@shared/time';
+import { maxDurationFrom } from '@shared/timeline';
 
 export interface ThreePointInput {
   /** Sequence frame rate. */
@@ -64,7 +65,16 @@ export function resolveThreePointEdit(p: ThreePointInput): ThreePointResult {
     }
   }
   if (!(outS > inS + EPS)) return { ok: false, reason: 'In/Out range is empty' };
-  const frames = Math.max(1, secondsToFrames(outS - inS, p.fps));
+  let frames = Math.max(1, secondsToFrames(outS - inS, p.fps));
+  // Rounding may add a frame the media does not have (e.g. the whole clip: 36.7 frames -> 37). The trim
+  // limits use whole frames available (floor), so cap there, and snap the Out to that frame so the store,
+  // which turns In/Out back into frames, places exactly `frames` and never runs past the media end.
+  const fit = maxDurationFrom(inS, 1, mediaEnd, p.fps);
+  if (frames > fit) {
+    if (fit < 1) return { ok: false, reason: 'In/Out range is shorter than one frame' };
+    frames = fit;
+    outS = inS + framesToSeconds(frames, p.fps);
+  }
 
   let atFrame: number;
   if (p.seqIn !== null) atFrame = p.seqIn;

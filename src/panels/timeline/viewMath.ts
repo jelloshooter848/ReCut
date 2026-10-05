@@ -108,7 +108,7 @@ export function rulerSpacing(fps: Rational, zoom: number, minMajorPx = 80, minMi
     // beyond the table: multiples of hours
     const nominal = Math.max(1, Math.round(fpsValue(fps)));
     let h = 3600 * nominal;
-    while (h * zoom < minMajorPx) h *= 2;
+    while (h * zoom < minMajorPx && Number.isFinite(h)) h *= 2; // bounded even for a zero / negative zoom
     major = h;
   }
   // Minor ticks: the finest interval of the same domain (frames when the major is sub-second, whole seconds
@@ -127,15 +127,23 @@ export interface RulerTick { frame: number; x: number; label?: string; major: bo
 
 /** Ticks covering [scroll, scroll + width/zoom]. Labels on majors as HH:MM:SS:FF. */
 export function rulerTicks(fps: Rational, zoom: number, scroll: number, widthPx: number, minMajorPx = 80): RulerTick[] {
-  const { major, minor } = rulerSpacing(fps, zoom, minMajorPx);
   const out: RulerTick[] = [];
-  if (widthPx <= 0) return out;
+  if (!(widthPx > 0) || !(zoom > 0) || !Number.isFinite(zoom) || !Number.isFinite(scroll)) return out;
+  const { major, minor } = rulerSpacing(fps, zoom, minMajorPx);
   const first = Math.max(0, scroll);
   const last = scroll + widthPx / zoom;
   const step = minor > 0 ? minor : major;
   const start = Math.floor(first / step) * step;
-  for (let f = start; f <= last; f += step) {
-    if (f < 0) continue;
+  // Iterate by index with a bound derived from the viewport (not `f += step`): at huge scroll positions
+  // (beyond 2^53) `f + step === f` and an accumulating loop never terminates. Frames that collapse onto the
+  // previous one at that magnitude are skipped.
+  const count = Math.min(Math.floor((last - start) / step) + 1, Math.ceil(widthPx / (step * zoom)) + 2, 100_000);
+  let prev = -Infinity;
+  for (let i = 0; i < count; i++) {
+    const f = start + i * step;
+    if (f < 0 || f <= prev) continue;
+    if (f > last) break;
+    prev = f;
     const isMajor = f % major === 0;
     if (!isMajor && minor === 0) continue;
     out.push({ frame: f, x: frameToX(f, zoom, scroll), major: isMajor, label: isMajor ? formatTimecode(f, fps) : undefined });
