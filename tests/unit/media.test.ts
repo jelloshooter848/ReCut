@@ -77,7 +77,7 @@ describe('ffmpeg wrapper', () => {
     expect(getFfmpegPath()).toBeTruthy();
     expect(getFfprobePath()).toBeTruthy();
     const v = await getFfmpegVersion();
-    expect(v).toMatch(/^\d/);
+    expect(v).toMatch(/^(n?\d|N-|git-)/); // release (6.1.1, n7.1) or development (N-…) build
   });
 
   it('reports progress 0..1 and rejects with readable errors', async () => {

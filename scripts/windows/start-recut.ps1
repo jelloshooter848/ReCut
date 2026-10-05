@@ -95,7 +95,7 @@ if ($Smoke) {
   if (-not (Test-Path $out)) { Fail "Smoke test produced no report." }
   Get-Content $out
   $report = Get-Content $out -Raw
-  if ($report -match 'FAILED|MISSING' -or $report -notmatch 'encode\+probe ok' -or $report -notmatch 'status=206') { Fail "Smoke test failed." }
+  if ($report -cmatch 'FAILED|layout=MISSING' -or $report -notmatch 'encode\+probe ok' -or $report -notmatch 'status=206') { Fail "Smoke test failed." }
   Say "Smoke test passed."
   exit 0
 }

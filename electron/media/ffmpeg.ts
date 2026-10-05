@@ -7,7 +7,7 @@
  *
  * No Electron imports here so unit tests can exercise it directly under Node.
  */
-import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { spawn, execFile, execFileSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ffmpegMissingMessage } from '../../shared/ipc';
@@ -112,6 +112,41 @@ export function getFfmpegVersion(): Promise<string | null> {
       resolve(m ? m[1] : String(stdout).split('\n')[0] || null);
     });
   });
+}
+
+/**
+ * Major version from an `ffmpeg -version` banner: "6.1.1-3ubuntu5" -> 6, "9.0.2-essentials_build" -> 9,
+ * "n7.1-12-g…" -> 7. Git master builds ("N-118000-g…", "git-2025-…") are treated as current (99). Unknown -> 0.
+ */
+export function parseFfmpegMajor(versionLine: string): number {
+  const m = /ffmpeg version\s+(\S+)/.exec(versionLine);
+  const v = m ? m[1] : versionLine.trim();
+  if (/^(N-|git-)/i.test(v)) return 99;
+  const n = /^n?(\d+)\./.exec(v);
+  return n ? parseInt(n[1], 10) : 0;
+}
+
+const majorCache = new Map<string, number>();
+/** FFmpeg major version of `bin` (cached; one short synchronous `-version` call per binary). */
+export function ffmpegMajorVersionSync(bin: string): number {
+  const hit = majorCache.get(bin);
+  if (hit !== undefined) return hit;
+  let major = 0;
+  try {
+    const out = execFileSync(bin, ['-hide_banner', '-version'], { timeout: 10_000, windowsHide: true }).toString();
+    major = parseFfmpegMajor(out.split(/\r?\n/)[0] ?? '');
+  } catch { major = 0; }
+  majorCache.set(bin, major);
+  return major;
+}
+
+/**
+ * Adapt argument spellings that changed between FFmpeg versions. `-filter_complex_script <file>` was deprecated in 7.0
+ * (replaced by `-/filter_complex <file>`) and removed in 8; `-/filter_complex` does not exist before 7.
+ */
+export function adaptFfmpegArgs(args: string[], major: number): string[] {
+  if (major < 7) return args;
+  return args.map((a) => (a === '-filter_complex_script' ? '-/filter_complex' : a === '-filter_script' ? '-/filter' : a));
 }
 
 // ------------------------------------------------------------------

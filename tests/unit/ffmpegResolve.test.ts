@@ -56,3 +56,22 @@ describe('one ffmpeg resolver for the whole app', () => {
     expect(msg).toMatch(/INSTALL\.md/);
   });
 });
+
+import { adaptFfmpegArgs, parseFfmpegMajor } from '../../electron/media/ffmpeg';
+
+describe('FFmpeg version-dependent arguments', () => {
+  it('parses major versions from -version banners', () => {
+    expect(parseFfmpegMajor('ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023')).toBe(6);
+    expect(parseFfmpegMajor('ffmpeg version 9.0.2-essentials_build-www.gyan.dev Copyright')).toBe(9);
+    expect(parseFfmpegMajor('ffmpeg version n7.1-12-gabcdef Copyright')).toBe(7);
+    expect(parseFfmpegMajor('ffmpeg version N-118000-gdeadbeef-20260101 Copyright')).toBe(99);
+    expect(parseFfmpegMajor('something else')).toBe(0);
+  });
+  it('uses -/filter_complex on FFmpeg 7+ and keeps -filter_complex_script before that', () => {
+    const args = ['-i', 'a.mp4', '-filter_complex_script', 'g.txt', 'out.mp4'];
+    expect(adaptFfmpegArgs(args, 6)).toEqual(args);
+    expect(adaptFfmpegArgs(args, 0)).toEqual(args);
+    expect(adaptFfmpegArgs(args, 7)).toEqual(['-i', 'a.mp4', '-/filter_complex', 'g.txt', 'out.mp4']);
+    expect(adaptFfmpegArgs(args, 9)).toEqual(['-i', 'a.mp4', '-/filter_complex', 'g.txt', 'out.mp4']);
+  });
+});

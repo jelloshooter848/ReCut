@@ -100,9 +100,9 @@ describe('project save/load', () => {
 
 describe('autosave & recovery', () => {
   it('computes autosave locations', () => {
-    expect(autosavePathFor('/p/a.recut', userData)).toBe('/p/a.recut.autosave');
+    expect(autosavePathFor('/p/a.recut', userData)).toBe(path.resolve('/p/a.recut') + '.autosave');
     expect(autosavePathFor(null, userData)).toBe(path.join(userData, 'autosave', 'untitled.recut.autosave'));
-    expect(projectPathForAutosave('/p/a.recut.autosave', userData)).toBe('/p/a.recut');
+    expect(projectPathForAutosave('/p/a.recut.autosave', userData)).toBe(path.resolve('/p/a.recut'));
     expect(projectPathForAutosave(untitledAutosavePath(userData), userData)).toBeNull();
   });
 
@@ -197,12 +197,12 @@ describe('prefs & recent projects', () => {
   });
 
   it('keeps recent projects deduped, most-recent first, capped', async () => {
-    expect(pushRecent(['/a', '/b'], '/b')).toEqual(['/b', '/a']);
+    expect(pushRecent(['/a', '/b'], '/b')).toEqual([path.resolve('/b'), '/a']);
     const many = Array.from({ length: 20 }, (_, i) => `/p/${i}.recut`);
     let list: string[] = [];
     for (const m of many) list = pushRecent(list, m);
     expect(list.length).toBe(MAX_RECENT);
-    expect(list[0]).toBe('/p/19.recut');
+    expect(list[0]).toBe(path.resolve('/p/19.recut'));
     const stored = await addRecentProject(userData, '/x/one.recut');
     expect(stored).toEqual(['/x/one.recut']);
     expect((await readPrefs(userData)).recentProjects).toEqual(['/x/one.recut']);
@@ -333,15 +333,15 @@ describe('backup fallback (QA-04 / QA-10)', () => {
 describe('projectPathFromArgv (QA-33)', () => {
   it('Chromium-reordered argv: --project followed by a switch, real path last', () => {
     const argv = ['--no-sandbox', '--project', '--allow-file-access-from-files', '--enable-features=X', '/app/dist/electron/main.js', '/tmp/x/second.recut'];
-    expect(projectPathFromArgv(argv)).toBe('/tmp/x/second.recut');
+    expect(projectPathFromArgv(argv)).toBe(path.resolve('/tmp/x/second.recut'));
   });
   it('prefers the last positional .recut', () => {
-    expect(projectPathFromArgv(['/a/one.recut', '--flag', '/b/two.RECUT'])).toBe('/b/two.RECUT');
-    expect(projectPathFromArgv(['--project=/c/p.recut', '/d/q.recut'])).toBe('/d/q.recut');
+    expect(projectPathFromArgv(['/a/one.recut', '--flag', '/b/two.RECUT'])).toBe(path.resolve('/b/two.RECUT'));
+    expect(projectPathFromArgv(['--project=/c/p.recut', '/d/q.recut'])).toBe(path.resolve('/d/q.recut'));
   });
   it('--project=<p> and --project <p> (next token not a switch)', () => {
-    expect(projectPathFromArgv(['.', '--project=/c/p'])).toBe('/c/p');
-    expect(projectPathFromArgv(['.', '--project', '/c/plain'])).toBe('/c/plain');
+    expect(projectPathFromArgv(['.', '--project=/c/p'])).toBe(path.resolve('/c/p'));
+    expect(projectPathFromArgv(['.', '--project', '/c/plain'])).toBe(path.resolve('/c/plain'));
     expect(projectPathFromArgv(['.', '--project', '--other'])).toBeNull();
     expect(projectPathFromArgv(['.', '--project'])).toBeNull();
     expect(projectPathFromArgv(['.', '--no-sandbox'])).toBeNull();

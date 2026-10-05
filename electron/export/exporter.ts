@@ -15,7 +15,7 @@ import {
   buildRenderGraph, buildSubtitleSrt, exportPartPath, exportSidecarPath, FILTER_SCRIPT_TOKEN, sec, type RenderGraph,
 } from './renderGraph';
 import { ensureDirSafe } from '../safeMkdir';
-import { getFfmpegPath } from '../media/ffmpeg';
+import { adaptFfmpegArgs, ffmpegMajorVersionSync, getFfmpegPath } from '../media/ffmpeg';
 import { ffmpegMissingMessage } from '../../shared/ipc';
 import { CHUNK_MAX_AUDIO_SEGMENTS, CHUNK_MAX_SEGMENTS, planExportChunks, sampleIndexAt, shouldChunk, type ExportChunk } from './chunks';
 
@@ -314,7 +314,7 @@ async function runChunkedExport(
 function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgress, signal?: AbortSignal, onSpawn?: (c: ChildProcess) => void): Promise<void> {
   let bin: string;
   try { bin = resolveFfmpegPath(); } catch (e) { return Promise.reject(e); }
-  const full = ['-progress', 'pipe:1', '-nostats', '-loglevel', 'warning', ...args];
+  const full = adaptFfmpegArgs(['-progress', 'pipe:1', '-nostats', '-loglevel', 'warning', ...args], ffmpegMajorVersionSync(bin));
   return new Promise<void>((resolve, reject) => {
     let child: ChildProcess;
     try {

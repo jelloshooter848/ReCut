@@ -3,6 +3,7 @@
  * runExport, then verify the output with ffprobe/ffmpeg (duration, fps, size, pixel colors, audio).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { adaptFfmpegArgs, ffmpegMajorVersionSync } from '../../electron/media/ffmpeg';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
@@ -29,7 +30,8 @@ let media51: MediaItem; // 5.1 audio-only 4s
 let outN = 0;
 
 async function ff(args: string[]): Promise<void> {
-  await exec(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', ...args], { maxBuffer: 64 * 1024 * 1024 });
+  // Same version-dependent spelling the app uses (-/filter_complex on FFmpeg 7+).
+  await exec(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', ...adaptFfmpegArgs(args, ffmpegMajorVersionSync(FFMPEG))], { maxBuffer: 64 * 1024 * 1024 });
 }
 
 async function probe(file: string): Promise<MediaProbe> {

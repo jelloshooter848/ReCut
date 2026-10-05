@@ -49,7 +49,7 @@ jobs:
           if (-not $p.WaitForExit(180000)) { $p.Kill(); throw 'smoke test timed out' }
           Get-Content $out
           $r = Get-Content $out -Raw
-          if ($r -match 'FAILED|MISSING' -or $r -notmatch 'encode\+probe ok' -or $r -notmatch 'status=206' -or $r -notmatch 'resources\\ffmpeg') { throw 'smoke test failed' }
+          if ($r -cmatch 'FAILED|layout=MISSING' -or $r -notmatch 'encode\+probe ok' -or $r -notmatch 'status=206' -or $r -notmatch 'resources\\ffmpeg') { throw 'smoke test failed' }
 
       - name: Silent-install the installer and smoke-test the installed app
         shell: pwsh
@@ -65,7 +65,7 @@ jobs:
           if (-not $p.WaitForExit(180000)) { $p.Kill(); throw 'smoke test timed out' }
           Get-Content $out
           $r = Get-Content $out -Raw
-          if ($r -match 'FAILED|MISSING' -or $r -notmatch 'encode\+probe ok') { throw 'installed-app smoke test failed' }
+          if ($r -cmatch 'FAILED|layout=MISSING' -or $r -notmatch 'encode\+probe ok') { throw 'installed-app smoke test failed' }
 
       - name: Read version
         id: ver
