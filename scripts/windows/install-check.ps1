@@ -31,11 +31,17 @@ $setup = Get-ChildItem $Release -Filter 'ReCut-Setup-*.exe' | Select-Object -Fir
 if (-not $setup) { throw "no ReCut-Setup-*.exe in $Release" }
 Write-Host "Installer: $($setup.FullName) ($($setup.Length) bytes)"
 
-$roots = @("$env:LOCALAPPDATA\Programs", "$env:ProgramFiles", "${env:ProgramFiles(x86)}") | Where-Object { $_ -and (Test-Path $_) }
-
+# The installed ReCut.exe: in the InstallLocation the installer recorded, or in the default per-user / per-machine
+# folder. (Test-Path on known paths: a recursive Get-ChildItem -Filter search came back empty here even with the exe
+# present.)
 function Find-InstalledExe {
-  Get-ChildItem $roots -Recurse -Depth 3 -Filter ReCut.exe -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -notlike '*\Uninstall*' } | Select-Object -First 1
+  $dirs = @(Get-ItemProperty 'HKCU:\Software\*', 'HKLM:\Software\*' -ErrorAction SilentlyContinue |
+      Where-Object { $_.ShortcutName -eq 'ReCut' -and $_.InstallLocation } | ForEach-Object { $_.InstallLocation })
+  $dirs += "$env:LOCALAPPDATA\Programs\ReCut", "$env:ProgramFiles\ReCut", "${env:ProgramFiles(x86)}\ReCut"
+  foreach ($d in $dirs) {
+    $p = Join-Path $d 'ReCut.exe'
+    if (Test-Path -LiteralPath $p -PathType Leaf) { return Get-Item -LiteralPath $p }
+  }
 }
 
 function Find-UninstallEntry {
@@ -51,8 +57,6 @@ function Show-InstallDiagnostics([datetime]$since) {
   Get-ItemProperty 'HKCU:\Software\*' -ErrorAction SilentlyContinue | Where-Object { $_.InstallLocation -or $_.ShortcutName -like 'ReCut*' } |
     Select-Object PSChildName, InstallLocation, ShortcutName | Format-List | Out-String | Write-Host
   Find-UninstallEntry | Select-Object PSChildName, DisplayName, InstallLocation, QuietUninstallString | Format-List | Out-String | Write-Host
-  Write-Host 'ReCut.exe anywhere under the user profile and Program Files:'
-  Get-ChildItem $env:USERPROFILE, $env:ProgramFiles, 'C:\ReCut' -Recurse -Depth 6 -Filter ReCut.exe -ErrorAction SilentlyContinue | Select-Object -First 10 FullName | Format-Table -AutoSize | Out-String -Width 300 | Write-Host
   Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'ReCut|Setup|^Un_|^Au_' } | Select-Object Id, Name, Path | Format-Table -AutoSize | Out-String -Width 300 | Write-Host
   Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; StartTime = $since.AddSeconds(-5) } -ErrorAction SilentlyContinue |
     Where-Object { $_.Id -in 1006, 1007, 1008, 1015, 1116, 1117, 1118, 1119 } | Select-Object -First 4 |
