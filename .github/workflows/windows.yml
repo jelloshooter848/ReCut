@@ -3,17 +3,31 @@ name: Windows build
 # Builds the Windows installer + portable exe on a real Windows machine, smoke-tests them, and publishes them
 # as a GitHub Release. Also checks that "Start ReCut.cmd" works from a fresh clone and runs the test suites on Windows.
 #
-# Release naming (docs/RELEASING.md):
-#   - push to a branch:            prerelease  v<version>-dev.<run_number>  "ReCut <version>-dev.<run> (Windows test build)"
-#   - push of a tag v<MAJOR.MINOR.PATCH>: release v<version>  "ReCut <version>", marked Latest, notes from CHANGELOG.md.
-#     The tag must equal "v" + package.json version, and CHANGELOG.md must have a "## [<version>]" section.
+# Releases are automatic (docs/RELEASING.md). The normal flow is: a release PR bumps package.json
+# (npm version X.Y.Z --no-git-tag-version) and adds a "## [X.Y.Z]" section to CHANGELOG.md -> the PR is merged ->
+# this workflow runs on the push to main and, after the smoke and install checks pass, publishes release vX.Y.Z on
+# the merge commit. Nobody pushes a tag: the publish step creates it. Never create the release or tag by hand (for
+# example in the GitHub web UI) before the release PR is merged.
+#
+# Release naming, decided by the "Release metadata" step:
+#   - push to main, package.json version v has a "## [v]" CHANGELOG.md section, and no tag v<v> exists on origin:
+#                                  release v<v>  "ReCut <v>", marked Latest, notes from CHANGELOG.md
+#   - push of a tag v<MAJOR.MINOR.PATCH> (optional manual fallback): the same release. The tag must equal
+#     "v" + package.json version, and CHANGELOG.md must have a "## [<version>]" section, or the run fails in seconds.
+#   - anything else (push to main when v<v> is already tagged or has no changelog section, other branches,
+#     workflow_dispatch): prerelease  v<version>-dev.<run_number>  "ReCut <version>-dev.<run> (Windows test build)"
+#   Just before publishing, an automatic release re-checks that v<v> is still untagged (someone may have pushed the
+#   tag while this run was building) and falls back to a dev prerelease if it is not.
 #
 # Trigger notes:
 #   - Only plain semver tags (v0.2.0, v1.10.3) trigger a tag build. GitHub filter patterns treat '.' literally and '+'
 #     as "one or more of the preceding character", so v*-dev.* / v*-win.* prerelease tags never match.
-#     (Tags the release step creates with GITHUB_TOKEN would not trigger a workflow anyway.)
+#   - The release tags this workflow creates itself (the automatic v<v> on main and every -dev. tag) are created by
+#     softprops/action-gh-release with GITHUB_TOKEN. GitHub never starts a workflow run for events caused by
+#     GITHUB_TOKEN, so an automatic release does not trigger a second (tag) build of the same commit.
 #   - paths-ignore applies to branch pushes only: GitHub does not evaluate path filters for tag pushes, so a release
-#     tag on a commit that changed only CHANGELOG.md / docs still builds.
+#     tag on a commit that changed only CHANGELOG.md / docs still builds. A push to main that changes only *.md /
+#     docs/** does not run at all, so it cannot release; a release PR always changes package.json, so it does.
 on:
   push:
     branches: [claude/build-recut, main]
@@ -29,9 +43,15 @@ on:
 permissions:
   contents: write
 
+# One run per ref at a time. Other branches cancel a superseded run. Runs on main are never cancelled by a newer
+# push: they queue, because a main run may be the one publishing a release, and cancelling it (two quick merges)
+# would drop the release or let it race the next run. Queueing also serialises the "is v<v> already tagged?" check,
+# so the second run sees the tag the first one created and makes a dev build. (GitHub keeps at most one pending
+# run per group: a newer push replaces a still-pending one. If that drops a not-yet-started release run, the newer
+# run releases instead, since v<v> is still untagged and its package.json/CHANGELOG.md still carry v<v>.)
 concurrency:
   group: windows-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   installer:
@@ -42,11 +62,13 @@ jobs:
       - uses: actions/checkout@v4
 
       # Runs first so a mistagged release fails in seconds, not after the build. Publishing happens at the end,
-      # after the smoke and install checks, in both cases.
-      - name: Release metadata (verify tag, extract changelog section)
+      # after the smoke and install checks, in every case.
+      - name: Release metadata (release or dev build, changelog notes)
         id: rel
         shell: pwsh
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
           RUN_NUMBER: ${{ github.run_number }}
@@ -54,6 +76,7 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false   # git ls-remote exit codes are checked by hand
           $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
           if ($v -notmatch '^\d+\.\d+\.\d+$') { Write-Host "::error::package.json version '$v' is not MAJOR.MINOR.PATCH"; exit 1 }
           $install = @(
@@ -65,39 +88,77 @@ jobs:
             '',
             "Built from $env:SHA. This build launched, encoded and probed a test clip on a Windows runner before publishing."
           ) -join "`n"
-          if ($env:REF_TYPE -eq 'tag') {
-            $tag = $env:REF_NAME
-            if ($tag -cne "v$v") {
-              Write-Host "::error::Tag '$tag' does not match package.json version '$v' (expected tag 'v$v'). Tag the merge commit of the release PR that bumped package.json, or fix the version in a new release PR. See docs/RELEASING.md."
-              exit 1
-            }
-            # The section runs from the "## [<version>]" heading to the next "## [" heading (or a link-reference
-            # block / end of file).
+
+          # The "## [<ver>]" section of CHANGELOG.md, from its heading to the next "## [" heading (or a link-reference
+          # block / end of file). $null if there is no such heading, '' if the section is empty.
+          function Get-ChangelogSection([string]$ver) {
             $lines = @(Get-Content CHANGELOG.md -Encoding utf8)
-            $head = '^## \[' + [regex]::Escape($v) + '\](\s|$)'
+            $head = '^## \[' + [regex]::Escape($ver) + '\](\s|$)'
             $start = -1; $end = $lines.Count
             for ($i = 0; $i -lt $lines.Count; $i++) {
               if ($start -lt 0) { if ($lines[$i] -match $head) { $start = $i } }
               elseif ($lines[$i] -match '^## \[' -or $lines[$i] -match '^\[[^\]]+\]:\s') { $end = $i; break }
             }
-            if ($start -lt 0) { Write-Host "::error::CHANGELOG.md has no '## [$v]' section. Add it in the release PR (see docs/RELEASING.md)."; exit 1 }
-            $section = ''
-            if ($end - $start -ge 2) { $section = ($lines[($start + 1)..($end - 1)] -join "`n").Trim() }
-            if (-not $section) { Write-Host "::error::The '## [$v]' section of CHANGELOG.md is empty."; exit 1 }
-            # Repository-relative links (bugs/closed/...) do not resolve in a release body: point them at the tag.
-            $section = [regex]::Replace($section, '\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:|#|/)([^)\s]+)\)', "](https://github.com/$env:REPO/blob/$tag/`$1)")
-            $body = "$section`n`n---`n`n$install"
-            $name = "ReCut $v"; $pre = 'false'; $latest = 'true'
-          } else {
-            $tag = "v$v-dev.$env:RUN_NUMBER"
-            $name = "ReCut $v-dev.$env:RUN_NUMBER (Windows test build)"
-            $body = "Test build of an unreleased commit, not a release. For the current release, use the release marked **Latest**.`n`n$install"
-            $pre = 'true'; $latest = 'false'
+            if ($start -lt 0) { return $null }
+            if ($end - $start -lt 2) { return '' }
+            return ($lines[($start + 1)..($end - 1)] -join "`n").Trim()
           }
+          # Release body: the changelog section, then the install note. Repository-relative links (bugs/closed/...)
+          # do not resolve in a release body, so they are pointed at the release tag.
+          function Get-ReleaseBody([string]$section, [string]$tag) {
+            $section = [regex]::Replace($section, '\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:|#|/)([^)\s]+)\)', "](https://github.com/$env:REPO/blob/$tag/`$1)")
+            return "$section`n`n---`n`n$install"
+          }
+          # Whether tag $tag exists on origin (actions/checkout left its credentials in the git config).
+          # ls-remote --exit-code exits 2 when no ref matches. Any other failure stops the run rather than guess,
+          # because guessing "not tagged" could publish onto an existing release.
+          function Test-RemoteTag([string]$tag) {
+            git ls-remote --exit-code --tags origin "refs/tags/$tag" | Out-Host
+            $rc = $LASTEXITCODE
+            $global:LASTEXITCODE = 0   # the runner fails a pwsh step whose script ends with a non-zero LASTEXITCODE
+            if ($rc -eq 0) { return $true }
+            if ($rc -eq 2) { return $false }
+            Write-Host "::error::git ls-remote failed (exit $rc) while checking whether tag $tag exists."; exit 1
+          }
+
+          # Default: dev prerelease. Always written out, so the final check before publishing can fall back to it.
+          $devTag = "v$v-dev.$env:RUN_NUMBER"
+          $devName = "ReCut $v-dev.$env:RUN_NUMBER (Windows test build)"
+          $devBody = "Test build of an unreleased commit, not a release. For the current release, use the release marked **Latest**.`n`n$install"
+          $tag = $devTag; $name = $devName; $body = $devBody; $pre = 'true'; $latest = 'false'; $auto = 'false'
+
+          if ($env:REF_TYPE -eq 'tag') {
+            # Manual fallback: a pushed tag vX.Y.Z must match package.json and have a changelog section.
+            if ($env:REF_NAME -cne "v$v") {
+              Write-Host "::error::Tag '$env:REF_NAME' does not match package.json version '$v' (expected tag 'v$v'). Tag the merge commit of the release PR that bumped package.json, or fix the version in a new release PR. See docs/RELEASING.md."
+              exit 1
+            }
+            $section = Get-ChangelogSection $v
+            if ($null -eq $section) { Write-Host "::error::CHANGELOG.md has no '## [$v]' section. Add it in the release PR (see docs/RELEASING.md)."; exit 1 }
+            if (-not $section) { Write-Host "::error::The '## [$v]' section of CHANGELOG.md is empty."; exit 1 }
+            $tag = "v$v"; $name = "ReCut $v"; $body = Get-ReleaseBody $section $tag; $pre = 'false'; $latest = 'true'
+          } elseif ($env:EVENT_NAME -eq 'push' -and $env:REF -eq 'refs/heads/main') {
+            # Automatic release: the first main build of a version that has a changelog section and no tag yet.
+            $section = Get-ChangelogSection $v
+            if (-not $section) {
+              Write-Host "CHANGELOG.md has no (or an empty) '## [$v]' section: dev build."
+            } elseif (Test-RemoteTag "v$v") {
+              Write-Host "Tag v$v already exists on origin ($v is released): dev build."
+            } else {
+              Write-Host "v$v is not tagged yet and CHANGELOG.md has its section: publishing release v$v from $env:SHA."
+              $tag = "v$v"; $name = "ReCut $v"; $body = Get-ReleaseBody $section $tag; $pre = 'false'; $latest = 'true'; $auto = 'true'
+            }
+          }
+
           $notes = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          $devNotes = Join-Path $env:RUNNER_TEMP 'dev-notes.md'
           Set-Content -Path $notes -Value $body -Encoding utf8
-          Write-Host "Release: $name (tag $tag, prerelease $pre)"; Get-Content $notes
-          Add-Content -Path $env:GITHUB_OUTPUT -Value @("version=$v", "tag=$tag", "name=$name", "prerelease=$pre", "latest=$latest", "notes=$notes")
+          Set-Content -Path $devNotes -Value $devBody -Encoding utf8
+          Write-Host "Release: $name (tag $tag, prerelease $pre, automatic $auto)"; Get-Content $notes
+          Add-Content -Path $env:GITHUB_OUTPUT -Value @(
+            "version=$v", "tag=$tag", "name=$name", "prerelease=$pre", "latest=$latest", "notes=$notes", "auto=$auto",
+            "dev_tag=$devTag", "dev_name=$devName", "dev_notes=$devNotes")
+          exit 0
 
       - uses: actions/setup-node@v4
         with:
@@ -145,16 +206,53 @@ jobs:
         shell: pwsh
         run: ./scripts/windows/install-check.ps1 -Release release -Attempts 5 -SmokeAttempts 1
 
+      # An automatic release re-checks its tag right before publishing. If v<version> appeared while this run was
+      # building (someone pushed the tag or made the release by hand), the run publishes a dev prerelease instead of
+      # touching that release. Everything else passes through unchanged.
+      - name: Final release check
+        id: pub
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          AUTO: ${{ steps.rel.outputs.auto }}
+          TAG: ${{ steps.rel.outputs.tag }}
+          NAME: ${{ steps.rel.outputs.name }}
+          PRE: ${{ steps.rel.outputs.prerelease }}
+          LATEST: ${{ steps.rel.outputs.latest }}
+          NOTES: ${{ steps.rel.outputs.notes }}
+          DEV_TAG: ${{ steps.rel.outputs.dev_tag }}
+          DEV_NAME: ${{ steps.rel.outputs.dev_name }}
+          DEV_NOTES: ${{ steps.rel.outputs.dev_notes }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $tag = $env:TAG; $name = $env:NAME; $pre = $env:PRE; $latest = $env:LATEST; $notes = $env:NOTES
+          if ($env:AUTO -eq 'true') {
+            git ls-remote --exit-code --tags origin "refs/tags/$tag" | Out-Host
+            $rc = $LASTEXITCODE; $global:LASTEXITCODE = 0
+            if ($rc -eq 0) {
+              Write-Host "::warning::Tag $tag was created while this run was building; publishing a dev prerelease instead."
+              $tag = $env:DEV_TAG; $name = $env:DEV_NAME; $pre = 'true'; $latest = 'false'; $notes = $env:DEV_NOTES
+            } elseif ($rc -ne 2) {
+              Write-Host "::error::git ls-remote failed (exit $rc) while re-checking tag $tag."; exit 1
+            }
+          }
+          Write-Host "Publishing: $name (tag $tag, prerelease $pre, latest $latest)"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value @("tag=$tag", "name=$name", "prerelease=$pre", "latest=$latest", "notes=$notes")
+          exit 0
+
+      # softprops creates the tag (with GITHUB_TOKEN, on target_commitish = the commit this run built) when it does
+      # not exist yet. That is how an automatic release gets its v<version> tag on the release PR's merge commit.
       - name: Publish GitHub Release
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.rel.outputs.tag }}
+          tag_name: ${{ steps.pub.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          name: ${{ steps.rel.outputs.name }}
-          prerelease: ${{ steps.rel.outputs.prerelease }}
-          make_latest: ${{ steps.rel.outputs.latest }}
-          body_path: ${{ steps.rel.outputs.notes }}
+          name: ${{ steps.pub.outputs.name }}
+          prerelease: ${{ steps.pub.outputs.prerelease }}
+          make_latest: ${{ steps.pub.outputs.latest }}
+          body_path: ${{ steps.pub.outputs.notes }}
           files: |
             release/ReCut-Setup-*.exe
             release/ReCut-Portable-*.exe
