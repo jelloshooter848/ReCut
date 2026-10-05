@@ -20,6 +20,11 @@ on:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
     paths-ignore: ['**/*.md', 'docs/**']
   workflow_dispatch:
+    inputs:
+      installer_stress:
+        description: 'Also run the installer-stress job: the install check on 6 extra runners (10 install cycles each)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -123,37 +128,8 @@ jobs:
           $r = Get-Content $out -Raw
           if ($r -cmatch 'FAILED|layout=MISSING' -or $r -notmatch 'encode\+probe ok' -or $r -notmatch 'status=206' -or $r -notmatch 'resources\\ffmpeg') { throw 'smoke test failed' }
 
-      - name: Silent-install the installer and smoke-test the installed app
-        shell: pwsh
-        run: |
-          $setup = Get-ChildItem release -Filter 'ReCut-Setup-*.exe' | Select-Object -First 1
-          $inst = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait -PassThru
-          Write-Host "Installer exit code: $($inst.ExitCode)"
-          # The NSIS installer can hand off to a child process, so poll for the installed app.
-          $roots = @("$env:LOCALAPPDATA\Programs", "$env:ProgramFiles", "${env:ProgramFiles(x86)}") | Where-Object { $_ -and (Test-Path $_) }
-          $exe = $null
-          for ($i = 0; $i -lt 60 -and -not $exe; $i++) {
-            $exe = Get-ChildItem $roots -Recurse -Depth 3 -Filter ReCut.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notlike '*\Uninstall*' } | Select-Object -First 1
-            if (-not $exe) { Start-Sleep -Seconds 2 }
-          }
-          if (-not $exe) {
-            Get-ChildItem "$env:LOCALAPPDATA\Programs" -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String | Write-Host
-            # Diagnostics for installer crashes: which module faulted, on which CPU.
-            Get-CimInstance Win32_Processor | Select-Object Name, Manufacturer, NumberOfCores | Format-List | Out-String | Write-Host
-            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-15) } -ErrorAction SilentlyContinue |
-              Where-Object { $_.Id -in 1000, 1001, 1026 } | Select-Object -First 6 | ForEach-Object { Write-Host "---- event $($_.Id) $($_.ProviderName)"; Write-Host $_.Message }
-            Get-ChildItem $env:TEMP -Filter 'ns*.tmp' -Directory -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Host "NSIS temp: $($_.FullName)"; Get-ChildItem $_.FullName -Recurse | Select-Object FullName, Length | Format-Table -AutoSize | Out-String | Write-Host }
-            throw 'installed ReCut.exe not found'
-          }
-          Write-Host "Installed at $($exe.FullName)"
-          $out = "$env:RUNNER_TEMP\smoke-installed.txt"
-          $env:RECUT_SMOKE = '1'; $env:RECUT_SMOKE_OUT = $out; $env:RECUT_USER_DATA = "$env:RUNNER_TEMP\ud2"
-          $p = Start-Process -FilePath $exe.FullName -PassThru
-          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw 'smoke test timed out' }
-          Get-Content $out
-          $r = Get-Content $out -Raw
-          if ($r -cmatch 'FAILED|layout=MISSING' -or $r -notmatch 'encode\+probe ok') { throw 'installed-app smoke test failed' }
-
+      # Uploaded before the install check so a failed install can still be inspected, and so the installer-stress
+      # job can reuse the build. The Release is published only after the install check passes.
       - uses: actions/upload-artifact@v4
         with:
           name: ReCut-windows
@@ -161,6 +137,13 @@ jobs:
             release/ReCut-Setup-*.exe
             release/ReCut-Portable-*.exe
           if-no-files-found: error
+
+      # Five silent install / smoke / uninstall cycles plus one portable launch, because the installer crash in
+      # bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md was intermittent. Prints the CPU first and, on a
+      # failed install, the faulting module (Application error events) and the NSIS temp dir.
+      - name: Install check (installer x5, uninstall, portable exe)
+        shell: pwsh
+        run: ./scripts/windows/install-check.ps1 -Release release -Attempts 5 -SmokeAttempts 1
 
       - name: Publish GitHub Release
         if: github.event_name != 'pull_request'
@@ -175,6 +158,29 @@ jobs:
           files: |
             release/ReCut-Setup-*.exe
             release/ReCut-Portable-*.exe
+
+  # Manual only (workflow_dispatch with installer_stress): repeats the install check on several runners to raise the
+  # chance of landing on the host types where the intermittent NSIS installer crash showed up (AMD EPYC 7763), see
+  # bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md. Reuses the installer job's build; never on push/tag.
+  installer-stress:
+    name: Installer stress ${{ matrix.shard }}
+    needs: installer
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.installer_stress }}
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ReCut-windows
+          path: release
+      - name: Install check (installer x10, uninstall, portable exe)
+        shell: pwsh
+        run: ./scripts/windows/install-check.ps1 -Release release -Attempts 10 -SmokeAttempts 1
 
   launcher:
     name: Start ReCut.cmd from a fresh clone
