@@ -100,6 +100,11 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - Projects store **absolute** media paths, so moving media means using Relink. A media path that is not absolute
   (for example in a hand-edited project file) is refused by probing, thumbnails, proxies and export with "media path
   must be an absolute path".
+- **Moving media rebuilds its derived media.** Thumbnails, waveforms and proxies are cached under a key made from the
+  file's absolute path, size and modified time. After you move a file (even unchanged, to a new folder or drive) and
+  relink it, its thumbnails and waveform are generated again, and so is its proxy the next time one is built. A
+  proxy that was ready before the move keeps being used while its cache file exists. The old cache entries stay on
+  disk until you clear the cache. There is no Collect / Consolidate Project command.
 - **Limits on load:** timeline positions and durations are capped at 86,400,000 frames (24 h at 1000 fps, far more
   at normal rates), clip speed at 1 %–10 000 %, and nesting at 64 levels. An invalid sequence frame rate becomes
   23.976.
@@ -112,19 +117,26 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 
 ## Scale and performance
 
-- The performance attack (`docs/attack/performance.md`) measured a 2,500-clip, 60-media project and found slow
-  playback, edits and autosave. Since then, the playhead moves in place, hidden panels unmount, the timeline has a
-  level-of-detail lane, the Scenes / Transcript / Project lists are virtualized, autosave is idle-time and compact,
-  export is chunked and job lanes are split. **The report has not been re-measured since those changes.**
+- The performance attack (`docs/attack/performance.md`, 4 October 2026) measured a 2,500-clip, 60-media project and
+  found slow playback, edits and autosave. Since then, the playhead moves in place, hidden panels unmount, the
+  timeline has a level-of-detail lane, the Scenes / Transcript / Project lists are virtualized, autosave is idle-time
+  and compact, export is chunked and job lanes are split. **Re-measured on 5 October 2026** (same project, the
+  sequence is 26 min long): Program playback holds 24 fps, scrubbing at zoom-to-fit runs at 59 fps, autosave takes
+  about 0.45 s without stalling playback, transcript / scene / project searches paint within 40 ms, and the chunked
+  export of the whole sequence completes with FFmpeg under 0.9 GB. Still slow at that size: each edit takes
+  80–120 ms from commit to paint, scrubbing at 1 px/frame runs at 32–35 fps, switching sequences takes 100–140 ms,
+  saving takes about 2 s, and opening takes about 4 s with the window frozen for about 3 s. Multi-hour sequences
+  have not been measured.
 - Snapshots store full copies of a sequence, so many snapshots of a large sequence make the project file grow
   quickly.
 
 ## Reports in `docs/` that are out of date
 
-- `docs/acceptance.md` lists BUG-1 to BUG-6 from the last gauntlet run. Commit `7156564` contains fixes for all six
-  (safe output-folder creation; the conform prompt on Transcript inserts; Movie routing without a year; per-file
-  chip counts; a toast when opening from `.bak`; redrawing the paused frame when a proxy becomes ready). The gauntlet
-  has not been re-run since.
-- The `docs/attack/*.md` reports are snapshots from before the fix waves. When last counted (4 October 2026), the
-  `tests/attack-qa` unit repros (84 tests) and the `tests/attack` media measurements (102 tests) all passed. The
-  Playwright parts of those suites were not re-run. Re-run a suite before you treat a finding as open.
+- `docs/acceptance.md` keeps BUG-1 to BUG-6 from the first gauntlet run for history; all six are fixed. The gauntlet
+  was re-run on 5 October 2026: all four acceptance tests pass (17/17, 21/21, 22/22 and 11/11 steps, no
+  workarounds), and the full end-to-end suite passes (51 tests).
+- `docs/attack/performance.md` is the 4 October 2026 measurement. For the 5 October re-measurement, see
+  [Scale and performance](#scale-and-performance) above.
+- The other `docs/attack/*.md` reports are snapshots from before the fix waves. On 5 October 2026 the `tests/attack-qa`
+  unit repros (84 tests), the `tests/attack-qa` Playwright repros (22 tests) and the `tests/attack` media
+  measurements (102 tests) all passed. Re-run a suite before you treat a finding as open.
