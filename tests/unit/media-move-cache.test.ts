@@ -17,7 +17,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-move-cache-'));
 process.env.RECUT_CACHE_DIR = path.join(tmp, 'cache');
 
 import { getFfmpegPath } from '../../electron/media/ffmpeg';
-import { cacheKeyForPath, getCacheDir } from '../../electron/media/cache';
+import { cacheKeyForFile, cacheKeyForPath, getCacheDir } from '../../electron/media/cache';
 import { getThumbnail } from '../../electron/media/thumbs';
 import { getWaveform } from '../../electron/media/waveform';
 import { startProxyJob } from '../../electron/media/proxy';
@@ -28,6 +28,13 @@ const oldDir = path.join(tmp, 'driveA', 'Movies');
 const newDir = path.join(tmp, 'driveB', 'Archive', 'Movies');
 const oldPath = path.join(oldDir, 'feature.mp4');
 const newPath = path.join(newDir, 'feature.mp4');
+/**
+ * Fixed whole-second (and even-second, for 2 s FAT resolution) mtime given to the source and to the moved copy.
+ * Copying a sub-millisecond mtime through `fs.utimesSync(p, st.atime, st.mtime)` is lossy: the Date rounds to the
+ * millisecond and the seconds-as-double conversion can land just below it, so Math.floor(mtimeMs) moved by 1 ms in
+ * either direction about half the time (bugs/closed/2026-10-05-media-move-cache-mtime-precision.md).
+ */
+const MTIME = new Date(1_700_000_000_000);
 
 function listFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
@@ -41,6 +48,8 @@ beforeAll(() => {
     '-f', 'lavfi', '-i', 'testsrc=duration=4:size=320x240:rate=24', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4',
     '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', oldPath],
   { stdio: ['ignore', 'ignore', 'pipe'], timeout: 120_000 });
+  // Before any cache entry is made, so every key in the test is computed from this mtime.
+  fs.utimesSync(oldPath, MTIME, MTIME);
 }, 120_000);
 
 afterAll(async () => {
@@ -50,6 +59,7 @@ afterAll(async () => {
 describe('derived media after moving a source file (same bytes, same mtime)', () => {
   it('hits the cache at the same path, and misses (regenerates) at the new path', async () => {
     const q = new JobQueue({ throttleMs: 10 });
+    expect(Math.floor(fs.statSync(oldPath).mtimeMs)).toBe(MTIME.getTime());
 
     // 1. Generate thumbnail, waveform and proxy at the original location.
     const thumbA = await getThumbnail({ path: oldPath, time: 1, width: 160 });
@@ -70,15 +80,20 @@ describe('derived media after moving a source file (same bytes, same mtime)', ()
     // 2. Move the file to another folder the way a cross-drive move does (copy + delete), keeping its mtime.
     const st = fs.statSync(oldPath);
     fs.copyFileSync(oldPath, newPath);
-    fs.utimesSync(newPath, st.atime, st.mtime);
+    fs.utimesSync(newPath, MTIME, MTIME);
     fs.unlinkSync(oldPath);
     const moved = fs.statSync(newPath);
+    // The two inputs of the key other than the path are identical (the key uses size and Math.floor(mtimeMs)).
     expect(moved.size).toBe(st.size);
     expect(Math.floor(moved.mtimeMs)).toBe(Math.floor(st.mtimeMs));
+    expect(Math.floor(moved.mtimeMs)).toBe(MTIME.getTime());
 
-    // 3. Same bytes, same size, same mtime: the key still changes because it hashes the absolute path.
+    // 3. Same bytes, same size, same mtime: the key still changes because it hashes the absolute path, and only
+    // because of the path: each key is reproduced from its own path with the other file's size and mtime.
     const keyB = await cacheKeyForPath(newPath);
     expect(keyB).not.toBe(keyA);
+    expect(cacheKeyForFile(oldPath, moved.size, moved.mtimeMs)).toBe(keyA);
+    expect(cacheKeyForFile(newPath, st.size, st.mtimeMs)).toBe(keyB);
 
     // Thumbnail: a different cache file that did not exist before the request, so the frame was extracted again.
     const thumbB = await getThumbnail({ path: newPath, time: 1, width: 160 });
