@@ -267,7 +267,9 @@ export function registerIpc(deps: IpcDeps): void {
   // --- fs ---
   ipcMain.handle(IPC.fsStat, (_e, p: string) => fsApi.stat(assertString(p, 'path')));
   ipcMain.handle(IPC.fsReadText, (_e, p: string) => fsApi.readText(assertString(p, 'path')));
-  ipcMain.handle(IPC.fsWriteText, (_e, p: string, content: string) => fsApi.writeText(assertString(p, 'path'), String(content ?? '')));
+  // No generic text write: the renderer can only write subtitle exports, checked here against the project's sources.
+  ipcMain.handle(IPC.subtitlesExport, (_e, p: unknown, content: unknown, protectedPaths: unknown) =>
+    fsApi.writeSubtitleFile(p as string, content as string, protectedPaths as string[]));
   ipcMain.handle(IPC.fsListDir, (_e, p: string) => fsApi.listDir(assertString(p, 'path')));
   ipcMain.handle(IPC.fsScanForRelink, (_e, req: RelinkScanRequest) => fsApi.scanForRelink(req));
 

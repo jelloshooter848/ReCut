@@ -33,7 +33,8 @@ export const IPC = {
   // files
   fsStat: 'fs:stat',
   fsReadText: 'fs:readText',
-  fsWriteText: 'fs:writeText',
+  /** Write a subtitle export (.srt / .vtt only), refused when it is the same file as a protected path. */
+  subtitlesExport: 'subtitles:export',
   fsScanForRelink: 'fs:scanForRelink',
   fsListDir: 'fs:listDir',
   // media
@@ -95,6 +96,9 @@ export interface SaveFileOptions { title?: string; filters?: FileFilter[]; defau
 export interface MessageOptions { type?: 'none' | 'info' | 'error' | 'question' | 'warning'; title?: string; message: string; detail?: string; buttons?: string[]; defaultId?: number; cancelId?: number }
 
 export interface FileStat { exists: boolean; size?: number; mtimeMs?: number; isDirectory?: boolean }
+
+/** Result of `exportSubtitleFile`: refusals (project source, not .srt/.vtt, not absolute) come back as `ok: false`. */
+export type SubtitleWriteResult = { ok: true; path: string } | { ok: false; error: string };
 
 export type SaveResult = { ok: true; path: string } | { ok: false; error: string }
 export type LoadResult =
@@ -184,7 +188,12 @@ export interface RecutApi {
 
   stat(path: string): Promise<FileStat>;
   readText(path: string): Promise<string>;
-  writeText(path: string, content: string): Promise<void>;
+  /**
+   * Atomically write subtitle text to `path` (.srt / .vtt only). The main process refuses a target that is
+   * the same file as any of `protectedPaths` (the project's source files) by canonical path (symlinks
+   * resolved, case-folded on Windows / macOS) or device + inode.
+   */
+  exportSubtitleFile(path: string, content: string, protectedPaths: string[]): Promise<SubtitleWriteResult>;
   listDir(path: string): Promise<{ name: string; path: string; isDirectory: boolean; size: number }[]>;
   scanForRelink(req: RelinkScanRequest): Promise<RelinkCandidate[]>;
 

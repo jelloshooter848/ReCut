@@ -8,7 +8,7 @@ import { performSourceEdit } from '@/panels/source/insert';
 import { useStore, importSubtitleFile, importEmbeddedSubtitles, recutApi } from '@/state';
 import { toast, dismissToast } from '@/components/ui';
 import { buildTranscriptIndex, type TranscriptIndex } from '@/transcript/index';
-import { getProviders, type TranscriptProvider } from '@/transcript/providers';
+import { getProviders, SubtitleFileProvider, type TranscriptProvider } from '@/transcript/providers';
 import { uid } from '../../../shared/ids';
 import { fileNameOf } from '@/state/selectors';
 
@@ -97,15 +97,20 @@ export async function importEmbedded(mediaId: ID, streamIndex: number): Promise<
   }
 }
 
-/** Run a transcript provider for a media item and attach the result as a subtitle track. */
+/**
+ * Run a transcript provider for a media item and attach the result as a subtitle track. For the subtitle-file
+ * provider the sidecar it reads is located first and recorded as the track's `path`, so exports never
+ * overwrite it (projectSourcePaths).
+ */
 export async function transcribeWith(provider: TranscriptProvider, mediaId: ID): Promise<void> {
   const st = useStore.getState();
   const media = st.project.media[mediaId];
   if (!media) return;
   const id = toast('info', `${provider.name}: transcribing ${media.name}…`, 0);
   try {
-    const cues = await provider.transcribe(media.path, {}, () => { /* progress could drive a job row */ });
-    st.addMediaSubtitleTrack({ id: uid('sub'), name: provider.name, language: 'und', mediaId, cues, origin: provider.id });
+    const sourcePath = provider instanceof SubtitleFileProvider ? await provider.findSidecar(media.path) : null;
+    const cues = await provider.transcribe(media.path, sourcePath ? { subtitlePath: sourcePath } : {}, () => { /* progress could drive a job row */ });
+    st.addMediaSubtitleTrack({ id: uid('sub'), name: provider.name, language: 'und', mediaId, cues, origin: provider.id, ...(sourcePath ? { path: sourcePath } : {}) });
     toast.ok(`${provider.name}: ${cues.length} cues added to ${media.name}`);
   } catch (e) {
     toast.error(`${provider.name}: ${e instanceof Error ? e.message : String(e)}`);

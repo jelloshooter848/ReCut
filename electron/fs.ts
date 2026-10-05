@@ -1,10 +1,12 @@
 /**
  * Filesystem helpers exposed to the renderer over IPC. Pure Node (no Electron imports).
  */
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteFile } from './project/io';
-import type { FileStat, RelinkCandidate, RelinkScanRequest } from '../shared/ipc';
+import { findSameFile } from './pathSafety';
+import type { FileStat, RelinkCandidate, RelinkScanRequest, SubtitleWriteResult } from '../shared/ipc';
 
 export interface DirEntry { name: string; path: string; isDirectory: boolean; size: number }
 
@@ -21,13 +23,34 @@ export async function readText(p: string): Promise<string> {
   return fsp.readFile(p, 'utf8');
 }
 
+const SUBTITLE_EXT = /\.(?:srt|vtt)$/i;
+
 /**
- * Write UTF-8 text atomically (temp file in the same folder, fsync, rename over `p`; parent folders created
- * safely), so a failure part-way never leaves a truncated file. No `.bak` is left next to user files.
- * Callers that must not overwrite project sources check that in the renderer (exportSubtitles.ts).
+ * Subtitle export writer (IPC `subtitles:export`). Refuses anything but an absolute `.srt` / `.vtt` path,
+ * a target that exists and is not a regular file, and a target that is the same file as one of
+ * `protectedPaths` (the project's sources, sent by the renderer) by canonical path or device + inode
+ * (electron/pathSafety.ts), so symlinked folder aliases, hard links and case variants are caught here even
+ * though the renderer's pre-check is lexical. Then writes UTF-8 atomically (temp file in the same folder,
+ * fsync, rename over the target; parent folders created safely): a failure never leaves a truncated file,
+ * and no `.bak` is left next to user files. I/O errors reject.
  */
-export async function writeText(p: string, content: string): Promise<void> {
-  await atomicWriteFile(p, content, { backup: false });
+export async function writeSubtitleFile(
+  target: string, content: string, protectedPaths: readonly string[], opts: { platform?: string } = {},
+): Promise<SubtitleWriteResult> {
+  if (typeof target !== 'string' || target === '' || target.includes('\0') || !path.isAbsolute(target)) {
+    return { ok: false, error: `Subtitle export needs a full file path, not "${String(target)}".` };
+  }
+  if (!SUBTITLE_EXT.test(target)) return { ok: false, error: `Subtitle export only writes .srt or .vtt files, not "${target}".` };
+  if (typeof content !== 'string') return { ok: false, error: 'Subtitle export content must be text.' };
+  if (!Array.isArray(protectedPaths)) return { ok: false, error: 'Subtitle export needs the list of project source files.' };
+  const hit = findSameFile(target, protectedPaths, opts.platform ?? process.platform);
+  if (hit !== undefined) {
+    return { ok: false, error: `Refusing to export subtitles to "${target}": that file is a source file of the project (${hit}). Choose a different file name or folder.` };
+  }
+  const existing = fs.statSync(target, { throwIfNoEntry: false });
+  if (existing && !existing.isFile()) return { ok: false, error: `Refusing to export subtitles to "${target}": it exists and is not a file.` };
+  await atomicWriteFile(target, content, { backup: false });
+  return { ok: true, path: target };
 }
 
 export async function listDir(p: string): Promise<DirEntry[]> {

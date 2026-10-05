@@ -240,6 +240,8 @@ export interface SequenceSubtitleTrack {
   language: string;
   enabled: boolean;
   cues: SequenceSubtitleCue[];
+  /** Subtitle files whose cues were imported into this track (project sources: exports never overwrite them). */
+  sourcePaths?: string[];
 }
 
 export interface StoryBlock {

@@ -4,8 +4,10 @@
  * same guarantees video export has (tests/unit/export-safety.test.ts).
  *
  * The renderer path is exercised through the real `exportSequenceSubtitles` (the function the panel and
- * `window.__recut.subtitles` call) with `window.recut.writeText` wired straight to the real main-process
- * writer in electron/fs.ts, writing real files under os.tmpdir().
+ * `window.__recut.subtitles` call) with `window.recut.exportSubtitleFile` wired straight to the real
+ * main-process writer in electron/fs.ts, writing real files under os.tmpdir(). The main process repeats the
+ * check on canonical paths (realpath, device + inode), so symlinked folder aliases and hard links are caught
+ * even when the renderer's lexical check passes, and it only ever writes .srt / .vtt files.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
@@ -17,7 +19,8 @@ import { createMediaItem, createProject, createSequence } from '@shared/project'
 import { useStore, resetStore } from '../../src/state/store';
 import { exportSequenceSubtitles, writeSequenceSubtitles } from '../../src/panels/subtitles/exportSubtitles';
 import { findSamePath, pathCompareKey, resolveAbsolutePath } from '@shared/pathKey';
-import { writeText } from '../../electron/fs';
+import { writeSubtitleFile } from '../../electron/fs';
+import { IPC } from '@shared/ipc';
 
 const FPS = { num: 24, den: 1 };
 const ORIGINAL_SRT = '1\n00:00:01,000 --> 00:00:02,000\nOriginal imported line\n';
@@ -28,6 +31,8 @@ let subtitleFile: string;
 let mediaFile: string;
 let proxyFile: string;
 let writes: string[];
+/** Main-process writes that got past the renderer pre-check (attempted, maybe refused there). */
+let mainCalls: { path: string; protectedPaths: string[] }[];
 
 function fixture(): { project: Project; seq: Sequence } {
   const project = createProject('Subtitle safety');
@@ -56,12 +61,18 @@ beforeEach(() => {
   fs.writeFileSync(mediaFile, ORIGINAL_MEDIA);
   fs.writeFileSync(proxyFile, ORIGINAL_MEDIA);
   writes = [];
+  mainCalls = [];
   resetStore();
   useStore.setState({ project: fixture().project });
   // The preload bridge, wired to the real main-process writer.
   vi.stubGlobal('window', {
     recut: {
-      writeText: async (p: string, content: string) => { writes.push(p); await writeText(p, content); },
+      exportSubtitleFile: async (p: string, content: string, protectedPaths: string[]) => {
+        mainCalls.push({ path: p, protectedPaths });
+        const res = await writeSubtitleFile(p, content, protectedPaths);
+        if (res.ok) writes.push(p);
+        return res;
+      },
       appInfo: async () => ({ platform: process.platform }),
     },
   });
@@ -93,6 +104,8 @@ describe('exportSequenceSubtitles refuses project source files', () => {
   it('refuses a proxy path', async () => {
     const res = await exportSequenceSubtitles({ path: proxyFile });
     expect(res.ok).toBe(false);
+    expect(!res.ok && res.error).toMatch(/source file of the project/);
+    expect(writes).toEqual([]);
     expect(fs.readFileSync(proxyFile).equals(ORIGINAL_MEDIA)).toBe(true);
   });
 
@@ -112,16 +125,106 @@ describe('exportSequenceSubtitles refuses project source files', () => {
     expect(res).toEqual({ ok: true, path: out, count: 1 });
     expect(fs.readFileSync(out, 'utf8')).toBe('1\n00:00:01,000 --> 00:00:02,000\nExported line\n');
     expect(fs.readdirSync(dir).sort()).toEqual(['Edit.srt', 'clip.mp4', 'clip.proxy.mp4', 'imported.en.srt']);
+    // The main process got the project's source list to check against.
+    expect(mainCalls).toEqual([{ path: out, protectedPaths: expect.arrayContaining([subtitleFile, mediaFile, proxyFile]) }]);
   });
 });
 
-describe('electron/fs writeText is atomic', () => {
+/** Make a symlink, or skip the test where the OS refuses (Windows without the symlink privilege). */
+function symlinkOrSkip(target: string, link: string, type: 'dir' | 'file', skip: () => void): boolean {
+  try {
+    fs.symlinkSync(target, link, type);
+    return true;
+  } catch (e) {
+    if (process.platform === 'win32' && ['EPERM', 'EACCES'].includes((e as NodeJS.ErrnoException).code ?? '')) { skip(); return false; }
+    throw e;
+  }
+}
+
+describe('the main process refuses project sources by canonical path, not by spelling', () => {
+  it('a symlinked folder alias passes the renderer check but is refused by the main process', async (ctx) => {
+    const alias = path.join(dir, 'alias');
+    if (!symlinkOrSkip(dir, alias, 'dir', () => ctx.skip())) return;
+    const target = path.join(alias, 'imported.en.srt');
+    const res = await exportSequenceSubtitles({ path: target });
+    expect(mainCalls.map((c) => c.path)).toEqual([target]); // the lexical pre-check did not see it
+    expect(res.ok).toBe(false);
+    expect(!res.ok && res.error).toMatch(/Refusing to export subtitles to ".*alias.*imported\.en\.srt": that file is a source file of the project/);
+    expect(writes).toEqual([]);
+    expect(fs.readFileSync(subtitleFile, 'utf8')).toBe(ORIGINAL_SRT);
+    expect(fs.readdirSync(dir).sort()).toEqual(['alias', 'clip.mp4', 'clip.proxy.mp4', 'imported.en.srt']);
+  });
+
+  it('a symlinked file pointing at a source is refused', async (ctx) => {
+    const link = path.join(dir, 'link.srt');
+    if (!symlinkOrSkip(subtitleFile, link, 'file', () => ctx.skip())) return;
+    const res = await writeSubtitleFile(link, 'x', [subtitleFile]);
+    expect(res.ok).toBe(false);
+    expect(fs.readFileSync(subtitleFile, 'utf8')).toBe(ORIGINAL_SRT);
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+  });
+
+  it('a hard link to a source (same device and inode, different name) is refused', async () => {
+    const link = path.join(dir, 'other-name.srt');
+    fs.linkSync(subtitleFile, link);
+    const res = await exportSequenceSubtitles({ path: link });
+    expect(mainCalls.map((c) => c.path)).toEqual([link]);
+    expect(res.ok).toBe(false);
+    expect(!res.ok && res.error).toMatch(/source file of the project/);
+    expect(writes).toEqual([]);
+    expect(fs.readFileSync(subtitleFile, 'utf8')).toBe(ORIGINAL_SRT);
+    expect(fs.statSync(link).ino).toBe(fs.statSync(subtitleFile).ino);
+  });
+
+  it('folds case on win32 / darwin, not on linux', async () => {
+    const upper = path.join(dir, 'IMPORTED.EN.SRT');
+    for (const platform of ['win32', 'darwin']) {
+      expect((await writeSubtitleFile(upper, 'x', [subtitleFile], { platform })).ok).toBe(false);
+    }
+    expect(fs.readFileSync(subtitleFile, 'utf8')).toBe(ORIGINAL_SRT);
+    // Only meaningful where the temp folder is case-sensitive (Linux): there it is a different file.
+    if (process.platform === 'linux') {
+      expect(await writeSubtitleFile(upper, 'x', [subtitleFile], { platform: 'linux' })).toEqual({ ok: true, path: upper });
+      expect(fs.readFileSync(subtitleFile, 'utf8')).toBe(ORIGINAL_SRT);
+    }
+  });
+
+  it('writes only .srt / .vtt files: a media file (not even listed as protected) is left alone', async () => {
+    for (const target of [mediaFile, path.join(dir, 'notes.txt'), path.join(dir, 'x.srt.mp4'), path.join(dir, 'noext')]) {
+      const res = await writeSubtitleFile(target, 'oops', []);
+      expect(res.ok).toBe(false);
+      expect(!res.ok && res.error).toMatch(/only writes \.srt or \.vtt/);
+    }
+    expect(fs.readFileSync(mediaFile).equals(ORIGINAL_MEDIA)).toBe(true);
+    expect(fs.readdirSync(dir).sort()).toEqual(['clip.mp4', 'clip.proxy.mp4', 'imported.en.srt']);
+    expect((await writeSubtitleFile(path.join(dir, 'ok.VTT'), 'WEBVTT\n', [])).ok).toBe(true);
+  });
+
+  it('refuses relative paths and malformed input', async () => {
+    const cases: [unknown, unknown, unknown][] = [
+      ['out.srt', 'x', []], ['', 'x', []], [42, 'x', []], [path.join(dir, 'a.srt'), 5, []],
+      [path.join(dir, 'a.srt'), 'x', 'nope'], [path.join(dir, 'a\0.srt'), 'x', []],
+    ];
+    for (const [p, c, prot] of cases) {
+      const res = await writeSubtitleFile(p as string, c as string, prot as string[]);
+      expect(res.ok).toBe(false);
+    }
+    expect(fs.readdirSync(dir).sort()).toEqual(['clip.mp4', 'clip.proxy.mp4', 'imported.en.srt']);
+  });
+
+  it('there is no generic text-write channel left for the renderer', () => {
+    expect(Object.values(IPC)).not.toContain('fs:writeText');
+    expect(Object.values(IPC)).toContain('subtitles:export');
+  });
+});
+
+describe('electron/fs writeSubtitleFile is atomic', () => {
   it('replaces an existing file via a temp file in the same folder + rename, leaving no temp behind', async () => {
     const out = path.join(dir, 'out.srt');
     fs.writeFileSync(out, 'old contents that are longer than the new ones\n');
     const inodeBefore = fs.statSync(out).ino;
     const rename = vi.spyOn(fsp, 'rename');
-    await writeText(out, 'new\n');
+    expect(await writeSubtitleFile(out, 'new\n', [])).toEqual({ ok: true, path: out });
     expect(fs.readFileSync(out, 'utf8')).toBe('new\n');
     // Replaced, not truncated and rewritten in place.
     expect(fs.statSync(out).ino).not.toBe(inodeBefore);
@@ -133,17 +236,26 @@ describe('electron/fs writeText is atomic', () => {
   });
 
   it('a failed replace leaves the target untouched and no temp file behind', async () => {
-    const target = path.join(dir, 'busy');
+    const target = path.join(dir, 'busy.srt');
     fs.mkdirSync(target);
     fs.writeFileSync(path.join(target, 'keep.txt'), 'keep');
-    await expect(writeText(target, 'x')).rejects.toThrow();
+    expect((await writeSubtitleFile(target, 'x', [])).ok).toBe(false);
     expect(fs.readFileSync(path.join(target, 'keep.txt'), 'utf8')).toBe('keep');
-    expect(fs.readdirSync(dir).sort()).toEqual(['busy', 'clip.mp4', 'clip.proxy.mp4', 'imported.en.srt']);
+    expect(fs.readdirSync(dir).sort()).toEqual(['busy.srt', 'clip.mp4', 'clip.proxy.mp4', 'imported.en.srt']);
+  });
+
+  it('a failed rename leaves the target untouched and no temp file behind (the error is thrown)', async () => {
+    const out = path.join(dir, 'keep.srt');
+    fs.writeFileSync(out, ORIGINAL_SRT);
+    vi.spyOn(fsp, 'rename').mockRejectedValueOnce(Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' }));
+    await expect(writeSubtitleFile(out, 'new\n', [])).rejects.toThrow(/EBUSY/);
+    expect(fs.readFileSync(out, 'utf8')).toBe(ORIGINAL_SRT);
+    expect(fs.readdirSync(dir).sort()).toEqual(['clip.mp4', 'clip.proxy.mp4', 'imported.en.srt', 'keep.srt']);
   });
 
   it('creates missing parent folders', async () => {
     const out = path.join(dir, 'a', 'b', 'c.vtt');
-    await writeText(out, 'WEBVTT\n');
+    expect((await writeSubtitleFile(out, 'WEBVTT\n', [])).ok).toBe(true);
     expect(fs.readFileSync(out, 'utf8')).toBe('WEBVTT\n');
     expect(fs.readdirSync(path.dirname(out))).toEqual(['c.vtt']);
   });
@@ -168,7 +280,7 @@ describe('writeSequenceSubtitles (pure, injected writer)', () => {
 
   async function attempt(project: Project, target: string, platform: string | undefined) {
     const written: string[] = [];
-    const res = await writeSequenceSubtitles(project, { path: target }, { platform, writeText: async (p) => { written.push(p); } });
+    const res = await writeSequenceSubtitles(project, { path: target }, { platform, exportSubtitleFile: async (p) => { written.push(p); return { ok: true, path: p }; } });
     return { res, written };
   }
 
@@ -191,8 +303,18 @@ describe('writeSequenceSubtitles (pure, injected writer)', () => {
   });
 
   it('a write error is reported, not thrown', async () => {
-    const res = await writeSequenceSubtitles(posixProject(), { path: '/out/x.srt' }, { platform: 'linux', writeText: async () => { throw new Error('EACCES: permission denied'); } });
+    const res = await writeSequenceSubtitles(posixProject(), { path: '/out/x.srt' }, { platform: 'linux', exportSubtitleFile: async () => { throw new Error('EACCES: permission denied'); } });
     expect(res).toEqual({ ok: false, error: 'EACCES: permission denied' });
+  });
+
+  it("a main-process refusal is reported as the result, and the project's source paths are sent along", async () => {
+    const sent: string[][] = [];
+    const res = await writeSequenceSubtitles(posixProject(), { path: '/out/x.srt' }, {
+      platform: 'linux',
+      exportSubtitleFile: async (_p, _c, prot) => { sent.push(prot); return { ok: false, error: 'Refusing: canonical match' }; },
+    });
+    expect(res).toEqual({ ok: false, error: 'Refusing: canonical match' });
+    expect(sent).toEqual([expect.arrayContaining(['/media/Show/clip.mp4', '/media/Show/clip.en.srt'])]);
   });
 });
 

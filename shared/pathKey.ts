@@ -4,8 +4,9 @@
  * (path.resolve, then case-folded on win32 / darwin) for absolute paths: `.` and `..` segments, repeated
  * and trailing separators are collapsed lexically, and on Windows `/` and `\` are equivalent.
  *
- * It does not follow symlinks (the renderer cannot); the main-process exporter additionally canonicalizes
- * with realpath. Pure: no DOM, no Node.
+ * It does not follow symlinks (the renderer cannot); the main-process exporter and subtitle writer
+ * (electron/pathSafety.ts) additionally canonicalize with realpath and compare device + inode. Pure: no DOM,
+ * no Node.
  */
 
 /** Platforms whose default file systems compare names case-insensitively. Unknown → fold (stricter). */
