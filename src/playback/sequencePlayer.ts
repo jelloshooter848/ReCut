@@ -9,7 +9,7 @@
  * The canvas internal resolution is the sequence size scaled by `playbackResolution`; CSS sizing
  * is the caller's responsibility.
  */
-import type { ID, MediaItem, Rational, Sequence } from '../../shared/model';
+import type { ID, MediaItem, Rational, Sequence, VideoStreamInfo } from '../../shared/model';
 import { secondsToFramesFloor, framesToSeconds, fpsValue } from '../../shared/time';
 import { sequenceDuration, resolveSubtitleCues, type ResolvedCue } from '../../shared/timeline';
 import { PlaybackClock } from './clock';
@@ -17,6 +17,26 @@ import { MediaElementPool } from './elementPool';
 import { planFrame, type FramePlan, type LayerPlan, type AudioPlan, type MissingMedia } from './planner';
 import { clampElementTime, toElementTime } from './mediaSource';
 import { pathToMediaUrl } from '../../shared/ipc';
+
+/**
+ * Display size of a probed video stream, as Chromium reports it in videoWidth / videoHeight: the storage size
+ * stretched by the sample aspect ratio (wider for SAR > 1, taller for SAR < 1; width / height are already the
+ * rotated axes, and SAR stretches the storage x axis). A missing or insane stored SAR counts as square.
+ * Null when the size is unknown.
+ */
+export function probedDisplaySize(v: VideoStreamInfo | undefined): { width: number; height: number } | null {
+  if (!v || !(v.width > 0) || !(v.height > 0)) return null;
+  const s = v.sar as unknown as { num?: unknown; den?: unknown } | null | undefined;
+  let sar = 1;
+  if (s && typeof s === 'object' && Number.isSafeInteger(s.num) && Number.isSafeInteger(s.den) && (s.num as number) > 0 && (s.den as number) > 0) {
+    const r = (s.num as number) / (s.den as number);
+    if (r >= 1 / 16 && r <= 16) sar = r;
+  }
+  const swap = v.rotation === 90 || v.rotation === 270;
+  let w = swap ? v.height : v.width, h = swap ? v.width : v.height; // storage axes
+  if (sar > 1) w = Math.round(w * sar); else if (sar < 1) h = Math.round(h / sar);
+  return swap ? { width: h, height: w } : { width: w, height: h };
+}
 
 /** Decoded still images shared by every player, keyed by file path (LRU-capped). */
 const IMAGE_CACHE_CAP = 64;
@@ -555,8 +575,11 @@ export class SequencePlayer {
         const v = this.activeVideo.get(layer.clipId);
         if (!v || v.readyState < 2) continue;
         el = v;
-        vw = v.videoWidth || layer.mediaSize?.width || 0;
-        vh = v.videoHeight || layer.mediaSize?.height || 0;
+        // videoWidth / videoHeight are the display size (SAR applied); the probe fallback must match it.
+        const m = Object.hasOwn(this.media, layer.mediaId) ? this.media[layer.mediaId] : undefined;
+        const fallback = probedDisplaySize(m?.probe?.video) ?? layer.mediaSize;
+        vw = v.videoWidth || fallback?.width || 0;
+        vh = v.videoHeight || fallback?.height || 0;
       }
       if (!vw || !vh) continue;
       const fit = Math.min(seq.width / vw, seq.height / vh);

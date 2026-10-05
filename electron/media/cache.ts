@@ -9,6 +9,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { assertAbsoluteMediaPath } from './ffmpeg';
 
 export type CacheSubdir = 'thumbs' | 'waves' | 'proxies' | 'scenes';
 export const CACHE_SUBDIRS: CacheSubdir[] = ['thumbs', 'waves', 'proxies', 'scenes'];
@@ -50,8 +51,9 @@ export function cacheKeyForFile(filePath: string, size: number, mtimeMs: number)
   return h.digest('hex');
 }
 
-/** Stat the file and compute its cache key. Throws if the file is missing. */
+/** Stat the file and compute its cache key. Throws if the file is missing or the path is not absolute. */
 export async function cacheKeyForPath(filePath: string): Promise<string> {
+  assertAbsoluteMediaPath(filePath); // a source media path: never resolved against the working directory
   const st = await fsp.stat(filePath);
   return cacheKeyForFile(filePath, st.size, st.mtimeMs);
 }

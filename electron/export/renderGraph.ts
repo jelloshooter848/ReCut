@@ -476,11 +476,12 @@ function transformFilters(ctx: Ctx, seg: ClipSeg): string[] {
   if (hasCrop) {
     if (cl + cr >= 1 || ct + cb >= 1) { ctx.warnings.push(`Clip "${seg.clip.name}": crop removes the whole image.`); }
     f.push(`crop=w='max(2,trunc(iw*${num(1 - cl - cr)}/2)*2)':h='max(2,trunc(ih*${num(1 - ct - cb)}/2)*2)':x='iw*${num(cl)}':y='ih*${num(ct)}'`);
-    const v = seg.media.probe?.video;
-    if (v && v.width > 0 && v.height > 0) {
-      const k = Math.min(W / v.width, H / v.height);
-      ox = v.width * k * (cl - cr) / 2;
-      oy = v.height * k * (ct - cb) / 2;
+    const d = fitInputSize(seg.media.probe?.video);
+    if (d) {
+      // The crop runs on the fitted picture (display shape, see fitFilters), so the offset uses that size.
+      const k = Math.min(W / d.w, H / d.h);
+      ox = d.w * k * (cl - cr) / 2;
+      oy = d.h * k * (ct - cb) / 2;
     }
   }
   if (Math.abs(S - 1) >= 1e-6) {
@@ -503,6 +504,26 @@ function transformFilters(ctx: Ctx, seg: ClipSeg): string[] {
 }
 
 function clamp01(v: number): number { return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0; }
+
+/**
+ * Size of a probed video stream as fitFilters' fit scale receives it: the display axes (width / height are
+ * already swapped for 90 / 270 rotation) un-squeezed by the sample aspect ratio, rounded like the first scale in
+ * fitFilters. A stored SAR that is missing or not a sane positive ratio counts as square. Null when unknown.
+ */
+function fitInputSize(v: VideoStreamInfo | undefined): { w: number; h: number } | null {
+  if (!v || !(v.width > 0) || !(v.height > 0)) return null;
+  const s = v.sar as unknown as { num?: unknown; den?: unknown } | undefined;
+  let sar = 1;
+  if (s && typeof s === 'object' && Number.isSafeInteger(s.num) && Number.isSafeInteger(s.den) && (s.num as number) > 0 && (s.den as number) > 0) {
+    const r = (s.num as number) / (s.den as number);
+    if (r >= 1 / 16 && r <= 16) sar = r;
+  }
+  // Autorotate transposes a 90 / 270 stream, which inverts its SAR.
+  if (v.rotation === 90 || v.rotation === 270) sar = 1 / sar;
+  if (sar > 1.000001) return { w: Math.max(2, Math.round(v.width * sar / 2) * 2), h: v.height };
+  if (sar < 0.999999) return { w: v.width, h: Math.max(2, Math.round(v.height / sar / 2) * 2) };
+  return { w: v.width, h: v.height };
+}
 
 /**
  * Fit the source into the W x H frame (letterbox / pillarbox), with square pixels.
@@ -815,7 +836,7 @@ function assertOutputNotASource(req: ExportRequest, outputPath: string, opts: Re
   const tracks = [...req.sequence.videoTracks, ...req.sequence.audioTracks];
   for (const t of tracks) {
     for (const c of t.clips) {
-      const m = req.media[c.mediaId];
+      const m = Object.hasOwn(req.media, c.mediaId) ? req.media[c.mediaId] : undefined; // "constructor" etc. are not media
       if (m) for (const p of [m.path, m.proxy?.path]) add(p, 'used by the sequence');
     }
   }

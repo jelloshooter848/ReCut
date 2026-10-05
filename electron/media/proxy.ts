@@ -10,7 +10,7 @@ import type { ProxyRequest } from '@shared/ipc';
 import type { JobQueue, JobRunContext } from '../jobs/jobQueue';
 import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
 import { cacheKeyForPath, cacheSubdir, fileExists, removeQuietly } from './cache';
-import { FfmpegError, runFfmpeg } from './ffmpeg';
+import { FfmpegError, ffmpegFileArg, runFfmpeg } from './ffmpeg';
 import { probeMedia } from './probe';
 
 export interface ProxyResult {
@@ -40,7 +40,7 @@ export function proxyOutputPath(key: string, height: number, audioStream?: numbe
 
 /** Build the ffmpeg argument list for a proxy transcode (exported for inspection/tests). */
 export function buildProxyArgs(req: ProxyRequest, opts: { targetHeight: number; hasVideo: boolean; hasAudio: boolean; outPart: string }): string[] {
-  const args: string[] = ['-i', req.path];
+  const args: string[] = ['-i', ffmpegFileArg(req.path)];
   if (opts.hasVideo) {
     args.push(
       '-map', '0:v:0',
@@ -63,7 +63,7 @@ export function buildProxyArgs(req: ProxyRequest, opts: { targetHeight: number; 
   } else {
     args.push('-an');
   }
-  args.push('-sn', '-dn', '-map_metadata', '-1', '-map_chapters', '-1', '-movflags', '+faststart', '-f', 'mp4', opts.outPart);
+  args.push('-sn', '-dn', '-map_metadata', '-1', '-map_chapters', '-1', '-movflags', '+faststart', '-f', 'mp4', ffmpegFileArg(opts.outPart));
   return args;
 }
 

@@ -9,7 +9,7 @@ import type { SceneDetectRequest, SceneDetectResult } from '@shared/ipc';
 import type { JobQueue, JobRunContext } from '../jobs/jobQueue';
 import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
 import { cacheKeyForPath, cacheSubdir, fileExists, removeQuietly } from './cache';
-import { FfmpegError, runFfmpeg } from './ffmpeg';
+import { FfmpegError, ffmpegFileArg, runFfmpeg } from './ffmpeg';
 import { probeMedia } from './probe';
 
 export const DEFAULT_MIN_SCENE_SECONDS = 1.0;
@@ -67,7 +67,7 @@ export async function runSceneDetect(req: SceneDetectRequest, ctx: JobRunContext
   const rawBoundaries: number[] = [];
   const run = runFfmpeg(
     [
-      '-i', req.path,
+      '-i', ffmpegFileArg(req.path),
       '-map', '0:v:0',
       '-an', '-sn', '-dn',
       '-vf', `scale=320:-2,select='gt(scene,${threshold})',showinfo`,

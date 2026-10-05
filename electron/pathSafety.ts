@@ -1,12 +1,11 @@
 /**
  * Main-process path identity for "would this write replace a project source file?" checks. Unlike the
- * renderer's lexical check (shared/pathKey.ts) it follows symlinks (realpath) and recognizes hard links and
- * case-insensitive volumes by device + inode, so an aliased spelling of a source path is still caught.
+ * renderer's lexical check (shared/pathKey.ts) it follows symlinks (realpath), recognizes hard links by device +
+ * inode and folds case on every platform, so an aliased spelling of a source path is still caught.
  * Pure Node (no Electron).
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { foldsPathCase } from '../shared/pathKey';
 
 /**
  * Canonical form of a path for comparisons: realpath when it exists, else realpath(dir)/basename,
@@ -18,10 +17,14 @@ export function canonicalPath(p: string): string {
   try { return path.join(fs.realpathSync.native(path.dirname(abs)), path.basename(abs)); } catch { return abs; }
 }
 
-/** Comparison key: canonical path, case-folded where the platform's file systems fold names. */
-function compareKey(p: string, platform: string | undefined): string {
-  const c = canonicalPath(p);
-  return foldsPathCase(platform) ? c.toLowerCase() : c;
+/**
+ * Comparison key: canonical path, case-folded on every platform (the video export rule in
+ * electron/export/renderGraph.ts assertOutputNotASource). A case-sensitive volume can hold two files that differ
+ * only in case; refusing to write the other one is harmless, while not folding misses a case-insensitive volume
+ * mounted on Linux (vfat / exFAT / NTFS / SMB) or a case-insensitive APFS volume.
+ */
+function compareKey(p: string): string {
+  return canonicalPath(p).toLowerCase();
 }
 
 /**
@@ -36,16 +39,16 @@ export function fileIdentity(p: string): { dev: bigint; ino: bigint } | null {
 }
 
 /**
- * The first of `candidates` that is the same file as `target`: equal canonical paths (case-folded on
- * win32 / darwin, and when `platform` is unknown), or, when both exist, the same device and inode.
- * Non-string / empty / NUL-containing candidates are ignored.
+ * The first of `candidates` that is the same file as `target`: equal canonical paths (case-folded on every
+ * platform), or, when both exist, the same device and inode. Non-string / empty / NUL-containing candidates are
+ * ignored. `_platform` is accepted for callers that pass it; the comparison no longer depends on it.
  */
-export function findSameFile(target: string, candidates: readonly unknown[], platform: string | undefined = process.platform): string | undefined {
-  const key = compareKey(target, platform);
+export function findSameFile(target: string, candidates: readonly unknown[], _platform?: string): string | undefined {
+  const key = compareKey(target);
   const id = fileIdentity(target);
   for (const c of candidates) {
     if (typeof c !== 'string' || c === '' || c.includes('\0')) continue;
-    if (compareKey(c, platform) === key) return c;
+    if (compareKey(c) === key) return c;
     if (id) {
       const other = fileIdentity(c);
       if (other && other.dev === id.dev && other.ino === id.ino) return c;
