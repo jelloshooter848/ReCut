@@ -102,7 +102,13 @@ export type SubtitleWriteResult = { ok: true; path: string } | { ok: false; erro
 
 export type SaveResult = { ok: true; path: string } | { ok: false; error: string }
 export type LoadResult =
-  | { ok: true; path: string; project: Project; fromBackup?: boolean; backupMtime?: number }
+  | {
+    ok: true; path: string; project: Project; fromBackup?: boolean; backupMtime?: number;
+    /** What had to be repaired to open the file (one line per kind of repair); absent when nothing was. */
+    repaired?: string[];
+    /** Copy of the file as it was before the repairs (`<file>.pre-repair-<ts>`), when `repaired` is set and the copy worked. */
+    preRepairPath?: string;
+  }
   | { ok: false; error: string }
 
 export interface RecoveryInfo { autosavePath: string; projectPath: string | null; savedAt: number; project: Project }

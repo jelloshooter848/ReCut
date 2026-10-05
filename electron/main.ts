@@ -181,8 +181,7 @@ function rememberBoundsSync(w: BrowserWindow): void {
       'window.x': b.x, 'window.y': b.y, 'window.width': b.width, 'window.height': b.height,
       'window.maximized': maximized ? 1 : 0,
     };
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(prefs, null, 2));
+    io.atomicWriteFileSync(file, JSON.stringify(prefs, null, 2)); // temp + rename: a crash never leaves half a prefs.json
   } catch (e) {
     console.error('could not save window bounds:', e);
   }

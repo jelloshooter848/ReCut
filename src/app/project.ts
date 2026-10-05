@@ -111,6 +111,14 @@ export async function checkMissingMedia(): Promise<string[]> {
   } catch { return []; }
 }
 
+/** Toast text for a load that had to repair damaged data (LoadResult.repaired / preRepairPath). */
+export function repairedMessage(repaired: string[], preRepairPath?: string): string {
+  const n = repaired.length;
+  const what = `${repaired.slice(0, 3).join('; ')}${n > 3 ? `; and ${n - 3} more` : ''}`;
+  const kept = preRepairPath ? `The original file was kept as ${fileName(preRepairPath)}.` : 'Could not keep a copy of the original file.';
+  return `Some project data was damaged and has been repaired (${what}). ${kept}`;
+}
+
 /** Open a project from `path`, or ask for one. Resolves true when a project was loaded. */
 export async function requestOpenProject(path?: string): Promise<boolean> {
   const api = recutApi();
@@ -135,9 +143,10 @@ export async function requestOpenProject(path?: string): Promise<boolean> {
     if (res.fromBackup) {
       const when = res.backupMtime ? new Date(res.backupMtime).toLocaleString() : 'an earlier save';
       toast('warn', `Opened the backup from ${when}; the project file was damaged`);
-    } else {
+    } else if (!res.repaired?.length) {
       toast('ok', `Opened ${project.name}`);
     }
+    if (res.repaired?.length) toast('warn', repairedMessage(res.repaired, res.preRepairPath), 12000);
     void checkMissingMedia();
     return true;
   } catch (e) { toast('error', `Open failed: ${errText(e)}`); return false; }
