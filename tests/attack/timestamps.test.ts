@@ -17,12 +17,14 @@ beforeAll(() => { ensureMedia(); fs.mkdirSync(path.join(SCRATCH, 'cache'), { rec
 
 /** Decode the counter of a JPEG thumbnail (same encoding as the sources). */
 async function jpegCounter(file: string): Promise<number> {
-  const { stdout } = await ff(['-i', file, '-vf', 'scale=2:2:flags=area', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-']);
+  // JPEGs are full range; convert to TV range explicitly (FFmpeg 7+ no longer rescales full-range JPEG input to
+  // TV range on its own when converting to yuv420p, which would shift the encoded counter levels).
+  const { stdout } = await ff(['-i', file, '-vf', 'scale=2:2:flags=area:out_range=tv', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-']);
   const top = (stdout[0] + stdout[1]) / 2, bot = (stdout[2] + stdout[3]) / 2;
   return Math.round((bot - 16) / 4) * 50 + Math.round((top - 16) / 4);
 }
 async function jpegLuma(file: string): Promise<number> {
-  const { stdout } = await ff(['-i', file, '-vf', 'scale=1:1:flags=area', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-']);
+  const { stdout } = await ff(['-i', file, '-vf', 'scale=1:1:flags=area:out_range=tv', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-']);
   return stdout[0];
 }
 

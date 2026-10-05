@@ -329,6 +329,18 @@ function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgr
     let stdoutBuf = '';
     let canceled = false;
     let settled = false;
+    // Stall watchdog: some FFmpeg builds can spin forever (e.g. an AAC encoder bug in development builds). If neither
+    // the output position nor the output size moves for STALL_MS, stop FFmpeg and fail with a clear message.
+    let stalled = false;
+    const progressState = new Map<string, string>();
+    let lastProgressAt = Date.now();
+    const stallMs = exportStallMs();
+    const watchdog = setInterval(() => {
+      if (settled || Date.now() - lastProgressAt < stallMs) return;
+      stalled = true;
+      try { child.kill('SIGKILL'); } catch { /* already gone */ }
+    }, Math.min(5000, Math.max(250, stallMs / 4)));
+    watchdog.unref?.();
 
     const onAbort = () => {
       if (settled) return;
@@ -339,7 +351,7 @@ function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgr
       if (signal.aborted) onAbort();
       else signal.addEventListener('abort', onAbort, { once: true });
     }
-    const cleanup = () => { signal?.removeEventListener('abort', onAbort); };
+    const cleanup = () => { clearInterval(watchdog); signal?.removeEventListener('abort', onAbort); };
 
     child.stderr?.setEncoding('utf8');
     child.stderr?.on('data', (chunk: string) => {
@@ -354,6 +366,12 @@ function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgr
       const lines = stdoutBuf.split('\n');
       stdoutBuf = lines.pop() ?? '';
       for (const line of lines) {
+        const pk = /^(out_time_us|total_size)=(\S+)/.exec(line.trim());
+        if (pk) {
+          // Any movement of the output position or the output size counts as progress.
+          const prev = progressState.get(pk[1]);
+          if (prev !== pk[2]) { progressState.set(pk[1], pk[2]); lastProgressAt = Date.now(); }
+        }
         const m = /^out_time_(us|ms)=(-?\d+)/.exec(line.trim());
         if (m && durationSec > 0) {
           // ffmpeg <= 6.1 reports both keys in microseconds.
@@ -373,11 +391,22 @@ function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgr
       if (settled) return; settled = true; cleanup();
       if (stderrBuf.trim()) stderrLines.push(stderrBuf);
       if (canceled) { reject(new Error('Export canceled')); return; }
+      if (stalled) {
+        reject(new Error(`FFmpeg stopped making progress for ${Math.round(stallMs / 1000)} s and was stopped. `
+          + 'This is usually an FFmpeg bug: try another FFmpeg release (development builds are not recommended) or a different audio bitrate.'));
+        return;
+      }
       if (code === 0) { resolve(); return; }
       const tail = stderrLines.slice(-30).join('\n');
       reject(new Error(`ffmpeg exited with ${code !== null ? `code ${code}` : `signal ${sig}`}${tail ? `:\n${tail}` : ''}`));
     });
   });
+}
+
+/** No-progress limit for one FFmpeg run (env RECUT_EXPORT_STALL_MS, default 2 minutes). */
+export function exportStallMs(): number {
+  const v = Number(process.env.RECUT_EXPORT_STALL_MS);
+  return Number.isFinite(v) && v > 0 ? v : 120_000;
 }
 
 function formatClock(seconds: number): string {

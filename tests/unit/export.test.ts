@@ -3,7 +3,7 @@
  * runExport, then verify the output with ffprobe/ffmpeg (duration, fps, size, pixel colors, audio).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { adaptFfmpegArgs, ffmpegMajorVersionSync } from '../../electron/media/ffmpeg';
+import { adaptFfmpegArgs, ffmpegMajorVersionSync, resetFfmpegPaths } from '../../electron/media/ffmpeg';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
@@ -762,4 +762,29 @@ describe('chunked export (P-01)', () => {
     const r: ExportRequest = { ...bigReq(s), media: { [lumaMedia.id]: broken, [toneMedia.id]: toneMedia } };
     await expect(runExport(r)).rejects.toThrow(/Export failed in chunk 1\/\d+ \(video, frames 0-\d+\)/);
   }, 60000);
+});
+
+describe('export stall watchdog', () => {
+  it.skipIf(process.platform === 'win32')('stops an FFmpeg that makes no progress and reports it', async () => {
+    const stallDir = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-stall-'));
+    const fake = path.join(stallDir, 'ffmpeg');
+    // Answers -version like a real build, otherwise hangs without ever reporting progress.
+    fs.writeFileSync(fake, '#!/bin/sh\ncase "$*" in *-version*) echo "ffmpeg version 6.1.1"; exit 0;; esac\nexec sleep 600\n', { mode: 0o755 });
+    const saved = { ff: process.env.RECUT_FFMPEG, stall: process.env.RECUT_EXPORT_STALL_MS };
+    process.env.RECUT_FFMPEG = fake;
+    process.env.RECUT_EXPORT_STALL_MS = '1500';
+    resetFfmpegPaths();
+    try {
+      const s = seq();
+      vclip(s, mediaA, 0, 24, 0);
+      const r = req(s, { fileName: 'stall.mp4', outputDir: stallDir });
+      const t0 = Date.now();
+      await expect(runExport(r)).rejects.toThrow(/stopped making progress/);
+      expect(Date.now() - t0).toBeLessThan(15_000);
+    } finally {
+      if (saved.ff === undefined) delete process.env.RECUT_FFMPEG; else process.env.RECUT_FFMPEG = saved.ff;
+      if (saved.stall === undefined) delete process.env.RECUT_EXPORT_STALL_MS; else process.env.RECUT_EXPORT_STALL_MS = saved.stall;
+      resetFfmpegPaths();
+    }
+  }, 30_000);
 });

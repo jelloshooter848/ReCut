@@ -43,7 +43,9 @@ describe('probe fields per codec/container', () => {
     const raw = await ffprobeJson(mediaPath('multi.mkv'));
     const p = await probeMedia(mediaPath('multi.mkv'));
     console.log(`[codecs] multi.mkv format.start_time=${raw.format.start_time} probe.startTime=${p.startTime}`);
-    expect(Number(raw.format.start_time)).toBeLessThan(0);
+    // FFmpeg <= 6 reports the AAC priming as a negative container start; newer ffprobe reports 0. Either way the
+    // app must not expose a negative start.
+    expect(Number(raw.format.start_time)).toBeLessThanOrEqual(0);
     expect(p.startTime).toBe(0);
   });
   it('MP4 with two video streams: audio stream index is 2 (absolute)', async () => {

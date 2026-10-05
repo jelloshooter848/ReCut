@@ -6,9 +6,11 @@ param([string]$Dest = (Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..\..')
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+# Release builds only: FFmpeg development ("master") builds have shipped encoder bugs that hang exports.
 $sources = @(
-  'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip',                         # current stable release (GPL, includes libx264)
-  'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'  # fallback
+  'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip',                                   # current stable release (GPL, includes libx264)
+  'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-9.0.zip',  # fallback: 9.0 release branch
+  'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip'   # fallback: 8.1 release branch
 )
 $zip = Join-Path ([IO.Path]::GetTempPath()) "recut-ffmpeg-$PID.zip"
 $tmp = Join-Path ([IO.Path]::GetTempPath()) "recut-ffmpeg-$PID"
