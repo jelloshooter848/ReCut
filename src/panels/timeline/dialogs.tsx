@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import type { Clip, Marker, MarkerKind, MediaItem, Rational, Track } from '@shared/model';
-import { formatSecondsTimecode, formatTimecode, validFpsOr } from '@shared/time';
+import { formatSequenceSecondsTimecode, formatSequenceTimecode, validFpsOr } from '@shared/time';
 import { clipSourceOut } from '@shared/timeline';
 import { useStore, originalTimecode } from '@/state';
 import { Button } from '@/components/ui/Button';
@@ -47,7 +47,7 @@ export function MarkerEditor({ seqId, marker, fps, x, y, onClose }: { seqId: str
   const patch = (p: Partial<Omit<Marker, 'id'>>) => useStore.getState().updateMarker(seqId, marker.id, p);
   const commitText = () => { if (name !== marker.name || note !== marker.note) patch({ name, note }); };
   return (
-    <Popover x={x} y={y} onClose={() => { commitText(); onClose(); }} title={<><span className="grow">Marker</span><span className="mono text-dim text-xs">{formatTimecode(marker.time, fps)}</span></>}>
+    <Popover x={x} y={y} onClose={() => { commitText(); onClose(); }} title={<><span className="grow">Marker</span><span className="mono text-dim text-xs">{formatSequenceTimecode(marker.time, fps)}</span></>}>
       <div className="tl-form-row"><label>Name</label><TextField value={name} onChange={setName} onCommit={() => commitText()} autoFocus selectOnFocus placeholder="Marker name" /></div>
       <div className="tl-form-row"><label>Note</label><textarea className="input" rows={2} value={note} onChange={(e) => setNote(e.target.value)} onBlur={commitText} /></div>
       <div className="tl-form-row"><label>Kind</label><Select size="sm" value={marker.kind} options={MARKER_KINDS} onChange={(v) => patch({ kind: v })} /></div>
@@ -79,7 +79,7 @@ export function SpeedDialog({ seqId, clip, fps, onClose }: { seqId: string; clip
     <Dialog open title={`Speed / Duration — ${clip.name}`} onClose={onClose} width={360} onSubmit={apply}
       footer={<><Button size="sm" onClick={onClose}>Cancel</Button><Button size="sm" variant="primary" onClick={apply}>Apply</Button></>}>
       <div className="tl-form-row"><label>Speed</label><NumberField value={pct} min={1} max={1000} step={1} precision={1} unit="%" defaultValue={100} onChange={setPct} onCommit={setPct} /></div>
-      <div className="tl-form-row"><label>Duration</label><span className="mono text-dim">{formatTimecode(clip.duration, fps)} → <span className="text-bright">{formatTimecode(newDur, fps)}</span></span></div>
+      <div className="tl-form-row"><label>Duration</label><span className="mono text-dim">{formatSequenceTimecode(clip.duration, fps)} → <span className="text-bright">{formatSequenceTimecode(newDur, fps)}</span></span></div>
       <div className="tl-form-row"><label>Ripple</label><Toggle checked={ripple} onChange={setRipple} label="Shift following clips" /></div>
     </Dialog>
   );
@@ -125,9 +125,9 @@ export function PropertiesPopover({ clip, track, media, fps, playhead, x, y, onC
     <Popover x={x} y={y} width={320} onClose={onClose} title={<span className="ellipsis">{clip.name}</span>}>
       <div className="tl-props">
         <span>Track</span><span>{track.name}</span>
-        <span>Timeline</span><span>{formatTimecode(clip.start, fps)} – {formatTimecode(clip.start + clip.duration, fps)}</span>
-        <span>Duration</span><span>{formatTimecode(clip.duration, fps)} ({clip.duration} f)</span>
-        <span>Source</span><span>{formatSecondsTimecode(clip.sourceIn, mediaFps)} – {formatSecondsTimecode(clipSourceOut(clip, fps), mediaFps)}</span>
+        <span>Timeline</span><span>{formatSequenceTimecode(clip.start, fps)} – {formatSequenceTimecode(clip.start + clip.duration, fps)}</span>
+        <span>Duration</span><span>{formatSequenceTimecode(clip.duration, fps)} ({clip.duration} f)</span>
+        <span>Source</span><span>{formatSequenceSecondsTimecode(clip.sourceIn, mediaFps)} – {formatSequenceSecondsTimecode(clipSourceOut(clip, fps), mediaFps)}</span>
         {inside ? <><span>At playhead</span><span>{atPlayhead.sourceTimecode}</span></> : null}
         <span>Speed</span><span>{Math.round(clip.speed * 100)}%</span>
         <span>File</span><span title={media?.path}>{atPlayhead.fileName || '—'}</span>

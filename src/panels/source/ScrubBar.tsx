@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { DetectedScene, Rational, SubtitleCue } from '@shared/model';
-import { clamp, formatTimecode, secondsToFrames } from '@shared/time';
+import { clamp, formatSequenceTimecode, secondsToFrames } from '@shared/time';
 
 export interface ScrubBarProps {
   /** Media duration in seconds (finite, > 0 to be interactive). */
@@ -119,7 +119,7 @@ export function ScrubBar({ duration, time, inPoint, outPoint, fps, scenes, cues,
       ) : null}
       {valid ? <div className="scrub-playhead" style={{ left: pct(time) }} /> : null}
       {valid && hover ? (
-        <div className="scrub-tip" style={{ left: hover.x }}>{formatTimecode(hover.frame, fps)}</div>
+        <div className="scrub-tip" style={{ left: hover.x }}>{formatSequenceTimecode(hover.frame, fps)}</div>
       ) : null}
     </div>
   );

@@ -194,4 +194,61 @@ export function parseTimecode(input: string, fps: Rational, current = 0): number
   return neg && total !== 0 ? -total : total;
 }
 
+// ------------------------------------------------------------------------------------------------
+// App-wide timecode display rule
+// ------------------------------------------------------------------------------------------------
+
+/**
+ * The one display rule for frame timecodes everywhere in the UI (rulers, monitors, panels, tooltips, fields):
+ * SMPTE drop-frame (HH:MM:SS;FF) at exactly 30000/1001 and 60000/1001 (Premiere's default for those rates),
+ * non-drop (HH:MM:SS:FF) at every other rate. It depends on the rate only, so a 29.97 media file's source
+ * timecode is drop-frame too. Seconds clocks (formatClock) are not timecodes and are unaffected.
+ */
+export function usesDropFrameDisplay(fps: Rational): boolean {
+  return dropFramesPerMinute(fps) > 0;
+}
+
+/** Frames (at `fps`) as display timecode under the app-wide rule (see usesDropFrameDisplay). */
+export function formatSequenceTimecode(frames: number, fps: Rational): string {
+  return formatTimecode(frames, fps, { dropIndicator: usesDropFrameDisplay(fps) });
+}
+
+/** Seconds as display timecode at `fps` under the app-wide rule (rounded to the nearest frame first). */
+export function formatSequenceSecondsTimecode(seconds: number, fps: Rational): string {
+  return formatSequenceTimecode(secondsToFrames(seconds, fps), fps);
+}
+
+/**
+ * Premiere-style entry for an unseparated digit string: fields fill FF, SS, MM, HH from the right in pairs
+ * ("1512" -> "15:12", "500" -> "5:00", "11500" -> "1:15:00"). With `dropFrame` the last separator is ';'
+ * ("1000000" -> "1:00:00;00") so parseTimecode reads it as a drop-frame label. Anything else ("+24", "1:00",
+ * "1.10") is returned trimmed but otherwise as is. More than eight digits gives more than four fields, which
+ * parseTimecode rejects (nothing is truncated).
+ */
+export function expandTimecodeDigits(input: string, dropFrame = false): string {
+  const t = input.trim();
+  if (!/^\d+$/.test(t)) return t;
+  const parts: string[] = [];
+  for (let end = t.length; end > 0; end -= 2) parts.unshift(t.slice(Math.max(0, end - 2), end));
+  const last = parts.pop()!;
+  return parts.length ? `${parts.join(':')}${dropFrame ? ';' : ':'}${last}` : last;
+}
+
+/**
+ * Parse typed timecode so it means what the display shows (formatSequenceTimecode): digit-only shorthand is
+ * expanded (expandTimecodeDigits), and at drop-frame rates input separated only by ':' / '.' is read as a
+ * drop-frame label, exactly as if the last separator were ';' ("1:00:00:00" and "1000000" at 29.97 are
+ * 01:00:00;00 = frame 107892). Labels drop-frame skips (00:01:00;00 / ;01 at 29.97) give null, however typed.
+ * "+N" / "-N" stay frames relative to `current`; at non-drop rates this is parseTimecode after expansion.
+ */
+export function parseSequenceTimecode(text: string, fps: Rational, current = 0): number | null {
+  const df = usesDropFrameDisplay(fps);
+  let t = expandTimecodeDigits(text, df);
+  if (df && !t.includes(';') && !/^[+-][0-9]+$/.test(t)) {
+    const i = Math.max(t.lastIndexOf(':'), t.lastIndexOf('.'));
+    if (i >= 0) t = `${t.slice(0, i)};${t.slice(i + 1)}`;
+  }
+  return parseTimecode(t, fps, current);
+}
+
 export function clamp(v: number, lo: number, hi: number): number { return v < lo ? lo : v > hi ? hi : v; }

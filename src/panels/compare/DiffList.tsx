@@ -3,7 +3,7 @@
  */
 import React from 'react';
 import type { Rational } from '@shared/model';
-import { formatTimecode } from '@shared/time';
+import { formatSequenceTimecode } from '@shared/time';
 import type { DiffEntry, DiffKind, DiffResult } from './diff';
 
 export const KIND_LABEL: Record<DiffKind, string> = { same: 'same', moved: 'moved', trimmed: 'trimmed', onlyA: 'only in A', onlyB: 'only in B' };
@@ -32,7 +32,7 @@ const Row = React.memo(function Row({ e, fps, selected, onPick }: { e: DiffEntry
     <div
       className={`cmp-diff-row kind-${e.kind} ${selected ? 'selected' : ''} ${e.enabled ? '' : 'disabled'}`}
       data-testid="diff-row" data-kind={e.kind} data-side={e.side} data-clip={e.clipId}
-      title={`${e.name}\n${formatTimecode(e.start, fps)} – ${formatTimecode(e.end, fps)}\n${KIND_LABEL[e.kind]}${detail.length ? ` · ${detail.join(', ')}` : ''}${e.enabled ? '' : '\n(disabled)'}`}
+      title={`${e.name}\n${formatSequenceTimecode(e.start, fps)} – ${formatSequenceTimecode(e.end, fps)}\n${KIND_LABEL[e.kind]}${detail.length ? ` · ${detail.join(', ')}` : ''}${e.enabled ? '' : '\n(disabled)'}`}
       onClick={() => onPick(e)}
     >
       <div className="cmp-diff-main">
@@ -40,7 +40,7 @@ const Row = React.memo(function Row({ e, fps, selected, onPick }: { e: DiffEntry
         <span className={`cmp-diff-kind k-${e.kind}`}>{KIND_LABEL[e.kind]}</span>
       </div>
       <div className="cmp-diff-sub mono">
-        <span>{formatTimecode(e.start, fps)}</span>
+        <span>{formatSequenceTimecode(e.start, fps)}</span>
         {e.trackIndex > 0 ? <span className="text-faint">V{e.trackIndex + 1}</span> : null}
         {detail.length ? <span className="cmp-diff-detail">{detail.join(' · ')}</span> : null}
       </div>

@@ -5,7 +5,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { Clip, ID, Marker, Sequence, Track, TransitionType } from '@shared/model';
-import { formatSecondsTimecode, formatTimecode, fpsLabel, validFpsOr } from '@shared/time';
+import { formatSequenceSecondsTimecode, formatSequenceTimecode, fpsLabel, validFpsOr } from '@shared/time';
 import { clipEnd, clipSourceOut, editPoints, findClip, removableDisabledClipIds, resolveSubtitleCues, sequenceDuration, sourceTimeAt } from '@shared/timeline';
 import { useStore, filterMatches, filtersActive, usePlayhead } from '@/state';
 import { hasClipDrag, readClipDrag } from '@/app/dnd';
@@ -297,7 +297,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     const nearEnd = Math.abs(px - clipEnd(clip) * zoom) <= CUT_MENU_PX;
     const existing = track.transitions.find((t) => (nearStart && t.inClipId === clip.id) || (nearEnd && t.outClipId === clip.id));
     const cutItems: MenuItem[] = [];
-    if ((nearStart || nearEnd) && !existing) cutItems.push({ heading: `Cut at ${formatTimecode(nearStart ? clip.start : clipEnd(clip), fps)}` }, ...addTransitionItems(track, nearStart ? clip.start : clipEnd(clip), 'Add '), { separator: true });
+    if ((nearStart || nearEnd) && !existing) cutItems.push({ heading: `Cut at ${formatSequenceTimecode(nearStart ? clip.start : clipEnd(clip), fps)}` }, ...addTransitionItems(track, nearStart ? clip.start : clipEnd(clip), 'Add '), { separator: true });
     else if (existing) cutItems.push(...transitionMenu(existing, track), { separator: true });
     const colorItems: MenuItem[] = [
       { label: 'None', checked: !clip.color, onSelect: () => st.setClipTags(seqId, clip.id, { color: undefined }) },
@@ -351,7 +351,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     return [
       { heading: `${TRANSITION_LABEL[tr.type]} · ${tr.duration} f` },
       ...transitionTypes(track).map((t) => ({ label: t.label, checked: tr.type === t.type, onSelect: () => retype(t.type) })),
-      { label: 'Duration', submenu: [12, 24, 48, 72].map((f) => ({ label: `${f} frames (${formatTimecode(f, fps)})`, checked: tr.duration === f, onSelect: () => setDur(f) })) },
+      { label: 'Duration', submenu: [12, 24, 48, 72].map((f) => ({ label: `${f} frames (${formatSequenceTimecode(f, fps)})`, checked: tr.duration === f, onSelect: () => setDur(f) })) },
       { label: 'Remove', shortcut: 'Del', onSelect: () => st.removeTransition(seqId, tr.id) },
     ];
   };
@@ -362,7 +362,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     if (track) {
       const nearest = editPoints(fullSeq()!, [track.id]).filter((f) => f > 0).sort((a, b) => Math.abs(a - frame) - Math.abs(b - frame))[0];
       if (nearest !== undefined && Math.abs(nearest - frame) * zoom <= CUT_MENU_PX && track.clips.some((c) => c.start === nearest || clipEnd(c) === nearest)) {
-        items.push({ heading: `Cut at ${formatTimecode(nearest, fps)}` }, ...addTransitionItems(track, nearest, 'Add '), { separator: true });
+        items.push({ heading: `Cut at ${formatSequenceTimecode(nearest, fps)}` }, ...addTransitionItems(track, nearest, 'Add '), { separator: true });
       }
     }
     items.push(
@@ -522,7 +522,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
       <div className="tl-body">
         {/* ---- track headers ---- */}
         <div className="tl-headers" style={{ width: headerWidth }}>
-          <div className="tl-corner"><span>{fpsLabel(fps)} fps</span><span className="grow" /><span>{formatTimecode(duration, fps)}</span></div>
+          <div className="tl-corner"><span>{fpsLabel(fps)} fps</span><span className="grow" /><span>{formatSequenceTimecode(duration, fps)}</span></div>
           <div className="tl-headers-scroll" ref={headersScrollRef}>
             <div className="tl-headers-content" style={{ height: totalH }}>
               {hasSubs ? <SubtitleLaneHeader height={layout.subtitleLane} count={cues.length} /> : null}
@@ -669,7 +669,7 @@ function LivePropertiesPopover(p: Omit<React.ComponentProps<typeof PropertiesPop
 
 function HoverTimecode({ fps }: { fps: { num: number; den: number } }) {
   const hover = useTimelineUi((s) => s.hoverFrame);
-  return <span title="Timecode under the pointer">{hover === null ? '--:--:--:--' : formatTimecode(hover, fps)}</span>;
+  return <span title="Timecode under the pointer">{hover === null ? '--:--:--:--' : formatSequenceTimecode(hover, fps)}</span>;
 }
 
 function StatusStrip({ seq, selectedClip, selectedCount, media, duration, zoom }: {
@@ -682,13 +682,13 @@ function StatusStrip({ seq, selectedClip, selectedCount, media, duration, zoom }
       {selectedClip ? (
         <>
           <span className="tl-status-name ellipsis" style={{ maxWidth: 220 }}>{selectedClip.name}</span>
-          <span>src {formatSecondsTimecode(selectedClip.sourceIn, mediaFps)} – {formatSecondsTimecode(clipSourceOut(selectedClip, fps), mediaFps)}</span>
-          <span>dur {formatTimecode(selectedClip.duration, fps)}</span>
-          <span>@ {formatTimecode(selectedClip.start, fps)}</span>
+          <span>src {formatSequenceSecondsTimecode(selectedClip.sourceIn, mediaFps)} – {formatSequenceSecondsTimecode(clipSourceOut(selectedClip, fps), mediaFps)}</span>
+          <span>dur {formatSequenceTimecode(selectedClip.duration, fps)}</span>
+          <span>@ {formatSequenceTimecode(selectedClip.start, fps)}</span>
           {selectedCount > 1 ? <span className="badge dim">+{selectedCount - 1}</span> : null}
         </>
       ) : (
-        <><span className="tl-status-name">{seq.name}</span><span>{formatTimecode(duration, fps)}</span></>
+        <><span className="tl-status-name">{seq.name}</span><span>{formatSequenceTimecode(duration, fps)}</span></>
       )}
       <div className="grow" />
       <HoverTimecode fps={fps} />

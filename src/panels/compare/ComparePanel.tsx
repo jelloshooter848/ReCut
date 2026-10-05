@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeftRight, Columns2, Pause, Play, SkipBack, SkipForward, StepBack, StepForward, Volume2, VolumeX } from 'lucide-react';
 import type { ID, Sequence } from '@shared/model';
-import { formatTimecode } from '@shared/time';
+import { formatSequenceTimecode } from '@shared/time';
 import { useStore } from '@/state';
 import type { PanelProps } from '@/panels/registry';
 import { SequencePlayer, SyncGroup } from '@/playback';
@@ -42,7 +42,7 @@ export function defaultBFor(aId: ID | null, sequences: Record<ID, Sequence>, ord
 }
 
 function signedTc(frames: number, fps: Sequence['fps']): string {
-  return `${frames < 0 ? '−' : frames > 0 ? '+' : '±'}${formatTimecode(Math.abs(frames), fps)}`;
+  return `${frames < 0 ? '−' : frames > 0 ? '+' : '±'}${formatSequenceTimecode(Math.abs(frames), fps)}`;
 }
 
 export function ComparePanel({ active, focused }: PanelProps) {
@@ -308,7 +308,7 @@ export function ComparePanel({ active, focused }: PanelProps) {
       <div className="cmp-monitor-bar">
         <span className={`cmp-side-badge ${side === 'B' ? 'b' : ''}`}>{side}</span>
         <span className="ellipsis grow" title={label}>{label}</span>
-        <span className="mono cmp-tc" data-testid={`compare-tc-${side.toLowerCase()}`} data-frame={frame}>{seq ? formatTimecode(frame, seq.fps) : '--:--:--:--'}</span>
+        <span className="mono cmp-tc" data-testid={`compare-tc-${side.toLowerCase()}`} data-frame={frame}>{seq ? formatSequenceTimecode(frame, seq.fps) : '--:--:--:--'}</span>
         <IconButton size="sm" icon={muted ? VolumeX : Volume2} label={muted ? `Unmute ${side}` : `Mute ${side}`} toggled={!muted} data-testid={`compare-mute-${side.toLowerCase()}`} onClick={() => setMuted(!muted)} />
       </div>
     </div>
@@ -361,8 +361,8 @@ export function ComparePanel({ active, focused }: PanelProps) {
       </div>
 
       <div className="cmp-durations" data-testid="compare-durations">
-        <span className="cmp-dur"><span className="cmp-side-badge">A</span><span className="mono" data-testid="duration-a" data-frames={durA}>{formatTimecode(durA, seqA.fps)}</span></span>
-        <span className="cmp-dur"><span className="cmp-side-badge b">B</span><span className="mono" data-testid="duration-b" data-frames={durB}>{seqB ? formatTimecode(durB, seqB.fps) : '—'}</span></span>
+        <span className="cmp-dur"><span className="cmp-side-badge">A</span><span className="mono" data-testid="duration-a" data-frames={durA}>{formatSequenceTimecode(durA, seqA.fps)}</span></span>
+        <span className="cmp-dur"><span className="cmp-side-badge b">B</span><span className="mono" data-testid="duration-b" data-frames={durB}>{seqB ? formatSequenceTimecode(durB, seqB.fps) : '—'}</span></span>
         <span className={`cmp-dur cmp-delta ${delta < 0 ? 'neg' : delta > 0 ? 'pos' : ''}`} title="B minus A (in A's frame rate)">
           <span className="text-dim">Δ</span>
           <span className="mono" data-testid="duration-delta" data-frames={delta}>{seqB ? signedTc(delta, seqA.fps) : '—'}</span>

@@ -4,7 +4,7 @@
 import React, { useMemo, useState } from 'react';
 import { Camera, Copy, GitBranch, History, RotateCcw, Trash2 } from 'lucide-react';
 import type { ID, Sequence, SequenceSnapshot } from '@shared/model';
-import { formatTimecode } from '@shared/time';
+import { formatSequenceTimecode } from '@shared/time';
 import { sequenceDuration } from '@shared/timeline';
 import { useStore } from '@/state';
 import { Button } from '@/components/ui/Button';
@@ -91,13 +91,13 @@ export function CutsSection({ sequences, order, activeId, aId, bId, bSnapshotId,
                 const dur = sequenceDuration(s);
                 return (
                   <div key={s.id} className={`cmp-cut-row ${s.id === activeId ? 'active' : ''}`} data-testid="cut-row" data-seq={s.id} style={{ paddingLeft: isRoot ? 8 : 22 }}
-                    title={`${s.name}${s.versionLabel ? ` (${s.versionLabel})` : ''} · ${formatTimecode(dur, s.fps)}${s.parentSequenceId ? `\nderived from ${sequences[s.parentSequenceId]?.name ?? 'missing sequence'}` : ''}`}
+                    title={`${s.name}${s.versionLabel ? ` (${s.versionLabel})` : ''} · ${formatSequenceTimecode(dur, s.fps)}${s.parentSequenceId ? `\nderived from ${sequences[s.parentSequenceId]?.name ?? 'missing sequence'}` : ''}`}
                     onDoubleClick={() => st().setActiveSequence(s.id)}>
                     {!isRoot ? <span className="cmp-branch" /> : null}
                     <span className="ellipsis grow">{s.name}</span>
                     {s.versionLabel ? <span className="badge dim">{s.versionLabel}</span> : null}
                     {s.snapshots.length ? <span className="text-faint text-xs" title={`${s.snapshots.length} snapshot(s)`}><History size={10} /> {s.snapshots.length}</span> : null}
-                    <span className="mono text-dim text-xs">{formatTimecode(dur, s.fps)}</span>
+                    <span className="mono text-dim text-xs">{formatSequenceTimecode(dur, s.fps)}</span>
                     <button type="button" className={`cmp-ab ${s.id === aId ? 'on' : ''}`} title="Use as A" onClick={() => onSetA(s.id)}>A</button>
                     <button type="button" className={`cmp-ab b ${s.id === bId && !bSnapshotId ? 'on' : ''}`} title="Use as B" onClick={() => onSetB(s.id)}>B</button>
                   </div>
@@ -125,7 +125,7 @@ export function CutsSection({ sequences, order, activeId, aId, bId, bSnapshotId,
                   <History size={12} className="text-dim" />
                   <div className="col grow" style={{ minWidth: 0 }}>
                     <span className="ellipsis">{snap.name}</span>
-                    <span className="text-faint text-xs mono">{fmtDate(snap.createdAt)} · {formatTimecode(sequenceDuration({ ...snap.data, snapshots: [] } as Sequence), snap.data.fps)}</span>
+                    <span className="text-faint text-xs mono">{fmtDate(snap.createdAt)} · {formatSequenceTimecode(sequenceDuration({ ...snap.data, snapshots: [] } as Sequence), snap.data.fps)}</span>
                   </div>
                   <Button size="sm" active={comparing} data-testid="snapshot-compare" title={comparing ? 'Stop comparing with this snapshot' : 'Load this snapshot as B'}
                     onClick={() => onCompareSnapshot(comparing ? null : snap.id)}>{comparing ? 'Comparing' : 'Compare'}</Button>

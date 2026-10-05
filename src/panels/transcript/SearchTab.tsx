@@ -5,7 +5,7 @@ import type { Sequence } from '@shared/model';
 import { useStore } from '@/state';
 import { IconButton, SearchField, Select, EmptyState } from '@/components/ui';
 import { setClipDrag } from '@/app/dnd';
-import { formatTimecode } from '../../../shared/time';
+import { formatSequenceTimecode } from '../../../shared/time';
 import {
   searchTranscript, scopeOptions, decodeScope, highlightSegments,
   type TranscriptIndex, type TranscriptMatch, type MediaGroup, type SearchScope,
@@ -140,7 +140,7 @@ export function SearchTab({ index, active }: SearchTabProps) {
       >
         <div className="tr-tc mono" title={`Source ${tc}`}>
           <span data-testid="transcript-result-tc">{tc}</span>
-          {hit && seqFps ? <span className="tr-tl" title={`On timeline in "${hit.clipName}"${m.timeline!.length > 1 ? ` (+${m.timeline!.length - 1} more)` : ''}`} onClick={(ev) => { ev.stopPropagation(); jumpTimeline(m); }}>▸ {formatTimecode(hit.frame, seqFps)}</span> : null}
+          {hit && seqFps ? <span className="tr-tl" title={`On timeline in "${hit.clipName}"${m.timeline!.length > 1 ? ` (+${m.timeline!.length - 1} more)` : ''}`} onClick={(ev) => { ev.stopPropagation(); jumpTimeline(m); }}>▸ {formatSequenceTimecode(hit.frame, seqFps)}</span> : null}
         </div>
         <div className="tr-body">
           <div className="tr-ctx ellipsis">{m.before}</div>

@@ -3,7 +3,7 @@
  */
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import type { Marker, Rational } from '@shared/model';
-import { formatTimecode } from '@shared/time';
+import { formatSequenceTimecode } from '@shared/time';
 import { useStore } from '@/state';
 import { frameToX, rulerTicks, snapFrame, snapThresholdFrames, xToFrameInt } from './viewMath';
 import { RULER_H } from './types';
@@ -152,7 +152,7 @@ export function Ruler(p: RulerProps) {
               <div
                 className={['tl-marker', m.kind, m.resolved ? 'resolved' : '', sel ? 'selected' : ''].filter(Boolean).join(' ')}
                 data-marker-id={m.id} style={{ left: x, background: m.color }}
-                title={`${m.name || 'Marker'} · ${formatTimecode(time, p.fps)}${m.note ? `\n${m.note}` : ''}`}
+                title={`${m.name || 'Marker'} · ${formatSequenceTimecode(time, p.fps)}${m.note ? `\n${m.note}` : ''}`}
                 onDoubleClick={(e) => { e.stopPropagation(); p.onMarkerEdit(m, { x: e.clientX, y: e.clientY }); }}
               />
             </React.Fragment>

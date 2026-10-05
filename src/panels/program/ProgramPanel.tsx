@@ -14,7 +14,7 @@ import {
   Film, Frame, Maximize2, Minimize2, Monitor, Pause, Play, Repeat, SkipBack, SkipForward, StepBack, StepForward, TriangleAlert, Volume2, VolumeX, WifiOff, X,
 } from 'lucide-react';
 import type { Clip, ID, Marker, MediaItem, Rational, Sequence } from '@shared/model';
-import { formatTimecode } from '@shared/time';
+import { formatSequenceTimecode } from '@shared/time';
 import { clipAt, nextEdit, prevEdit, sequenceDuration } from '@shared/timeline';
 import { SequencePlayer, planFrame, type MissingMedia } from '@/playback';
 import { useStore } from '@/state/store';
@@ -79,7 +79,7 @@ function fitBox(cw: number, ch: number, w: number, h: number): { w: number; h: n
 function TimecodeOverlay({ frame, fps, mode, onToggle }: { frame: FrameSignal; fps: Rational; mode: 'sequence' | 'source'; onToggle(): void }) {
   const f = useFrame(frame);
   const videoTracks = useStore((s) => activeSequence(s)?.videoTracks);
-  let text = formatTimecode(f, fps, { dropIndicator: true });
+  let text = formatSequenceTimecode(f, fps);
   let file = '';
   if (mode === 'source' && videoTracks) {
     const st = useStore.getState();
@@ -366,7 +366,7 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
 
   const hasInOut = inPoint !== null && outPoint !== null && outPoint > inPoint;
   const ioDuration = hasInOut ? outPoint! - inPoint! : 0;
-  const tcTitle = (f: number | null) => (f === null ? '—' : formatTimecode(f, fps, { dropIndicator: true }));
+  const tcTitle = (f: number | null) => (f === null ? '—' : formatSequenceTimecode(f, fps));
 
   return (
     <div

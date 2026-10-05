@@ -5,7 +5,7 @@
  * x = (frame - scroll) * zoom.
  */
 import type { Rational, Track } from '../../../shared/model';
-import { formatTimecode, fpsValue } from '../../../shared/time';
+import { formatSequenceTimecode, fpsValue } from '../../../shared/time';
 
 /** Default lower zoom bound (px per frame); long sequences lower it dynamically (see minZoomFor). */
 export const MIN_ZOOM = 0.01;
@@ -125,7 +125,7 @@ export function rulerSpacing(fps: Rational, zoom: number, minMajorPx = 80, minMi
 
 export interface RulerTick { frame: number; x: number; label?: string; major: boolean }
 
-/** Ticks covering [scroll, scroll + width/zoom]. Labels on majors as HH:MM:SS:FF. */
+/** Ticks covering [scroll, scroll + width/zoom]. Labels on majors as display timecode (formatSequenceTimecode: HH:MM:SS;FF drop-frame at 29.97 / 59.94). */
 export function rulerTicks(fps: Rational, zoom: number, scroll: number, widthPx: number, minMajorPx = 80): RulerTick[] {
   const out: RulerTick[] = [];
   if (!(widthPx > 0) || !(zoom > 0) || !Number.isFinite(zoom) || !Number.isFinite(scroll)) return out;
@@ -146,7 +146,7 @@ export function rulerTicks(fps: Rational, zoom: number, scroll: number, widthPx:
     prev = f;
     const isMajor = f % major === 0;
     if (!isMajor && minor === 0) continue;
-    out.push({ frame: f, x: frameToX(f, zoom, scroll), major: isMajor, label: isMajor ? formatTimecode(f, fps) : undefined });
+    out.push({ frame: f, x: frameToX(f, zoom, scroll), major: isMajor, label: isMajor ? formatSequenceTimecode(f, fps) : undefined });
   }
   return out;
 }
@@ -253,10 +253,10 @@ export function clipOverlaps(start: number, duration: number, from: number, to: 
   return start < to && start + duration > from;
 }
 
-/** "+12 (00:00:00:12)" style delta label. */
+/** "+12 (00:00:00:12)" style delta label (timecode part follows the app-wide display rule, formatSequenceTimecode). */
 export function formatDelta(frames: number, fps: Rational): string {
   const sign = frames > 0 ? '+' : frames < 0 ? '-' : '';
-  return `${sign}${Math.abs(frames)} (${sign}${formatTimecode(Math.abs(frames), fps)})`;
+  return `${sign}${Math.abs(frames)} (${sign}${formatSequenceTimecode(Math.abs(frames), fps)})`;
 }
 
 export function linearToDb(v: number): number { return v <= 0 ? -Infinity : 20 * Math.log10(v); }

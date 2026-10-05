@@ -3,7 +3,7 @@
  */
 import { useMemo } from 'react';
 import type { ID, MediaItem, Rational } from '../../../shared/model';
-import { formatSecondsTimecode, validFpsOr } from '../../../shared/time';
+import { formatSequenceSecondsTimecode, validFpsOr } from '../../../shared/time';
 import { performSourceEdit } from '@/panels/source/insert';
 import { useStore, importSubtitleFile, importEmbeddedSubtitles, recutApi } from '@/state';
 import { toast, dismissToast } from '@/components/ui';
@@ -28,7 +28,7 @@ export function mediaFps(media: MediaItem | undefined, fallback?: Rational): Rat
 }
 
 export function sourceTimecode(seconds: number, media: MediaItem | undefined, fallback?: Rational): string {
-  return formatSecondsTimecode(seconds, mediaFps(media, fallback));
+  return formatSequenceSecondsTimecode(seconds, mediaFps(media, fallback));
 }
 
 /** Load a media range in the Source monitor: cue the clip, mark in/out and focus the Source panel. */

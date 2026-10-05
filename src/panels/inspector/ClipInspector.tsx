@@ -8,7 +8,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { FolderOpen, Link2, Plus, RotateCcw, Unlink2, X } from 'lucide-react';
 import type { Clip, ClipAudio, ClipTransform, ID, MediaItem, Rational, TagVocabulary, Track, Transition, TransitionType } from '@shared/model';
 import { clampSpeedPercent, clipEnd, clipSourceOut, defaultAudio, defaultTransform, findClip, linkedClips, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN, transitionsForClip } from '@shared/timeline';
-import { formatSecondsTimecode, fpsEquals, fpsLabel, validFpsOr } from '@shared/time';
+import { formatSequenceSecondsTimecode, fpsEquals, fpsLabel, validFpsOr } from '@shared/time';
 import { activeSequence, identityLabel, originalTimecode, selectedClips, useStore } from '@/state';
 import type { StoreState } from '@/state';
 import { Button, ColorSwatchPicker, IconButton, NumberField, Slider, TagInput, TextField, Toggle, labelColorHex } from '@/components/ui';
@@ -169,8 +169,8 @@ function SourceSection({ seqId: _seqId, fps, clips, media }: { seqId: ID; fps: R
   }
   const srcIn = single.sourceIn;
   const srcOut = clipSourceOut(single, fps);
-  const tcIn = formatSecondsTimecode(srcIn, mediaFps);
-  const tcOut = formatSecondsTimecode(srcOut, mediaFps);
+  const tcIn = formatSequenceSecondsTimecode(srcIn, mediaFps);
+  const tcOut = formatSequenceSecondsTimecode(srcOut, mediaFps);
   const tcStart = originalTimecode(single, single.start, fps, media).sourceTimecode;
   const idn = identityLabel(media);
   return (

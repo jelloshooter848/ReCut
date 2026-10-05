@@ -8,7 +8,7 @@ import {
   ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronRight, Clapperboard, Copy, Film, LayoutGrid, List, Palette, Pencil, Plus, Scissors, Star, Trash2, Wand2, Filter, X,
 } from 'lucide-react';
 import type { ID, MediaItem, SceneRecord } from '@shared/model';
-import { formatSecondsTimecode } from '@shared/time';
+import { formatSequenceSecondsTimecode } from '@shared/time';
 import type { PanelProps } from '@/panels/registry';
 import { useStore } from '@/state';
 import { activeSequence, selectedClips } from '@/state/selectors';
@@ -372,7 +372,7 @@ export function ScenesPanel({ active }: PanelProps) {
         initial={prompt?.initial ?? ''} onConfirm={confirmPrompt} onCancel={() => setPrompt(null)}>
         {prompt?.kind === 'source' && sourceClip ? (
           <div className="text-dim text-sm mono">
-            {formatSecondsTimecode(sourceClip.inPoint ?? 0, mediaFps(media[sourceClip.mediaId]))} → {formatSecondsTimecode(sourceClip.outPoint ?? 0, mediaFps(media[sourceClip.mediaId]))}
+            {formatSequenceSecondsTimecode(sourceClip.inPoint ?? 0, mediaFps(media[sourceClip.mediaId]))} → {formatSequenceSecondsTimecode(sourceClip.outPoint ?? 0, mediaFps(media[sourceClip.mediaId]))}
             <span className="text-faint"> · {media[sourceClip.mediaId]?.name}</span>
           </div>
         ) : null}
@@ -456,7 +456,7 @@ const SceneCard = memo(function SceneCard(p: ItemProps) {
       <div className="scn-card-body">
         <div className="scn-name ellipsis" title={scene.name}>{scene.name}</div>
         <div className="text-dim text-xs ellipsis" title={sourceLabel(media)}>{sourceLabel(media)}</div>
-        <div className="text-faint text-xs mono ellipsis">{formatSecondsTimecode(scene.in, fps)}</div>
+        <div className="text-faint text-xs mono ellipsis">{formatSequenceSecondsTimecode(scene.in, fps)}</div>
         <div className="row gap-4">
           <RatingStars value={scene.rating} onChange={(v) => h.onRate(scene, v)} size={9} />
           {scene.characters.length ? <span className="text-xs text-dim ellipsis ml-auto" title={scene.characters.join(', ')}>{scene.characters.join(', ')}</span> : null}

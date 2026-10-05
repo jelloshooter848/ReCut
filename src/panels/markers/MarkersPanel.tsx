@@ -4,7 +4,7 @@ import { Bookmark, Check, Plus, Trash2 } from 'lucide-react';
 import type { PanelProps } from '@/panels/registry';
 import { useStore } from '@/state/store';
 import { activeSequence } from '@/state/selectors';
-import { formatTimecode } from '@shared/time';
+import { formatSequenceTimecode } from '@shared/time';
 import type { Marker, MarkerKind } from '@shared/model';
 import { Select } from '@/components/ui/Select';
 import { IconButton } from '@/components/ui/IconButton';
@@ -97,11 +97,11 @@ export function MarkersPanel(_props: PanelProps) {
                   onDoubleClick={() => { st().selectMarker(m.id); setEditing(m.id); }}
                   title={m.note || undefined}>
                   <span className="swatch" style={{ background: m.color, width: 8, height: 8, borderRadius: 2, marginTop: 5, flexShrink: 0 }} />
-                  <span className="mono text-dim text-sm" style={{ width: 86, flexShrink: 0, marginTop: 2 }}>{formatTimecode(m.time, seq.fps)}</span>
+                  <span className="mono text-dim text-sm" style={{ width: 86, flexShrink: 0, marginTop: 2 }}>{formatSequenceTimecode(m.time, seq.fps)}</span>
                   <div className="col grow" style={{ minWidth: 0, gap: 1 }}>
                     <div className="row" style={{ gap: 6, minWidth: 0 }}>
                       <span className="ellipsis" style={{ textDecoration: m.resolved ? 'line-through' : undefined }}>{m.name}</span>
-                      {m.duration > 0 ? <span className="text-faint text-xs">+{formatTimecode(m.duration, seq.fps)}</span> : null}
+                      {m.duration > 0 ? <span className="text-faint text-xs">+{formatSequenceTimecode(m.duration, seq.fps)}</span> : null}
                     </div>
                     {m.note ? <div className="text-dim text-sm ellipsis">{m.note}</div> : null}
                   </div>

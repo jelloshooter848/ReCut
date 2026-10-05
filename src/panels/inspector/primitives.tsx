@@ -5,7 +5,7 @@
 import React, { useSyncExternalStore } from 'react';
 import { ChevronDown, ChevronRight, Copy, RotateCcw } from 'lucide-react';
 import type { Rational } from '@shared/model';
-import { formatTimecode, formatClock } from '@shared/time';
+import { formatSequenceTimecode, formatClock } from '@shared/time';
 import { toast } from '@/components/ui/toastStore';
 import { useStore } from '@/state';
 import type { Recipe } from '@/state';
@@ -148,7 +148,7 @@ export function allSame<T, V>(items: T[], pick: (t: T) => V): boolean {
   return items.every((i) => pick(i) === first);
 }
 
-export function tc(frames: number, fps: Rational): string { return formatTimecode(frames, fps); }
+export function tc(frames: number, fps: Rational): string { return formatSequenceTimecode(frames, fps); }
 export function framesLabel(frames: number, fps: Rational): string { return `${tc(frames, fps)} · ${frames} fr`; }
 export function secondsLabel(sec: number): string { return `${sec.toFixed(3)}s`; }
 export function clock(sec: number): string { return formatClock(sec, true); }

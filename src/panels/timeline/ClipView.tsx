@@ -5,7 +5,7 @@
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Link2 } from 'lucide-react';
 import type { Clip, MediaItem, Rational } from '@shared/model';
-import { formatSecondsTimecode, validFpsOr } from '@shared/time';
+import { formatSequenceSecondsTimecode, validFpsOr } from '@shared/time';
 import type { WaveformData } from '@shared/ipc';
 import { thumbs, waves } from '@/app/media';
 import { peaksForRange } from '@/playback/thumbnails';
@@ -145,7 +145,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
 
   // ---- labels ----------------------------------------------------------------------------
   const mediaFps = validFpsOr(media?.probe?.video?.fps, fps);
-  const srcTc = p.showSourceTc ? formatSecondsTimecode(clip.sourceIn, mediaFps) : null;
+  const srcTc = p.showSourceTc ? formatSequenceSecondsTimecode(clip.sourceIn, mediaFps) : null;
   const stripe = labelColorHex(clip.color);
   const characters = clip.characters.slice(0, 2);
   const fadeInW = clip.audio.fadeIn * zoom;

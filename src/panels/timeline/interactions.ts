@@ -8,7 +8,7 @@
 import { useCallback, useRef, useState } from 'react';
 import type React from 'react';
 import type { Clip, ID, Rational, Sequence, Track } from '@shared/model';
-import { formatTimecode } from '@shared/time';
+import { formatSequenceTimecode } from '@shared/time';
 import { clipEnd, findClip, linkedClips, maxClipEnd, maxDurationFrom } from '@shared/timeline';
 import { useStore, mediaDurationLookup } from '@/state';
 import type { Tool } from '@/state';
@@ -335,7 +335,7 @@ export function useTimelineDrag(ctxRef: React.MutableRefObject<InteractionCtx>, 
           return { clipId: l.clip.id, trackId, start: l.clip.start + delta, duration: l.clip.duration, kind: l.track.kind, name: l.clip.name };
         });
         const primary = clips.find((l) => l.clip.id === d.primaryId) ?? clips[0];
-        const tip = `${formatDelta(delta, seq.fps)}  ${formatTimecode(primary.clip.start + delta, seq.fps)}${e.ctrlKey ? '  INSERT' : ''}`;
+        const tip = `${formatDelta(delta, seq.fps)}  ${formatSequenceTimecode(primary.clip.start + delta, seq.fps)}${e.ctrlKey ? '  INSERT' : ''}`;
         setPreview({ kind: 'move', ghosts, delta, insert: e.ctrlKey, snapTarget, tip });
         return;
       }
@@ -348,7 +348,7 @@ export function useTimelineDrag(ctxRef: React.MutableRefObject<InteractionCtx>, 
         const start = d.edge === 'start' ? f : d.start;
         const end = d.edge === 'end' ? f : d.start + d.duration;
         const delta = f - d.orig;
-        const tip = `${d.ripple ? 'Ripple ' : ''}${formatDelta(delta, seq.fps)}  dur ${formatTimecode(end - start, seq.fps)}`;
+        const tip = `${d.ripple ? 'Ripple ' : ''}${formatDelta(delta, seq.fps)}  dur ${formatSequenceTimecode(end - start, seq.fps)}`;
         setPreview({ kind: 'trim', clipId: d.clipId, trackId: d.trackId, start, duration: end - start, edge: d.edge, ripple: d.ripple, tip, snapTarget });
         return;
       }
@@ -356,21 +356,21 @@ export function useTimelineDrag(ctxRef: React.MutableRefObject<InteractionCtx>, 
         let f = d.cut + Math.round(dx / ctx.zoom);
         if (snapOn) f = snapFrame(f, d.candidates, thr).frame;
         f = clamp(f, d.min, d.max);
-        setPreview({ kind: 'roll', trackId: d.trackId, frame: f, tip: `Roll ${formatDelta(f - d.cut, seq.fps)}  ${formatTimecode(f, seq.fps)}` });
+        setPreview({ kind: 'roll', trackId: d.trackId, frame: f, tip: `Roll ${formatDelta(f - d.cut, seq.fps)}  ${formatSequenceTimecode(f, seq.fps)}` });
         return;
       }
       case 'slip': {
         const loc = findClip(seq, d.clipId); if (!loc) return;
         const delta = clamp(-Math.round(dx / ctx.zoom), d.min, d.max);
         const newIn = Math.max(0, loc.clip.sourceIn + delta * seq.fps.den / seq.fps.num * loc.clip.speed);
-        const tip = `Slip ${formatDelta(delta, seq.fps)}  src ${formatTimecode(Math.round(newIn * seq.fps.num / seq.fps.den), seq.fps)}`;
+        const tip = `Slip ${formatDelta(delta, seq.fps)}  src ${formatSequenceTimecode(Math.round(newIn * seq.fps.num / seq.fps.den), seq.fps)}`;
         setPreview({ kind: 'slip', clipId: d.clipId, trackId: d.trackId, start: loc.clip.start, duration: loc.clip.duration, tip });
         return;
       }
       case 'slide': {
         const loc = findClip(seq, d.clipId); if (!loc) return;
         const delta = clamp(Math.round(dx / ctx.zoom), d.min, d.max);
-        setPreview({ kind: 'slide', clipId: d.clipId, trackId: d.trackId, start: loc.clip.start + delta, duration: loc.clip.duration, tip: `Slide ${formatDelta(delta, seq.fps)}  ${formatTimecode(loc.clip.start + delta, seq.fps)}` });
+        setPreview({ kind: 'slide', clipId: d.clipId, trackId: d.trackId, start: loc.clip.start + delta, duration: loc.clip.duration, tip: `Slide ${formatDelta(delta, seq.fps)}  ${formatSequenceTimecode(loc.clip.start + delta, seq.fps)}` });
         return;
       }
       case 'marquee': {
@@ -383,7 +383,7 @@ export function useTimelineDrag(ctxRef: React.MutableRefObject<InteractionCtx>, 
         const dFrames = dx / ctx.zoom;
         let duration = d.centered ? d.orig + 2 * (d.edge === 'right' ? dFrames : -dFrames) : d.orig + (d.edge === 'right' ? dFrames : -dFrames);
         duration = clamp(Math.round(duration), 1, Math.max(1, d.limit));
-        setPreview({ kind: 'transition', id: d.id, trackId: d.trackId, duration, tip: `${duration} f  ${formatTimecode(duration, seq.fps)}` });
+        setPreview({ kind: 'transition', id: d.id, trackId: d.trackId, duration, tip: `${duration} f  ${formatSequenceTimecode(duration, seq.fps)}` });
         return;
       }
     }

@@ -8,7 +8,7 @@ import {
   LoaderCircle, Pause, Play, Repeat, Replace, StepBack, StepForward, TriangleAlert, Volume2, VolumeX, WifiOff,
 } from 'lucide-react';
 import type { MediaItem, SubtitleCue } from '@shared/model';
-import { formatTimecode, framesToSeconds, secondsToFrames, secondsToFramesFloor, fpsLabel } from '@shared/time';
+import { formatSequenceTimecode, framesToSeconds, secondsToFrames, secondsToFramesFloor, fpsLabel } from '@shared/time';
 import { pathToMediaUrl } from '@shared/ipc';
 import { useStore, identityLabel, startProxy } from '@/state';
 import type { StoreState } from '@/state';
@@ -391,13 +391,13 @@ export function SourcePanel({ focused, active }: PanelProps) {
           <TimecodeField value={outFrame ?? durationFrames} fps={fps} min={0} max={Math.max(0, durationFrames)} tone={outFrame === null ? 'default' : 'playhead'}
             onChange={(f) => useStore.getState().setSourceOut(framesToSeconds(f, fps))} title="Out point" className="tc-out" />
           <div className="tc-meta">
-            <span title="Source timecode">TC <span className="mono">{formatTimecode(curFrame, fps)}</span></span>
-            <span title="Media duration" className="mono tc-mdur">{Number.isFinite(duration) ? formatTimecode(durationFrames, fps) : '—'}</span>
+            <span title="Source timecode">TC <span className="mono">{formatSequenceTimecode(curFrame, fps)}</span></span>
+            <span title="Media duration" className="mono tc-mdur">{Number.isFinite(duration) ? formatSequenceTimecode(durationFrames, fps) : '—'}</span>
             <span title="Frame rate" className="tc-fps">{fpsLabel(fps)} fps</span>
           </div>
         </div>
         <span className="tc-label">Dur</span>
-        <span className="mono text-sm tc-dur" title="In → Out duration">{formatTimecode(Math.max(0, rangeFrames), fps)}</span>
+        <span className="mono text-sm tc-dur" title="In → Out duration">{formatSequenceTimecode(Math.max(0, rangeFrames), fps)}</span>
         <Select<Zoom> size="sm" value={zoom} options={ZOOM_OPTIONS} onChange={setZoom} title="Zoom" aria-label="Zoom" />
       </div>
 
@@ -441,7 +441,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
         <div className="col gap-6">
           <label className="text-dim text-sm">Name</label>
           <TextField value={subclipName} onChange={setSubclipName} selectOnFocus autoFocus />
-          <div className="text-dim text-xs mono">{formatTimecode(inFrame ?? 0, fps)} → {formatTimecode(outFrame ?? durationFrames, fps)} ({formatTimecode(Math.max(0, rangeFrames), fps)})</div>
+          <div className="text-dim text-xs mono">{formatSequenceTimecode(inFrame ?? 0, fps)} → {formatSequenceTimecode(outFrame ?? durationFrames, fps)} ({formatSequenceTimecode(Math.max(0, rangeFrames), fps)})</div>
         </div>
       </Dialog>
     </div>
