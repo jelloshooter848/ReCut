@@ -469,9 +469,9 @@ describe('liftRange / extractRange / clearRange', () => {
   it('clearRange with except keeps the excepted clip and ignores empty ranges', () => {
     const s = S();
     const a = put(V(s), 0, 100); put(V(s), 100, 100);
-    clearRange(V(s), 0, 50, new Set([a.id]));
+    clearRange(V(s), 0, 50, s.fps, new Set([a.id]));
     expect(lay(V(s))).toEqual([[0, 100], [100, 200]]);
-    clearRange(V(s), 50, 50);
+    clearRange(V(s), 50, 50, s.fps);
     expect(lay(V(s))).toEqual([[0, 100], [100, 200]]);
   });
 });

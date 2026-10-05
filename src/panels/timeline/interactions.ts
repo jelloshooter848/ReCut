@@ -9,7 +9,7 @@ import { useCallback, useRef, useState } from 'react';
 import type React from 'react';
 import type { Clip, ID, Rational, Sequence, Track } from '@shared/model';
 import { formatTimecode } from '@shared/time';
-import { clipEnd, findClip, linkedClips, maxDurationFrom } from '@shared/timeline';
+import { clipEnd, findClip, linkedClips, maxClipEnd, maxDurationFrom } from '@shared/timeline';
 import { useStore, mediaDurationLookup } from '@/state';
 import type { Tool } from '@/state';
 import type { DragPreview } from './types';
@@ -52,43 +52,49 @@ export function snapTargets(seq: Sequence, exclude: Set<ID> = new Set()): number
   return out;
 }
 
-function trimRange(seq: Sequence, track: Track, clip: Clip, edge: 'start' | 'end', ripple: boolean, dur: (id: ID) => number): [number, number] {
+/**
+ * Drag range of a clip edge (mirrors trimLimits / trimEnd / rippleTrimEnd in shared/timeline.ts). A limit
+ * never lies on the inner side of the edge's current position: a clip already past its media end (or one
+ * overlapping a neighbour) keeps its edge when dragged outward instead of jumping back. Exported for tests.
+ */
+export function trimRange(seq: Sequence, track: Track, clip: Clip, edge: 'start' | 'end', ripple: boolean, dur: (id: ID) => number): [number, number] {
   const idx = track.clips.indexOf(clip);
   const prev = track.clips[idx - 1]; const next = track.clips[idx + 1];
   const handleBefore = fpsFrames(clip.sourceIn / clip.speed, seq.fps);
-  const maxDur = maxDurationFrom(clip.sourceIn, clip.speed, dur(clip.mediaId), seq.fps);
   if (edge === 'start') {
     const minStart = ripple ? Math.max(0, clip.start - handleBefore) : Math.max(prev ? clipEnd(prev) : 0, clip.start - handleBefore, 0);
-    return [minStart, clipEnd(clip) - 1];
+    return [Math.min(clip.start, minStart), clipEnd(clip) - 1];
   }
-  const maxEnd = ripple ? clip.start + maxDur : Math.min(next ? next.start : Number.MAX_SAFE_INTEGER, clip.start + maxDur);
+  const mediaEnd = maxClipEnd(clip, dur(clip.mediaId), seq.fps);
+  const maxEnd = ripple ? mediaEnd : Math.max(clipEnd(clip), Math.min(next ? next.start : Number.MAX_SAFE_INTEGER, mediaEnd));
   return [clip.start + 1, maxEnd];
 }
 
-function slideRange(seq: Sequence, track: Track, clip: Clip, dur: (id: ID) => number): [number, number] {
+/** Slide delta range (mirrors slideClip). Always contains 0. Exported for tests. */
+export function slideRange(seq: Sequence, track: Track, clip: Clip, dur: (id: ID) => number): [number, number] {
   const index = track.clips.indexOf(clip);
   const prev = track.clips[index - 1]; const next = track.clips[index + 1];
   let min = -Infinity, max = Infinity;
   if (prev) {
     const gap = clip.start - clipEnd(prev);
     if (gap === 0) {
-      const maxPrevEnd = prev.start + maxDurationFrom(prev.sourceIn, prev.speed, dur(prev.mediaId), seq.fps);
-      max = Math.min(max, maxPrevEnd - clipEnd(prev));
+      max = Math.min(max, maxClipEnd(prev, dur(prev.mediaId), seq.fps) - clipEnd(prev));
       min = Math.max(min, -(prev.duration - 1));
-    } else min = Math.max(min, -gap);
+    } else min = Math.max(min, -Math.max(0, gap));
   } else min = Math.max(min, -clip.start);
   if (next) {
     const gap = next.start - clipEnd(clip);
     if (gap === 0) {
       min = Math.max(min, -fpsFrames(next.sourceIn / next.speed, seq.fps));
       max = Math.min(max, next.duration - 1);
-    } else max = Math.min(max, gap);
+    } else max = Math.min(max, Math.max(0, gap));
   }
   return [min, max];
 }
 
-function rollRange(seq: Sequence, a: Clip, b: Clip, dur: (id: ID) => number): [number, number] {
-  const maxA = a.start + maxDurationFrom(a.sourceIn, a.speed, dur(a.mediaId), seq.fps);
+/** Rolling-edit range of the cut between `a` and `b` (mirrors rollEdit). Always contains the cut. Exported for tests. */
+export function rollRange(seq: Sequence, a: Clip, b: Clip, dur: (id: ID) => number): [number, number] {
+  const maxA = maxClipEnd(a, dur(a.mediaId), seq.fps);
   const minB = b.start - fpsFrames(b.sourceIn / b.speed, seq.fps);
   return [Math.max(a.start + 1, minB), Math.min(maxA, clipEnd(b) - 1)];
 }
@@ -296,7 +302,8 @@ export function useTimelineDrag(ctxRef: React.MutableRefObject<InteractionCtx>, 
         const clips = d.clipIds.map((id) => findClip(seq, id)).filter((l): l is NonNullable<typeof l> => !!l);
         if (!clips.length) return;
         let delta = Math.round(dx / ctx.zoom);
-        const minStart = Math.min(...clips.map((l) => l.clip.start));
+        let minStart = Infinity;
+        for (const l of clips) minStart = Math.min(minStart, l.clip.start); // no spread: selections can be huge
         let snapTarget: number | null = null;
         if (snapOn) {
           const positions: number[] = [];

@@ -65,11 +65,39 @@ function assignRows(blocks: StoryBlock[]): Map<string, number> {
   return out;
 }
 
+export interface StripTick { frame: number; major: boolean; label?: string }
+
+/** Ruler ticks over the whole strip ([0, extent] frames) at `ppf` px per frame. Pure (exported for tests). */
+export function stripRulerTicks(ppf: number, fpsNum: number, extent: number, fps: Sequence['fps']): StripTick[] {
+  if (!(ppf > 0) || !(fpsNum > 0) || !Number.isFinite(extent)) return [];
+  const { major, minor } = rulerStep(ppf, fpsNum);
+  const out: StripTick[] = [];
+  const endSec = extent / fpsNum;
+  // Index-based with a hard cap (each tick is a DOM node): an accumulating `s += minor` stops advancing at
+  // huge magnitudes, and the strip spans the whole sequence, not just the visible part.
+  const count = Math.min(Math.floor(endSec / minor) + 1, MAX_STRIP_TICKS);
+  let prevFrame = -Infinity;
+  for (let i = 0; i < count; i++) {
+    const s = i * minor;
+    const frame = Math.round(s * fpsNum);
+    if (frame <= prevFrame) continue;
+    prevFrame = frame;
+    const isMajor = Math.abs(s / major - Math.round(s / major)) < 1e-6;
+    out.push({ frame, major: isMajor, label: isMajor ? formatHMS(frame, fps) : undefined });
+  }
+  return out;
+}
+
+const MAX_STRIP_TICKS = 20_000;
+
 function rulerStep(ppf: number, fps: number): { major: number; minor: number } {
   const candidates = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
   const minPx = 72;
   for (const s of candidates) if (s * fps * ppf >= minPx) return { major: s, minor: s / (s >= 60 ? 4 : 5) };
-  return { major: 7200, minor: 1800 };
+  // Beyond the table (very long sequences): keep doubling so labels stay >= minPx apart.
+  let major = 7200;
+  while (major * fps * ppf < minPx && Number.isFinite(major)) major *= 2;
+  return { major, minor: major / 4 };
 }
 
 export function StoryStrip({ seq, zoom, onZoomChange, palette, filters, snapping, selectedBlockId, onSelectBlock, onCreateRange, onEditBlock }: StoryStripProps) {
@@ -88,7 +116,9 @@ export function StoryStrip({ seq, zoom, onZoomChange, palette, filters, snapping
   const innerW = Math.max(width, Math.round(extent * ppf));
   const durationF = sequenceDuration(seq);
   const rows = useMemo(() => assignRows(seq.storyBlocks), [seq.storyBlocks]);
-  const rowCount = Math.max(1, rows.size ? Math.max(...rows.values()) + 1 : 1);
+  let maxRow = 0;
+  for (const r of rows.values()) if (r > maxRow) maxRow = r; // no spread: block count is unbounded
+  const rowCount = maxRow + 1;
   const blockLaneH = rowCount * BLOCK_ROW_H + 6;
   const trackCount = Math.max(1, seq.videoTracks.length);
   const densityH = trackCount * DENSITY_ROW_H + 4;
@@ -273,18 +303,7 @@ export function StoryStrip({ seq, zoom, onZoomChange, palette, filters, snapping
   };
 
   // Ruler ticks.
-  const ticks = useMemo(() => {
-    if (ppf <= 0) return [] as { frame: number; major: boolean; label?: string }[];
-    const { major, minor } = rulerStep(ppf, fpsNum);
-    const out: { frame: number; major: boolean; label?: string }[] = [];
-    const endSec = extent / fpsNum;
-    for (let s = 0; s <= endSec; s += minor) {
-      const isMajor = Math.abs(s / major - Math.round(s / major)) < 1e-6;
-      const frame = Math.round(s * fpsNum);
-      out.push({ frame, major: isMajor, label: isMajor ? formatHMS(frame, fps) : undefined });
-    }
-    return out;
-  }, [ppf, fpsNum, extent, fps]);
+  const ticks = useMemo(() => stripRulerTicks(ppf, fpsNum, extent, fps), [ppf, fpsNum, extent, fps]);
 
   const selected = seq.storyBlocks.find((b) => b.id === selectedBlockId) ?? null;
   const inX = seq.view.inPoint !== null ? seq.view.inPoint * ppf : null;

@@ -58,6 +58,8 @@ export interface DiffResult {
 
 interface Item {
   clip: Clip;
+  /** Position in the side's collected list (B: candidate order for tie-breaking). */
+  index: number;
   trackIndex: number;
   /** start / duration expressed in A's frame rate (identity for A). */
   startA: number;
@@ -70,9 +72,21 @@ export function clipIdentityKey(c: Clip, durationFrames = c.duration): string {
   return `${c.mediaId}|${Math.round(c.sourceIn * 1000)}|${durationFrames}|${c.speed}`;
 }
 
+/** Round half away from zero, never -0: a delta of -2.5 frames mirrors +2.5 (-3 / +3). */
+function roundSigned(x: number): number {
+  const r = x < 0 ? -Math.round(-x) : Math.round(x);
+  return r === 0 ? 0 : r;
+}
+
+/** secondsToFrames for signed deltas: symmetric around 0 and never -0. */
+function deltaFrames(seconds: number, fps: Rational): number {
+  const f = secondsToFrames(Math.abs(seconds), fps);
+  return seconds < 0 && f !== 0 ? -f : f;
+}
+
 function convertFrames(frames: number, from: Rational, to: Rational): number {
   if (fpsEquals(from, to)) return frames;
-  return Math.round((frames * to.num * from.den) / (to.den * from.num));
+  return roundSigned((frames * to.num * from.den) / (to.den * from.num));
 }
 
 function collect(seq: Sequence, fpsA: Rational): Item[] {
@@ -81,7 +95,7 @@ function collect(seq: Sequence, fpsA: Rational): Item[] {
     for (const clip of track.clips) {
       const durationA = convertFrames(clip.duration, seq.fps, fpsA);
       out.push({
-        clip, trackIndex,
+        clip, index: out.length, trackIndex,
         startA: convertFrames(clip.start, seq.fps, fpsA),
         durationA,
         sourceOut: clipSourceOut(clip, seq.fps),
@@ -127,6 +141,19 @@ function pick(a: Item, candidates: Item[], score: (b: Item) => number): Item | u
   return best;
 }
 
+function groupBy(items: Item[], keyOf: (it: Item) => string): Map<string, Item[]> {
+  const m = new Map<string, Item[]>();
+  for (const it of items) { const k = keyOf(it); const l = m.get(k); if (l) l.push(it); else m.set(k, [it]); }
+  return m;
+}
+
+/** First index in `sorted` (ascending sourceIn) whose sourceIn is >= v. */
+function lowerBound(sorted: Item[], v: number): number {
+  let lo = 0, hi = sorted.length;
+  while (lo < hi) { const mid = (lo + hi) >>> 1; if (sorted[mid].clip.sourceIn < v) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+
 export function diffSequences(a: Sequence, b: Sequence): DiffResult {
   const fpsA = a.fps;
   const itemsA = collect(a, fpsA);
@@ -139,19 +166,42 @@ export function diffSequences(a: Sequence, b: Sequence): DiffResult {
   const pairs: { a: Item; b: Item; kind: DiffKind }[] = [];
   let pending = itemsA;
 
-  // Pass 1: identical clips at the same position.
-  const pass = (kind: DiffKind, score: (x: Item, y: Item) => number) => {
+  // Each pass pairs every pending A clip with the best unmatched B clip. Instead of scoring every B clip
+  // (quadratic: 5k x 5k clips took over a second), candidates come from an index that contains every B clip
+  // that can score at all; `pick` sees them in B's order, so the result is the same as a full scan.
+  const pass = (kind: DiffKind, candidatesOf: (x: Item) => Item[], score: (x: Item, y: Item) => number) => {
     const rest: Item[] = [];
     for (const x of pending) {
-      const y = pick(x, [...unmatchedB], (c) => score(x, c));
+      const y = pick(x, candidatesOf(x).filter((c) => unmatchedB.has(c)), (c) => score(x, c));
       if (y) { unmatchedB.delete(y); pairs.push({ a: x, b: y, kind }); }
       else rest.push(x);
     }
     pending = rest;
   };
-  pass('same', (x, y) => (x.key === y.key && x.startA === y.startA ? 1 : -Infinity));
-  pass('moved', (x, y) => (x.key === y.key ? 1 : -Infinity));
-  pass('trimmed', (x, y) => {
+  const none: Item[] = [];
+  // Pass 1: identical clips at the same position.
+  const byKeyAt = groupBy(itemsB, (it) => `${it.key}@${it.startA}`);
+  pass('same', (x) => byKeyAt.get(`${x.key}@${x.startA}`) ?? none, (x, y) => (x.key === y.key && x.startA === y.startA ? 1 : -Infinity));
+  // Pass 2: identical clips elsewhere.
+  const byKey = groupBy(itemsB, (it) => it.key);
+  pass('moved', (x) => byKey.get(x.key) ?? none, (x, y) => (x.key === y.key ? 1 : -Infinity));
+  // Pass 3: same media with overlapping source ranges. Per media, B clips sorted by sourceIn; a clip can only
+  // overlap x if its sourceIn lies in [x.sourceIn - longest range, x.sourceOut].
+  const byMedia = new Map<string, { sorted: Item[]; maxLen: number }>();
+  for (const [mediaId, list] of groupBy(itemsB.filter((it) => !Number.isNaN(it.clip.sourceIn) && !Number.isNaN(it.sourceOut)), (it) => it.clip.mediaId)) {
+    let maxLen = 0;
+    for (const it of list) maxLen = Math.max(maxLen, it.sourceOut - it.clip.sourceIn);
+    byMedia.set(mediaId, { sorted: [...list].sort((p, q) => p.clip.sourceIn - q.clip.sourceIn || p.index - q.index), maxLen });
+  }
+  pass('trimmed', (x) => {
+    const g = byMedia.get(x.clip.mediaId);
+    if (!g || Number.isNaN(x.clip.sourceIn) || Number.isNaN(x.sourceOut)) return none;
+    const out: Item[] = [];
+    for (let i = lowerBound(g.sorted, x.clip.sourceIn - g.maxLen - 1e-9 * (1 + g.maxLen)); i < g.sorted.length && g.sorted[i].clip.sourceIn <= x.sourceOut; i++) {
+      if (unmatchedB.has(g.sorted[i])) out.push(g.sorted[i]);
+    }
+    return out.sort((p, q) => p.index - q.index);
+  }, (x, y) => {
     if (x.clip.mediaId !== y.clip.mediaId) return -Infinity;
     const ov = sourceOverlap(x, y);
     return ov > 0 ? ov : -Infinity;
@@ -171,8 +221,8 @@ export function diffSequences(a: Sequence, b: Sequence): DiffResult {
       }
     }
     if (kind === 'trimmed') {
-      const head = secondsToFrames((y.clip.sourceIn - x.clip.sourceIn) / x.clip.speed, fpsA);
-      const tail = secondsToFrames((y.sourceOut - x.sourceOut) / x.clip.speed, fpsA);
+      const head = deltaFrames((y.clip.sourceIn - x.clip.sourceIn) / x.clip.speed, fpsA);
+      const tail = deltaFrames((y.sourceOut - x.sourceOut) / x.clip.speed, fpsA);
       ea.headDelta = head; ea.tailDelta = tail;
       eb.headDelta = head; eb.tailDelta = tail;
     }
