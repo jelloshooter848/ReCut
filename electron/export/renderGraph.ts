@@ -23,10 +23,19 @@ export interface RenderGraph {
   args: string[];
   /** The filter_complex graph (chains separated by ";\n"). */
   filterGraph: string;
-  /** Exact output duration in seconds (= range length). */
+  /** Exact output duration in seconds (= range length at the sequence rate; the audio is exactly this long). */
   durationSec: number;
-  /** Exact output frame count. */
+  /** Sequence frames rendered (`endF - startF`). Equals `outputFrameCount` when the output rate is the sequence rate. */
   frameCount: number;
+  /** Output video frame rate: settings.fps when valid, otherwise the sequence rate. */
+  outputFps: Rational;
+  /**
+   * Exact output video frame count. With a different output rate this is
+   * `outputFrameIndex(endF - exportStart) - outputFrameIndex(startF - exportStart)` (absolute, so chunks add up).
+   */
+  outputFrameCount: number;
+  /** Duration of the output video stream (`outputFrameCount / outputFps`; `durationSec` at the sequence rate). */
+  outputDurationSec: number;
   /** Final output path (outputDir/fileName.mp4). This is the last element of `args`. */
   outputPath: string;
   warnings: string[];
@@ -87,6 +96,30 @@ function num(x: number): string {
   return String(Math.round(x * 1e4) / 1e4);
 }
 function fpsStr(fps: Rational): string { return `${fps.num}/${fps.den}`; }
+
+/** A usable frame rate: numerator and denominator are positive finite integers. */
+export function isValidFps(fps: Rational | null | undefined): fps is Rational {
+  return !!fps && Number.isSafeInteger(fps.num) && Number.isSafeInteger(fps.den) && fps.num > 0 && fps.den > 0;
+}
+
+function sameRate(a: Rational, b: Rational): boolean {
+  return BigInt(a.num) * BigInt(b.den) === BigInt(b.num) * BigInt(a.den);
+}
+
+function gcd(a: number, b: number): number { while (b) { [a, b] = [b, a % b]; } return a; }
+
+/**
+ * Output frame-rate conversion: index of the first output frame at or after sequence frame `relFrame`
+ * (counted from the export range start), i.e. `round(relFrame * outFps / seqFps)`, rounding halves up.
+ * This is FFmpeg's `fps` filter rounding (av_rescale_q_rnd, NEAR_INF) of a frame at pts `relFrame` in the
+ * sequence time base, so output frame n shows the last sequence frame i with outputFrameIndex(i) <= n: the
+ * sequence frame on screen at the middle of output frame n. Exact integer maths (BigInt).
+ */
+export function outputFrameIndex(relFrame: number, seqFps: Rational, outFps: Rational): number {
+  const n = BigInt(Math.round(relFrame)) * BigInt(seqFps.den) * BigInt(outFps.num);
+  const d = BigInt(seqFps.num) * BigInt(outFps.den);
+  return Number((2n * n + d) / (2n * d));
+}
 
 /**
  * Escape a file path for use as a filter option value inside a filtergraph string.
@@ -693,8 +726,20 @@ function assertOutputNotASource(req: ExportRequest, outputPath: string, opts: Re
 export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = {}): RenderGraph {
   const { sequence: seq, media, settings } = req;
   const warnings: string[] = [];
-  const fps = settings.fps && settings.fps.num > 0 && settings.fps.den > 0 ? settings.fps : seq.fps;
-  if (fps.num * seq.fps.den !== seq.fps.num * fps.den) warnings.push(`Export frame rate ${fpsStr(fps)} differs from the sequence frame rate ${fpsStr(seq.fps)}; timing is computed at the sequence rate.`);
+  // Output frame rate. Everything on the timeline (trims, transitions, fades, subtitles, audio) is computed at
+  // the sequence rate; a different output rate only resamples the final video (see the end of the video graph).
+  let outFps: Rational = seq.fps;
+  const reqFps = settings.fps as Rational | null | undefined; // IPC input: may be missing or malformed
+  if (reqFps !== undefined && reqFps !== null) {
+    if (!isValidFps(reqFps)) {
+      const bad = reqFps as Rational;
+      warnings.push(`Export frame rate ${String(bad.num)}/${String(bad.den)} is not valid; using the sequence frame rate ${fpsStr(seq.fps)}.`);
+    } else if (!sameRate(reqFps, seq.fps)) {
+      const g = gcd(reqFps.num, reqFps.den);
+      outFps = { num: reqFps.num / g, den: reqFps.den / g };
+    }
+  }
+  const convert = outFps !== seq.fps;
   const W = Math.round(Number(settings.width) || seq.width);
   const H = Math.round(Number(settings.height) || seq.height);
   validateDimensions(W, H);
@@ -703,6 +748,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   const layout = channels === 6 ? '5.1' : 'stereo';
 
   let { startF, endF } = resolveRange(seq, settings, warnings);
+  const exportStartF = startF, exportEndF = endF;
   if (opts.range) {
     const r = opts.range;
     if (!Number.isInteger(r.startF) || !Number.isInteger(r.endF) || r.startF < startF || r.endF > endF || r.endF <= r.startF) {
@@ -718,6 +764,15 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   assertOutputNotASource(req, exportOutputPath(settings), opts);
   const seqFd = seq.fps.den / seq.fps.num;
   const durationSec = frameCount * seqFd;
+  // Output frames [outStart, outStart + outputFrameCount) of the whole export (absolute, so the chunks of a
+  // chunked export join with no drift).
+  const outStart = convert ? outputFrameIndex(startF - exportStartF, seq.fps, outFps) : 0;
+  let outputFrameCount = convert ? outputFrameIndex(endF - exportStartF, seq.fps, outFps) - outStart : frameCount;
+  if (outputFrameCount <= 0) {
+    if (startF !== exportStartF || endF !== exportEndF) throw new Error(`Export sub-range ${startF}..${endF} has no output frames at ${fpsStr(outFps)} fps.`);
+    outputFrameCount = 1; // a range shorter than half an output frame still exports one frame
+  }
+  const outputDurationSec = convert ? outputFrameCount * (outFps.den / outFps.num) : durationSec;
 
   const ctx: Ctx = {
     seq, settings, W, H, fps: seq.fps, fd: seqFd, SR, layout,
@@ -750,6 +805,17 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
       }
     }
     finalVideo.push('format=yuv420p');
+    if (convert) {
+      // Output frame-rate conversion. Frames get their absolute sequence index (pts in 1/seqFps units), so
+      // `fps` places output frame n on the last sequence frame i with round(i * out / seq) <= n (see
+      // outputFrameIndex) whatever chunk renders it. One cloned frame past the end lets `fps` emit the last
+      // output frames; trim keeps exactly outputFrameCount.
+      finalVideo.push(
+        'tpad=stop=1:stop_mode=clone', `settb=${seq.fps.den}/${seq.fps.num}`,
+        `setpts=N${startF - exportStartF > 0 ? `+${startF - exportStartF}` : ''}`,
+        `fps=fps=${fpsStr(outFps)}`, `trim=end_frame=${outputFrameCount}`, 'setpts=PTS-STARTPTS',
+      );
+    }
     ctx.chains.push(`${vcur}${finalVideo.join(',')}[vout]`);
   }
 
@@ -787,7 +853,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
     videoCodecArgs.push('-crf', String(Math.round(Number.isFinite(settings.crf) ? settings.crf : 18)));
   }
   if (vcodec === 'libx265') videoCodecArgs.push('-tag:v', 'hvc1');
-  videoCodecArgs.push('-pix_fmt', 'yuv420p', '-r', fpsStr(seq.fps), '-fps_mode', 'cfr');
+  videoCodecArgs.push('-pix_fmt', 'yuv420p', '-r', fpsStr(outFps), '-fps_mode', 'cfr');
   const acodec = settings.audioCodec === 'ac3' ? 'ac3' : 'aac';
   const audioCodecArgs = ['-c:a', acodec, '-b:a', `${Math.round(settings.audioBitrateKbps || (channels === 6 ? 640 : 192))}k`, '-ar', String(SR), '-ac', String(channels)];
 
@@ -797,10 +863,11 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   if (wantAudio) args.push('-map', '[aout]');
   if (wantVideo) args.push(...videoCodecArgs); else args.push('-vn');
   if (wantAudio) args.push(...audioCodecArgs); else args.push('-an');
-  args.push('-movflags', '+faststart', '-t', sec(durationSec), '-f', 'mp4', outputPath);
+  // A converted video can end up to half an output frame after the audio: never cut its last frame.
+  args.push('-movflags', '+faststart', '-t', sec(wantVideo ? Math.max(durationSec, outputDurationSec) : durationSec), '-f', 'mp4', outputPath);
 
   return {
-    args, filterGraph: ctx.chains.join(';\n'), durationSec, frameCount, outputPath, warnings,
+    args, filterGraph: ctx.chains.join(';\n'), durationSec, frameCount, outputFps: outFps, outputFrameCount, outputDurationSec, outputPath, warnings,
     subtitleContent, inputCount: ctx.inputs.length,
     inputArgs, videoCodecArgs, audioCodecArgs, sampleRate: SR, channels, startF, endF,
   };

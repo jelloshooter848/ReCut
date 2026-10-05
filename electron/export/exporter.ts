@@ -12,7 +12,7 @@ import path from 'node:path';
 import type { ExportRequest, ExportStartResult } from '@shared/ipc';
 import type { ID, JobInfo } from '@shared/model';
 import {
-  buildRenderGraph, buildSubtitleSrt, exportPartPath, exportSidecarPath, FILTER_SCRIPT_TOKEN, sec, type RenderGraph,
+  buildRenderGraph, buildSubtitleSrt, exportPartPath, exportSidecarPath, FILTER_SCRIPT_TOKEN, outputFrameIndex, sec, type RenderGraph,
 } from './renderGraph';
 import { ensureDirSafe } from '../safeMkdir';
 import { adaptFfmpegArgs, ffmpegMajorVersionSync, getFfmpegPath } from '../media/ffmpeg';
@@ -162,7 +162,7 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
     partPath = exportPartPath(graph.outputPath);
     const planInput = { req, startF: graph.startF, endF: graph.endF };
     const chunked = opts.chunked ?? shouldChunk(planInput, graph.inputCount);
-    const chunks = chunked ? planExportChunks(planInput, opts.maxSegmentsPerChunk ?? CHUNK_MAX_SEGMENTS, 'video') : [];
+    const chunks = chunked ? mergeChunksWithoutOutputFrames(planExportChunks(planInput, opts.maxSegmentsPerChunk ?? CHUNK_MAX_SEGMENTS, 'video'), req, graph) : [];
     const audioChunks = chunked ? planExportChunks(planInput, opts.maxAudioSegmentsPerChunk ?? CHUNK_MAX_AUDIO_SEGMENTS, 'audio') : [];
 
     if (chunked) {
@@ -208,6 +208,31 @@ function chunkGopArgs(vcodecArgs: string[]): string[] {
   return hevc
     ? ['-x265-params', 'keyint=250:open-gop=0', '-force_key_frames', '0']
     : ['-x264-params', 'keyint=250:open-gop=0:stitchable=1', '-force_key_frames', '0'];
+}
+
+/**
+ * Output frame-rate conversion: a video chunk shorter than an output frame can own no output frame (e.g. a
+ * 1-frame chunk at 60 -> 24 fps). Such a chunk is joined with the next one (the last with the previous), which
+ * keeps every boundary valid (chunks.ts) and the absolute output frame mapping unchanged.
+ */
+export function mergeChunksWithoutOutputFrames(chunks: ExportChunk[], req: ExportRequest, full: RenderGraph): ExportChunk[] {
+  const seqFps = req.sequence.fps;
+  const outFrames = (c: ExportChunk) => outputFrameIndex(c.endF - full.startF, seqFps, full.outputFps) - outputFrameIndex(c.startF - full.startF, seqFps, full.outputFps);
+  const join = (a: ExportChunk, b: ExportChunk): ExportChunk => ({
+    startF: a.startF, endF: b.endF, videoSegments: a.videoSegments + b.videoSegments,
+    audioSegments: a.audioSegments + b.audioSegments, videoMemoryMB: a.videoMemoryMB + b.videoMemoryMB,
+  });
+  const out: ExportChunk[] = [];
+  let pending: ExportChunk | null = null;
+  for (const c of chunks) {
+    const cur: ExportChunk = pending ? join(pending, c) : c;
+    pending = null;
+    if (outFrames(cur) > 0) out.push(cur); else pending = cur;
+  }
+  if (pending) {
+    if (out.length) out.push(join(out.pop()!, pending)); else out.push(pending);
+  }
+  return out;
 }
 
 function concatList(files: string[]): string {
@@ -268,7 +293,7 @@ async function runChunkedExport(
     fs.writeFileSync(script, g.filterGraph, 'utf8');
     const out = path.join(tmpDir, `chunk-${tag}.mp4`);
     const args = ['-hide_banner', '-nostdin', '-y', '-filter_complex_threads', '2', ...oneThread(g.inputArgs), '-filter_complex_script', script, '-map', '[vout]',
-      ...g.videoCodecArgs, ...chunkGopArgs(g.videoCodecArgs), '-an', '-t', sec(g.durationSec), '-f', 'mp4', out];
+      ...g.videoCodecArgs, ...chunkGopArgs(g.videoCodecArgs), '-an', '-t', sec(Math.max(g.durationSec, g.outputDurationSec)), '-f', 'mp4', out];
     await step(i, c, 'video', args, g.durationSec, W_VIDEO * (c.endF - c.startF) / total);
     try { fs.unlinkSync(script); } catch { /* best effort */ }
     videoFiles.push(out);
@@ -296,7 +321,7 @@ async function runChunkedExport(
   const args = ['-hide_banner', '-nostdin', '-y',
     '-f', 'concat', '-safe', '0', '-i', vList, '-f', 'concat', '-safe', '0', '-i', aList,
     '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', ...(hevc ? ['-tag:v', 'hvc1'] : []), ...full.audioCodecArgs,
-    '-movflags', '+faststart', '-t', sec(full.durationSec), '-f', 'mp4', partPath];
+    '-movflags', '+faststart', '-t', sec(Math.max(full.durationSec, full.outputDurationSec)), '-f', 'mp4', partPath];
   try {
     if (signal?.aborted) throw new Error('Export canceled');
     await runFfmpeg(args, full.durationSec, (p) => report(W_MUX, p, `Joining ${n} chunks`), signal, onSpawn);

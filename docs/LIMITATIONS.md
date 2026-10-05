@@ -67,6 +67,9 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - MP4 only, with H.264 or H.265 video and AAC or AC-3 audio. There is no ProRes / DNxHR / image-sequence / audio-only
   export, and no hardware encoders.
 - No interchange formats (EDL, FCPXML, OTIO, AAF).
+- **Frame-rate conversion** (an export frame rate other than the sequence's) repeats or drops whole frames. There is
+  no frame blending or motion interpolation, so 23.976 → 30 shows a regular repeat cadence and 23.976 ↔ 24 repeats
+  or drops one frame about every 42 s. Duration and audio sync are not affected.
 
 ## Platform and packaging
 

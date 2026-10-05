@@ -8,7 +8,8 @@ shows at that position, and the duration equals the exported range to the frame.
 Files:
 
 - `electron/export/renderGraph.ts` — pure. `buildRenderGraph(req, { subtitleFilePath? })` returns
-  `{ args, filterGraph, durationSec, frameCount, outputPath, warnings, subtitleContent?, inputCount }`.
+  `{ args, filterGraph, durationSec, frameCount, outputFps, outputFrameCount, outputDurationSec, outputPath, warnings,
+  subtitleContent?, inputCount, ... }`.
   No I/O; unit-tested; used for the "preview command" UI.
 - `electron/export/exporter.ts` — runs it: writes the graph to a temp file, spawns ffmpeg, parses
   `-progress` output, handles cancel, renames `<name>.part.mp4` to the final name, writes the `.srt` sidecar.
@@ -24,6 +25,28 @@ Files:
   `view.inPoint..view.outPoint` for `rangeMode: 'inOut'` (falls back to the entire sequence with a warning
   when the marks are missing or empty). Output duration is exactly `(endF - startF) * den/num` seconds.
 - Everything inside the graph is positioned relative to `startF`, so the output always starts at 0.
+
+### Output frame rate
+
+`settings.fps` (the dialog's Frame rate) is the encoded rate. It must be a rational with positive integer
+numerator and denominator; anything else falls back to the sequence rate with a warning. When it equals the
+sequence rate (also as an unreduced fraction, e.g. 48000/2002), the graph and args are exactly the
+sequence-rate ones. Otherwise **all timeline maths stay at the sequence rate** (segments, trims, transitions,
+fades, burn-in subtitles, the whole audio graph) and only the composited video is resampled at the very end:
+
+    [vcomp] ... format=yuv420p, tpad=stop=1:stop_mode=clone, settb=den/num, setpts=N+<rel>,
+            fps=fps=OUT, trim=end_frame=<K>, setpts=PTS-STARTPTS [vout]
+
+`setpts=N+<rel>` gives every frame its absolute sequence index relative to the export start (`rel` is non-zero
+for a chunk), so `fps` puts output frame `n` on the last sequence frame `i` with `round(i · OUT / SEQ) <= n`
+(FFmpeg rounds half up), i.e. the sequence frame on screen at the middle of output frame `n`. The cloned frame
+lets `fps` emit the final output frames; `trim` keeps exactly
+`K = outputFrameIndex(endF − exportStart) − outputFrameIndex(startF − exportStart)` frames, where
+`outputFrameIndex(f) = round(f · OUT / SEQ)` (exact BigInt maths, `renderGraph.ts`). For the whole export
+`K = round(duration · OUT)` (at least 1), the encoder gets `-r OUT -fps_mode cfr`, and `-t` is
+`max(duration, K / OUT)` so the last frame (which can end up to half an output frame after the audio) is never cut.
+Audio is untouched, so duration and A/V sync are those of the sequence. Verified frame by frame against this
+model on FFmpeg 6.1, 8.1 and 9.0 (`tests/unit/export-fps.test.ts`).
 
 ## Graph construction
 
@@ -131,7 +154,7 @@ MP4 always has an audio track.
 
 ### Encoding
 
-`-c:v libx264|libx265 -preset P (-crf C | -b:v Nk -maxrate Nk -bufsize 2Nk) -pix_fmt yuv420p -r FPS
+`-c:v libx264|libx265 -preset P (-crf C | -b:v Nk -maxrate Nk -bufsize 2Nk) -pix_fmt yuv420p -r OUT_FPS
 -fps_mode cfr -c:a aac|ac3 -b:a Nk -ar SR -ac N -movflags +faststart -t <duration> -f mp4 <outputDir>/<fileName>.mp4`.
 `-shortest` is never used: durations are controlled in the graph; `-t` is only a safety clamp.
 
@@ -176,7 +199,11 @@ Cuts no clip spans on any track of the pass are preferred when they keep the chu
 Each chunk is `buildRenderGraph(req, { range, streams })` over its sub-range: the same segment chains, frame
 choice and exact frame counts as the single pass (a clip that spans a boundary is split into two segments
 whose source positions come from `sourceTimeAt`, exactly like an In/Out export starting mid-clip). Burn-in
-subtitles are written per chunk, relative to the chunk.
+subtitles are written per chunk, relative to the chunk. With a converted output frame rate each video chunk
+renders the output frames `[outputFrameIndex(start), outputFrameIndex(end))` of the whole export (see
+"Output frame rate"), so the chunks add up to the single-pass count with no drift and the same frames; a video
+chunk that owns no output frame (e.g. a 1-frame chunk at 60 → 24 fps) is merged into the next one
+(`mergeChunksWithoutOutputFrames` in `exporter.ts`).
 
 **Video**: one ffmpeg per chunk → `chunk-NNNN.mp4` with the export's encoder args plus closed GOPs and an
 IDR at the chunk start (`-x264-params keyint=250:open-gop=0:stitchable=1` / `-x265-params
