@@ -10,21 +10,24 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createProject } from '../../shared/project';
+import { isValidFps } from '../../shared/time';
 import { saveProjectFile, loadProjectFile } from '../../electron/project/io';
 import { PROJECT_FORMAT_VERSION } from '../../shared/model';
+import type { Project } from '../../shared/model';
 
-// Delegates to the real normalizeProject, except for a marker project name that simulates an unexpected
-// internal failure (a TypeError from a code path nobody anticipated).
+// Delegates to the real normalizeProject / normalizeProjectWithReport, except for a marker project name that
+// simulates an unexpected internal failure (a TypeError from a code path nobody anticipated).
 vi.mock('../../shared/project', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../shared/project')>();
+  const explode = (raw: unknown) => {
+    if (raw && typeof raw === 'object' && (raw as { name?: unknown }).name === '__explode__') {
+      throw new TypeError("Cannot read properties of undefined (reading 'boom')");
+    }
+  };
   return {
     ...real,
-    normalizeProject: (raw: unknown) => {
-      if (raw && typeof raw === 'object' && (raw as { name?: unknown }).name === '__explode__') {
-        throw new TypeError("Cannot read properties of undefined (reading 'boom')");
-      }
-      return real.normalizeProject(raw);
-    },
+    normalizeProject: (raw: unknown) => { explode(raw); return real.normalizeProject(raw); },
+    normalizeProjectWithReport: (raw: unknown) => { explode(raw); return real.normalizeProjectWithReport(raw); },
   };
 });
 
@@ -52,16 +55,22 @@ function hostile(mut: (p: Any, sid: string) => void): string {
 }
 
 describe('hostile but repairable .recut files open from the primary, repaired', () => {
-  const cases: [string, (p: Any, sid: string) => void][] = [
-    ['scenes {broken: null}', (p) => { p.scenes = { broken: null, ok: { id: 'ok', name: 's', mediaId: 'm', in: 0, out: 1 } }; }],
-    ['subtitleTracks {broken: null}', (p) => { p.subtitleTracks = { broken: null }; }],
-    ['videoTracks [null]', (p, sid) => { p.sequences[sid].videoTracks = [null]; }],
-    ['audioTracks [null]', (p, sid) => { p.sequences[sid].audioTracks = [null, 5, 'x']; }],
-    ['markers / snapshots junk', (p, sid) => { p.sequences[sid].markers = [null]; p.sequences[sid].snapshots = [null, { data: 'x' }]; }],
-    ['sequence fps {num: 24, den: 0}', (p, sid) => { p.sequences[sid].fps = { num: 24, den: 0 }; }],
-    ['media proxy / probe junk', (p) => { p.media = { m: { path: '/m.mkv', name: 'm', proxy: 'x', probe: 7 } }; }],
+  const seqOf = (p: Project) => p.sequences[p.activeSequenceId!];
+  const cases: [string, (p: Any, sid: string) => void, (p: Project) => void][] = [
+    ['scenes {broken: null}', (p) => { p.scenes = { broken: null, ok: { id: 'ok', name: 's', mediaId: 'm', in: 0, out: 1 } }; },
+      (p) => { expect(Object.keys(p.scenes)).toEqual(['ok']); }],
+    ['subtitleTracks {broken: null}', (p) => { p.subtitleTracks = { broken: null }; }, (p) => { expect(p.subtitleTracks).toEqual({}); }],
+    ['videoTracks [null]', (p, sid) => { p.sequences[sid].videoTracks = [null]; },
+      (p) => { expect(seqOf(p).videoTracks.map((t) => t.name)).toEqual(['V1', 'V2', 'V3']); }],
+    ['audioTracks [null]', (p, sid) => { p.sequences[sid].audioTracks = [null, 5, 'x']; },
+      (p) => { expect(seqOf(p).audioTracks.map((t) => t.name)).toEqual(['A1', 'A2', 'A3']); }],
+    ['markers / snapshots junk', (p, sid) => { p.sequences[sid].markers = [null]; p.sequences[sid].snapshots = [null, { data: 'x' }]; },
+      (p) => { expect(seqOf(p).markers).toEqual([]); expect(seqOf(p).snapshots).toEqual([]); }],
+    ['sequence fps {num: 24, den: 0}', (p, sid) => { p.sequences[sid].fps = { num: 24, den: 0 }; }, () => undefined],
+    ['media proxy / probe junk', (p) => { p.media = { m: { path: '/m.mkv', name: 'm', proxy: 'x', probe: 7 } }; },
+      (p) => { expect(p.media.m.proxy).toEqual({ status: 'none' }); expect('probe' in p.media.m).toBe(false); expect(p.media.m.path).toBe('/m.mkv'); }],
   ];
-  for (const [label, mut] of cases) {
+  for (const [label, mut, check] of cases) {
     it(label, async () => {
       const file = await withBackup(`${label.replace(/\W+/g, '_')}.recut`);
       await fsp.writeFile(file, hostile(mut));
@@ -71,9 +80,11 @@ describe('hostile but repairable .recut files open from the primary, repaired', 
       expect(res.project.name).toBe('hostile');
       expect(res.fromBackup).toBeFalsy();
       expect(await corruptCopies()).toEqual([]);
-      const seq = res.project.sequences[res.project.activeSequenceId!];
-      expect(seq.fps.num > 0 && seq.fps.den > 0).toBe(true);
+      const seq = seqOf(res.project);
+      expect(seq.fps).toEqual({ num: 24000, den: 1001 }); // the default rate (also the repair for an invalid one)
+      expect(isValidFps(seq.fps)).toBe(true);
       expect(seq.videoTracks.length).toBeGreaterThan(0);
+      check(res.project);
     });
   }
 });
