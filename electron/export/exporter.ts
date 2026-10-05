@@ -12,7 +12,7 @@ import path from 'node:path';
 import type { ExportRequest, ExportStartResult } from '@shared/ipc';
 import type { ID, JobInfo } from '@shared/model';
 import {
-  buildRenderGraph, buildSubtitleSrt, exportPartPath, exportSidecarPath, FILTER_SCRIPT_TOKEN, sec, type RenderGraph,
+  buildRenderGraph, buildSubtitleSrt, exportPartPath, exportSidecarPath, exportSidecarTempPath, FILTER_SCRIPT_TOKEN, sec, type RenderGraph,
 } from './renderGraph';
 import { ensureDirSafe } from '../safeMkdir';
 import { adaptFfmpegArgs, ffmpegMajorVersionSync, getFfmpegPath } from '../media/ffmpeg';
@@ -153,6 +153,7 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
   fs.mkdirSync(tmpDir, { recursive: true });
   const subtitleFilePath = path.join(tmpDir, 'subtitles.srt');
   let partPath: string | null = null;
+  let sidecarTemp: string | null = null;
   try {
     if (signal?.aborted) throw new Error('Export canceled');
     const graph = buildRenderGraph(req, { subtitleFilePath, canonicalPath });
@@ -182,18 +183,25 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
     fs.renameSync(partPath, graph.outputPath);
     partPath = null;
 
+    // Sidecar: both its path and its temp were checked against the project's sources by buildRenderGraph.
+    // Written to a temp in the same folder and renamed, so a failed write never leaves a truncated .srt.
     let sidecarPath: string | undefined;
     if (req.settings.exportSubtitleSidecar && req.subtitles?.length) {
       const srt = buildSubtitleSrt(req);
       if (srt) {
-        sidecarPath = exportSidecarPath(graph.outputPath);
-        fs.writeFileSync(sidecarPath, srt, 'utf8');
+        const target = exportSidecarPath(graph.outputPath);
+        sidecarTemp = exportSidecarTempPath(graph.outputPath);
+        fs.writeFileSync(sidecarTemp, srt, 'utf8');
+        fs.renameSync(sidecarTemp, target);
+        sidecarTemp = null;
+        sidecarPath = target;
       }
     }
     onProgress?.(1, 'Done');
     return { outputPath: graph.outputPath, durationSec: graph.durationSec, warnings: graph.warnings, sidecarPath, chunks: Math.max(1, chunks.length), audioChunks: Math.max(1, audioChunks.length) };
   } finally {
     if (partPath) { try { fs.unlinkSync(partPath); } catch { /* nothing to clean */ } }
+    if (sidecarTemp) { try { fs.unlinkSync(sidecarTemp); } catch { /* nothing to clean */ } }
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 }

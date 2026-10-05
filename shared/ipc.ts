@@ -135,6 +135,13 @@ export interface ExportRequest {
   settings: ExportSettings;
   /** Sequence subtitle cues, already resolved to seconds. */
   subtitles?: { start: number; end: number; text: string }[];
+  /**
+   * Every project source asset the export must never write over (or next to, via its `.part` temp or
+   * sidecar `.srt`): all project media paths and proxy paths (used by this sequence or not) and imported
+   * subtitle track files. Filled by the Export dialog; optional for other callers (the sequence's own
+   * media and everything in `media` are always protected).
+   */
+  protectedPaths?: string[];
 }
 export type ExportStartResult = { ok: true; jobId: ID; outputPath: string } | { ok: false; error: string }
 

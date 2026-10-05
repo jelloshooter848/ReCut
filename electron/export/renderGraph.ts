@@ -638,6 +638,11 @@ export function exportSidecarPath(outputPath: string): string {
   return outputPath.replace(/\.mp4$/i, '') + '.srt';
 }
 
+/** Temp file the sidecar is written to before its rename: `<out>.part.srt`. */
+export function exportSidecarTempPath(outputPath: string): string {
+  return outputPath.replace(/\.mp4$/i, '') + '.part.srt';
+}
+
 /** Output path for a request: outputDir/fileName with a .mp4 extension (file name sanitized to a basename). */
 export function exportOutputPath(settings: ExportSettings): string {
   let name = sanitizeExportFileName(settings.fileName || 'export');
@@ -662,8 +667,10 @@ function hasEnabledClipInRange(seq: Sequence, startF: number, endF: number): boo
 }
 
 /**
- * Refuse an export whose output (or its `.part` temp / sidecar `.srt`) is one of the files the
- * sequence reads from: ffmpeg would truncate the source, and the final rename replaces it.
+ * Refuse an export that would write over a project source asset: the output, its `.part` temp or the
+ * sidecar `.srt` (and its temp) must not be a file the sequence reads from (ffmpeg would truncate the
+ * source, and the final rename replaces it), nor any other media / proxy in `req.media` or path in
+ * `req.protectedPaths` (bin media not on this timeline, imported subtitle files).
  */
 function assertOutputNotASource(req: ExportRequest, outputPath: string, opts: RenderGraphOptions): void {
   const platform = opts.platform ?? process.platform;
@@ -674,19 +681,25 @@ function assertOutputNotASource(req: ExportRequest, outputPath: string, opts: Re
     return fold ? c.toLowerCase() : c;
   };
   const sources = new Map<string, string>();
+  const add = (p: string | undefined, why: string) => {
+    if (typeof p !== 'string' || !p) return;
+    const k = canon(p);
+    if (!sources.has(k)) sources.set(k, `${why} (${p})`);
+  };
   const tracks = [...req.sequence.videoTracks, ...req.sequence.audioTracks];
   for (const t of tracks) {
     for (const c of t.clips) {
       const m = req.media[c.mediaId];
-      if (!m) continue;
-      for (const p of [m.path, m.proxy?.path]) if (p) sources.set(canon(p), p);
+      if (m) for (const p of [m.path, m.proxy?.path]) add(p, 'used by the sequence');
     }
   }
+  for (const m of Object.values(req.media)) if (m) for (const p of [m.path, m.proxy?.path]) add(p, 'a source file of the project');
+  if (Array.isArray(req.protectedPaths)) for (const p of req.protectedPaths) add(p, 'a source file of the project');
   const outputs = [outputPath, exportPartPath(outputPath)];
-  if (req.settings.exportSubtitleSidecar) outputs.push(exportSidecarPath(outputPath));
+  if (req.settings.exportSubtitleSidecar) outputs.push(exportSidecarPath(outputPath), exportSidecarTempPath(outputPath));
   for (const o of outputs) {
     const hit = sources.get(canon(o));
-    if (hit) throw new Error(`Refusing to export to "${o}": that file is used by the sequence (${hit}). Choose a different file name or folder.`);
+    if (hit) throw new Error(`Refusing to export to "${o}": that file is ${hit}. Choose a different file name or folder.`);
   }
 }
 

@@ -6,13 +6,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Copy, FolderOpen, Info, Loader2, Terminal, XCircle } from 'lucide-react';
 import type { ExportSettings, JobInfo, Sequence } from '@shared/model';
 import type { ExportRequest } from '@shared/ipc';
-import { FPS_PRESETS, fpsEquals, fpsLabel, formatTimecode, framesToSeconds } from '@shared/time';
-import { allTracks, resolveSubtitleCues } from '@shared/timeline';
+import { FPS_PRESETS, fpsEquals, fpsLabel, formatTimecode } from '@shared/time';
+import { allTracks } from '@shared/timeline';
 import { useStore, activeSequence, recutApi, ffmpegUnavailable } from '@/state';
 import { useJob } from '@/app/jobsStore';
 import { Button, Dialog, NumberField, ProgressBar, Select, Slider, TextField, Toggle } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
 import { injectStyle } from './injectStyle';
+import { buildExportRequest } from './request';
 import {
   CRF_MAX, CRF_MIN, CUSTOM, ENCODER_PRESETS, MAX_DIMENSION, MIN_DIMENSION, applyPreset, checklistBlocks, crfLabel,
   estimateEtaSeconds, estimateFileSize, exportChecklist, exportRange, formatBytes, formatDuration, fpsFromOptionValue,
@@ -81,6 +82,7 @@ export function ExportDialog() {
   const closeDialog = useStore((s) => s.closeDialog);
   const seq = useStore(activeSequence);
   const media = useStore((s) => s.project.media);
+  const subtitleTracks = useStore((s) => s.project.subtitleTracks);
   const projectId = useStore((s) => s.project.id);
   const projectPath = useStore((s) => s.projectPath);
   const projectUsesProxies = useStore((s) => s.project.settings.useProxies);
@@ -152,7 +154,7 @@ export function ExportDialog() {
         if (!api) { setCommandError('IPC unavailable'); return; }
         setCommand(null); setCommandError(null);
         try {
-          const args = await api.previewExportCommand(buildRequest(seq, media, settings));
+          const args = await api.previewExportCommand(buildRequest(seq, { media, subtitleTracks }, settings));
           setCommand(['ffmpeg', ...args.map(shellQuote)].join(' '));
         } catch (e) { setCommandError(e instanceof Error ? e.message : String(e)); }
       }}
@@ -172,7 +174,7 @@ export function ExportDialog() {
         const noFfmpeg = ffmpegUnavailable('ffmpeg');
         if (noFfmpeg) { setStartError(noFfmpeg); setStarting(false); return; }
         try {
-          const res = await api.startExport(buildRequest(seq, media, final));
+          const res = await api.startExport(buildRequest(seq, { media, subtitleTracks }, final));
           if (res.ok) { setFinalJob(null); setPhase({ kind: 'job', jobId: res.jobId, outputPath: res.outputPath }); }
           else setStartError(res.error);
         } catch (e) { setStartError(e instanceof Error ? e.message : String(e)); }
@@ -185,11 +187,9 @@ export function ExportDialog() {
 
 function shellQuote(a: string): string { return /^[A-Za-z0-9_\-./:=+@,]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`; }
 
-function buildRequest(seq: Sequence, media: ExportRequest['media'], settings: ExportSettings): ExportRequest {
-  const subtitles = sequenceHasSubtitles(seq)
-    ? resolveSubtitleCues(seq).map((c) => ({ start: framesToSeconds(c.start, seq.fps), end: framesToSeconds(c.end, seq.fps), text: c.text }))
-    : undefined;
-  return { sequence: seq, media, settings: { ...settings, useProxies: false }, subtitles };
+/** The request sent to main: see request.ts (pure, unit-tested). */
+function buildRequest(seq: Sequence, project: Parameters<typeof buildExportRequest>[0], settings: ExportSettings): ExportRequest {
+  return buildExportRequest(project, seq, settings);
 }
 
 // ---------------------------------------------------------------------------------------------------
