@@ -233,6 +233,6 @@ describe('isValidFps (BUG 4)', () => {
     for (const v of [0, -24, NaN, Infinity, -Infinity, 0.5, 0.999, 1001, 1e9]) expect(parseFps(v), String(v)).toBeNull();
     expect(parseFps(1)).toEqual({ num: 1, den: 1 });
     expect(parseFps(1000)).toEqual({ num: 1000, den: 1 });
-    expect(parseFps(119.88)).toEqual({ num: 119880, den: 1000 });
+    expect(parseFps(119.88)).toEqual({ num: 120000, den: 1001 }); // F8: every x/1001 rate snaps
   });
 });

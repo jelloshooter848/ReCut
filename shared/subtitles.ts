@@ -58,7 +58,7 @@ export function parseSubtitles(content: string): ParseResult {
 }
 
 function fmtSrt(t: number): string {
-  const ms = Math.round(t * 1000);
+  const ms = Math.max(0, Math.round(t * 1000));
   const h = Math.floor(ms / 3600000); const m = Math.floor((ms % 3600000) / 60000); const s = Math.floor((ms % 60000) / 1000); const r = ms % 1000;
   const p = (n: number, w = 2) => String(n).padStart(w, '0');
   return `${p(h)}:${p(m)}:${p(s)},${p(r, 3)}`;
@@ -69,12 +69,26 @@ function cueBody(text: string): string {
   return text.replace(/\r\n?/g, '\n').replace(/\n[ \t]*(?:\n[ \t]*)+/g, '\n').trim();
 }
 
-export function serializeSrt(cues: { start: number; end: number; text: string }[]): string {
-  return cues.map((c, i) => `${i + 1}\n${fmtSrt(c.start)} --> ${fmtSrt(c.end)}\n${cueBody(c.text)}\n`).join('\n');
+type TimedText = { start: number; end: number; text: string };
+
+/**
+ * Cues an SRT/VTT file can hold: times are written in whole milliseconds and cannot be negative, so a cue
+ * starting before 0 is clipped to 0 and one ending at or before 0 ms (or with a non-finite time) is dropped.
+ */
+export function writableCues(cues: TimedText[]): TimedText[] {
+  return cues
+    .filter((c) => Number.isFinite(c.start) && Number.isFinite(c.end) && Math.round(c.end * 1000) > 0)
+    .map((c) => (c.start < 0 ? { ...c, start: 0 } : c));
 }
 
-export function serializeVtt(cues: { start: number; end: number; text: string }[]): string {
-  return 'WEBVTT\n\n' + cues.map((c) => `${fmtSrt(c.start).replace(',', '.')} --> ${fmtSrt(c.end).replace(',', '.')}\n${cueBody(c.text)}\n`).join('\n');
+/** SRT for `cues` (see writableCues: cues before 0 are clipped or dropped; blocks are numbered 1..n). */
+export function serializeSrt(cues: TimedText[]): string {
+  return writableCues(cues).map((c, i) => `${i + 1}\n${fmtSrt(c.start)} --> ${fmtSrt(c.end)}\n${cueBody(c.text)}\n`).join('\n');
+}
+
+/** WebVTT for `cues` (see writableCues). */
+export function serializeVtt(cues: TimedText[]): string {
+  return 'WEBVTT\n\n' + writableCues(cues).map((c) => `${fmtSrt(c.start).replace(',', '.')} --> ${fmtSrt(c.end).replace(',', '.')}\n${cueBody(c.text)}\n`).join('\n');
 }
 
 /** Simple case-insensitive search with surrounding context. */
