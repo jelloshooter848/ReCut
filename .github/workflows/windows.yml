@@ -15,9 +15,6 @@ concurrency:
   group: windows-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  FFMPEG_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-7.1.zip
-
 jobs:
   installer:
     name: Installer + portable exe
@@ -34,15 +31,7 @@ jobs:
 
       - name: Download FFmpeg to bundle
         shell: pwsh
-        run: |
-          $ProgressPreference = 'SilentlyContinue'
-          Invoke-WebRequest -Uri $env:FFMPEG_URL -OutFile ffmpeg.zip -UseBasicParsing
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-tmp -Force
-          New-Item -ItemType Directory -Force resources/ffmpeg | Out-Null
-          foreach ($exe in 'ffmpeg.exe','ffprobe.exe') {
-            Copy-Item (Get-ChildItem ffmpeg-tmp -Recurse -Filter $exe | Select-Object -First 1).FullName resources/ffmpeg/$exe
-          }
-          & resources/ffmpeg/ffmpeg.exe -hide_banner -version | Select-Object -First 1
+        run: ./scripts/windows/get-ffmpeg.ps1 -Dest resources/ffmpeg
 
       - name: Build app and Windows packages
         env:
@@ -141,10 +130,8 @@ jobs:
       - name: Put FFmpeg on PATH
         shell: pwsh
         run: |
-          $ProgressPreference = 'SilentlyContinue'
-          Invoke-WebRequest -Uri $env:FFMPEG_URL -OutFile ffmpeg.zip -UseBasicParsing
-          Expand-Archive ffmpeg.zip -DestinationPath "$env:RUNNER_TEMP\ff" -Force
-          (Get-ChildItem "$env:RUNNER_TEMP\ff" -Recurse -Filter ffmpeg.exe | Select-Object -First 1).DirectoryName >> $env:GITHUB_PATH
+          ./scripts/windows/get-ffmpeg.ps1 -Dest "$env:RUNNER_TEMP\ff"
+          "$env:RUNNER_TEMP\ff" >> $env:GITHUB_PATH
       - run: npx vitest run
 
   e2e:
@@ -162,10 +149,8 @@ jobs:
       - name: Put FFmpeg and Git Bash on PATH
         shell: pwsh
         run: |
-          $ProgressPreference = 'SilentlyContinue'
-          Invoke-WebRequest -Uri $env:FFMPEG_URL -OutFile ffmpeg.zip -UseBasicParsing
-          Expand-Archive ffmpeg.zip -DestinationPath "$env:RUNNER_TEMP\ff" -Force
-          (Get-ChildItem "$env:RUNNER_TEMP\ff" -Recurse -Filter ffmpeg.exe | Select-Object -First 1).DirectoryName >> $env:GITHUB_PATH
+          ./scripts/windows/get-ffmpeg.ps1 -Dest "$env:RUNNER_TEMP\ff"
+          "$env:RUNNER_TEMP\ff" >> $env:GITHUB_PATH
           'C:\Program Files\Git\bin' >> $env:GITHUB_PATH
       - run: npm run build
       - run: npx playwright test -c tests/e2e/playwright.config.ts

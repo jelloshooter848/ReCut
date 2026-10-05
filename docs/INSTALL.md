@@ -15,8 +15,8 @@ far (see [Packaged builds](#packaged-builds)).
   rebuilds when the checked-out commit changed, downloads FFmpeg into `resources\ffmpeg` if none is installed, and
   launches the app. `Start ReCut.cmd -Rebuild` forces a clean install and build.
 
-Releases are produced by `.github/workflows/windows.yml`, which builds on `windows-latest`, bundles FFmpeg 7.1
-(BtbN GPL build), smoke-tests both the unpacked app and a silent install (media protocol, FFmpeg encode + probe,
+Releases are produced by `.github/workflows/windows.yml`, which builds on `windows-latest`, bundles the current FFmpeg release (gyan.dev essentials, BtbN as fallback;
+see `scripts/windows/get-ffmpeg.ps1`), smoke-tests both the unpacked app and a silent install (media protocol, FFmpeg encode + probe,
 UI mounted), and publishes a prerelease named `v<version>-win.<run>`. The same workflow checks `Start ReCut.cmd`
 from a fresh clone and runs the unit and end-to-end suites on Windows.
 

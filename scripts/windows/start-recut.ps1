@@ -75,25 +75,10 @@ $ffDir = Join-Path $Root 'resources\ffmpeg'
 $haveBundled = (Test-Path (Join-Path $ffDir 'ffmpeg.exe')) -and (Test-Path (Join-Path $ffDir 'ffprobe.exe'))
 $haveSystem = (Get-Command ffmpeg -ErrorAction SilentlyContinue) -and (Get-Command ffprobe -ErrorAction SilentlyContinue)
 if (-not $haveBundled -and -not $haveSystem) {
-  Say "Downloading FFmpeg (about 150 MB, one time only)..."
-  $url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-7.1.zip'
-  $zip = Join-Path $env:TEMP 'recut-ffmpeg.zip'
-  $tmp = Join-Path $env:TEMP 'recut-ffmpeg'
-  try {
-    Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
-    if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
-    Expand-Archive -Path $zip -DestinationPath $tmp -Force
-    New-Item -ItemType Directory -Force -Path $ffDir | Out-Null
-    foreach ($exe in 'ffmpeg.exe', 'ffprobe.exe') {
-      $src = Get-ChildItem -Path $tmp -Recurse -Filter $exe | Select-Object -First 1
-      if (-not $src) { throw "$exe not found in the FFmpeg download" }
-      Copy-Item $src.FullName (Join-Path $ffDir $exe) -Force
-    }
-  } catch {
-    Fail "Could not download FFmpeg: $($_.Exception.Message)`nInstall it yourself (winget install Gyan.FFmpeg) or put ffmpeg.exe and ffprobe.exe in $ffDir."
-  } finally {
-    Remove-Item -Force $zip -ErrorAction SilentlyContinue
-    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+  Say "Downloading FFmpeg (one time only)..."
+  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'get-ffmpeg.ps1') -Dest $ffDir
+  if ($LASTEXITCODE -ne 0) {
+    Fail "Could not download FFmpeg. Install it yourself (winget install Gyan.FFmpeg) or put ffmpeg.exe and ffprobe.exe in $ffDir."
   }
 }
 
