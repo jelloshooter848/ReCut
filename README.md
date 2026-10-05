@@ -72,7 +72,20 @@ Electron + React + TypeScript. FFmpeg does all media work. Version 0.1.0.
 | ![Export](docs/screenshots/export.png) Export dialog | ![Program maximized](docs/screenshots/program-maximized.png) Program monitor maximized |
 | ![Still image](docs/screenshots/program-still.png) A PNG on V2 over video in the Program monitor | |
 
-## Quick start
+## Windows: install and run
+
+- **Installer (easiest):** open the repository's [Releases](https://github.com/jelloshooter848/ReCut/releases) page,
+  download `ReCut-Setup-<version>.exe` from the newest release and run it. It adds Start-menu and desktop shortcuts.
+  FFmpeg is bundled, so nothing else is needed. `ReCut-Portable-<version>.exe` runs without installing.
+  The app is not code-signed, so Windows may show "Windows protected your PC": click **More info › Run anyway**.
+- **From a clone:** double-click **`Start ReCut.cmd`** in the repository folder. The first run checks for Node.js
+  (offering to install it with winget), installs dependencies, builds the app and downloads FFmpeg into
+  `resources\ffmpeg`; later runs just launch ReCut. Run it again after `git pull` and it rebuilds automatically.
+
+Both are built and smoke-tested on a Windows machine by [`.github/workflows/windows.yml`](.github/workflows/windows.yml)
+on every push.
+
+## Quick start (from source, any OS)
 
 Requires Node.js 20+ (22 recommended) and FFmpeg 6+ (`ffmpeg` and `ffprobe` on `PATH`, or set `RECUT_FFMPEG` /
 `RECUT_FFPROBE`). ReCut shows a banner at startup when it cannot find them. See [docs/INSTALL.md](docs/INSTALL.md),

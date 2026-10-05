@@ -3,6 +3,23 @@
 ReCut runs from source on Linux, macOS and Windows. Only the **Linux unpacked** packaged build has been verified so
 far (see [Packaged builds](#packaged-builds)).
 
+## Windows in one step
+
+- **Installer:** download `ReCut-Setup-<version>.exe` from the newest
+  [GitHub Release](https://github.com/jelloshooter848/ReCut/releases) and run it (per-user install, no admin rights,
+  Start-menu and desktop shortcuts, `.recut` files open in ReCut, uninstall from *Settings › Apps*).
+  `ReCut-Portable-<version>.exe` is the same app without installing. FFmpeg is bundled in both.
+  Builds are unsigned: if SmartScreen says "Windows protected your PC", choose **More info › Run anyway**.
+- **From a cloned repository:** double-click `Start ReCut.cmd`. It runs `scripts/windows/start-recut.ps1`, which
+  checks for Node.js 20+ (offers `winget install OpenJS.NodeJS.LTS`), runs `npm ci` when the lockfile changed,
+  rebuilds when the checked-out commit changed, downloads FFmpeg into `resources\ffmpeg` if none is installed, and
+  launches the app. `Start ReCut.cmd -Rebuild` forces a clean install and build.
+
+Releases are produced by `.github/workflows/windows.yml`, which builds on `windows-latest`, bundles FFmpeg 7.1
+(BtbN GPL build), smoke-tests both the unpacked app and a silent install (media protocol, FFmpeg encode + probe,
+UI mounted), and publishes a prerelease named `v<version>-win.<run>`. The same workflow checks `Start ReCut.cmd`
+from a fresh clone and runs the unit and end-to-end suites on Windows.
+
 ## Prerequisites
 
 | Requirement | Version | Notes |
