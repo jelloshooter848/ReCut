@@ -5,6 +5,34 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
+## [0.2.1] - 2026-10-05
+
+Fixes the Windows installer crash in 0.2.0. Project files are unchanged (`formatVersion` 1).
+
+### Fixed
+
+- The Windows installer could crash on a fresh install (`ReCut-Setup-0.2.0.exe` exited with an access violation in
+  NSIS's `System.dll`; about 1 in 3 fresh installs on GitHub's Windows Server 2025 runners, on AMD and Intel CPUs).
+  The cause was a fixed-length read in electron-builder's per-user install script, fixed upstream in
+  electron-builder 26.12; ReCut now builds with electron-builder 26.15.3. Verified with 130 install/uninstall cycles
+  on AMD and Intel runners, with no crash
+  ([report](bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md)).
+
+### Changed
+
+- Uninstalling ReCut now removes its `.recut` file association instead of restoring the previous default app.
+  Installing 0.2.1 over 0.2.0 upgrades in place (same install folder and shortcuts).
+- CI now installs and uninstalls the Windows installer five times and launches the portable exe before publishing a
+  build.
+
+### Known issues
+
+- Unchanged from 0.2.0: 2,500-clip performance budgets
+  ([open report](bugs/open/2026-10-05-perf-budgets-2500-clips.md)), moved media rebuilds its cache
+  ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned builds. The installer is built with NSIS
+  3.0.4, which has CVE-2025-43715 (privilege escalation only when an installer runs as SYSTEM; ReCut's per-user
+  installer normally does not).
+
 ## [0.2.0] - 2026-10-05
 
 First tagged release. Covers everything since the initial build, including the work published as the
