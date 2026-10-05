@@ -219,6 +219,9 @@ Scenes in the library are reusable, tagged source ranges.
    **Export another**.
 
 The MP4 has exactly the frame count of the exported range, and each frame is the one the Program monitor showed.
+If you pick a **Frame rate** other than the sequence's (for example 30 fps for a 23.976 sequence), the video is
+converted when it is written: frames are repeated or dropped, while the duration and audio sync stay the same. The
+dialog shows the resulting frame count; **Use <sequence rate>** switches back.
 
 ## Saving
 

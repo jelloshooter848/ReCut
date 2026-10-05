@@ -16,7 +16,8 @@ import { injectStyle } from './injectStyle';
 import { buildExportRequest } from './request';
 import {
   CRF_MAX, CRF_MIN, CUSTOM, ENCODER_PRESETS, MAX_DIMENSION, MIN_DIMENSION, applyPreset, checklistBlocks, crfLabel,
-  estimateEtaSeconds, estimateFileSize, exportChecklist, exportRange, formatBytes, formatDuration, fpsFromOptionValue,
+  effectiveExportFps, estimateEtaSeconds, estimateFileSize, exportChecklist, exportOutputFrames, exportRange, formatBytes,
+  formatDuration, fpsConversionNote, fpsFromOptionValue,
   fpsOptionValue, hasInOut, initialExportSettings, loadSavedExportSettings, maxSourceChannels, outputPathFor,
   presetNameFor, presetsFor, saveExportSettings, sanitizeFileName, sequenceHasSubtitles, validateExportSettings, withMp4,
 } from './settings';
@@ -226,7 +227,11 @@ function SettingsView(p: SettingsViewProps) {
   const maxCh = useMemo(() => maxSourceChannels(seq, media), [seq, media]);
   const surroundOk = maxCh >= 6;
   const hasSubs = sequenceHasSubtitles(seq);
-  const fpsDiffers = !fpsEquals(settings.fps, seq.fps);
+  const outFps = effectiveExportFps(settings, seq);
+  const fpsDiffers = !fpsEquals(outFps, seq.fps);
+  /** Output video frames (differs from range.frames when the frame rate is converted). */
+  const outFrames = exportOutputFrames(range.frames, seq, settings);
+  const outFramesLabel = `${outFrames} fr${fpsDiffers ? ` @ ${fpsLabel(outFps)} fps` : ''}`;
   const outPath = outputPathFor(settings);
   const issueFor = (field: string) => validation.issues.find((i) => i.field === field)?.message;
   const disabledReason = !validation.ok ? validation.issues[0].message : blocked ? checklist.find((c) => c.level === 'error')!.text : p.starting ? 'Starting…' : undefined;
@@ -276,11 +281,11 @@ function SettingsView(p: SettingsViewProps) {
           <div>
             <h4>Output</h4>
             <dl className="xd-kv">
-              <dt>Video</dt><dd>{settings.width}×{settings.height} · {settings.videoCodec === 'libx265' ? 'H.265' : 'H.264'}</dd>
+              <dt>Video</dt><dd>{settings.width}×{settings.height} · {fpsLabel(outFps)} fps · {settings.videoCodec === 'libx265' ? 'H.265' : 'H.264'}</dd>
               <dt>Quality</dt><dd>{settings.qualityMode === 'crf' ? `CRF ${settings.crf} (${crfLabel(settings.crf)})` : `${settings.videoBitrateKbps} kbps`} · {settings.preset}</dd>
               <dt>Audio</dt><dd>{settings.audioCodec.toUpperCase().replace('AC3', 'AC-3')} · {settings.audioBitrateKbps} kbps · {settings.audioChannels === 6 ? '5.1' : 'Stereo'}</dd>
               <dt>Range</dt><dd>{range.usesInOut ? 'In → Out' : 'Entire sequence'}</dd>
-              <dt>Duration</dt><dd className="mono">{formatTimecode(range.frames, seq.fps)} · {range.frames} fr</dd>
+              <dt>Duration</dt><dd className="mono">{formatTimecode(range.frames, seq.fps)} · {outFramesLabel}</dd>
               <dt>Est. size</dt><dd data-testid="export-size">{size.approximate ? '≈ ' : ''}{formatBytes(size.bytes)}</dd>
               <dt>File</dt><dd className="wrap xd-path" title={outPath}>{outPath}</dd>
             </dl>
@@ -341,11 +346,11 @@ function SettingsView(p: SettingsViewProps) {
             <div className="xd-row">
               <label>Frame rate</label>
               <div className="ctl">
-                <Select value={fpsOptionValue(settings.fps)} options={fpsOptions} onChange={(v) => update({ fps: fpsFromOptionValue(v, seq.fps) })} />
+                <Select value={fpsOptionValue(outFps)} options={fpsOptions} onChange={(v) => update({ fps: fpsFromOptionValue(v, seq.fps) })} />
                 {fpsDiffers ? <Button size="sm" onClick={() => update({ fps: seq.fps })}>Use {fpsLabel(seq.fps)}</Button> : null}
               </div>
             </div>
-            {fpsDiffers ? <div className="xd-row"><span /><span className="xd-warn"><AlertTriangle />Export uses the sequence frame rate; retiming is not applied.</span></div> : null}
+            {fpsDiffers ? <div className="xd-row"><span /><span className="xd-hint" data-testid="export-fps-note">{fpsConversionNote(seq.fps, outFps)}</span></div> : null}
             <div className="xd-row">
               <label>Codec</label>
               <div className="ctl"><Select value={settings.videoCodec} options={CODEC_OPTIONS} onChange={(v) => update({ videoCodec: v })} /></div>
@@ -412,7 +417,7 @@ function SettingsView(p: SettingsViewProps) {
               <div className="ctl">
                 <Select value={settings.rangeMode} onChange={(v) => update({ rangeMode: v })}
                   options={[{ value: 'entire', label: 'Entire sequence' }, { value: 'inOut', label: hasInOut(seq) ? 'In to Out' : 'In to Out (not set)', disabled: !hasInOut(seq) }]} />
-                <span className="xd-hint mono">{formatTimecode(range.frames, seq.fps)} · {range.frames} frames · {size.approximate ? '≈ ' : ''}{formatBytes(size.bytes)}</span>
+                <span className="xd-hint mono">{formatTimecode(range.frames, seq.fps)} · {outFramesLabel} · {size.approximate ? '≈ ' : ''}{formatBytes(size.bytes)}</span>
               </div>
             </div>
           </section>

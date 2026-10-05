@@ -199,7 +199,10 @@ describe('checklist / media inspection', () => {
     const fine = exportChecklist(s, { a: media('a'), b: media('b') }, settings);
     expect(fine).toEqual([]);
     const fpsItems = exportChecklist(s, { a: media('a'), b: media('b') }, { ...settings, fps: { num: 30, den: 1 } });
-    expect(fpsItems.some((i) => i.text.includes('retiming'))).toBe(true);
+    // A different export frame rate is converted at the output (not a pre-flight problem); an invalid one falls back.
+    expect(fpsItems).toEqual([]);
+    const badFps = exportChecklist(s, { a: media('a'), b: media('b') }, { ...settings, fps: { num: 29.97, den: 1 } });
+    expect(badFps.some((i) => i.level === 'warning' && i.text.includes('not valid'))).toBe(true);
     const proxied = { a: { ...media('a'), proxy: { status: 'ready' as const, path: '/p.mp4' } }, b: media('b') };
     expect(exportChecklist(s, proxied, settings, true).some((i) => i.level === 'info')).toBe(true);
     expect(exportChecklist(s, proxied, settings, false).some((i) => i.level === 'info')).toBe(false);

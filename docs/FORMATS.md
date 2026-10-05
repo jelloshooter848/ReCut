@@ -121,7 +121,9 @@ length of 5 s when inserted. They export with `-loop 1` at the sequence frame ra
 - Container: **MP4** only (`+faststart`).
 - Video: **H.264 (libx264)** or **H.265 / HEVC (libx265)**, yuv420p, constant frame rate. Quality is either **CRF**
   (14–32) or **Target bitrate**. Encoder preset ultrafast…slow. Frame size 16–8192 px (even). Frame rate is the
-  sequence's or 23.976 / 24 / 25 / 29.97 / 30 / 50 / 59.94 / 60.
+  sequence's or 23.976 / 24 / 25 / 29.97 / 30 / 50 / 59.94 / 60 (NTSC rates stay exact rationals, e.g. 30000/1001).
+  A rate other than the sequence's is converted at the output by repeating or dropping frames: the timeline,
+  transitions, subtitles and audio are rendered at the sequence rate, so the duration and A/V sync do not change.
 - Audio: **AAC** or **AC-3**, stereo or 5.1, 44.1 / 48 / 96 kHz.
 - Range: entire sequence or In → Out.
 - Presets (`shared/model.ts` → `EXPORT_PRESETS`, plus **Match Sequence**):
@@ -136,4 +138,5 @@ length of 5 s when inserted. They export with `-loop 1` at the sequence frame ra
 | Match Sequence | sequence size | (keeps current codec settings) | sequence rate / channels |
 
 Exports are frame-exact: the output has exactly the frame count of the exported range, and each frame is the one the
-Program monitor shows. See [export-pipeline.md](export-pipeline.md).
+Program monitor shows. With a converted frame rate the output has `round(range duration × export rate)` frames and
+each one shows the sequence frame on screen at its midpoint. See [export-pipeline.md](export-pipeline.md).

@@ -4,7 +4,7 @@
  */
 import type { ExportPreset, ExportSettings, ID, MediaItem, Rational, Sequence } from '@shared/model';
 import { EXPORT_PRESETS } from '@shared/model';
-import { FPS_PRESETS, fpsEquals, fpsValue, framesToSeconds } from '@shared/time';
+import { FPS_PRESETS, fpsEquals, fpsLabel, fpsValue, framesToSeconds } from '@shared/time';
 import { allTracks, sequenceDuration } from '@shared/timeline';
 
 export const MATCH_SEQUENCE = 'Match Sequence';
@@ -163,6 +163,29 @@ export function hasInOut(seq: Sequence): boolean {
   return i !== null && o !== null && o > i;
 }
 
+/** A usable export frame rate: numerator and denominator are positive finite integers (mirrors renderGraph isValidFps). */
+export function isValidExportFps(fps: Rational | null | undefined): fps is Rational {
+  return !!fps && Number.isSafeInteger(fps.num) && Number.isSafeInteger(fps.den) && fps.num > 0 && fps.den > 0;
+}
+
+/** Frame rate the export is encoded at: settings.fps when valid, otherwise the sequence rate (like the render graph). */
+export function effectiveExportFps(settings: Pick<ExportSettings, 'fps'>, seq: Sequence): Rational {
+  return isValidExportFps(settings.fps) ? settings.fps : seq.fps;
+}
+
+/**
+ * Output video frames for `seqFrames` sequence frames: round(seqFrames × outFps / seqFps) (halves up, at least 1),
+ * the count electron/export/renderGraph.ts outputFrameIndex produces. Equals seqFrames at the sequence rate.
+ */
+export function exportOutputFrames(seqFrames: number, seq: Sequence, settings: Pick<ExportSettings, 'fps'>): number {
+  const out = effectiveExportFps(settings, seq);
+  if (seqFrames <= 0) return 0;
+  if (fpsEquals(out, seq.fps)) return seqFrames;
+  const n = BigInt(Math.round(seqFrames)) * BigInt(seq.fps.den) * BigInt(out.num);
+  const d = BigInt(seq.fps.num) * BigInt(out.den);
+  return Math.max(1, Number((2n * n + d) / (2n * d)));
+}
+
 export interface SizeEstimate { bytes: number; approximate: boolean }
 
 /**
@@ -180,7 +203,7 @@ export function estimateFileSize(settings: ExportSettings, durationSec: number):
   const crf = Number.isFinite(settings.crf) ? settings.crf : 18;
   const base = settings.videoCodec === 'libx265' ? 0.045 : 0.07;
   const bpp = base * Math.pow(0.89, crf - 23);
-  const fps = fpsValue(settings.fps);
+  const fps = isValidExportFps(settings.fps) ? fpsValue(settings.fps) : 24;
   const videoBps = Math.max(2, settings.width) * Math.max(2, settings.height) * fps * bpp;
   const bytes = (videoBps + audioKbps * 1000) / 8 * d;
   return { bytes: Math.round(bytes), approximate: true };
@@ -303,12 +326,19 @@ export function exportChecklist(seq: Sequence, media: Record<ID, MediaItem>, set
   const pending = unprobed.filter((m) => !m.probeError);
   if (pending.length) items.push({ level: 'warning', text: `Media not analyzed yet: ${pending.map((m) => m.name).join(', ')}.` });
   if (settings.rangeMode === 'inOut' && !hasInOut(seq)) items.push({ level: 'warning', text: 'In/Out range is not set; the entire sequence will be exported.' });
-  if (!fpsEquals(settings.fps, seq.fps)) items.push({ level: 'warning', text: 'Export uses the sequence frame rate; retiming is not applied.' });
+  // A different (valid) export frame rate is converted at the output (see fpsConversionNote); nothing to check.
+  if (!isValidExportFps(settings.fps)) items.push({ level: 'warning', text: `The export frame rate is not valid; the sequence frame rate (${fpsLabel(seq.fps)} fps) is used.` });
   if (settings.audioChannels === 6 && maxSourceChannels(seq, media) < 6) items.push({ level: 'warning', text: 'No source has 6 audio channels; 5.1 output will be upmixed from stereo.' });
   if ((settings.burnSubtitles || settings.exportSubtitleSidecar) && !sequenceHasSubtitles(seq)) items.push({ level: 'warning', text: 'The sequence has no subtitle tracks; nothing will be burned in or written.' });
   const readyProxies = ids.map((id) => media[id]).filter((m): m is MediaItem => !!m && m.proxy.status === 'ready');
   if (projectUsesProxies && readyProxies.length) items.push({ level: 'info', text: 'Export always uses original media, not proxies.' });
   return items;
+}
+
+/** Explains output frame-rate conversion (sequence rate -> export rate). */
+export function fpsConversionNote(seqFps: Rational, outFps: Rational): string {
+  const verb = fpsValue(outFps) > fpsValue(seqFps) ? 'repeated' : 'dropped';
+  return `Converted from ${fpsLabel(seqFps)} to ${fpsLabel(outFps)} fps: some frames are ${verb}. Duration and audio sync are unchanged.`;
 }
 
 export function checklistBlocks(items: ChecklistItem[]): boolean {
@@ -350,7 +380,7 @@ export function initialExportSettings(seq: Sequence, saved: SavedExportSettings 
   const s = { ...defaults, ...saved.settings, useProxies: false as const };
   if (saved.sequenceId !== seq.id) { s.fileName = defaults.fileName; }
   if (!s.outputDir) s.outputDir = defaults.outputDir;
-  if (!s.fps || !(s.fps.num > 0) || !(s.fps.den > 0)) s.fps = seq.fps;
+  if (!isValidExportFps(s.fps)) s.fps = seq.fps;
   return s;
 }
 
