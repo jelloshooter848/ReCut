@@ -45,6 +45,18 @@ function Find-UninstallEntry {
 
 function Show-InstallDiagnostics([datetime]$since) {
   Get-ChildItem "$env:LOCALAPPDATA\Programs" -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String | Write-Host
+  Get-ChildItem "$env:LOCALAPPDATA\Programs\ReCut" -Recurse -Depth 1 -ErrorAction SilentlyContinue | Select-Object -First 40 FullName, Length, LastWriteTime |
+    Format-Table -AutoSize | Out-String -Width 300 | Write-Host
+  Write-Host 'Install registry entries:'
+  Get-ItemProperty 'HKCU:\Software\*' -ErrorAction SilentlyContinue | Where-Object { $_.InstallLocation -or $_.ShortcutName -like 'ReCut*' } |
+    Select-Object PSChildName, InstallLocation, ShortcutName | Format-List | Out-String | Write-Host
+  Find-UninstallEntry | Select-Object PSChildName, DisplayName, InstallLocation, QuietUninstallString | Format-List | Out-String | Write-Host
+  Write-Host 'ReCut.exe anywhere under the user profile and Program Files:'
+  Get-ChildItem $env:USERPROFILE, $env:ProgramFiles, 'C:\ReCut' -Recurse -Depth 6 -Filter ReCut.exe -ErrorAction SilentlyContinue | Select-Object -First 10 FullName | Format-Table -AutoSize | Out-String -Width 300 | Write-Host
+  Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'ReCut|Setup|^Un_|^Au_' } | Select-Object Id, Name, Path | Format-Table -AutoSize | Out-String -Width 300 | Write-Host
+  Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; StartTime = $since.AddSeconds(-5) } -ErrorAction SilentlyContinue |
+    Where-Object { $_.Id -in 1006, 1007, 1008, 1015, 1116, 1117, 1118, 1119 } | Select-Object -First 4 |
+    ForEach-Object { Write-Host "---- Defender event $($_.Id)"; Write-Host $_.Message }
   Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $since.AddSeconds(-5) } -ErrorAction SilentlyContinue |
     Where-Object { $_.Id -in 1000, 1001, 1026 } | Select-Object -First 6 |
     ForEach-Object { Write-Host "---- event $($_.Id) $($_.ProviderName)"; Write-Host $_.Message }
@@ -116,8 +128,10 @@ for ($n = 1; $n -le $Attempts; $n++) {
   $ok = -not $row.Error
   Write-Host ("Attempt {0}/{1}: {2} exit={3} installed={4} smoke={5} uninstalled={6} {7}s {8}" -f $n, $Attempts, $(if ($ok) { 'PASS' } else { 'FAIL' }), $row.ExitCode, $row.Installed, $row.Smoke, $row.Uninstalled, $row.Seconds, $row.Error)
   $results += [pscustomobject]$row
-  # Without a clean uninstall the next attempt would not be a fresh install: stop here.
+  # Without a clean uninstall the next attempt would not be a fresh install: stop here. Keep going after a crash
+  # (non-zero exit, nothing installed) so the run counts how often it happens; stop on any other failure.
   if ($row.Installed -and -not $row.Uninstalled) { break }
+  if ($row.Error -and $row.ExitCode -eq 0) { break }
 }
 
 $portable = 'skipped'
