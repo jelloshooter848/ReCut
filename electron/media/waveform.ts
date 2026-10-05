@@ -8,7 +8,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { WaveformData } from '@shared/ipc';
 import { cacheSubdir, fileExists, removeQuietly } from './cache';
-import { runFfmpeg, runFfprobeJson } from './ffmpeg';
+import { ffmpegFileArg, runFfmpeg, runFfprobeJson } from './ffmpeg';
 import type { FfprobeOutput } from './probe';
 import { peakOfU8 } from './peaks';
 
@@ -100,7 +100,7 @@ export function getWaveform(filePath: string, key: string, opts: WaveformOptions
 /** Decode and bucket without touching the cache. */
 export async function computeWaveform(filePath: string, opts: WaveformOptions = {}): Promise<WaveformData> {
   // Find the audio stream + duration.
-  const raw = await runFfprobeJson<FfprobeOutput>(['-show_format', '-show_streams', '-select_streams', 'a', filePath], { timeoutMs: 60_000 });
+  const raw = await runFfprobeJson<FfprobeOutput>(['-show_format', '-show_streams', '-select_streams', 'a', ffmpegFileArg(filePath)], { timeoutMs: 60_000 });
   const audioStreams = (raw.streams ?? []).filter((s) => s.codec_type === 'audio');
   let duration = parseFloat(raw.format?.duration ?? '') || 0;
   if (!(duration > 0)) for (const s of audioStreams) duration = Math.max(duration, parseFloat(s.duration ?? '') || 0);
@@ -131,7 +131,7 @@ export async function computeWaveform(filePath: string, opts: WaveformOptions = 
 
   const run = runFfmpeg(
     [
-      '-i', filePath,
+      '-i', ffmpegFileArg(filePath),
       '-map', mapSpec,
       '-vn', '-sn', '-dn',
       '-ac', '1',

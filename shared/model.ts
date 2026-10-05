@@ -49,6 +49,11 @@ export interface VideoStreamInfo {
   codedHeight?: number;
   /** Video stream start relative to the container start (seconds, >= 0). */
   startTime?: number;
+  /**
+   * Sample (pixel) aspect ratio of the stored picture; `width`/`height` are storage pixels, so the display width
+   * is `width * sar` (for SAR > 1). Absent on old probes and treated as 1:1; readers must validate it.
+   */
+  sar?: Rational;
 }
 
 export interface SubtitleStreamInfo { index: number; codec: string; language?: string; title?: string }

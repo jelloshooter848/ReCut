@@ -4,7 +4,7 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import type { AudioStreamInfo, MediaKind, MediaProbe, Rational, SubtitleStreamInfo, VideoStreamInfo } from '@shared/model';
-import { runFfprobeJson } from './ffmpeg';
+import { assertAbsoluteMediaPath, ffmpegFileArg, runFfprobeJson } from './ffmpeg';
 
 // ------------------------------------------------------------------
 // Raw ffprobe JSON shapes (subset)
@@ -17,6 +17,7 @@ export interface FfprobeStream {
   height?: number;
   coded_width?: number;
   coded_height?: number;
+  sample_aspect_ratio?: string;
   pix_fmt?: string;
   color_space?: string;
   profile?: string;
@@ -58,6 +59,18 @@ export interface ProbedVideoStreamInfo extends VideoStreamInfo {
   codedHeight: number;
   /** Stream start relative to the container start (seconds, >= 0). The export pads a late-starting video stream. */
   startTime: number;
+  /** Sample aspect ratio, reduced; 1:1 when the stream has none (ffprobe "0:1" / "N/A") or an invalid one. */
+  sar: Rational;
+}
+
+/** Parse ffprobe's `sample_aspect_ratio` ("32:27"); unknown, zero or malformed -> 1:1. */
+export function parseSar(s: string | undefined): Rational {
+  const m = /^\s*(\d+)\s*[:/]\s*(\d+)\s*$/.exec(s ?? '');
+  if (!m) return { num: 1, den: 1 };
+  const n = parseInt(m[1], 10), d = parseInt(m[2], 10);
+  if (!(n > 0 && d > 0)) return { num: 1, den: 1 };
+  const g = gcd(n, d);
+  return { num: n / g, den: d / g };
 }
 
 /** Display rotation of a stream in degrees, normalized to 0/90/180/270 (clockwise, as players apply it). */
@@ -226,6 +239,7 @@ export function probeFromFfprobe(raw: FfprobeOutput, filePath: string, fileSize?
       codedWidth,
       codedHeight,
       startTime: streamStartOffset(s, format),
+      sar: parseSar(s.sample_aspect_ratio),
     };
     video = v;
     break;
@@ -300,10 +314,11 @@ export function probeFromFfprobe(raw: FfprobeOutput, filePath: string, fileSize?
 
 /** Probe a media file. Rejects with a readable error for unreadable/unsupported files. */
 export async function probeMedia(filePath: string): Promise<MediaProbe> {
+  assertAbsoluteMediaPath(filePath);
   const st = await fsp.stat(filePath).catch((e: NodeJS.ErrnoException) => {
     throw new Error(e.code === 'ENOENT' ? `file not found: ${filePath}` : `cannot stat ${filePath}: ${e.message}`);
   });
-  const raw = await runFfprobeJson<FfprobeOutput>(['-show_format', '-show_streams', filePath], { timeoutMs: 60_000 });
+  const raw = await runFfprobeJson<FfprobeOutput>(['-show_format', '-show_streams', ffmpegFileArg(filePath)], { timeoutMs: 60_000 });
   if (!raw.format && !(raw.streams && raw.streams.length)) throw new Error(`ffprobe found no streams in ${filePath}`);
   return probeFromFfprobe(raw, filePath, st.size);
 }

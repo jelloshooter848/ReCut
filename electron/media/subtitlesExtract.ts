@@ -2,7 +2,7 @@
  * Extract an embedded text subtitle stream to SRT text via ffmpeg (stdout).
  */
 import path from 'node:path';
-import { runFfmpeg, runFfprobeJson } from './ffmpeg';
+import { ffmpegFileArg, runFfmpeg, runFfprobeJson } from './ffmpeg';
 import type { FfprobeOutput } from './probe';
 
 export const TEXT_SUBTITLE_CODECS = new Set(['subrip', 'srt', 'ass', 'ssa', 'mov_text', 'webvtt', 'text', 'ttml', 'sami', 'microdvd', 'mpl2', 'subviewer', 'subviewer1', 'vplayer', 'jacosub', 'realtext', 'stl']);
@@ -17,7 +17,7 @@ export function isTextSubtitleCodec(codec: string | undefined): boolean {
  * and for stream indices that are not subtitle streams.
  */
 export async function extractSubtitles(filePath: string, streamIndex: number): Promise<string> {
-  const raw = await runFfprobeJson<FfprobeOutput>(['-show_streams', '-select_streams', String(streamIndex), filePath], { timeoutMs: 60_000 });
+  const raw = await runFfprobeJson<FfprobeOutput>(['-show_streams', '-select_streams', String(streamIndex), ffmpegFileArg(filePath)], { timeoutMs: 60_000 });
   const stream = (raw.streams ?? []).find((s) => s.index === streamIndex) ?? raw.streams?.[0];
   const base = path.basename(filePath);
   if (!stream) throw new Error(`${base} has no stream with index ${streamIndex}`);
@@ -31,7 +31,7 @@ export async function extractSubtitles(filePath: string, streamIndex: number): P
   }
 
   const run = runFfmpeg(
-    ['-i', filePath, '-map', `0:${streamIndex}`, '-vn', '-an', '-dn', '-c:s', 'srt', '-f', 'srt', '-'],
+    ['-i', ffmpegFileArg(filePath), '-map', `0:${streamIndex}`, '-vn', '-an', '-dn', '-c:s', 'srt', '-f', 'srt', '-'],
     { stdout: 'data', collectStdout: true },
   );
   const res = await run.promise;

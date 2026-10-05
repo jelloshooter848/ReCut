@@ -7,7 +7,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { FilmstripRequest, ThumbnailRequest } from '@shared/ipc';
 import { cacheKeyForPath, cacheSubdir, ensureDir, fileExists, removeQuietly } from './cache';
-import { fmtSeconds, runFfmpeg } from './ffmpeg';
+import { ffmpegFileArg, fmtSeconds, runFfmpeg } from './ffmpeg';
 import { probeMedia, type ProbedVideoStreamInfo } from './probe';
 
 const DEFAULT_WIDTH = 160;
@@ -166,14 +166,14 @@ async function extractOne(file: string, time: number, width: number, out: string
   const seek = frameSeekTime(time, await frameGrid(file));
   const args = [
     '-ss', fmtSeconds(seek),
-    '-i', file,
+    '-i', ffmpegFileArg(file),
     '-an', '-sn', '-dn',
     '-map', '0:v:0',
     '-frames:v', '1',
     '-vf', `scale=${width}:-2`,
     '-q:v', '4',
     '-f', 'mjpeg',
-    part,
+    ffmpegFileArg(part),
   ];
   try {
     await runFfmpeg(args, { stdout: 'ignore' }).promise;
@@ -325,7 +325,7 @@ async function extractBatch(file: string, width: number, batch: [string, number]
   }
   const args: string[] = [];
   const grid = await frameGrid(file);
-  for (const [, t] of batch) args.push('-ss', fmtSeconds(frameSeekTime(t, grid)), '-i', file);
+  for (const [, t] of batch) args.push('-ss', fmtSeconds(frameSeekTime(t, grid)), '-i', ffmpegFileArg(file));
   batch.forEach(([out], idx) => {
     args.push(
       '-map', `${idx}:v:0`,
@@ -334,7 +334,7 @@ async function extractBatch(file: string, width: number, batch: [string, number]
       '-vf', `scale=${width}:-2`,
       '-q:v', '4',
       '-f', 'mjpeg',
-      `${out}.part`,
+      ffmpegFileArg(`${out}.part`),
     );
   });
   try {

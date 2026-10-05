@@ -150,6 +150,31 @@ export function adaptFfmpegArgs(args: string[], major: number): string[] {
 }
 
 // ------------------------------------------------------------------
+// File arguments
+// ------------------------------------------------------------------
+
+/**
+ * Throws unless `p` is an absolute path (by `platform`'s rules). Media paths come from user-shareable project
+ * files: a relative one could be an FFmpeg protocol (`concat:/a|/b`, `subfile,,…:/x`, `http://…`, `pipe:0`).
+ * On win32 `C:\x`, `C:/x`, `\\server\share\x` and `\x` are absolute; drive-relative `C:x` is not.
+ */
+export function assertAbsoluteMediaPath(p: string, platform: NodeJS.Platform = process.platform): void {
+  const isAbs = platform === 'win32' ? path.win32.isAbsolute : path.posix.isAbsolute;
+  if (typeof p !== 'string' || p === '' || p.includes('\0') || !isAbs(p)) {
+    throw new Error(`media path must be an absolute path: ${JSON.stringify(p)}`);
+  }
+}
+
+/**
+ * ffmpeg / ffprobe input or output argument for a file: `file:<absolute path>`. FFmpeg's file protocol takes
+ * the rest literally (spaces, '#', '?', '%', ':', unicode), so no prefix is ever read as a protocol.
+ */
+export function ffmpegFileArg(p: string, platform: NodeJS.Platform = process.platform): string {
+  assertAbsoluteMediaPath(p, platform);
+  return `file:${p}`;
+}
+
+// ------------------------------------------------------------------
 // runFfmpeg
 // ------------------------------------------------------------------
 

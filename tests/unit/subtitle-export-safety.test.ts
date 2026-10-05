@@ -176,17 +176,27 @@ describe('the main process refuses project sources by canonical path, not by spe
     expect(fs.statSync(link).ino).toBe(fs.statSync(subtitleFile).ino);
   });
 
-  it('folds case on win32 / darwin, not on linux', async () => {
+  it('folds case on every platform, like video export (refusing a case variant on a case-sensitive volume is harmless)', async () => {
     const upper = path.join(dir, 'IMPORTED.EN.SRT');
-    for (const platform of ['win32', 'darwin']) {
-      expect((await writeSubtitleFile(upper, 'x', [subtitleFile], { platform })).ok).toBe(false);
+    for (const platform of ['win32', 'darwin', 'linux', undefined]) {
+      const res = await writeSubtitleFile(upper, 'x', [subtitleFile], { platform });
+      expect(res.ok, String(platform)).toBe(false);
+      expect(!res.ok && res.error).toMatch(/source file of the project/);
     }
     expect(fs.readFileSync(subtitleFile, 'utf8')).toBe(ORIGINAL_SRT);
-    // Only meaningful where the temp folder is case-sensitive (Linux): there it is a different file.
-    if (process.platform === 'linux') {
-      expect(await writeSubtitleFile(upper, 'x', [subtitleFile], { platform: 'linux' })).toEqual({ ok: true, path: upper });
-      expect(fs.readFileSync(subtitleFile, 'utf8')).toBe(ORIGINAL_SRT);
-    }
+    // Nothing was written under the upper-case name either (on a case-sensitive volume it would be a new file).
+    expect(fs.readdirSync(dir).sort()).toEqual(['clip.mp4', 'clip.proxy.mp4', 'imported.en.srt']);
+  });
+
+  it('a case variant of a source that passes the renderer pre-check on linux is refused by the main process', async () => {
+    const upper = path.join(dir, 'Imported.EN.srt');
+    const res = await exportSequenceSubtitles({ path: upper });
+    if (process.platform === 'linux') expect(mainCalls.map((c) => c.path)).toEqual([upper]); // lexical check is case-sensitive there
+    expect(res.ok).toBe(false);
+    expect(!res.ok && res.error).toMatch(/source file of the project/);
+    expect(writes).toEqual([]);
+    expect(fs.readFileSync(subtitleFile, 'utf8')).toBe(ORIGINAL_SRT);
+    expect(fs.readdirSync(dir).sort()).toEqual(['clip.mp4', 'clip.proxy.mp4', 'imported.en.srt']);
   });
 
   it('writes only .srt / .vtt files: a media file (not even listed as protected) is left alone', async () => {
