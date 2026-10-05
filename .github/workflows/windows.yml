@@ -1,0 +1,176 @@
+name: Windows build
+
+# Builds the Windows installer + portable exe on a real Windows machine, smoke-tests them, and publishes them
+# as a GitHub Release. Also checks that "Start ReCut.cmd" works from a fresh clone and runs the test suites on Windows.
+on:
+  push:
+    branches: [claude/build-recut, main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FFMPEG_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-7.1.zip
+
+jobs:
+  installer:
+    name: Installer + portable exe
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+
+      - name: Download FFmpeg to bundle
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri $env:FFMPEG_URL -OutFile ffmpeg.zip -UseBasicParsing
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-tmp -Force
+          New-Item -ItemType Directory -Force resources/ffmpeg | Out-Null
+          foreach ($exe in 'ffmpeg.exe','ffprobe.exe') {
+            Copy-Item (Get-ChildItem ffmpeg-tmp -Recurse -Filter $exe | Select-Object -First 1).FullName resources/ffmpeg/$exe
+          }
+          & resources/ffmpeg/ffmpeg.exe -hide_banner -version | Select-Object -First 1
+
+      - name: Build app and Windows packages
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npm run build
+          npx electron-builder --win --x64 --publish never
+
+      - name: Smoke-test the unpacked app
+        shell: pwsh
+        run: |
+          $out = "$env:RUNNER_TEMP\smoke-unpacked.txt"
+          $env:RECUT_SMOKE = '1'; $env:RECUT_SMOKE_OUT = $out; $env:RECUT_USER_DATA = "$env:RUNNER_TEMP\ud1"
+          $p = Start-Process -FilePath release/win-unpacked/ReCut.exe -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw 'smoke test timed out' }
+          Get-Content $out
+          $r = Get-Content $out -Raw
+          if ($r -match 'FAILED|MISSING' -or $r -notmatch 'encode\+probe ok' -or $r -notmatch 'status=206' -or $r -notmatch 'resources\\ffmpeg') { throw 'smoke test failed' }
+
+      - name: Silent-install the installer and smoke-test the installed app
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem release -Filter 'ReCut-Setup-*.exe' | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter ReCut.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw 'installed ReCut.exe not found' }
+          Write-Host "Installed at $($exe.FullName)"
+          $out = "$env:RUNNER_TEMP\smoke-installed.txt"
+          $env:RECUT_SMOKE = '1'; $env:RECUT_SMOKE_OUT = $out; $env:RECUT_USER_DATA = "$env:RUNNER_TEMP\ud2"
+          $p = Start-Process -FilePath $exe.FullName -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw 'smoke test timed out' }
+          Get-Content $out
+          $r = Get-Content $out -Raw
+          if ($r -match 'FAILED|MISSING' -or $r -notmatch 'encode\+probe ok') { throw 'installed-app smoke test failed' }
+
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ReCut-windows
+          path: |
+            release/ReCut-Setup-*.exe
+            release/ReCut-Portable-*.exe
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}-win.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: ReCut ${{ steps.ver.outputs.version }} for Windows (build ${{ github.run_number }})
+          prerelease: true
+          files: |
+            release/ReCut-Setup-*.exe
+            release/ReCut-Portable-*.exe
+          body: |
+            **ReCut-Setup-${{ steps.ver.outputs.version }}.exe** — installer. Adds Start-menu and desktop shortcuts, opens `.recut` projects, and can be removed from *Settings › Apps*.
+            **ReCut-Portable-${{ steps.ver.outputs.version }}.exe** — no install; double-click to run (starts a little slower).
+
+            FFmpeg is bundled, so nothing else needs to be installed. The app is not code-signed: if Windows shows
+            "Windows protected your PC", click **More info › Run anyway**.
+
+            Built from ${{ github.sha }}. This build launched, encoded and probed a test clip on a Windows runner before publishing.
+
+  launcher:
+    name: Start ReCut.cmd from a fresh clone
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run the launcher in self-test mode
+        shell: cmd
+        run: call "Start ReCut.cmd" -Smoke
+
+  tests:
+    name: Unit tests on Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Put FFmpeg on PATH
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri $env:FFMPEG_URL -OutFile ffmpeg.zip -UseBasicParsing
+          Expand-Archive ffmpeg.zip -DestinationPath "$env:RUNNER_TEMP\ff" -Force
+          (Get-ChildItem "$env:RUNNER_TEMP\ff" -Recurse -Filter ffmpeg.exe | Select-Object -First 1).DirectoryName >> $env:GITHUB_PATH
+      - run: npx vitest run
+
+  e2e:
+    name: End-to-end tests on Windows
+    runs-on: windows-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Put FFmpeg and Git Bash on PATH
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri $env:FFMPEG_URL -OutFile ffmpeg.zip -UseBasicParsing
+          Expand-Archive ffmpeg.zip -DestinationPath "$env:RUNNER_TEMP\ff" -Force
+          (Get-ChildItem "$env:RUNNER_TEMP\ff" -Recurse -Filter ffmpeg.exe | Select-Object -First 1).DirectoryName >> $env:GITHUB_PATH
+          'C:\Program Files\Git\bin' >> $env:GITHUB_PATH
+      - run: npm run build
+      - run: npx playwright test -c tests/e2e/playwright.config.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-results-windows
+          path: test-results/

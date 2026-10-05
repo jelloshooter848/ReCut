@@ -18,6 +18,9 @@ import { registerMediaProtocol } from './media/protocol';
 import { mediaHandlers } from './media/index';
 import * as io from './project/io';
 import { projectPathFromArgv } from './project/argv';
+import os from 'node:os';
+import { getFfmpegPath, getFfprobePath, getFfmpegVersion, runFfmpeg } from './media/ffmpeg';
+import { probeMedia } from './media/probe';
 
 const isDev = Boolean(process.env.RECUT_DEV_URL) || !app.isPackaged;
 const smoke = process.env.RECUT_SMOKE === '1';
@@ -262,23 +265,49 @@ async function createWindow(): Promise<BrowserWindow> {
 // ------------------------------------------------------------------
 
 async function runSmoke(): Promise<void> {
+  // Results go to stdout and, when RECUT_SMOKE_OUT is set, to that file (Windows GUI apps have no attached console).
+  const lines: string[] = [];
+  const log = (line: string) => { lines.push(line); console.log(line); };
   const target = process.env.RECUT_SMOKE_FILE || (process.platform === 'win32' ? process.execPath : '/usr/bin/ffmpeg');
   const url = `${MEDIA_SCHEME}://local/${encodeURIComponent(target)}`;
   try {
     const res = await net.fetch(url, { headers: { Range: 'bytes=10-19' } });
     const body = new Uint8Array(await res.arrayBuffer());
-    console.log(`smoke: protocol status=${res.status} content-length=${res.headers.get('content-length')} content-range=${res.headers.get('content-range')} body-bytes=${body.byteLength} type=${res.headers.get('content-type')}`);
+    log(`smoke: protocol status=${res.status} content-length=${res.headers.get('content-length')} content-range=${res.headers.get('content-range')} body-bytes=${body.byteLength} type=${res.headers.get('content-type')}`);
     const head = await net.fetch(url, { method: 'HEAD' });
-    console.log(`smoke: HEAD status=${head.status} content-length=${head.headers.get('content-length')} accept-ranges=${head.headers.get('accept-ranges')}`);
+    log(`smoke: HEAD status=${head.status} content-length=${head.headers.get('content-length')} accept-ranges=${head.headers.get('accept-ranges')}`);
     const missing = await net.fetch(`${MEDIA_SCHEME}://local/${encodeURIComponent('/definitely/not/here.mp4')}`);
-    console.log(`smoke: missing status=${missing.status}`);
+    log(`smoke: missing status=${missing.status}`);
     const bad = await net.fetch(url, { headers: { Range: 'bytes=99999999999-' } });
-    console.log(`smoke: unsatisfiable status=${bad.status} content-range=${bad.headers.get('content-range')}`);
+    log(`smoke: unsatisfiable status=${bad.status} content-range=${bad.headers.get('content-range')}`);
   } catch (e) {
-    console.log(`smoke: protocol fetch FAILED: ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
+    log(`smoke: protocol fetch FAILED: ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
   }
-  console.log(`smoke: window loaded=${win && !win.isDestroyed() ? win.webContents.getURL() : 'none'}`);
-  setTimeout(() => requestQuit(true), 2000);
+  // FFmpeg: resolved paths, version, and a real encode + probe of a generated clip.
+  try {
+    log(`smoke: ffmpeg path=${getFfmpegPath()} ffprobe path=${getFfprobePath()} version=${await getFfmpegVersion()}`);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-smoke-'));
+    const clip = path.join(tmp, 'smoke clip.mp4');
+    await runFfmpeg(['-f', 'lavfi', '-i', 'testsrc=duration=1:size=320x180:rate=24', '-f', 'lavfi', '-i', 'sine=duration=1',
+      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', clip]).promise;
+    const probe = await probeMedia(clip);
+    log(`smoke: ffmpeg encode+probe ok duration=${probe.duration.toFixed(2)} video=${probe.video?.codec} ${probe.video?.width}x${probe.video?.height} audio=${probe.audio[0]?.codec ?? 'none'} browserPlayable=${probe.browserPlayable}`);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  } catch (e) {
+    log(`smoke: ffmpeg FAILED: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  // Renderer: did the React app mount its layout?
+  try {
+    const mounted = win && !win.isDestroyed()
+      ? await win.webContents.executeJavaScript(`new Promise((r) => { let n = 0; const t = setInterval(() => { if (document.querySelector('#root .layout') || ++n > 100) { clearInterval(t); r(!!document.querySelector('#root .layout')); } }, 100); })`)
+      : false;
+    log(`smoke: window loaded=${win && !win.isDestroyed() ? win.webContents.getURL() : 'none'} layout=${mounted ? 'mounted' : 'MISSING'}`);
+  } catch (e) {
+    log(`smoke: renderer check FAILED: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  const out = process.env.RECUT_SMOKE_OUT;
+  if (out) { try { fs.writeFileSync(out, lines.join('\n') + '\n'); } catch { /* ignore */ } }
+  setTimeout(() => requestQuit(true), 1000);
 }
 
 // ------------------------------------------------------------------
