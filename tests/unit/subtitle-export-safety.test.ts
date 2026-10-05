@@ -18,7 +18,7 @@ import type { Project, Sequence } from '@shared/model';
 import { createMediaItem, createProject, createSequence } from '@shared/project';
 import { useStore, resetStore } from '../../src/state/store';
 import { exportSequenceSubtitles, serializeSequenceSubtitles, writeSequenceSubtitles } from '../../src/panels/subtitles/exportSubtitles';
-import { findSamePath, pathCompareKey, resolveAbsolutePath } from '@shared/pathKey';
+import { findSamePath, foldsPathCase, pathCompareKey, resolveAbsolutePath } from '@shared/pathKey';
 import { writeSubtitleFile } from '../../electron/fs';
 import { IPC } from '@shared/ipc';
 
@@ -188,10 +188,10 @@ describe('the main process refuses project sources by canonical path, not by spe
     expect(fs.readdirSync(dir).sort()).toEqual(['clip.mp4', 'clip.proxy.mp4', 'imported.en.srt']);
   });
 
-  it('a case variant of a source that passes the renderer pre-check on linux is refused by the main process', async () => {
+  it('a case variant of a source is refused by the renderer pre-check on every platform (like the main process)', async () => {
     const upper = path.join(dir, 'Imported.EN.srt');
     const res = await exportSequenceSubtitles({ path: upper });
-    if (process.platform === 'linux') expect(mainCalls.map((c) => c.path)).toEqual([upper]); // lexical check is case-sensitive there
+    expect(mainCalls).toEqual([]); // the lexical pre-check folds case everywhere, so it never reaches the main process
     expect(res.ok).toBe(false);
     expect(!res.ok && res.error).toMatch(/source file of the project/);
     expect(writes).toEqual([]);
@@ -294,11 +294,14 @@ describe('writeSequenceSubtitles (pure, injected writer)', () => {
     return { res, written };
   }
 
-  it('folds case and separators on win32 and darwin, not on linux', async () => {
+  it('folds case on every platform (like video export and the main process), separators on win32', async () => {
     expect((await attempt(winProject(), 'c:/media/show/CLIP.EN.SRT', 'win32')).written).toEqual([]);
     expect((await attempt(posixProject(), '/MEDIA/show/Clip.En.Srt', 'darwin')).written).toEqual([]);
     expect((await attempt(posixProject(), '/MEDIA/show/Clip.En.Srt', undefined)).written).toEqual([]);
-    expect((await attempt(posixProject(), '/MEDIA/show/Clip.En.Srt', 'linux')).written).toEqual(['/MEDIA/show/Clip.En.Srt']);
+    const linux = await attempt(posixProject(), '/MEDIA/show/Clip.En.Srt', 'linux');
+    expect(linux.written).toEqual([]);
+    expect(!linux.res.ok && linux.res.error).toMatch(/source file of the project/);
+    expect((await attempt(posixProject(), '/media/show\\clip.en.srt', 'linux')).written).toEqual(['/media/show\\clip.en.srt']); // a backslash is a name character on posix, not a separator
     expect((await attempt(posixProject(), '/media/Show/clip.en.srt', 'linux')).res.ok).toBe(false);
     expect((await attempt(posixProject(), '/media/Show/../Show/./clip.mp4', 'linux')).res.ok).toBe(false);
   });
@@ -374,7 +377,10 @@ describe('shared/pathKey matches path.resolve for absolute paths', () => {
   });
   it('keys and lookups', () => {
     expect(pathCompareKey('C:\\A\\B.srt', 'win32')).toBe('c:\\a\\b.srt');
-    expect(pathCompareKey('/A/B.srt', 'linux')).toBe('/A/B.srt');
+    expect(pathCompareKey('/A/B.srt', 'linux')).toBe('/a/b.srt');
+    expect(pathCompareKey('/A/B.srt', 'darwin')).toBe('/a/b.srt');
+    expect(findSamePath('/A/./B', ['/a/c', '/a/b'], 'linux')).toBe('/a/b');
+    for (const platform of ['win32', 'darwin', 'linux', 'freebsd', undefined]) expect(foldsPathCase(platform), String(platform)).toBe(true);
     expect(pathCompareKey('rel/b.srt', 'linux')).toBeNull();
     expect(findSamePath('/a/b', ['rel', '/a/c', '/a/./b'], 'linux')).toBe('/a/./b');
     expect(findSamePath('rel', ['rel'], 'linux')).toBeUndefined();

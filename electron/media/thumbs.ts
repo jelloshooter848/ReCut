@@ -96,9 +96,10 @@ function timeKey(time: number): number {
 
 /**
  * Per-file thumbnail directory name: the file's cache key, re-hashed with the extraction version so entries
- * written before M-10 (which held the frame AFTER a mid-frame time) are never served again.
+ * written by an older extraction are never served again: before M-10 they held the frame AFTER a mid-frame time
+ * (v2), before v3 an anamorphic source's thumbnail had its stored (squeezed) shape.
  */
-const THUMB_VERSION = 'covering-frame-v2';
+const THUMB_VERSION = 'covering-frame-display-shape-v3';
 function thumbDirName(key: string): string {
   return createHash('sha1').update(`${key}|${THUMB_VERSION}`).digest('hex');
 }
@@ -160,6 +161,18 @@ export function frameSeekTime(time: number, grid: FrameGrid | null): number {
   return Math.max(0, grid.start + (j - 0.25) / grid.fps);
 }
 
+/**
+ * Video filter for a `width`-wide thumbnail with the source's DISPLAY shape: non-square pixels (anamorphic DVD /
+ * HDV, SAR from the stream) are first resampled to square ones along x, like the export's fitFilters and the
+ * <video> element do, then the picture is scaled to `width` (height even, aspect kept). FFmpeg's `sar` is 1 for a
+ * stream without one, so square-pixel sources keep their shape. Chromium ignores a JPEG's own aspect field, so the
+ * pixels themselves must have the display shape; the final `setsar=1` drops the tiny SAR the even-height rounding
+ * would otherwise record.
+ */
+export function thumbScaleFilter(width: number): string {
+  return `scale=w='max(2,trunc(iw*sar/2)*2)':h=ih,setsar=1,scale=${width}:-2,setsar=1`;
+}
+
 /** One ffmpeg invocation: seek to `time`, grab one frame, write JPEG to `out` (via .part). */
 async function extractOne(file: string, time: number, width: number, out: string): Promise<boolean> {
   const part = `${out}.part`;
@@ -170,7 +183,7 @@ async function extractOne(file: string, time: number, width: number, out: string
     '-an', '-sn', '-dn',
     '-map', '0:v:0',
     '-frames:v', '1',
-    '-vf', `scale=${width}:-2`,
+    '-vf', thumbScaleFilter(width),
     '-q:v', '4',
     '-f', 'mjpeg',
     ffmpegFileArg(part),
@@ -331,7 +344,7 @@ async function extractBatch(file: string, width: number, batch: [string, number]
       '-map', `${idx}:v:0`,
       '-an', '-sn', '-dn',
       '-frames:v', '1',
-      '-vf', `scale=${width}:-2`,
+      '-vf', thumbScaleFilter(width),
       '-q:v', '4',
       '-f', 'mjpeg',
       ffmpegFileArg(`${out}.part`),

@@ -1,17 +1,22 @@
 /**
  * Pure path comparison for "is this output one of the project's source files?" checks done in the renderer,
- * where `node:path` is not available. Mirrors electron/export/renderGraph.ts `assertOutputNotASource`
- * (path.resolve, then case-folded on win32 / darwin) for absolute paths: `.` and `..` segments, repeated
- * and trailing separators are collapsed lexically, and on Windows `/` and `\` are equivalent.
+ * where `node:path` is not available. Mirrors electron/export/renderGraph.ts `assertOutputNotASource` and
+ * electron/pathSafety.ts (path.resolve, then case-folded on every platform) for absolute paths: `.` and `..`
+ * segments, repeated and trailing separators are collapsed lexically, and on Windows `/` and `\` are equivalent.
  *
  * It does not follow symlinks (the renderer cannot); the main-process exporter and subtitle writer
  * (electron/pathSafety.ts) additionally canonicalize with realpath and compare device + inode. Pure: no DOM,
  * no Node.
  */
 
-/** Platforms whose default file systems compare names case-insensitively. Unknown → fold (stricter). */
-export function foldsPathCase(platform: string | undefined): boolean {
-  return platform === undefined || platform === 'win32' || platform === 'darwin';
+/**
+ * Whether path comparisons fold case on `platform`: always, like video export and the main-process subtitle
+ * check. A case-sensitive volume can hold two names that differ only in case, and refusing to write the other one
+ * is harmless; not folding would miss a case-insensitive volume mounted on Linux (vfat / exFAT / NTFS / SMB) or a
+ * case-insensitive APFS volume. `platform` only decides the path syntax (resolveAbsolutePath).
+ */
+export function foldsPathCase(_platform?: string): boolean {
+  return true;
 }
 
 function looksWindows(p: string, platform: string | undefined): boolean {
@@ -51,7 +56,7 @@ export function resolveAbsolutePath(p: string, platform: string | undefined): st
   return root + parts.join(sep);
 }
 
-/** Comparison key for an absolute path on `platform` (resolved, case-folded where the OS folds), or null. */
+/** Comparison key for an absolute path on `platform` (resolved, case-folded), or null. */
 export function pathCompareKey(p: string, platform: string | undefined): string | null {
   const r = resolveAbsolutePath(p, platform);
   if (r === null) return null;

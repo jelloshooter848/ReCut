@@ -19,7 +19,7 @@ import {
 } from './renderGraph';
 import { ensureDirSafe } from '../safeMkdir';
 import { canonicalPath, fileIdentity } from '../pathSafety';
-import { adaptFfmpegArgs, ffmpegMajorVersionSync, getFfmpegPath } from '../media/ffmpeg';
+import { adaptFfmpegArgs, ffmpegFileArg, ffmpegMajorVersionSync, getFfmpegPath } from '../media/ffmpeg';
 import { ffmpegMissingMessage } from '../../shared/ipc';
 import { CHUNK_MAX_AUDIO_SEGMENTS, CHUNK_MAX_SEGMENTS, planExportChunks, sampleIndexAt, shouldChunk, type ExportChunk } from './chunks';
 
@@ -44,14 +44,12 @@ export function exportStatPath(p: string): ExportPathStat | null {
   return { id: identityKey(p), isDirectory };
 }
 
-/** ffmpeg input / output argument for a file path: a `file:` URL, so `tee:`, `concat:`, `http:` ... are never protocols. */
-function ffmpegFile(p: string): string {
-  return `file:${p}`;
-}
-
-/** `args` with every `-i` value as a `file:` URL. */
+/**
+ * `args` with every `-i` value as a `file:` URL (ffmpegFileArg, electron/media/ffmpeg.ts), so `tee:`, `concat:`,
+ * `http:` ... are never protocols and a relative path is refused rather than read relative to the main process cwd.
+ */
 function fileInputs(args: string[]): string[] {
-  return args.map((a, i) => (i > 0 && args[i - 1] === '-i' ? ffmpegFile(a) : a));
+  return args.map((a, i) => (i > 0 && args[i - 1] === '-i' ? ffmpegFileArg(a) : a));
 }
 
 function randomToken(): string {
@@ -271,7 +269,7 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
       const scriptPath = path.join(tmpDir, 'filter.txt');
       fs.writeFileSync(scriptPath, graph.filterGraph, 'utf8');
       const args = fileInputs(graph.args.map((a) => (a === FILTER_SCRIPT_TOKEN ? scriptPath : a)));
-      args[args.length - 1] = ffmpegFile(partPath);
+      args[args.length - 1] = ffmpegFileArg(partPath);
       onProgress?.(0, 'Starting ffmpeg');
       await runFfmpeg(args, graph.durationSec, onProgress, signal, opts.onSpawn);
     }
@@ -419,7 +417,7 @@ async function runChunkedExport(
     fs.writeFileSync(script, g.filterGraph, 'utf8');
     const out = path.join(tmpDir, `chunk-${tag}.mp4`);
     const args = ['-hide_banner', '-nostdin', '-y', '-filter_complex_threads', '2', ...fileInputs(oneThread(g.inputArgs)), '-filter_complex_script', script, '-map', '[vout]',
-      ...g.videoCodecArgs, ...chunkGopArgs(g.videoCodecArgs), '-an', '-t', sec(Math.max(g.durationSec, g.outputDurationSec)), '-f', 'mp4', ffmpegFile(out)];
+      ...g.videoCodecArgs, ...chunkGopArgs(g.videoCodecArgs), '-an', '-t', sec(Math.max(g.durationSec, g.outputDurationSec)), '-f', 'mp4', ffmpegFileArg(out)];
     await step(i, c, 'video', args, g.durationSec, W_VIDEO * (c.endF - c.startF) / total);
     try { fs.unlinkSync(script); } catch { /* best effort */ }
     videoFiles.push(out);
@@ -433,7 +431,7 @@ async function runChunkedExport(
     fs.writeFileSync(script, g.filterGraph, 'utf8');
     const out = path.join(tmpDir, `chunk-${tag}.wav`);
     const args = ['-hide_banner', '-nostdin', '-y', '-filter_complex_threads', '2', ...fileInputs(oneThread(g.inputArgs)), '-filter_complex_script', script, '-map', '[aout]',
-      '-c:a', 'pcm_f32le', '-ar', String(g.sampleRate), '-ac', String(g.channels), '-vn', '-f', 'wav', ffmpegFile(out)];
+      '-c:a', 'pcm_f32le', '-ar', String(g.sampleRate), '-ac', String(g.channels), '-vn', '-f', 'wav', ffmpegFileArg(out)];
     await step(i, c, 'audio', args, (c.endF - c.startF) * fd, W_AUDIO * (c.endF - c.startF) / total);
     try { fs.unlinkSync(script); } catch { /* best effort */ }
     audioFiles.push(out);
@@ -445,9 +443,9 @@ async function runChunkedExport(
   fs.writeFileSync(aList, concatList(audioFiles), 'utf8');
   const hevc = full.videoCodecArgs.includes('libx265');
   const args = ['-hide_banner', '-nostdin', '-y',
-    '-f', 'concat', '-safe', '0', '-i', ffmpegFile(vList), '-f', 'concat', '-safe', '0', '-i', ffmpegFile(aList),
+    '-f', 'concat', '-safe', '0', '-i', ffmpegFileArg(vList), '-f', 'concat', '-safe', '0', '-i', ffmpegFileArg(aList),
     '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', ...(hevc ? ['-tag:v', 'hvc1'] : []), ...full.audioCodecArgs,
-    '-movflags', '+faststart', '-t', sec(Math.max(full.durationSec, full.outputDurationSec)), '-f', 'mp4', ffmpegFile(partPath)];
+    '-movflags', '+faststart', '-t', sec(Math.max(full.durationSec, full.outputDurationSec)), '-f', 'mp4', ffmpegFileArg(partPath)];
   try {
     if (signal?.aborted) throw new Error('Export canceled');
     await runFfmpeg(args, full.durationSec, (p) => report(W_MUX, p, `Joining ${n} chunks`), signal, onSpawn);

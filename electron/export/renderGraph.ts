@@ -14,6 +14,7 @@ import type { ExportRequest } from '@shared/ipc';
 import { clipEnd, sequenceDuration, sourceTimeAt, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN } from '@shared/timeline';
 import { framesToSeconds, isValidFps } from '@shared/time';
 import { serializeSrt } from '@shared/subtitles';
+import { videoDisplaySize } from '@shared/media';
 
 /** Placeholder in `args` for the path of the filter script file (see exporter.ts). */
 export const FILTER_SCRIPT_TOKEN = '__FILTER_SCRIPT__';
@@ -506,23 +507,13 @@ function transformFilters(ctx: Ctx, seg: ClipSeg): string[] {
 function clamp01(v: number): number { return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0; }
 
 /**
- * Size of a probed video stream as fitFilters' fit scale receives it: the display axes (width / height are
- * already swapped for 90 / 270 rotation) un-squeezed by the sample aspect ratio, rounded like the first scale in
- * fitFilters. A stored SAR that is missing or not a sane positive ratio counts as square. Null when unknown.
+ * Size of a probed video stream as fitFilters' fit scale receives it: the display axes un-squeezed by the sample
+ * aspect ratio, rounded like the first scale in fitFilters (shared/media.ts videoDisplaySize, 'filter' mode).
+ * Null when unknown.
  */
 function fitInputSize(v: VideoStreamInfo | undefined): { w: number; h: number } | null {
-  if (!v || !(v.width > 0) || !(v.height > 0)) return null;
-  const s = v.sar as unknown as { num?: unknown; den?: unknown } | undefined;
-  let sar = 1;
-  if (s && typeof s === 'object' && Number.isSafeInteger(s.num) && Number.isSafeInteger(s.den) && (s.num as number) > 0 && (s.den as number) > 0) {
-    const r = (s.num as number) / (s.den as number);
-    if (r >= 1 / 16 && r <= 16) sar = r;
-  }
-  // Autorotate transposes a 90 / 270 stream, which inverts its SAR.
-  if (v.rotation === 90 || v.rotation === 270) sar = 1 / sar;
-  if (sar > 1.000001) return { w: Math.max(2, Math.round(v.width * sar / 2) * 2), h: v.height };
-  if (sar < 0.999999) return { w: v.width, h: Math.max(2, Math.round(v.height / sar / 2) * 2) };
-  return { w: v.width, h: v.height };
+  const d = videoDisplaySize(v, 'filter');
+  return d && { w: d.width, h: d.height };
 }
 
 /**

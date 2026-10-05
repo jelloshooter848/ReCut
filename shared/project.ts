@@ -8,6 +8,7 @@ import type {
 import { uid } from './ids';
 import { makeTrack, defaultTransform, defaultAudio, reconcileTransitions, SPEED_PERCENT_MIN, SPEED_PERCENT_MAX } from './timeline';
 import { isValidFps, parseFps } from './time';
+import { saneSar } from './media';
 import {
   MAX_TIMELINE_FRAMES, MAX_SOURCE_SECONDS, MAX_PROJECT_DEPTH, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX, PROXY_HEIGHTS,
   AUTOSAVE_INTERVAL_MIN_SEC, AUTOSAVE_INTERVAL_MAX_SEC, DEFAULT_TRANSITION_FRAMES_MIN, DEFAULT_TRANSITION_FRAMES_MAX,
@@ -853,6 +854,8 @@ function repairVideoStream(v: Obj): VideoStreamInfo {
   v.isVfr = bool(v.isVfr, false);
   optional(v, 'pixFmt', isStr); optional(v, 'colorSpace', isStr);
   for (const k of ['rotation', 'codedWidth', 'codedHeight', 'startTime']) optional(v, k, isFiniteNum);
+  // Sample aspect ratio: positive safe integers with a ratio in MIN_SAR..MAX_SAR (shared/media.ts), else dropped.
+  if ('sar' in v) { const sar = saneSar(v.sar); if (sar) v.sar = sar; else { delete v.sar; note(FIELD_RESET); } }
   return v as unknown as VideoStreamInfo;
 }
 

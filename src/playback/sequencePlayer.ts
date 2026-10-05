@@ -17,25 +17,16 @@ import { MediaElementPool } from './elementPool';
 import { planFrame, type FramePlan, type LayerPlan, type AudioPlan, type MissingMedia } from './planner';
 import { clampElementTime, toElementTime } from './mediaSource';
 import { pathToMediaUrl } from '../../shared/ipc';
+import { videoDisplaySize } from '../../shared/media';
 
 /**
  * Display size of a probed video stream, as Chromium reports it in videoWidth / videoHeight: the storage size
  * stretched by the sample aspect ratio (wider for SAR > 1, taller for SAR < 1; width / height are already the
  * rotated axes, and SAR stretches the storage x axis). A missing or insane stored SAR counts as square.
- * Null when the size is unknown.
+ * Null when the size is unknown. (shared/media.ts videoDisplaySize, 'element' mode.)
  */
 export function probedDisplaySize(v: VideoStreamInfo | undefined): { width: number; height: number } | null {
-  if (!v || !(v.width > 0) || !(v.height > 0)) return null;
-  const s = v.sar as unknown as { num?: unknown; den?: unknown } | null | undefined;
-  let sar = 1;
-  if (s && typeof s === 'object' && Number.isSafeInteger(s.num) && Number.isSafeInteger(s.den) && (s.num as number) > 0 && (s.den as number) > 0) {
-    const r = (s.num as number) / (s.den as number);
-    if (r >= 1 / 16 && r <= 16) sar = r;
-  }
-  const swap = v.rotation === 90 || v.rotation === 270;
-  let w = swap ? v.height : v.width, h = swap ? v.width : v.height; // storage axes
-  if (sar > 1) w = Math.round(w * sar); else if (sar < 1) h = Math.round(h / sar);
-  return swap ? { width: h, height: w } : { width: w, height: h };
+  return videoDisplaySize(v, 'element');
 }
 
 /** Decoded still images shared by every player, keyed by file path (LRU-capped). */
