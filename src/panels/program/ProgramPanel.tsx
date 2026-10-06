@@ -232,6 +232,12 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
     };
   }, [frameSig, scheduleStatus]);
 
+  // ---- canvas resolution never exceeds what the monitor shows (device pixels) ----
+  useEffect(() => {
+    const dpr = window.devicePixelRatio || 1;
+    playerRef.current?.setDisplaySize(box.w * dpr, box.h * dpr);
+  }, [box.w, box.h]);
+
   // ---- transport registration ----
   useEffect(() => {
     const t = createProgramTransport({ player: () => playerRef.current, setLoop: (on) => setLoopOn(on), loopOn: () => prefs.loop });
