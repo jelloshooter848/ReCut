@@ -15,7 +15,7 @@ import { clipOverlaps, clipVisiblePx, visibleRange, layoutTracks, zoomToFit } fr
 import { sequenceDuration } from '../../shared/timeline';
 // @ts-expect-error plain JS module shared with the Electron harness
 import { buildBigProject } from './bigProject.mjs';
-import { bench, flush, ms, record, round } from './_report';
+import { bench, flush, GUARDRAIL, ms, record, round } from './_report';
 
 const FPS = { num: 24, den: 1 };
 const S = () => useStore.getState();
@@ -45,22 +45,22 @@ describe('panels @ large project', () => {
     let rows = buildBinRows(input);
     record({ section: 'project', metric: 'rows (bins mode, all scenes expanded)', value: rows.length, unit: 'rows' });
     const b = bench(20, () => { rows = buildBinRows(input); });
-    ms('project', 'buildBinRows all expanded (median)', b.median, 16);
+    ms('project', 'buildBinRows all expanded (median)', b.median, 16, undefined, GUARDRAIL);
     const tree = seriesTree(S());
     const bs = bench(20, () => { buildSeriesRows(tree, input); });
-    ms('project', 'buildSeriesRows all expanded (median)', bs.median, 16);
+    ms('project', 'buildSeriesRows all expanded (median)', bs.median, 16, undefined, GUARDRAIL);
     const st = bench(20, () => { seriesTree(S()); });
-    ms('project', 'seriesTree (median)', st.median, 5);
+    ms('project', 'seriesTree (median)', st.median, 5, undefined, GUARDRAIL);
     const grid = bench(10, () => { buildBinRows({ ...input, view: 'grid' }); });
-    ms('project', 'buildBinRows grid/chunkCards (median)', grid.median, 16);
+    ms('project', 'buildBinRows grid/chunkCards (median)', grid.median, 16, undefined, GUARDRAIL);
     // Search typing: every keystroke rebuilds the rows with the new query (filtering also forces bins open).
     const q = 'series 3 e04';
     const per: number[] = [];
     for (let i = 1; i <= q.length; i++) { const t = performance.now(); buildBinRows({ ...input, query: q.slice(0, i) }); per.push(performance.now() - t); }
-    ms('project', 'search keystroke -> rows rebuilt (max over query)', Math.max(...per), 16);
-    ms('project', 'search keystroke -> rows rebuilt (mean)', per.reduce((a, c) => a + c, 0) / per.length, 8);
+    ms('project', 'search keystroke -> rows rebuilt (max over query)', Math.max(...per), 16, undefined, GUARDRAIL);
+    ms('project', 'search keystroke -> rows rebuilt (mean)', per.reduce((a, c) => a + c, 0) / per.length, 8, undefined, GUARDRAIL);
     const hay = bench(5, () => { const terms = searchTerms('dawn'); for (const m of Object.values(p.media)) mediaMatches(m, terms); });
-    ms('project', 'mediaMatches x60 (haystack rebuilt per call)', hay.median, 2);
+    ms('project', 'mediaMatches x60 (haystack rebuilt per call)', hay.median, 2, undefined, GUARDRAIL);
     expect(rows.length).toBeGreaterThan(3000);
   });
 
@@ -68,22 +68,22 @@ describe('panels @ large project', () => {
     const p = S().project;
     let idx = buildTranscriptIndex(p);
     const ib = bench(10, () => { idx = buildTranscriptIndex(p); });
-    ms('transcript', 'buildTranscriptIndex (median)', ib.median, 50, 'rebuilt whenever project.media or subtitleTracks identity changes');
+    ms('transcript', 'buildTranscriptIndex (median)', ib.median, 50, 'rebuilt whenever project.media or subtitleTracks identity changes', GUARDRAIL);
     record({ section: 'transcript', metric: 'indexed cues', value: idx.stats.cues, unit: '' });
     let res = searchTranscript(idx, 'the', { kind: 'project' }, { limit: 1000 });
     const sb = bench(20, () => { res = searchTranscript(idx, 'the', { kind: 'project' }, { limit: 1000 }); });
-    ms('transcript', 'searchTranscript "the" project scope (median)', sb.median, 16);
+    ms('transcript', 'searchTranscript "the" project scope (median)', sb.median, 16, undefined, GUARDRAIL);
     record({ section: 'transcript', metric: 'matches for "the" (total / returned)', value: `${res.total} / ${res.matches.length}`, unit: '' });
     const sw = bench(10, () => { searchTranscript(idx, 'the', { kind: 'project' }, { limit: 1000, wholeWord: true }); });
-    ms('transcript', 'searchTranscript "the" whole-word (median)', sw.median, 16);
+    ms('transcript', 'searchTranscript "the" whole-word (median)', sw.median, 16, undefined, GUARDRAIL);
     const sr = bench(10, () => { searchTranscript(idx, 'th[ei]', { kind: 'project' }, { limit: 1000, regex: true }); });
-    ms('transcript', 'searchTranscript regex th[ei] (median)', sr.median, 16);
+    ms('transcript', 'searchTranscript regex th[ei] (median)', sr.median, 16, undefined, GUARDRAIL);
     const seqScope = bench(5, () => { searchTranscript(idx, 'the', { kind: 'sequence', sequenceId: big.seqId }, { limit: 1000 }); });
-    ms('transcript', 'searchTranscript "the" sequence scope (2500 clips; median)', seqScope.median, 50, 'timelineHitsFor scans every clip per match');
+    ms('transcript', 'searchTranscript "the" sequence scope (2500 clips; median)', seqScope.median, 50, 'timelineHitsFor scans every clip per match', GUARDRAIL);
     // Debounced keystroke cost: t, th, the
     const per: number[] = [];
     for (const q of ['t', 'th', 'the', 'the ', 'the s', 'the sh']) { const t = performance.now(); searchTranscript(idx, q, { kind: 'project' }, { limit: 1000 }); per.push(performance.now() - t); }
-    ms('transcript', 'keystroke search cost (max over "the sh")', Math.max(...per), 16);
+    ms('transcript', 'keystroke search cost (max over "the sh")', Math.max(...per), 16, undefined, GUARDRAIL);
     expect(res.total).toBeGreaterThan(100);
   });
 
@@ -95,19 +95,19 @@ describe('panels @ large project', () => {
     if (!mod) return;
     const { EMPTY_FILTERS, matchesFilters, compareScenes, groupScenes, collectFacets } = mod;
     const f = bench(20, () => { collectFacets(all); });
-    ms('scenes', 'collectFacets (median)', f.median, 5);
+    ms('scenes', 'collectFacets (median)', f.median, 5, undefined, GUARDRAIL);
     const per: number[] = [];
     for (const q of ['t', 'th', 'the', 'the ', 'the s']) {
       const t = performance.now();
       all.filter((s) => matchesFilters(s, { ...EMPTY_FILTERS, query: q }, p.media[s.mediaId])).sort((a, b) => compareScenes(a, b, 'name', 1, p.media));
       per.push(performance.now() - t);
     }
-    ms('scenes', 'filter+sort per keystroke (max)', Math.max(...per), 16);
-    ms('scenes', 'filter+sort per keystroke (mean)', per.reduce((a, c) => a + c, 0) / per.length, 8);
+    ms('scenes', 'filter+sort per keystroke (max)', Math.max(...per), 16, undefined, GUARDRAIL);
+    ms('scenes', 'filter+sort per keystroke (mean)', per.reduce((a, c) => a + c, 0) / per.length, 8, undefined, GUARDRAIL);
     const g = bench(20, () => { groupScenes(all, 'character', p.media); });
-    ms('scenes', 'groupScenes by character (median)', g.median, 5);
+    ms('scenes', 'groupScenes by character (median)', g.median, 5, undefined, GUARDRAIL);
     const srt = bench(20, () => { [...all].sort((a, b) => compareScenes(a, b, 'source', 1, p.media)); });
-    ms('scenes', 'sort by source (localeCompare of labels; median)', srt.median, 16);
+    ms('scenes', 'sort by source (localeCompare of labels; median)', srt.median, 16, undefined, GUARDRAIL);
     expect(all.length).toBe(400);
   });
 
@@ -137,7 +137,7 @@ describe('panels @ large project', () => {
           void clipsById;
         }
       });
-      ms('timeline', `render culling loop @ ${label} (median)`, b.median, 2, `${visible} clips visible, zoom=${round(zoom, 4)}`);
+      ms('timeline', `render culling loop @ ${label} (median)`, b.median, 2, `${visible} clips visible, zoom=${round(zoom, 4)}`, GUARDRAIL);
       record({ section: 'timeline', metric: `clips mounted @ ${label}`, value: visible, unit: 'clips' });
     }
   });

@@ -66,6 +66,14 @@ export interface StoreState {
   project: Project;
   projectPath: string | null;
   dirty: boolean;
+  /**
+   * Bumped by every write that makes the project differ from its file (each one that sets `dirty`) and by
+   * newProject / loadProjectData. A save records it when it snapshots the project; `markSaved` clears `dirty` only
+   * if it is unchanged when the write lands (edits made during the save stay unsaved).
+   */
+  revision: number;
+  /** `revision` right after the last newProject / loadProjectData: a save that started before it wrote another project. */
+  loadedRevision: number;
   history: HistoryState;
   /** Snapshot of `project` taken by beginTransaction(); null when no transaction is open. */
   transaction: Project | null;
@@ -138,7 +146,12 @@ export interface StoreActions {
   // ---- project ----
   newProject(name?: string): void;
   loadProjectData(project: Project, path: string | null): void;
-  markSaved(path: string): void;
+  /**
+   * The project was written to `path`. `revision`: the store's `revision` when the written snapshot was taken.
+   * Clears `dirty` only when no edit happened since; keeps it (but takes the path) when one did; does nothing when
+   * the project was replaced (new / open) since. Omitted: the current project was written.
+   */
+  markSaved(path: string, revision?: number): void;
   setSettings(patch: Partial<ProjectSettings>): void;
   renameProject(name: string): void;
 

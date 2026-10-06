@@ -22,7 +22,7 @@ import { JobQueue } from '../../electron/jobs/jobQueue';
 import { startProxyJob } from '../../electron/media/proxy';
 import { startSceneDetectJob } from '../../electron/media/sceneDetect';
 import { startExportJob } from '../../electron/export/exporter';
-import { benchAsync, flush, ms, now, record, round, rssMB, stats } from './_report';
+import { benchAsync, flush, GUARDRAIL, ms, now, record, round, rssMB, stats } from './_report';
 
 const SCRATCH = process.env.RECUT_PERF_SCRATCH || path.join(os.tmpdir(), 'recut-perf');
 const FFMPEG = process.env.RECUT_FFMPEG || 'ffmpeg';
@@ -74,20 +74,20 @@ describe('main-process media layer', () => {
 
   it('thumbnail: miss vs hit latency; filmstrip of 48 frames', async () => {
     const miss = await benchAsync(8, async (i) => { await getThumbnail({ path: SRC, time: 1 + i * 3.1, width: 96 }); });
-    ms('thumbs', 'thumbnail cache MISS (median of 8, 720p source)', miss.median, 300);
-    ms('thumbs', 'thumbnail cache MISS (max)', miss.max, 600);
+    ms('thumbs', 'thumbnail cache MISS (median of 8, 720p source)', miss.median, 300, undefined, GUARDRAIL);
+    ms('thumbs', 'thumbnail cache MISS (max)', miss.max, 600, undefined, GUARDRAIL);
     const hit = await benchAsync(50, async (i) => { await getThumbnail({ path: SRC, time: 1 + (i % 8) * 3.1, width: 96 }); });
-    ms('thumbs', 'thumbnail cache HIT (median of 50; stat+key hash+exists)', hit.median, 5);
-    ms('thumbs', 'thumbnail cache HIT (p95)', hit.p95, 10);
+    ms('thumbs', 'thumbnail cache HIT (median of 50; stat+key hash+exists)', hit.median, 5, undefined, GUARDRAIL);
+    ms('thumbs', 'thumbnail cache HIT (p95)', hit.p95, 10, undefined, GUARDRAIL);
     const times48 = Array.from({ length: 48 }, (_, i) => 5 + i * 1.1);
     const t = now(); const urls = await getFilmstrip({ path: SRC, times: times48, width: 128 }); const dt = now() - t;
-    ms('thumbs', 'filmstrip 48 frames cold (4 ffmpeg batches of 12, 3 concurrent)', dt, 3000);
-    record({ section: 'thumbs', metric: 'filmstrip 48 frames produced', value: urls.filter(Boolean).length, unit: '/48', pass: urls.filter(Boolean).length === 48 });
+    ms('thumbs', 'filmstrip 48 frames cold (4 ffmpeg batches of 12, 3 concurrent)', dt, 3000, undefined, GUARDRAIL);
+    record({ section: 'thumbs', metric: 'filmstrip 48 frames produced', value: urls.filter(Boolean).length, unit: '/48', pass: urls.filter(Boolean).length === 48 }, GUARDRAIL);
     const t2 = now(); await getFilmstrip({ path: SRC, times: times48, width: 128 }); const dt2 = now() - t2;
-    ms('thumbs', 'filmstrip 48 frames warm (all cached)', dt2, 50);
+    ms('thumbs', 'filmstrip 48 frames warm (all cached)', dt2, 50, undefined, GUARDRAIL);
     // Cold miss on the long file: ffmpeg -ss seeks within a 2 h stream.
     const longMiss = await benchAsync(5, async (i) => { await getThumbnail({ path: LONG, time: 3600 + i * 97, width: 96 }); });
-    ms('thumbs', 'thumbnail MISS deep inside long file (median)', longMiss.median, 500);
+    ms('thumbs', 'thumbnail MISS deep inside long file (median)', longMiss.median, 500, undefined, GUARDRAIL);
     expect(urls.filter(Boolean).length).toBeGreaterThan(40);
   });
 
@@ -95,13 +95,13 @@ describe('main-process media layer', () => {
     const key = await cacheKeyForPath(LONG);
     const r0 = rssMB();
     const w = await withPeakFfmpegRss(() => getWaveform(LONG, key));
-    ms('waveform', `waveform generate ${round(w.result.duration / 60)} min file (cold)`, w.ms, 60_000);
+    ms('waveform', `waveform generate ${round(w.result.duration / 60)} min file (cold)`, w.ms, 60_000, undefined, GUARDRAIL);
     record({ section: 'waveform', metric: 'peak RSS of ffmpeg decoder child (MB)', value: w.peakMB, unit: 'MB' });
     record({ section: 'waveform', metric: 'node RSS growth during waveform (MB)', value: round(rssMB() - r0), unit: 'MB' });
     record({ section: 'waveform', metric: 'peaks array bytes', value: w.result.peaks.length, unit: 'bytes', note: `${w.result.rate} buckets/s` });
-    const t = now(); await getWaveform(LONG, key); ms('waveform', 'waveform cached read', now() - t, 50);
+    const t = now(); await getWaveform(LONG, key); ms('waveform', 'waveform cached read', now() - t, 50, undefined, GUARDRAIL);
     const cw = await withPeakFfmpegRss(() => computeWaveform(SRC));
-    ms('waveform', 'waveform compute 60 s 720p source', cw.ms, 3000);
+    ms('waveform', 'waveform compute 60 s 720p source', cw.ms, 3000, undefined, GUARDRAIL);
     expect(w.result.peaks.length).toBeGreaterThan(1000);
   });
 
@@ -118,7 +118,7 @@ describe('main-process media layer', () => {
 
     // Baseline: thumbnail misses and a proxy with an idle machine.
     const idleThumb = await benchAsync(6, async (i) => { await getThumbnail({ path: SRC, time: 20 + i * 2.7, width: 96 }); });
-    ms('fairness', 'thumbnail MISS, idle (median)', idleThumb.median, 300);
+    ms('fairness', 'thumbnail MISS, idle (median)', idleThumb.median, 300, undefined, GUARDRAIL);
     const proxyTime = async (tag: string) => {
       const t = now(); const { job } = await startProxyJob(queue, { mediaId: 'm1', path: SRC, height: 540 });
       const final = await queue.waitFor(job.id);
@@ -126,16 +126,16 @@ describe('main-process media layer', () => {
       return { ms: round(now() - t), status: final.status, tag };
     };
     const p0 = await proxyTime('idle');
-    ms('fairness', 'proxy 540p of 60 s 720p, idle', p0.ms, 60_000, p0.status);
+    ms('fairness', 'proxy 540p of 60 s 720p, idle', p0.ms, 60_000, p0.status, GUARDRAIL);
 
     // Export running (x264 medium 1080p uses every core) -> proxies still start (separate lane) but how fast?
     const exp = await startExportJob(queue, { sequence: seq, media, settings, overwrite: true }); // scratch persists between runs
     expect(exp.ok).toBe(true);
     await sleep(1500);
     const busyThumb = await benchAsync(6, async (i) => { await getThumbnail({ path: SRC, time: 30 + i * 2.7, width: 96 }); });
-    ms('fairness', 'thumbnail MISS while export encodes (median)', busyThumb.median, 600, `x${round(busyThumb.median / Math.max(1, idleThumb.median), 1)} slower`);
+    ms('fairness', 'thumbnail MISS while export encodes (median)', busyThumb.median, 600, `x${round(busyThumb.median / Math.max(1, idleThumb.median), 1)} slower`, GUARDRAIL);
     const p1 = await proxyTime('during export');
-    ms('fairness', 'proxy 540p while export encodes', p1.ms, 120_000, `${p1.status}; x${round(p1.ms / Math.max(1, p0.ms), 1)} slower`);
+    ms('fairness', 'proxy 540p while export encodes', p1.ms, 120_000, `${p1.status}; x${round(p1.ms / Math.max(1, p0.ms), 1)} slower`, GUARDRAIL);
     record({ section: 'fairness', metric: 'export still running after proxy finished', value: String(queue.list().some((j) => j.kind === 'export' && j.status === 'running')), unit: '' });
     if (exp.ok) queue.cancel(exp.jobId);
     await sleep(500);
@@ -148,20 +148,20 @@ describe('main-process media layer', () => {
     const { job: pj } = await startProxyJob(queue, { mediaId: 'm1', path: SRC, height: 540 });
     await sleep(8000);
     const pjNow = queue.get(pj.id)!;
-    record({ section: 'fairness', metric: 'proxy status 8 s after queueing behind 2 long scene detects', value: pjNow.status, unit: '', threshold: 'running', pass: pjNow.status === 'running', note: 'media lane concurrency = 2; scene detect of a 2 h file holds a slot for minutes' });
+    record({ section: 'fairness', metric: 'proxy status 8 s after queueing behind 2 long scene detects', value: pjNow.status, unit: '', threshold: 'running', pass: pjNow.status === 'running', note: 'media lane concurrency = 2; scene detect of a 2 h file holds a slot for minutes' }, GUARDRAIL);
     const sdThumb = await benchAsync(6, async (i) => { await getThumbnail({ path: SRC, time: 40 + i * 2.7, width: 96 }); });
-    ms('fairness', 'thumbnail MISS while 2 scene detects run (median)', sdThumb.median, 600, `x${round(sdThumb.median / Math.max(1, idleThumb.median), 1)} slower`);
+    ms('fairness', 'thumbnail MISS while 2 scene detects run (median)', sdThumb.median, 600, `x${round(sdThumb.median / Math.max(1, idleThumb.median), 1)} slower`, GUARDRAIL);
     const sdProgress = queue.get(sd1.id)!.progress;
     record({ section: 'fairness', metric: 'scene detect progress of 2 h file after ~10 s', value: round(sdProgress * 100, 2), unit: '%', note: `ETA ~${round((now() - tq) / 1000 / Math.max(0.0001, sdProgress) / 60, 1)} min each` });
     queue.cancel(sd1.id); queue.cancel(sd2.id);
     const final = await queue.waitFor(pj.id);
-    ms('fairness', 'proxy queued behind scene detects: wait+run until done', now() - tq, 120_000, final.status);
+    ms('fairness', 'proxy queued behind scene detects: wait+run until done', now() - tq, 120_000, final.status, GUARDRAIL);
     queue.cancelAll();
     await sleep(300);
     // In-flight thumbnail semaphore: 20 simultaneous misses -> 3 at a time.
     const t = now();
     await Promise.all(Array.from({ length: 20 }, (_, i) => getThumbnail({ path: SRC, time: 50 + i * 0.37, width: 96 })));
-    ms('fairness', '20 concurrent thumbnail misses (MAX_CONCURRENT=3)', now() - t, 3000);
+    ms('fairness', '20 concurrent thumbnail misses (MAX_CONCURRENT=3)', now() - t, 3000, undefined, GUARDRAIL);
     const s = stats([idleThumb.median, busyThumb.median, sdThumb.median]);
     record({ section: 'fairness', metric: 'thumbnail miss median idle / export / scenedetect', value: `${idleThumb.median} / ${busyThumb.median} / ${sdThumb.median}`, unit: 'ms', note: `max ${s.max}` });
   });

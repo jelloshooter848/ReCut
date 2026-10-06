@@ -1,0 +1,1299 @@
+{
+  "about": "Medians of the guardrail and diagnostic rows of tests/perf, keyed by \"<suite>|<section>|<metric>\". perf-check.mjs compares guardrails against it (REGRESSION_RULE) and shows the trend of diagnostics. Change it only in a PR that says why: an accepted cost of a feature, or locking in an improvement. See docs/DEVELOPMENT.md -> Performance gate.",
+  "rule": "guardrail FAIL when the median of >= 2 runs > 1.5 x baseline median and exceeds it by more than 2 ms / 8 MB (other units: no floor)",
+  "reason": "Initial seed of the tiered gate (2026-10-06): 2 node + 2 Electron runs on main 16f707a (Phase 1 workstreams B, C, D merged), run alone under the perf lock; electron run 2 was re-run after a Playwright 'promise was garbage collected' crash in the main-process section.",
+  "commit": "16f707af3bebce971ab3d559b389d499a8bef08f",
+  "date": "2026-10-06",
+  "machine": {
+    "nproc": 4,
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "memGB": 16,
+    "platform": "linux 6.18.44-fc-v70",
+    "node": "v22.22.0",
+    "ffmpeg": "ffmpeg version 6.1.1-3ubuntu5",
+    "notes": "Shared Linux cloud container, xvfb + software GL (RECUT_DISABLE_GPU=1); 1-min load average 1.9-3.7 before the suites (it idles around 2 on this VM)."
+  },
+  "runs": {
+    "count": 2,
+    "suites": [
+      "store",
+      "panels",
+      "main",
+      "export",
+      "electron"
+    ],
+    "dirs": [
+      "seed/run-1",
+      "seed/run-2"
+    ]
+  },
+  "rows": {
+    "store|commit|insertFromSource overwrite (median)": {
+      "tier": "guardrail",
+      "median": 1.27,
+      "min": 1.12,
+      "max": 1.41,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|commit|insertFromSource overwrite (p95)": {
+      "tier": "guardrail",
+      "median": 1.77,
+      "min": 1.48,
+      "max": 2.06,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms"
+    },
+    "store|commit|insertFromSource insert/ripple (median)": {
+      "tier": "guardrail",
+      "median": 5.42,
+      "min": 5.36,
+      "max": 5.48,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|commit|insertFromSource insert/ripple (p95)": {
+      "tier": "guardrail",
+      "median": 8.61,
+      "min": 8.1,
+      "max": 9.11,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms"
+    },
+    "store|commit|razor all tracks (median)": {
+      "tier": "guardrail",
+      "median": 4.63,
+      "min": 4.43,
+      "max": 4.82,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|commit|razor all tracks (p95)": {
+      "tier": "guardrail",
+      "median": 8.58,
+      "min": 8.44,
+      "max": 8.72,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms"
+    },
+    "store|commit|moveClips 1 clip overwrite (median)": {
+      "tier": "guardrail",
+      "median": 0.75,
+      "min": 0.75,
+      "max": 0.75,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|commit|moveClips (p95)": {
+      "tier": "guardrail",
+      "median": 1.15,
+      "min": 1.14,
+      "max": 1.17,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms"
+    },
+    "store|commit|moveClips 1 clip insert/ripple (median)": {
+      "tier": "guardrail",
+      "median": 3.86,
+      "min": 3.82,
+      "max": 3.89,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|commit|rippleDeleteSelected 1 clip (median)": {
+      "tier": "guardrail",
+      "median": 1.42,
+      "min": 1.42,
+      "max": 1.43,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|commit|rippleDeleteSelected (p95)": {
+      "tier": "guardrail",
+      "median": 2.32,
+      "min": 2.27,
+      "max": 2.36,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms"
+    },
+    "store|commit|deleteSelected 1 clip (median)": {
+      "tier": "guardrail",
+      "median": 0.86,
+      "min": 0.83,
+      "max": 0.88,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|commit|setClipEnabled (tiny commit, median)": {
+      "tier": "guardrail",
+      "median": 0.11,
+      "min": 0.11,
+      "max": 0.11,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 8 ms"
+    },
+    "store|commit|addTransitionAtCut (median)": {
+      "tier": "guardrail",
+      "median": 0.14,
+      "min": 0.13,
+      "max": 0.15,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 8 ms"
+    },
+    "store|commit|addMarker (median)": {
+      "tier": "guardrail",
+      "median": 0.14,
+      "min": 0.13,
+      "max": 0.15,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 8 ms"
+    },
+    "store|commit|setClipSpeed ripple (median)": {
+      "tier": "guardrail",
+      "median": 2.68,
+      "min": 2.6,
+      "max": 2.75,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|view|setView playhead, no selection (mean of 1000)": {
+      "tier": "guardrail",
+      "median": 0.04,
+      "min": 0.04,
+      "max": 0.04,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 0.5 ms"
+    },
+    "store|view|setView playhead, 100 clips selected (mean)": {
+      "tier": "guardrail",
+      "median": 0.04,
+      "min": 0.04,
+      "max": 0.04,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 0.5 ms"
+    },
+    "store|view|setView playhead, all 2500 selected (mean)": {
+      "tier": "guardrail",
+      "median": 0.04,
+      "min": 0.04,
+      "max": 0.04,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 1 ms"
+    },
+    "store|view|setView scroll (mean of 500)": {
+      "tier": "guardrail",
+      "median": 0.04,
+      "min": 0.04,
+      "max": 0.04,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 0.5 ms"
+    },
+    "store|history|undo (median of 30)": {
+      "tier": "guardrail",
+      "median": 0.4,
+      "min": 0.39,
+      "max": 0.4,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|history|undo (max)": {
+      "tier": "guardrail",
+      "median": 1,
+      "min": 0.99,
+      "max": 1.02,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms"
+    },
+    "store|history|redo (median of 30)": {
+      "tier": "guardrail",
+      "median": 0.36,
+      "min": 0.34,
+      "max": 0.37,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|history|redo (max)": {
+      "tier": "guardrail",
+      "median": 0.62,
+      "min": 0.58,
+      "max": 0.65,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms"
+    },
+    "store|memory|heap growth over 300 commits (MB)": {
+      "tier": "guardrail",
+      "median": 2.54,
+      "min": 2.53,
+      "max": 2.54,
+      "n": 2,
+      "unit": "MB",
+      "threshold": "<= 150 MB"
+    },
+    "store|memory|history.past.length after 300 commits": {
+      "tier": "guardrail",
+      "median": 200,
+      "min": 200,
+      "max": 200,
+      "n": 2,
+      "unit": "",
+      "threshold": "== limit 200"
+    },
+    "store|io|serializeProject (pretty JSON, median of 3)": {
+      "tier": "diagnostic",
+      "median": 153.01,
+      "min": 151.11,
+      "max": 154.9,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 100 ms",
+      "reference": true
+    },
+    "store|io|JSON.parse (median of 3)": {
+      "tier": "diagnostic",
+      "median": 146.78,
+      "min": 146.3,
+      "max": 147.25,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 100 ms",
+      "reference": true
+    },
+    "store|io|normalizeProject (median of 3)": {
+      "tier": "guardrail",
+      "median": 124.16,
+      "min": 120.5,
+      "max": 127.82,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 100 ms",
+      "reference": true
+    },
+    "store|io|structuredClone(project) ~ IPC cost one way (median of 3)": {
+      "tier": "diagnostic",
+      "median": 228.81,
+      "min": 225.67,
+      "max": 231.94,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 100 ms",
+      "reference": true
+    },
+    "store|io|serializeForSave (immer produce stamping modifiedAt)": {
+      "tier": "guardrail",
+      "median": 0.02,
+      "min": 0.01,
+      "max": 0.02,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 20 ms"
+    },
+    "store|io|loadProjectData (store set + pruneUi)": {
+      "tier": "guardrail",
+      "median": 0.07,
+      "min": 0.06,
+      "max": 0.07,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 20 ms"
+    },
+    "store|frame|planFrame (median over 240 frames)": {
+      "tier": "guardrail",
+      "median": 0.02,
+      "min": 0.02,
+      "max": 0.02,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 2 ms"
+    },
+    "store|frame|planFrame (max)": {
+      "tier": "guardrail",
+      "median": 1.77,
+      "min": 1.73,
+      "max": 1.81,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 4 ms"
+    },
+    "store|frame|sequenceDuration (mean)": {
+      "tier": "guardrail",
+      "median": 0.11,
+      "min": 0.11,
+      "max": 0.11,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 0.2 ms"
+    },
+    "store|frame|findClip by id (mean, linear scan)": {
+      "tier": "guardrail",
+      "median": 0.05,
+      "min": 0.04,
+      "max": 0.05,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 0.1 ms"
+    },
+    "store|frame|resolveSubtitleCues 8000 cues (median)": {
+      "tier": "guardrail",
+      "median": 2.37,
+      "min": 1.87,
+      "max": 2.86,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|frame|planFrame with subtitle tracks (median)": {
+      "tier": "guardrail",
+      "median": 0.03,
+      "min": 0.02,
+      "max": 0.03,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 2 ms"
+    },
+    "store|long|planFrame multi-hour (median over 240 frames)": {
+      "tier": "guardrail",
+      "median": 0.01,
+      "min": 0.01,
+      "max": 0.01,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 2 ms"
+    },
+    "store|long|planFrame multi-hour (max)": {
+      "tier": "guardrail",
+      "median": 1.3,
+      "min": 1.28,
+      "max": 1.31,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 4 ms"
+    },
+    "store|long|sequenceDuration multi-hour (mean)": {
+      "tier": "guardrail",
+      "median": 0.14,
+      "min": 0.13,
+      "max": 0.15,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 0.2 ms"
+    },
+    "store|long|multi-hour insertFromSource insert/ripple (median)": {
+      "tier": "guardrail",
+      "median": 8.96,
+      "min": 8.69,
+      "max": 9.22,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|long|multi-hour razor all tracks (median)": {
+      "tier": "guardrail",
+      "median": 4.08,
+      "min": 4.07,
+      "max": 4.09,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|long|multi-hour moveClips 1 clip overwrite (median)": {
+      "tier": "guardrail",
+      "median": 2.04,
+      "min": 2.02,
+      "max": 2.06,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|long|multi-hour rippleDeleteSelected 1 clip (median)": {
+      "tier": "guardrail",
+      "median": 3.53,
+      "min": 3.45,
+      "max": 3.6,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|long|multi-hour undo (median of 20)": {
+      "tier": "guardrail",
+      "median": 0.35,
+      "min": 0.33,
+      "max": 0.36,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "store|long|serializeProject incl. multi-hour (pretty JSON, median of 3)": {
+      "tier": "diagnostic",
+      "median": 180.62,
+      "min": 180.53,
+      "max": 180.7,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 100 ms",
+      "reference": true
+    },
+    "store|long|JSON.parse incl. multi-hour (median of 3)": {
+      "tier": "diagnostic",
+      "median": 183.31,
+      "min": 177.97,
+      "max": 188.64,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 100 ms",
+      "reference": true
+    },
+    "store|long|structuredClone(project) incl. multi-hour (median of 3)": {
+      "tier": "diagnostic",
+      "median": 536.42,
+      "min": 535.6,
+      "max": 537.25,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 100 ms",
+      "reference": true
+    },
+    "panels|project|buildBinRows all expanded (median)": {
+      "tier": "guardrail",
+      "median": 2.02,
+      "min": 1.97,
+      "max": 2.07,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "panels|project|buildSeriesRows all expanded (median)": {
+      "tier": "guardrail",
+      "median": 0.37,
+      "min": 0.36,
+      "max": 0.37,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "panels|project|seriesTree (median)": {
+      "tier": "guardrail",
+      "median": 0.06,
+      "min": 0.06,
+      "max": 0.06,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 5 ms"
+    },
+    "panels|project|buildBinRows grid/chunkCards (median)": {
+      "tier": "guardrail",
+      "median": 2.4,
+      "min": 2.38,
+      "max": 2.42,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "panels|project|search keystroke -> rows rebuilt (max over query)": {
+      "tier": "guardrail",
+      "median": 8.22,
+      "min": 8.21,
+      "max": 8.22,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "panels|project|search keystroke -> rows rebuilt (mean)": {
+      "tier": "guardrail",
+      "median": 4.58,
+      "min": 4.16,
+      "max": 5,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 8 ms"
+    },
+    "panels|project|mediaMatches x60 (haystack rebuilt per call)": {
+      "tier": "guardrail",
+      "median": 0.08,
+      "min": 0.06,
+      "max": 0.09,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 2 ms"
+    },
+    "panels|transcript|buildTranscriptIndex (median)": {
+      "tier": "guardrail",
+      "median": 1.42,
+      "min": 1.37,
+      "max": 1.46,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms"
+    },
+    "panels|transcript|searchTranscript \"the\" project scope (median)": {
+      "tier": "guardrail",
+      "median": 1.85,
+      "min": 1.7,
+      "max": 2,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "panels|transcript|searchTranscript \"the\" whole-word (median)": {
+      "tier": "guardrail",
+      "median": 1.17,
+      "min": 1.16,
+      "max": 1.19,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "panels|transcript|searchTranscript regex th[ei] (median)": {
+      "tier": "guardrail",
+      "median": 2.53,
+      "min": 1.67,
+      "max": 3.39,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "panels|transcript|searchTranscript \"the\" sequence scope (2500 clips; median)": {
+      "tier": "guardrail",
+      "median": 8.22,
+      "min": 6.49,
+      "max": 9.95,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms"
+    },
+    "panels|transcript|keystroke search cost (max over \"the sh\")": {
+      "tier": "guardrail",
+      "median": 7.9,
+      "min": 7.59,
+      "max": 8.2,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "panels|scenes|collectFacets (median)": {
+      "tier": "guardrail",
+      "median": 0.2,
+      "min": 0.19,
+      "max": 0.2,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 5 ms"
+    },
+    "panels|scenes|filter+sort per keystroke (max)": {
+      "tier": "guardrail",
+      "median": 1.39,
+      "min": 1.38,
+      "max": 1.4,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "panels|scenes|filter+sort per keystroke (mean)": {
+      "tier": "guardrail",
+      "median": 1.03,
+      "min": 0.95,
+      "max": 1.11,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 8 ms"
+    },
+    "panels|scenes|groupScenes by character (median)": {
+      "tier": "guardrail",
+      "median": 0.23,
+      "min": 0.23,
+      "max": 0.23,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 5 ms"
+    },
+    "panels|scenes|sort by source (localeCompare of labels; median)": {
+      "tier": "guardrail",
+      "median": 1.36,
+      "min": 1.3,
+      "max": 1.41,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 16 ms"
+    },
+    "panels|timeline|render culling loop @ zoom-to-fit (median)": {
+      "tier": "guardrail",
+      "median": 0.56,
+      "min": 0.55,
+      "max": 0.58,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 2 ms"
+    },
+    "panels|timeline|render culling loop @ 1 px/frame (median)": {
+      "tier": "guardrail",
+      "median": 0.37,
+      "min": 0.36,
+      "max": 0.38,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 2 ms"
+    },
+    "panels|timeline|render culling loop @ frame level 20 px/frame (median)": {
+      "tier": "guardrail",
+      "median": 0.38,
+      "min": 0.36,
+      "max": 0.4,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 2 ms"
+    },
+    "main|thumbs|thumbnail cache MISS (median of 8, 720p source)": {
+      "tier": "guardrail",
+      "median": 160.8,
+      "min": 153.77,
+      "max": 167.82,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 300 ms"
+    },
+    "main|thumbs|thumbnail cache MISS (max)": {
+      "tier": "guardrail",
+      "median": 205.27,
+      "min": 200.95,
+      "max": 209.59,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 600 ms"
+    },
+    "main|thumbs|thumbnail cache HIT (median of 50; stat+key hash+exists)": {
+      "tier": "guardrail",
+      "median": 0.18,
+      "min": 0.17,
+      "max": 0.18,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 5 ms"
+    },
+    "main|thumbs|thumbnail cache HIT (p95)": {
+      "tier": "guardrail",
+      "median": 0.34,
+      "min": 0.33,
+      "max": 0.34,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 10 ms"
+    },
+    "main|thumbs|filmstrip 48 frames cold (4 ffmpeg batches of 12, 3 concurrent)": {
+      "tier": "guardrail",
+      "median": 2908.09,
+      "min": 2809.26,
+      "max": 3006.92,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 3000 ms"
+    },
+    "main|thumbs|filmstrip 48 frames produced": {
+      "tier": "guardrail",
+      "median": 48,
+      "min": 48,
+      "max": 48,
+      "n": 2,
+      "unit": "/48"
+    },
+    "main|thumbs|filmstrip 48 frames warm (all cached)": {
+      "tier": "guardrail",
+      "median": 3.73,
+      "min": 3.68,
+      "max": 3.78,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms"
+    },
+    "main|thumbs|thumbnail MISS deep inside long file (median)": {
+      "tier": "guardrail",
+      "median": 235.38,
+      "min": 234.7,
+      "max": 236.06,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 500 ms"
+    },
+    "main|waveform|waveform generate 20 min file (cold)": {
+      "tier": "guardrail",
+      "median": 4129.91,
+      "min": 4106.06,
+      "max": 4153.76,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 60000 ms"
+    },
+    "main|waveform|waveform cached read": {
+      "tier": "guardrail",
+      "median": 0.96,
+      "min": 0.89,
+      "max": 1.02,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms"
+    },
+    "main|waveform|waveform compute 60 s 720p source": {
+      "tier": "guardrail",
+      "median": 341.37,
+      "min": 340.3,
+      "max": 342.44,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 3000 ms"
+    },
+    "main|fairness|thumbnail MISS, idle (median)": {
+      "tier": "guardrail",
+      "median": 151.83,
+      "min": 140.5,
+      "max": 163.16,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 300 ms"
+    },
+    "main|fairness|proxy 540p of 60 s 720p, idle": {
+      "tier": "guardrail",
+      "median": 8976.42,
+      "min": 8899.62,
+      "max": 9053.22,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 60000 ms"
+    },
+    "main|fairness|thumbnail MISS while export encodes (median)": {
+      "tier": "guardrail",
+      "median": 226.56,
+      "min": 208.62,
+      "max": 244.5,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 600 ms"
+    },
+    "main|fairness|proxy 540p while export encodes": {
+      "tier": "guardrail",
+      "median": 12922.96,
+      "min": 12859.44,
+      "max": 12986.47,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 120000 ms"
+    },
+    "main|fairness|proxy status 8 s after queueing behind 2 long scene detects": {
+      "tier": "guardrail",
+      "median": null,
+      "value": "running",
+      "n": 2,
+      "unit": "",
+      "threshold": "running"
+    },
+    "main|fairness|thumbnail MISS while 2 scene detects run (median)": {
+      "tier": "guardrail",
+      "median": 168.14,
+      "min": 162.49,
+      "max": 173.79,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 600 ms"
+    },
+    "main|fairness|proxy queued behind scene detects: wait+run until done": {
+      "tier": "guardrail",
+      "median": 9326.17,
+      "min": 9222.37,
+      "max": 9429.98,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 120000 ms"
+    },
+    "main|fairness|20 concurrent thumbnail misses (MAX_CONCURRENT=3)": {
+      "tier": "guardrail",
+      "median": 1328.84,
+      "min": 1297.28,
+      "max": 1360.4,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 3000 ms"
+    },
+    "export|graph|buildRenderGraph 2500 clips (median of 5)": {
+      "tier": "guardrail",
+      "median": 21.75,
+      "min": 21.52,
+      "max": 21.98,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 200 ms"
+    },
+    "export|ipc|ExportRequest JSON.stringify": {
+      "tier": "diagnostic",
+      "median": 8.85,
+      "min": 8.38,
+      "max": 9.32,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms",
+      "reference": true
+    },
+    "export|ipc|ExportRequest structuredClone (IPC one way, median)": {
+      "tier": "diagnostic",
+      "median": 22.22,
+      "min": 20.6,
+      "max": 23.83,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms",
+      "reference": true
+    },
+    "export|graph|buildRenderGraph @ 100 clips (median)": {
+      "tier": "guardrail",
+      "median": 1.09,
+      "min": 1.03,
+      "max": 1.14,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 100 ms"
+    },
+    "export|graph|buildRenderGraph @ 500 clips (median)": {
+      "tier": "guardrail",
+      "median": 4.55,
+      "min": 4.21,
+      "max": 4.88,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 100 ms"
+    },
+    "export|graph|buildRenderGraph @ 1000 clips (median)": {
+      "tier": "guardrail",
+      "median": 8.22,
+      "min": 8.2,
+      "max": 8.24,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 100 ms"
+    },
+    "export|ffmpeg|ffmpeg exit @ 100 clips (52 inputs)": {
+      "tier": "guardrail",
+      "median": null,
+      "value": "0",
+      "n": 2,
+      "unit": "",
+      "threshold": "0"
+    },
+    "export|ffmpeg|ffmpeg wall time @ 100 clips (0.5 s output)": {
+      "tier": "guardrail",
+      "median": 1598.07,
+      "min": 1562.36,
+      "max": 1633.77,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 60000 ms"
+    },
+    "export|ffmpeg|ffmpeg peak RSS @ 100 clips (MB)": {
+      "tier": "guardrail",
+      "median": 704.21,
+      "min": 689.45,
+      "max": 718.97,
+      "n": 2,
+      "unit": "MB",
+      "threshold": "<= 4096 MB"
+    },
+    "export|ffmpeg|ffmpeg exit @ 500 clips (252 inputs)": {
+      "tier": "diagnostic",
+      "median": null,
+      "value": "0",
+      "n": 2,
+      "unit": "",
+      "threshold": "0",
+      "reference": true
+    },
+    "export|ffmpeg|ffmpeg wall time @ 500 clips (0.5 s output)": {
+      "tier": "diagnostic",
+      "median": 13328.93,
+      "min": 12929.56,
+      "max": 13728.29,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 60000 ms",
+      "reference": true
+    },
+    "export|ffmpeg|ffmpeg peak RSS @ 500 clips (MB)": {
+      "tier": "diagnostic",
+      "median": 3116.3,
+      "min": 3116.17,
+      "max": 3116.43,
+      "n": 2,
+      "unit": "MB",
+      "threshold": "<= 4096 MB",
+      "reference": true
+    },
+    "export|ffmpeg|ffmpeg exit @ 2500 clips (1258 inputs)": {
+      "tier": "diagnostic",
+      "median": null,
+      "value": "KILLED: RSS > 6 GB",
+      "n": 2,
+      "unit": "",
+      "threshold": "0",
+      "reference": true
+    },
+    "export|ffmpeg|ffmpeg wall time @ 2500 clips (0.5 s output)": {
+      "tier": "diagnostic",
+      "median": 21210.05,
+      "min": 20627.56,
+      "max": 21792.53,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 60000 ms",
+      "reference": true
+    },
+    "export|ffmpeg|ffmpeg peak RSS @ 2500 clips (MB)": {
+      "tier": "diagnostic",
+      "median": 6242.99,
+      "min": 6201.19,
+      "max": 6284.79,
+      "n": 2,
+      "unit": "MB",
+      "threshold": "<= 4096 MB",
+      "reference": true
+    },
+    "export|export|full export 2500 clips: peak ffmpeg RSS (MB)": {
+      "tier": "guardrail",
+      "median": 844.32,
+      "min": 844.26,
+      "max": 844.37,
+      "n": 2,
+      "unit": "MB",
+      "threshold": "<= 1536 MB"
+    },
+    "electron|timeline|DOM nodes in tracks content @ zoom-to-fit": {
+      "tier": "guardrail",
+      "median": 27,
+      "min": 27,
+      "max": 27,
+      "n": 2,
+      "unit": "nodes",
+      "threshold": "<= 5000"
+    },
+    "electron|timeline|IPC filmstrip / thumbnail / waveform calls in 3 s after switch @ zoom-to-fit": {
+      "tier": "guardrail",
+      "median": null,
+      "value": "0 / 0 / 0",
+      "n": 2,
+      "unit": "calls",
+      "threshold": "filmstrip <= 60"
+    },
+    "electron|timeline|DOM nodes in tracks content @ 1 px/frame": {
+      "tier": "guardrail",
+      "median": 1015,
+      "min": 1015,
+      "max": 1015,
+      "n": 2,
+      "unit": "nodes",
+      "threshold": "<= 5000"
+    },
+    "electron|timeline|IPC filmstrip / thumbnail / waveform calls in 3 s after switch @ 1 px/frame": {
+      "tier": "guardrail",
+      "median": null,
+      "value": "34 / 0 / 1",
+      "n": 2,
+      "unit": "calls",
+      "threshold": "filmstrip <= 60"
+    },
+    "electron|timeline|DOM nodes in tracks content @ frame level 20 px/frame": {
+      "tier": "guardrail",
+      "median": 107,
+      "min": 107,
+      "max": 107,
+      "n": 2,
+      "unit": "nodes",
+      "threshold": "<= 5000"
+    },
+    "electron|timeline|IPC filmstrip / thumbnail / waveform calls in 3 s after switch @ frame level 20 px/frame": {
+      "tier": "guardrail",
+      "median": null,
+      "value": "4 / 0 / 0",
+      "n": 2,
+      "unit": "calls",
+      "threshold": "filmstrip <= 60"
+    },
+    "electron|scrub|setView call cost @ zoom-to-fit (2500 clips mounted), no selection (median / max)": {
+      "tier": "guardrail",
+      "median": 0.3,
+      "min": 0.3,
+      "max": 0.3,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 1 ms"
+    },
+    "electron|scrub|setView call cost @ zoom-to-fit, 50 clips selected (median / max)": {
+      "tier": "guardrail",
+      "median": 1.45,
+      "min": 1.4,
+      "max": 1.5,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 1 ms"
+    },
+    "electron|scrub|setView call cost @ 1 px/frame (~120 clips mounted), no selection (median / max)": {
+      "tier": "guardrail",
+      "median": 0.3,
+      "min": 0.3,
+      "max": 0.3,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 1 ms"
+    },
+    "electron|scrub|setView call cost @ 1 px/frame, 50 clips selected (median / max)": {
+      "tier": "guardrail",
+      "median": 1.3,
+      "min": 1.3,
+      "max": 1.3,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 1 ms"
+    },
+    "electron|store|history.past.length after 300 commits": {
+      "tier": "guardrail",
+      "median": 200,
+      "min": 200,
+      "max": 200,
+      "n": 2,
+      "unit": "",
+      "threshold": "== 200"
+    },
+    "electron|io|JSON.stringify(project) in renderer": {
+      "tier": "diagnostic",
+      "median": 135.2,
+      "min": 132.8,
+      "max": 137.6,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 100 ms",
+      "reference": true
+    },
+    "electron|io|structuredClone(project) in renderer (what one IPC send costs)": {
+      "tier": "diagnostic",
+      "median": 258.35,
+      "min": 237.7,
+      "max": 279,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 100 ms",
+      "reference": true
+    },
+    "electron|io|autosaveProject round trip (renderer -> main write)": {
+      "tier": "guardrail",
+      "median": 444.7,
+      "min": 442.4,
+      "max": 447,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 500 ms"
+    },
+    "electron|io|autosave main-side handler time (write; serialize too on the legacy channel)": {
+      "tier": "guardrail",
+      "median": 209.36,
+      "min": 205.05,
+      "max": 213.67,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 300 ms"
+    },
+    "electron|io|openProject main-side handler time": {
+      "tier": "diagnostic",
+      "median": 516.14,
+      "min": 515.33,
+      "max": 516.94,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 500 ms",
+      "reference": true
+    },
+    "electron|project|thumbnail IPC calls in 2.5 s after scrolling 3000 scene rows": {
+      "tier": "guardrail",
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "n": 2,
+      "unit": "calls",
+      "threshold": "<= 60"
+    },
+    "electron|pool|media elements (<video> + <audio>) created during 10 s playback @ 1 px/frame": {
+      "tier": "guardrail",
+      "median": 2,
+      "min": 2,
+      "max": 2,
+      "n": 2,
+      "unit": "",
+      "threshold": "<= 16 (pool capacity)"
+    },
+    "electron|pool|video elements created / live(src) / playing / in DOM after 10 s playback": {
+      "tier": "guardrail",
+      "median": null,
+      "value": "296 / 7 / 0 / 0",
+      "n": 2,
+      "unit": "",
+      "threshold": "live <= 16"
+    },
+    "electron|pool|video elements created / live / playing after 20 sequence switches": {
+      "tier": "guardrail",
+      "median": null,
+      "value": "296 / 7 / 0",
+      "n": 2,
+      "unit": "",
+      "threshold": "live <= 16"
+    },
+    "electron|pool|media elements created by zoom-to-fit playback + 20 sequence switches": {
+      "tier": "guardrail",
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "n": 2,
+      "unit": "",
+      "threshold": "<= 16 (pool capacity)"
+    },
+    "electron|audio|MediaElementSources / GainNodes created by zoom-to-fit playback + 20 switches": {
+      "tier": "guardrail",
+      "median": null,
+      "value": "0 / 0",
+      "n": 2,
+      "unit": "",
+      "threshold": "<= elements created"
+    },
+    "electron|pool|video elements live / playing after that playback": {
+      "tier": "guardrail",
+      "median": null,
+      "value": "7 / 0",
+      "n": 2,
+      "unit": "",
+      "threshold": "live <= 16"
+    },
+    "electron|main|thumbnail MISS via IPC (median of 8)": {
+      "tier": "guardrail",
+      "median": 86.35,
+      "min": 85.1,
+      "max": 87.6,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 300 ms"
+    },
+    "electron|main|thumbnail HIT via IPC (median of 40)": {
+      "tier": "guardrail",
+      "median": 0.55,
+      "min": 0.5,
+      "max": 0.6,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 5 ms"
+    },
+    "electron|main|filmstrip 48 frames cold via IPC": {
+      "tier": "guardrail",
+      "median": 834,
+      "min": 799.6,
+      "max": 868.4,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 3000 ms"
+    },
+    "electron|main|filmstrip 48 frames warm via IPC": {
+      "tier": "guardrail",
+      "median": 4.85,
+      "min": 4.4,
+      "max": 5.3,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 50 ms"
+    },
+    "electron|fairness|thumbnail MISS via IPC while export encodes (median)": {
+      "tier": "guardrail",
+      "median": 197.35,
+      "min": 191.1,
+      "max": 203.6,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 600 ms"
+    },
+    "electron|fairness|autosave round trip while playing": {
+      "tier": "guardrail",
+      "median": 380.15,
+      "min": 373.9,
+      "max": 386.4,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 500 ms"
+    },
+    "electron|long|DOM nodes in tracks content, multi-hour @ zoom-to-fit": {
+      "tier": "guardrail",
+      "median": 18,
+      "min": 18,
+      "max": 18,
+      "n": 2,
+      "unit": "nodes",
+      "threshold": "<= 5000"
+    },
+    "electron|long|DOM nodes in tracks content, multi-hour @ 1 px/frame": {
+      "tier": "guardrail",
+      "median": 347,
+      "min": 347,
+      "max": 347,
+      "n": 2,
+      "unit": "nodes",
+      "threshold": "<= 5000"
+    },
+    "electron|long|setView call cost multi-hour @ zoom-to-fit, no selection (median / max)": {
+      "tier": "guardrail",
+      "median": 0.5,
+      "min": 0.5,
+      "max": 0.5,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 1 ms"
+    },
+    "electron|long|setView call cost multi-hour @ 1 px/frame, no selection (median / max)": {
+      "tier": "guardrail",
+      "median": 0.55,
+      "min": 0.5,
+      "max": 0.6,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 1 ms"
+    },
+    "electron|long|setView call cost multi-hour @ 1 px/frame, 50 clips selected (median / max)": {
+      "tier": "guardrail",
+      "median": 4.05,
+      "min": 4,
+      "max": 4.1,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 1 ms"
+    },
+    "electron|long|openProject main-side handler time incl. multi-hour": {
+      "tier": "diagnostic",
+      "median": 487.9,
+      "min": 484.57,
+      "max": 491.23,
+      "n": 2,
+      "unit": "ms",
+      "threshold": "<= 500 ms",
+      "reference": true
+    }
+  }
+}

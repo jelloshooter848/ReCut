@@ -75,6 +75,17 @@ export async function requestSaveAs(): Promise<boolean> {
 }
 
 /**
+ * Save before the project is closed or replaced. True only when nothing is left unsaved: edits made while the
+ * save was in flight are not in the file and keep the project dirty, so closing now would lose them.
+ */
+async function saveBeforeClose(): Promise<boolean> {
+  if (!(await requestSave())) return false;
+  if (!useStore.getState().dirty) return true;
+  toast('warn', 'Changes made while saving are not saved yet. Save again.');
+  return false;
+}
+
+/**
  * When the project has unsaved changes, ask Save / Don't Save / Cancel.
  * Resolves true when it is safe to proceed (saved or discarded).
  */
@@ -87,7 +98,7 @@ export async function confirmDiscardIfDirty(): Promise<boolean> {
     detail: 'Your changes will be lost if you don\'t save them.',
     buttons: ['Save', "Don't Save", 'Cancel'], defaultId: 0, cancelId: 2,
   });
-  if (i === 0) return requestSave();
+  if (i === 0) return saveBeforeClose();
   return i === 1;
 }
 
@@ -264,12 +275,12 @@ async function handleBeforeQuit(): Promise<void> {
     });
   } catch (e) { console.error('[quit] prompt failed', e); }
   if (i === 0) {
-    if (await requestSave()) { await api.quit(true); return; }
+    if (await saveBeforeClose()) { await api.quit(true); return; }
   } else if (i === 1) {
     await api.quit(true);
     return;
   }
-  // Cancel, or the save was cancelled/failed: stay open.
+  // Cancel, or the save was cancelled / failed / left edits unsaved: stay open.
   await api.quitCancel?.();
 }
 

@@ -272,6 +272,45 @@ frame, against 20.5 on the 26-min sequence where a flip comes every ~6 frames). 
 
 ---
 
+## Gate policy (2026-10-06)
+
+The project owner re-scoped the gate on 6 October 2026. No row was deleted, hidden or loosened; every budgeted row
+now carries a tier where it is recorded (`tier` on the row in `tests/perf/_report.ts` and `electron-perf.mjs`; an
+unclassified budgeted row is a gate), and `npm run perf:check` prints three sections. The policy, the regression
+rule and the full row-by-row table are in `docs/DEVELOPMENT.md` → Performance gate.
+
+- **Gates (86 rows)**: user-facing, strict pass/fail on the existing budget: save and open round trips (including
+  the 3 h project, which still fails), edit commit → paint, scrub fps / re-renders / long tasks, sequence switch →
+  paint, wheel scroll, zoom → paint, playback fps and long tasks, keystroke → paint, panel interactions, export
+  completion and graph correctness, previewExportCommand.
+- **Moved to guardrail (122 rows)**: fail on a material regression (median of ≥ 2 runs > 1.5 × baseline and above
+  a 2 ms / 8 MB noise floor) against `tests/perf/baseline.json`, and still on their budget, except
+  `normalizeProject`, whose 100 ms target is now a reference only. These are all node store rows (commit, view,
+  history, memory, `serializeForSave`, `loadProjectData`, frame, multi-hour commits and per-frame work), all
+  `panels` rows, all `main` media-layer rows, `buildRenderGraph`, the ffmpeg single-graph rows at 100 clips (one
+  chunk's size), the full-export peak RSS, and in Electron `setView call cost`, DOM node counts, IPC call counts,
+  `history.past.length`, autosave round trips and handler, media-element / audio-node pool rows and the
+  main-process media rows.
+- **Moved to diagnostic (18 rows)**: reported with trend, never blocking; old thresholds kept as reference:
+  node `serializeProject`, `JSON.parse`, `structuredClone(project)` (2,500-clip and incl. multi-hour), Electron
+  `JSON.stringify(project)` and `structuredClone(project)` in the renderer, `openProject main-side handler time`
+  (and incl. multi-hour), `ExportRequest` `JSON.stringify` / `structuredClone`, and the ffmpeg single-graph rows at
+  500 and 2,500 clips (export never builds a graph above 150 inputs; it chunks).
+
+Baseline seeded from 2 node + 2 Electron runs on `main` 16f707a (workstreams B, C, D merged), alone under the
+perf lock, same 4-core container (FFmpeg 6.1.1-3ubuntu5, Node 22.22.0). Result of
+`node tests/perf/perf-check.mjs --from <both runs>`: gates 55 PASS / 31 FAIL, guardrails 118 PASS / 4 FAIL (all on
+their budget: `setView call cost` with 50 clips selected at zoom-to-fit 1.45 ms, at 1 px/frame 1.3 ms, multi-hour
+4.05 ms, all ≤ 1 ms; node `filmstrip 48 frames cold` 2,908 ms, passing 1 of 2 runs at ≤ 3,000 ms), 18 diagnostics
+reported (11 above their old reference). The failing gates are scrub at 1 px/frame (2,500-clip and 3 h: 23–34 fps,
+20–56 ClipView renders per frame), edit commit → paint (33–51 ms against 32 / 50 ms), wheel @ 1 px/frame (11.3 ms
+against 8), the 3 h save round trip (552 ms against 500), and three flaky rows (long tasks after a switch @
+zoom-to-fit, project search keystroke, long tasks after 20 switches + 10 maximize cycles). The 2,500-clip save
+(389 ms) and open (820 ms) round trips now pass. **Status stays open**: Roadmap §1 is done only when every gate
+passes and no guardrail shows an unexplained material regression.
+
+---
+
 ## Verification
 <!-- Filled in by whoever works the bug. -->
 
