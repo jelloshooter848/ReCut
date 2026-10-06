@@ -9,7 +9,8 @@
  *   npm run build && xvfb-run -a node tests/perf/electron-perf.mjs [--media <dir>] [--long <file>] [--skip-heavy]
  *
  * Env: RECUT_PERF_SCRATCH (scratch root), RECUT_PERF_OUT (results dir), RECUT_PERF_MEDIA, RECUT_PERF_LONG_FILE.
- * Writes <out>/electron.json and prints a measurement table. No source files are touched.
+ * Writes <out>/electron.json and prints a measurement table. No source files are touched. If a step fails, the rows
+ * measured before it are still written and the script exits 1.
  */
 import { _electron as electron } from 'playwright';
 import { execFileSync } from 'node:child_process';
@@ -17,6 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evalMain } from './_electron-common.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
@@ -102,12 +104,31 @@ const tmp = fs.mkdtempSync(path.join(SCRATCH, 'electron-'));
 const userData = path.join(tmp, 'userData'); const cacheDir = path.join(tmp, 'cache');
 fs.mkdirSync(userData, { recursive: true }); fs.mkdirSync(cacheDir, { recursive: true });
 console.log(`[perf] launching ReCut (userData ${userData})`);
-const app = await electron.launch({ args: [path.join(ROOT, 'dist/electron/main.js'), '--no-sandbox'], cwd: ROOT, env: { ...process.env, RECUT_USER_DATA: userData, RECUT_CACHE_DIR: cacheDir, RECUT_DISABLE_GPU: '1' }, timeout: 90_000 });
+
+// Every row measured so far is written even when a later step throws, so one failure never loses the whole table;
+// the exit code stays non-zero, so perf:check still reports the suite as failed. The measurement body below is one
+// try block (left at top-level indentation to keep its diff readable).
+let app;
+let finishing = false;
+async function finish(error) {
+  if (finishing) return;
+  finishing = true;
+  if (error) console.error(`\n[perf] FAILED after ${results.length} measurements: ${error?.stack ?? error}`);
+  const file = path.join(OUT, 'electron.json');
+  fs.writeFileSync(file, JSON.stringify(results, null, 2));
+  console.log(`\n[perf] ${results.length} measurements -> ${file}${error ? ' (INCOMPLETE: the run failed, exiting 1)' : ''}`);
+  if (app) { try { await Promise.race([app.evaluate(({ app }) => app.exit(0)), sleep(3000)]); } catch {} try { app.process().kill('SIGKILL'); } catch {} } // app.close() can hang on the unsaved-changes prompt
+  process.exit(error ? 1 : 0);
+}
+process.on('uncaughtException', (e) => finish(e));
+process.on('unhandledRejection', (e) => finish(e));
+try {
+app = await electron.launch({ args: [path.join(ROOT, 'dist/electron/main.js'), '--no-sandbox'], cwd: ROOT, env: { ...process.env, RECUT_USER_DATA: userData, RECUT_CACHE_DIR: cacheDir, RECUT_DISABLE_GPU: '1' }, timeout: 90_000 });
 const page = await app.firstWindow();
 page.on('pageerror', (e) => console.log('[renderer:pageerror]', e.message));
 page.on('console', (m) => { if (m.type() === 'error') console.log('[renderer:error]', m.text().slice(0, 300)); });
 await page.waitForSelector('#root .layout', { timeout: 60_000 });
-await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setSize(1600, 1000); w.center(); });
+await evalMain(app, ({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setSize(1600, 1000); w.center(); });
 await page.evaluate(() => { localStorage.removeItem('recut.layout.v1'); localStorage.removeItem('recut.shortcuts.v1'); });
 await app.context().addInitScript(INIT_SCRIPT);
 await page.reload();
@@ -116,7 +137,7 @@ await page.waitForFunction(() => Boolean(window.__recut) && Boolean(window.__per
 rec('env', 'React DevTools hook attached (ClipView render counting)', String(await page.evaluate(() => window.__perf.hook)));
 
 // Main-process IPC instrumentation (counts + durations per channel) via ipcMain's handler map.
-const ipcWrapped = await app.evaluate(({ ipcMain }) => {
+const ipcWrapped = await evalMain(app, ({ ipcMain }) => {
   const map = ipcMain._invokeHandlers;
   if (!(map instanceof Map)) return false;
   const S = (globalThis.__perfIpc = { counts: {}, times: {}, lastArgsBytes: {} });
@@ -131,8 +152,8 @@ const ipcWrapped = await app.evaluate(({ ipcMain }) => {
   return true;
 });
 rec('env', 'main-process IPC handlers wrapped', String(ipcWrapped));
-const ipcStats = async (reset = true) => app.evaluate(({ }, reset) => { const S = globalThis.__perfIpc; const out = JSON.parse(JSON.stringify(S)); if (reset) { S.counts = {}; S.times = {}; } return out; }, reset);
-const metrics = async () => app.evaluate(({ app }) => app.getAppMetrics().map((m) => ({ type: m.type, pid: m.pid, ws: Math.round(m.memory.workingSetSize / 1024), cpu: m.cpu.percentCPUUsage })));
+const ipcStats = async (reset = true) => evalMain(app, ({ }, reset) => { const S = globalThis.__perfIpc; const out = JSON.parse(JSON.stringify(S)); if (reset) { S.counts = {}; S.times = {}; } return out; }, reset);
+const metrics = async () => evalMain(app, ({ app }) => app.getAppMetrics().map((m) => ({ type: m.type, pid: m.pid, ws: Math.round(m.memory.workingSetSize / 1024), cpu: m.cpu.percentCPUUsage })));
 const mainMB = async () => (await metrics()).find((m) => m.type === 'Browser')?.ws ?? -1;
 const rendererMB = async () => (await metrics()).filter((m) => m.type === 'Tab').reduce((a, m) => a + m.ws, 0);
 const lt = async (since) => page.evaluate((since) => window.__perf.lt.filter((e) => e.t >= since), since);
@@ -738,7 +759,7 @@ console.log('\n--- multi-hour sequence ---');
   ms('long', 'openProject main-side handler time incl. multi-hour', ((await ipcStats(true)).times['project:load'] || [0])[0], 500, undefined, DIAGNOSTIC);
 }
 
-fs.writeFileSync(path.join(OUT, 'electron.json'), JSON.stringify(results, null, 2));
-console.log(`\n[perf] ${results.length} measurements -> ${path.join(OUT, 'electron.json')}`);
-try { await Promise.race([app.evaluate(({ app }) => app.exit(0)), new Promise((r) => setTimeout(r, 3000))]); } catch {} try { app.process().kill('SIGKILL'); } catch {} // app.close() can hang on the unsaved-changes prompt
-process.exit(0);
+} catch (e) {
+  await finish(e ?? new Error('electron-perf failed'));
+}
+await finish(null);
