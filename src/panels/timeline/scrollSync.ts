@@ -2,21 +2,25 @@
  * Keeps a horizontal scroller (the tracks content, the ruler) at the view's scroll position: its scrollLeft holds the
  * whole device pixels of view.scroll * zoom (splitScroll; the caller supplies the sub-pixel rest with a transform).
  *
- * The write happens in a store subscription, synchronously inside the setView that moved the view and before React
- * commits that update: layout is still clean then, so setting scrollLeft costs no forced layout (written from a layout
- * effect after the commit it forces a synchronous style + layout of everything the commit changed, e.g. a page flip's
- * new page of clips, which the frame then lays out again). A layout effect writes what the subscription could not
- * (first mount, content not yet wide enough, a resized or re-shown scroller).
+ * The write happens while the component renders the new position, i.e. before React commits that update's DOM
+ * changes: written from a layout effect after the commit, setting scrollLeft forces a synchronous style + layout of
+ * everything the commit changed (a page flip's new page of clips), which the frame then lays out again. Not in a store
+ * subscription either: that would run inside setView and charge its caller. The render-time write is idempotent (a
+ * repeated render writes nothing). A layout effect writes what it could not (first mount, content not yet wide enough
+ * for the new position, a resized or re-shown scroller).
  */
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
-import { useStore } from '@/state';
-import { splitScroll } from './viewMath';
+import { useCallback, useLayoutEffect, useRef } from 'react';
 
 export function useViewScrollLeft(
-  ref: React.RefObject<HTMLElement>, seqId: string, base: number, contentPx: number, clientW: number,
+  ref: React.RefObject<HTMLElement>, base: number, contentPx: number, clientW: number,
 ): () => void {
   const st = useRef({ set: NaN, want: base, contentPx: 0, clientW: 0, geom: '' });
   st.current.want = base;
+  {
+    // Render-time write against the committed geometry (what the scroller can hold right now).
+    const c = st.current; const el = ref.current;
+    if (el && c.set !== base && base <= c.contentPx - c.clientW) { el.scrollLeft = base; c.set = base; }
+  }
   useLayoutEffect(() => {
     const c = st.current; const el = ref.current;
     c.contentPx = contentPx; c.clientW = clientW;
@@ -24,13 +28,6 @@ export function useViewScrollLeft(
     if (!el || (c.set === base && c.geom === geom)) return;
     el.scrollLeft = base; c.set = base; c.geom = geom;
   }, [ref, base, contentPx, clientW]);
-  useEffect(() => useStore.subscribe((s) => {
-    const v = s.project.sequences[seqId]?.view; const el = ref.current; const c = st.current;
-    if (!v || !el) return;
-    const b = splitScroll(v.scroll * v.zoom, window.devicePixelRatio || 1).base;
-    if (b === c.set || b > c.contentPx - c.clientW) return;
-    el.scrollLeft = b; c.set = b;
-  }), [ref, seqId]);
   /** Re-applies the position (after a resize, being shown again, or a scroll by something else). Reads layout. */
   return useCallback(() => {
     const el = ref.current; const c = st.current; if (!el) return;

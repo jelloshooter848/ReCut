@@ -176,7 +176,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   // wheel steps move by whole pixels), so content sits exactly where translateX(-scrollPx) put it.
   // See useViewScrollLeft for when it is written.
   const split = splitScroll(scrollPx, window.devicePixelRatio || 1);
-  const syncScrollLeft = useViewScrollLeft(areaRef, seqId, split.base, contentPx, viewW);
+  const syncScrollLeft = useViewScrollLeft(areaRef, split.base, contentPx, viewW);
   const scrollBaseRef = useRef(split.base);
   scrollBaseRef.current = split.base;
   const onHScroll = () => {

@@ -58,7 +58,7 @@ export function Ruler(p: RulerProps) {
   const { base, baseDev } = splitScroll(p.scroll * p.zoom, dpr);
   const baseRef = useRef(base);
   baseRef.current = base;
-  const syncScrollLeft = useViewScrollLeft(scrollerRef, p.seqId, base, p.contentPx, Math.round(p.width));
+  const syncScrollLeft = useViewScrollLeft(scrollerRef, base, p.contentPx, Math.round(p.width));
   /** The offset belongs to the view: undo any other scroll of the (hidden-bar) scroller. */
   const onScrollerScroll = () => { const el = scrollerRef.current; if (el && Math.abs(el.scrollLeft - baseRef.current) > 1) syncScrollLeft(); };
   // Canvas placement: the mounted range on the device pixel grid.
