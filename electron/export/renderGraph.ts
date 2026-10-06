@@ -756,11 +756,11 @@ export interface ExportChapter {
 /**
  * The output chapters of `[startF, endF)`: the sequence's Chapter markers (kind 'chapter'; other kinds are editor
  * notes), relative to the range start. A chapter marker at or before `startF` covers the range start (the latest
- * one wins); markers at or after `endF` are dropped. Each chapter ends where the next one starts, the last at
- * `endSec` (the output duration). The first chapter always starts at 0: MP4 chapter text tracks cannot leave a gap
- * before the first chapter (FFmpeg reads such a file back with the first chapter at 0). Two markers on one frame:
- * the later one in the marker list wins. Times are sequence time, so an output frame-rate conversion does not move
- * them.
+ * one wins); markers at or after `endF` are dropped. When no chapter marker is at or before `startF`, an untitled
+ * leading chapter runs from 0 to the first marker, so that marker's break is kept: MP4 chapter text tracks cannot
+ * leave a gap before the first chapter (FFmpeg reads such a file back with the first chapter at 0). Each chapter
+ * ends where the next one starts, the last at `endSec` (the output duration). Two markers on one frame: the later
+ * one in the marker list wins. Times are sequence time, so an output frame-rate conversion does not move them.
  */
 export function exportChapters(seq: Pick<Sequence, 'markers' | 'fps'>, startF: number, endF: number, endSec: number): ExportChapter[] {
   const marks = (Array.isArray(seq.markers) ? seq.markers : [])
@@ -775,6 +775,7 @@ export function exportChapters(seq: Pick<Sequence, 'markers' | 'fps'>, startF: n
     if (starts.length && starts[starts.length - 1].f === f) starts[starts.length - 1].title = title;
     else starts.push({ f, title });
   }
+  if (starts.length && starts[0].f > startF) starts.unshift({ f: startF, title: '' });
   return starts.map((c, i) => ({
     start: i === 0 ? 0 : framesToSeconds(c.f - startF, seq.fps),
     end: i + 1 < starts.length ? framesToSeconds(starts[i + 1].f - startF, seq.fps) : endSec,

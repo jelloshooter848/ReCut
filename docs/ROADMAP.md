@@ -101,15 +101,19 @@ already builds video and audio separately; this adds containers, codecs and a "n
 stereo downmix, or a commentary) and soft subtitle tracks. ReCut exports MP4 only, and the export settings force the
 file name to `.mp4` (`withMp4` in `src/panels/export/settings.ts`), so packaging is a second pass in MKVToolNix
 today.
-**Why deferred:** export writes one mixed audio track, and subtitles only burned in or as a sidecar file. Chapter
-markers are not written at all, and a single-pass export copies the first source's chapters and title instead (see
-[the export chapter / metadata bug](../bugs/closed/2026-10-05-export-ignores-chapter-markers-copies-source-metadata.md)).
-Packaging depends on that fix.
-**Plan:** an MKV container option in the export settings. Chapter markers are written as chapters. One audio track
-per selected mix (for example 5.1 plus a stereo downmix, or a commentary), each with its own language and title.
-Subtitle tracks are muxed as soft subtitles instead of only burned in or written as a sidecar. Use FFmpeg's Matroska
-muxer, not `mkvmerge`, so there is no new dependency. It must work with a user-installed FFmpeg: FFmpeg is bundled
-only in the Windows builds (see [LIMITATIONS](LIMITATIONS.md#platform-and-packaging)).
+**Why deferred:** chapters are no longer the blocker. Since 0.2.0 the sequence's Chapter markers are exported as MP4
+chapters and no metadata is copied from the sources (see [the export chapter / metadata
+bug](../bugs/closed/2026-10-05-export-ignores-chapter-markers-copies-source-metadata.md) and [the first-chapter-break
+fix](../bugs/closed/2026-10-06-first-chapter-break-lost-and-stale-roadmap.md)), and an MKV export would write the same
+chapters (`exportChapters`). What packaging still needs: there is no container option and the export settings force
+`.mp4` (`withMp4` in `src/panels/export/settings.ts`); export mixes everything to one audio track; subtitles are only
+burned in or written as a sidecar file, never as a soft subtitle track.
+**Plan:** an MKV container option in the export settings, with the file extension following it instead of forced
+`.mp4`. Chapters as in MP4 export. One audio track per selected mix (for example 5.1 plus a stereo downmix, or a
+commentary), each with its own language and title. Subtitle tracks are muxed as soft subtitles instead of only burned
+in or written as a sidecar. Use FFmpeg's Matroska muxer, not `mkvmerge`, so there is no new dependency. It must work
+with a user-installed FFmpeg: FFmpeg is bundled only in the Windows builds (see
+[LIMITATIONS](LIMITATIONS.md#platform-and-packaging)).
 
 ## 8. Nested sequences and compound clips
 

@@ -240,9 +240,11 @@ dialog shows the resulting frame count; **Use <sequence rate>** switches back.
 
 **Chapters:** markers of kind **Chapter** (marker dialog or Markers panel) become the MP4's chapters, with their
 names. Only chapter markers inside the exported range count; times are measured from the start of the range. A chapter
-marker before the In point that is still current at In becomes the first chapter, and the first chapter always starts
-at the beginning of the file. Each chapter runs to the next one, the last to the end of the file. Ordinary markers and
-continuity notes are not exported. A trailing backslash in a chapter name is dropped (FFmpeg cannot store it).
+marker before the In point that is still current at In becomes the first chapter, starting at the beginning of the
+file. If no chapter marker is at or before the start of the range (for example, you marked only the act breaks), the
+file gets an extra first chapter with no name, from the start to your first chapter marker, so every break you
+marked is kept. Each chapter runs to the next one, the last to the end of the file. Ordinary markers and continuity
+notes are not exported. A trailing backslash in a chapter name is dropped (FFmpeg cannot store it).
 Nothing else is copied from your source files: no title, comment, artist or other tags, no chapters, no stream names
 or languages.
 
