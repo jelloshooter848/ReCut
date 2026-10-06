@@ -1,12 +1,19 @@
 /**
  * Timecode ruler: canvas ticks + DOM markers / in-out band. Scrubs the playhead on click/drag, drags markers.
+ *
+ * Everything sits in a horizontal scroller whose scroll offset follows the view's scroll (like the tracks), so a scroll
+ * step moves the markers and the band without a style change, re-layout or re-layerization of the page. They are
+ * positioned at their view position plus that offset (pixel for pixel where they were). The tick canvas covers the
+ * timeline's mounted range in content coordinates (it only moves when that range does) and is redrawn for each view
+ * with exactly the view's ticks, offset to the viewport's place in it.
  */
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import type { Marker, Rational } from '@shared/model';
 import { formatSequenceTimecode } from '@shared/time';
 import { useStore } from '@/state';
-import { frameToX, rulerTicks, snapFrame, snapThresholdFrames, xToFrameInt } from './viewMath';
+import { frameToX, rulerTicks, snapFrame, snapThresholdFrames, splitScroll, xToFrameInt } from './viewMath';
 import { RULER_H } from './types';
+import { useViewScrollLeft } from './scrollSync';
 
 export interface RulerProps {
   seqId: string;
@@ -14,6 +21,11 @@ export interface RulerProps {
   zoom: number;
   scroll: number;
   width: number;
+  /** Width of the scrollable content (px), as the tracks. */
+  contentPx: number;
+  /** Content-space pixel range of the clips the timeline mounts: the canvas covers it, markers in it stay mounted. */
+  mountX0: number;
+  mountX1: number;
   markers: Marker[];
   selectedMarkerId: string | null;
   inPoint: number | null;
@@ -39,14 +51,29 @@ export function Ruler(p: RulerProps) {
   const lastClick = useRef<{ id: string; at: number }>({ id: '', at: 0 });
 
   const offRef = useRef<OffscreenCanvas | null>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const dpr = window.devicePixelRatio || 1;
+  // The scroller holds the whole device pixels of the view's scroll (set before paint, like the tracks scroller);
+  // view positions plus `base` are content positions.
+  const { base, baseDev } = splitScroll(p.scroll * p.zoom, dpr);
+  const baseRef = useRef(base);
+  baseRef.current = base;
+  const syncScrollLeft = useViewScrollLeft(scrollerRef, base, p.contentPx, Math.round(p.width));
+  /** The offset belongs to the view: undo any other scroll of the (hidden-bar) scroller. */
+  const onScrollerScroll = () => { const el = scrollerRef.current; if (el && Math.abs(el.scrollLeft - baseRef.current) > 1) syncScrollLeft(); };
+  // Canvas placement: the mounted range on the device pixel grid.
+  const cvDev0 = Math.floor(Math.max(0, Math.min(p.mountX0, base)) * dpr);
+  const cvDevW = Math.max(1, Math.ceil(Math.max(p.mountX1, base + p.width) * dpr) - cvDev0);
 
   useLayoutEffect(() => {
     const cv = canvasRef.current; if (!cv || p.width <= 0) return;
-    const dpr = window.devicePixelRatio || 1;
     const W = Math.round(p.width), H = RULER_H;
-    if (cv.width !== Math.round(W * dpr)) cv.width = Math.round(W * dpr);
+    if (cv.width !== cvDevW) cv.width = cvDevW;
     if (cv.height !== Math.round(H * dpr)) cv.height = Math.round(H * dpr);
-    cv.style.width = `${W}px`; cv.style.height = `${H}px`;
+    const left = `${cvDev0 / dpr}px`, width = `${cvDevW / dpr}px`, height = `${H}px`;
+    if (cv.style.left !== left) cv.style.left = left;
+    if (cv.style.width !== width) cv.style.width = width;
+    if (cv.style.height !== height) cv.style.height = height;
     const ctx = cv.getContext('2d'); if (!ctx) return;
     // Draw into an OffscreenCanvas and copy it over: fillText on a canvas that is in the document first brings the
     // document's style up to date (the canvas' computed font / direction), which in the middle of a commit means a
@@ -61,8 +88,11 @@ export function Ruler(p: RulerProps) {
       octx = off.getContext('2d');
     }
     const g = octx ?? ctx;
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.fillStyle = COLORS.bg; g.fillRect(0, 0, W, H);
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = COLORS.bg; g.fillRect(0, 0, cvDevW, cv.height);
+    // The view's drawing, in view coordinates, moved by whole device pixels to where the viewport is on the canvas.
+    g.setTransform(dpr, 0, 0, dpr, baseDev - cvDev0, 0);
+    g.fillRect(0, 0, W, H);
     const ticks = rulerTicks(p.fps, p.zoom, p.scroll, W);
     g.font = RULER_FONT;
     g.textBaseline = 'alphabetic';
@@ -83,7 +113,7 @@ export function Ruler(p: RulerProps) {
       ctx.clearRect(0, 0, cv.width, cv.height);
       ctx.drawImage(off, 0, 0);
     }
-  }, [p.fps, p.zoom, p.scroll, p.width]);
+  }, [p.fps, p.zoom, p.scroll, p.width, dpr, baseDev, cvDev0, cvDevW]);
 
   const frameAt = (clientX: number, e?: { altKey: boolean }) => {
     const r = rootRef.current!.getBoundingClientRect();
@@ -138,11 +168,13 @@ export function Ruler(p: RulerProps) {
     setMarkerLive(null);
   };
 
-  const inX = p.inPoint !== null ? frameToX(p.inPoint, p.zoom, p.scroll) : null;
-  const outX = p.outPoint !== null ? frameToX(p.outPoint, p.zoom, p.scroll) : null;
+  // In / out band: view position plus `base` (content), not clipped to the view (the clipped-off part is invisible); an
+  // open end reaches just past the content edge, as it reached past the view's.
+  const inX = p.inPoint !== null ? frameToX(p.inPoint, p.zoom, p.scroll) + base : null;
+  const outX = p.outPoint !== null ? frameToX(p.outPoint, p.zoom, p.scroll) + base : null;
   const showInOut = inX !== null || outX !== null;
   const bandL = inX ?? -2;
-  const bandR = outX ?? p.width + 2;
+  const bandR = outX ?? p.contentPx + 2;
 
   return (
     <div
@@ -156,31 +188,40 @@ export function Ruler(p: RulerProps) {
       }}
       title="Click or drag to scrub"
     >
-      <canvas ref={canvasRef} />
-      {showInOut && bandR > 0 && bandL < p.width ? (
-        <div className={['tl-ruler-inout', inX === null ? 'open-start' : '', outX === null ? 'open-end' : ''].filter(Boolean).join(' ')}
-          style={{ left: Math.max(-2, bandL), width: Math.max(0, Math.min(p.width + 2, bandR) - Math.max(-2, bandL)) }} />
-      ) : null}
-      <div className="tl-ruler-markers">
-        {p.markers.map((m) => {
-          const time = markerLive?.id === m.id ? markerLive.time : m.time;
-          const x = frameToX(time, p.zoom, p.scroll);
-          if (x < -12 || x > p.width + 12) return null;
-          const sel = m.id === p.selectedMarkerId;
-          const spanW = m.duration > 0 ? m.duration * p.zoom : 0;
-          return (
-            <React.Fragment key={m.id}>
-              {spanW > 0 ? <div className="tl-marker-span" style={{ left: x, width: spanW, background: m.color }} /> : null}
-              {sel ? <div className="tl-marker-ring" style={{ left: x }} /> : null}
-              <div
-                className={['tl-marker', m.kind, m.resolved ? 'resolved' : '', sel ? 'selected' : ''].filter(Boolean).join(' ')}
-                data-marker-id={m.id} style={{ left: x, background: m.color }}
-                title={`${m.name || 'Marker'} · ${formatSequenceTimecode(time, p.fps)}${m.note ? `\n${m.note}` : ''}`}
-                onDoubleClick={(e) => { e.stopPropagation(); p.onMarkerEdit(m, { x: e.clientX, y: e.clientY }); }}
-              />
-            </React.Fragment>
-          );
-        })}
+      <div className="tl-ruler-scroll" ref={scrollerRef} onScroll={onScrollerScroll}>
+        <div className="tl-ruler-content" style={{ width: p.contentPx }}>
+          <canvas ref={canvasRef} />
+          {showInOut ? (
+            <div className={['tl-ruler-inout', inX === null ? 'open-start' : '', outX === null ? 'open-end' : ''].filter(Boolean).join(' ')}
+              style={{ left: Math.max(-2, bandL), width: Math.max(0, Math.min(p.contentPx + 2, bandR) - Math.max(-2, bandL)) }} />
+          ) : null}
+          <div className="tl-ruler-markers">
+            {p.markers.map((m) => {
+              const time = markerLive?.id === m.id ? markerLive.time : m.time;
+              const vx = frameToX(time, p.zoom, p.scroll);
+              const x = vx + base;
+              // A marker within 12 px of the view shows; one further out is invisible, so it may stay mounted while the
+              // timeline's mounted range holds it (scroll steps then change no marker). Its span still follows the view
+              // margin as it always did.
+              const inView = vx >= -12 && vx <= p.width + 12;
+              if (!inView && (x < p.mountX0 - 12 || x > p.mountX1 + 12)) return null;
+              const sel = m.id === p.selectedMarkerId;
+              const spanW = m.duration > 0 && inView ? m.duration * p.zoom : 0;
+              return (
+                <React.Fragment key={m.id}>
+                  {spanW > 0 ? <div className="tl-marker-span" style={{ left: x, width: spanW, background: m.color }} /> : null}
+                  {sel ? <div className="tl-marker-ring" style={{ left: x }} /> : null}
+                  <div
+                    className={['tl-marker', m.kind, m.resolved ? 'resolved' : '', sel ? 'selected' : ''].filter(Boolean).join(' ')}
+                    data-marker-id={m.id} style={{ left: x, background: m.color }}
+                    title={`${m.name || 'Marker'} · ${formatSequenceTimecode(time, p.fps)}${m.note ? `\n${m.note}` : ''}`}
+                    onDoubleClick={(e) => { e.stopPropagation(); p.onMarkerEdit(m, { x: e.clientX, y: e.clientY }); }}
+                  />
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </div>
       </div>
     </div>
   );

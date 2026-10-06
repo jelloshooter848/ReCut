@@ -129,6 +129,8 @@ export async function launchAndBuild({ width = 1900, height = 1050, tag = 'elect
   if (!fs.existsSync(path.join(MEDIA_DIR, 'movies'))) execFileSync('bash', [path.join(ROOT, 'scripts/make-test-media.sh'), MEDIA_DIR, 'full'], { stdio: 'inherit' });
   if (!fs.existsSync(path.join(ROOT, 'dist/renderer/index.html'))) throw new Error('dist/ missing: run npm run build');
   const tmp = fs.mkdtempSync(path.join(SCRATCH, `${tag}-`));
+  // Removed on exit (success or not) unless RECUT_PERF_KEEP=1; see electron-perf.mjs.
+  process.on('exit', () => { if (process.env.RECUT_PERF_KEEP !== '1') { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* best effort */ } } });
   const userData = path.join(tmp, 'userData'); const cacheDir = path.join(tmp, 'cache');
   fs.mkdirSync(userData, { recursive: true }); fs.mkdirSync(cacheDir, { recursive: true });
   const app = await electron.launch({ args: [path.join(ROOT, 'dist/electron/main.js'), '--no-sandbox'], cwd: ROOT, env: { ...process.env, RECUT_USER_DATA: userData, RECUT_CACHE_DIR: cacheDir, RECUT_DISABLE_GPU: '1' }, timeout: 90_000 });
