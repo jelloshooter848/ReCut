@@ -27,9 +27,9 @@ const DEFAULT_AUTOSAVE_INTERVAL_SEC = 60;
  * AUTOSAVE_QUIET_MS; after AUTOSAVE_PATIENCE_MS of waiting, any AUTOSAVE_SHORT_QUIET_MS pause; after
  * AUTOSAVE_MAX_DEFER_MS, regardless.
  */
-export const AUTOSAVE_QUIET_MS = 3000;
+export const AUTOSAVE_QUIET_MS = 2000;
 export const AUTOSAVE_SHORT_QUIET_MS = 250;
-export const AUTOSAVE_PATIENCE_MS = 20_000;
+export const AUTOSAVE_PATIENCE_MS = 15_000;
 export const AUTOSAVE_MAX_DEFER_MS = 60_000;
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
