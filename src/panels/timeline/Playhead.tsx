@@ -50,10 +50,13 @@ export function Playhead({ seqId, zoom, scroll, width, suppressFlip }: PlayheadP
   const x = frameToX(playhead, zoom, scroll);
   if (x < -8 || x > width + 8) return null;
   const left = Math.round(x);
+  // Line and head sit in one layer moved by a transform (composited, timeline.css): a playhead step is a compositor-only
+  // property change. Moved with `left`, every step (playback, scrubbing) changed the bounds of paint chunks, which
+  // re-runs the whole page's layerization in that frame. Whole pixels either way, so the pixels are the same.
   return (
-    <>
-      <div className="tl-playhead" style={{ left }} data-playhead />
-      <div className="tl-playhead-head" style={{ left, height: RULER_H * 0.55 }} />
-    </>
+    <div className="tl-playhead-layer" style={{ transform: `translateX(${left}px)` }}>
+      <div className="tl-playhead" data-playhead />
+      <div className="tl-playhead-head" style={{ height: RULER_H * 0.55 }} />
+    </div>
   );
 }

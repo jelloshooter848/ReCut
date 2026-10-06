@@ -56,11 +56,8 @@ export function Ruler(p: RulerProps) {
   // The scroller holds the whole device pixels of the view's scroll (set before paint, like the tracks scroller);
   // view positions plus `base` are content positions.
   const { base, baseDev } = splitScroll(p.scroll * p.zoom, dpr);
-  const baseRef = useRef(base);
-  baseRef.current = base;
-  const syncScrollLeft = useViewScrollLeft(scrollerRef, base, p.contentPx, Math.round(p.width));
-  /** The offset belongs to the view: undo any other scroll of the (hidden-bar) scroller. */
-  const onScrollerScroll = () => { const el = scrollerRef.current; if (el && Math.abs(el.scrollLeft - baseRef.current) > 1) syncScrollLeft(); };
+  // The offset belongs to the view: any other scroll of the (hidden-bar) scroller is undone.
+  const scroller = useViewScrollLeft(scrollerRef, base, p.contentPx, Math.round(p.width));
   // Canvas placement: the mounted range on the device pixel grid.
   const cvDev0 = Math.floor(Math.max(0, Math.min(p.mountX0, base)) * dpr);
   const cvDevW = Math.max(1, Math.ceil(Math.max(p.mountX1, base + p.width) * dpr) - cvDev0);
@@ -74,20 +71,26 @@ export function Ruler(p: RulerProps) {
     if (cv.style.left !== left) cv.style.left = left;
     if (cv.style.width !== width) cv.style.width = width;
     if (cv.style.height !== height) cv.style.height = height;
-    const ctx = cv.getContext('2d'); if (!ctx) return;
-    // Draw into an OffscreenCanvas and copy it over: fillText on a canvas that is in the document first brings the
-    // document's style up to date (the canvas' computed font / direction), which in the middle of a commit means a
-    // forced style recalc of everything React just changed (a page flip mounts a page of clips). An offscreen canvas
-    // has no element, so its text needs no style; the copied pixels are the same.
+    // Draw into an OffscreenCanvas and hand its bitmap to the canvas: fillText on a canvas that is in the document
+    // first brings the document's style up to date (the canvas' computed font / direction), which in the middle of a
+    // commit means a forced style recalc of everything React just changed (a page flip mounts a page of clips). An
+    // offscreen canvas has no element, so its text needs no style. The bitmap is transferred (no copy: a drawImage of
+    // the whole ruler plus a clear cost about 1.5 ms per page flip); the pixels are the same. Without OffscreenCanvas
+    // the canvas is drawn directly.
     let off: OffscreenCanvas | null = null;
     let octx: OffscreenCanvasRenderingContext2D | null = null;
-    if (typeof OffscreenCanvas !== 'undefined') {
+    let shown: ImageBitmapRenderingContext | null = null;
+    let ctx: CanvasRenderingContext2D | null = null;
+    if (typeof OffscreenCanvas !== 'undefined') shown = cv.getContext('bitmaprenderer');
+    if (shown) {
       off = offRef.current ?? (offRef.current = new OffscreenCanvas(cv.width, cv.height));
       if (off.width !== cv.width) off.width = cv.width;
       if (off.height !== cv.height) off.height = cv.height;
       octx = off.getContext('2d');
     }
+    if (!octx) ctx = cv.getContext('2d');
     const g = octx ?? ctx;
+    if (!g) return;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.fillStyle = COLORS.bg; g.fillRect(0, 0, cvDevW, cv.height);
     // The view's drawing, in view coordinates, moved by whole device pixels to where the viewport is on the canvas.
@@ -108,11 +111,7 @@ export function Ruler(p: RulerProps) {
     g.fillStyle = COLORS.label;
     for (const t of ticks) if (t.major && t.label) g.fillText(t.label, Math.round(t.x) + 0.5 + 3, 11);
     g.strokeStyle = COLORS.edge; g.beginPath(); g.moveTo(0, H - 0.5); g.lineTo(W, H - 0.5); g.stroke();
-    if (off && octx) {
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, cv.width, cv.height);
-      ctx.drawImage(off, 0, 0);
-    }
+    if (off && octx && shown) shown.transferFromImageBitmap(off.transferToImageBitmap());
   }, [p.fps, p.zoom, p.scroll, p.width, dpr, baseDev, cvDev0, cvDevW]);
 
   const frameAt = (clientX: number, e?: { altKey: boolean }) => {
@@ -188,7 +187,7 @@ export function Ruler(p: RulerProps) {
       }}
       title="Click or drag to scrub"
     >
-      <div className="tl-ruler-scroll" ref={scrollerRef} onScroll={onScrollerScroll}>
+      <div className="tl-ruler-scroll" ref={scrollerRef} onScroll={scroller.onScroll}>
         <div className="tl-ruler-content" style={{ width: p.contentPx }}>
           <canvas ref={canvasRef} />
           {showInOut ? (
