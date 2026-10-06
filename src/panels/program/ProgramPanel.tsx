@@ -18,7 +18,7 @@ import { formatSequenceTimecode } from '@shared/time';
 import { clipAt, nextEdit, prevEdit, sequenceDuration } from '@shared/timeline';
 import { SequencePlayer, planFrame, type MissingMedia } from '@/playback';
 import { useStore } from '@/state/store';
-import { activeSequence, originalTimecode } from '@/state/selectors';
+import { activeSequence, activeSequenceDuration, originalTimecode } from '@/state/selectors';
 import type { StoreState } from '@/state/types';
 import { startProxy } from '@/state/mediaActions';
 import { getAudioContext, getPool, resumeAudio } from '@/app/media';
@@ -128,7 +128,8 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
   const seqH = useStore((s) => activeSequence(s)?.height ?? 1080);
   const inPoint = useStore((s) => activeSequence(s)?.view.inPoint ?? null);
   const outPoint = useStore((s) => activeSequence(s)?.view.outPoint ?? null);
-  const duration = useStore((s) => { const seq = activeSequence(s); return seq ? sequenceDuration(seq) : 0; });
+  // Cached on the track arrays: this selector runs on every store update (each scrub / playback step).
+  const duration = useStore(activeSequenceDuration);
   const markers = useStore((s) => activeSequence(s)?.markers ?? NO_MARKERS);
   const playing = useStore((s) => s.playback.playing);
   const rate = useStore((s) => s.playback.rate);
@@ -199,8 +200,13 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
         else if (!player.isPlaying) player.renderFrame(seq.view.playhead);
         scheduleStatus();
       }
-      // Paused: the store playhead is the source of truth (timeline clicks, keyboard, inspector).
-      if (!player.isPlaying && seq.view.playhead !== player.currentFrame()) player.seek(seq.view.playhead);
+      // Paused: the store playhead is the source of truth (timeline clicks, keyboard, inspector). Publish it to the
+      // frame readouts here, in the store update's task, so React renders them in the same commit as the store
+      // consumers (the player's onFrame a frame later then finds the value already published: no second commit).
+      if (!player.isPlaying && seq.view.playhead !== player.currentFrame()) {
+        player.seek(seq.view.playhead);
+        frameSig.set(player.currentFrame(), true);
+      }
       lastSeq = seq; lastMedia = media; lastSettings = settings;
     };
     apply(useStore.getState());
@@ -278,7 +284,8 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
   const onScrub = useCallback((frame: number, phase: 'start' | 'move' | 'end') => {
     const p = playerRef.current;
     if (phase === 'start') { setActiveTransport('program'); focusRoot(); if (p?.isPlaying) p.pause(); }
-    if (p) p.renderFrame(frame);
+    // A scrub step: the player coalesces seeks and touches only what is visible until the playhead rests.
+    if (p) p.seek(frame);
     const st = useStore.getState();
     const id = st.project.activeSequenceId;
     if (id) st.setView(id, { playhead: frame });
