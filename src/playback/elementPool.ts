@@ -1,5 +1,6 @@
 /**
- * Pool of HTMLVideoElements keyed by (path, role).
+ * Pool of media elements keyed by (path, role): <audio> for roles starting with 'audio' (sound only: no video decoder),
+ * <video> otherwise.
  *
  * Decoding is expensive, so the sequence player reuses elements across frames and the pool
  * evicts the least recently used element when more than `capacity` exist. A per-path error
@@ -11,7 +12,7 @@ export interface PooledElement {
   key: string;
   path: string;
   role: string;
-  el: HTMLVideoElement;
+  el: HTMLMediaElement;
   lastUsed: number;
   /** Incremented by `retain`, decremented by `release`; retained entries are never evicted. */
   pins: number;
@@ -26,6 +27,9 @@ export interface MediaLoadError {
 
 export function poolKey(path: string, role: string): string { return `${role}\u0000${path}`; }
 
+/** Roles starting with 'audio' get an <audio> element: it plays the file's sound without decoding its pictures. */
+export function isAudioRole(role: string): boolean { return role.startsWith('audio'); }
+
 export class MediaElementPool {
   private entries = new Map<string, PooledElement>();
   private errors = new Map<string, MediaLoadError>();
@@ -33,26 +37,43 @@ export class MediaElementPool {
   private destroyed = false;
   private listeners = new Set<(err: MediaLoadError) => void>();
   private releaseListeners = new Set<(path: string) => void>();
+  private disposeListeners = new Set<(el: HTMLMediaElement, path: string, role: string) => void>();
+  private createdCount = 0;
+  private disposedCount = 0;
 
   constructor(public capacity = 12) {}
 
   get size(): number { return this.entries.size; }
 
+  /** Elements created / disposed over the pool's lifetime (dev overlays, leak tests). */
+  get stats(): { created: number; disposed: number; live: number } {
+    return { created: this.createdCount, disposed: this.disposedCount, live: this.entries.size };
+  }
+
   /**
    * Get (or create) the element for `path` in `role` and mark it as most recently used.
    * Roles are free-form strings (e.g. `video:<clipId>`, `audio:<clipId>`, `warm`).
    */
-  acquire(path: string, role: string): HTMLVideoElement {
+  acquire(path: string, role: string): HTMLMediaElement {
     if (this.destroyed) throw new Error('MediaElementPool destroyed');
     const key = poolKey(path, role);
     let entry = this.entries.get(key);
-    if (!entry) {
-      entry = { key, path, role, el: this.createElement(path, role), lastUsed: 0, pins: 0 };
-      this.entries.set(key, entry);
-      this.evict();
+    if (entry) {
+      entry.lastUsed = ++this.counter;
+      return entry.el;
     }
-    entry.lastUsed = ++this.counter;
+    // Most recently used from the start, and never its own eviction victim: with lastUsed 0 the new element was the
+    // LRU entry of a full pool, so it was disposed before it was returned and recreated on every later acquire.
+    entry = { key, path, role, el: this.createElement(path, role), lastUsed: ++this.counter, pins: 0 };
+    this.entries.set(key, entry);
+    this.evict(key);
     return entry.el;
+  }
+
+  /** `acquire` for a picture role (not 'audio…'): always an HTMLVideoElement. */
+  acquireVideo(path: string, role: string): HTMLVideoElement {
+    if (isAudioRole(role)) throw new Error(`acquireVideo: '${role}' is an audio role`);
+    return this.acquire(path, role) as HTMLVideoElement;
   }
 
   /** Whether an element already exists for this (path, role). */
@@ -80,7 +101,7 @@ export class MediaElementPool {
     const e = this.entries.get(key);
     if (!e) return;
     this.entries.delete(key);
-    this.dispose(e.el);
+    this.dispose(e);
   }
 
   /** Drop every element for a path (any role), e.g. when media is relinked or a proxy finishes. */
@@ -96,9 +117,19 @@ export class MediaElementPool {
     return () => { this.releaseListeners.delete(cb); };
   }
 
+  /**
+   * Called just before the pool disposes an element (eviction, release, releasePath, destroy), so owners can drop
+   * what they attached to it (a MediaElementAudioSourceNode can be created only once per element and lives as long
+   * as the element: disconnect it here so neither stays reachable from the audio graph).
+   */
+  onDispose(cb: (el: HTMLMediaElement, path: string, role: string) => void): () => void {
+    this.disposeListeners.add(cb);
+    return () => { this.disposeListeners.delete(cb); };
+  }
+
   /** Start buffering a file so the first seek is fast. Uses a dedicated 'warm' role. */
   warm(path: string): HTMLVideoElement {
-    const el = this.acquire(path, 'warm');
+    const el = this.acquireVideo(path, 'warm');
     try { el.load(); } catch { /* ignore */ }
     return el;
   }
@@ -123,26 +154,31 @@ export class MediaElementPool {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    for (const e of this.entries.values()) this.dispose(e.el);
+    for (const e of this.entries.values()) this.dispose(e);
     this.entries.clear();
     this.errors.clear();
     this.listeners.clear();
     this.releaseListeners.clear();
+    this.disposeListeners.clear();
   }
 
   // ---------------------------------------------------------------
 
-  private createElement(path: string, role: string): HTMLVideoElement {
-    const el = document.createElement('video');
+  private createElement(path: string, role: string): HTMLMediaElement {
+    const audio = isAudioRole(role);
+    const el: HTMLMediaElement = document.createElement(audio ? 'audio' : 'video');
+    this.createdCount++;
     el.preload = 'auto';
-    el.playsInline = true;
-    el.setAttribute('playsinline', '');
+    if (!audio) {
+      (el as HTMLVideoElement).playsInline = true;
+      el.setAttribute('playsinline', '');
+      (el as HTMLVideoElement).disableRemotePlayback = true;
+    }
     el.removeAttribute('crossorigin');
     el.muted = role.startsWith('video') || role === 'warm';
     el.defaultMuted = el.muted;
     el.loop = false;
     el.controls = false;
-    el.disableRemotePlayback = true;
     el.addEventListener('error', () => {
       const me = el.error;
       const err: MediaLoadError = {
@@ -160,7 +196,10 @@ export class MediaElementPool {
     return el;
   }
 
-  private dispose(el: HTMLVideoElement): void {
+  private dispose(e: PooledElement): void {
+    const el = e.el;
+    this.disposedCount++;
+    for (const cb of this.disposeListeners) { try { cb(el, e.path, e.role); } catch { /* ignore listener failures */ } }
     try { el.pause(); } catch { /* ignore */ }
     try {
       el.removeAttribute('src');
@@ -169,16 +208,17 @@ export class MediaElementPool {
     if (el.parentNode) el.parentNode.removeChild(el);
   }
 
-  private evict(): void {
+  /** Dispose least recently used, unpinned entries until the pool fits its capacity; `keep` is never evicted. */
+  private evict(keep: string): void {
     while (this.entries.size > this.capacity) {
       let victim: PooledElement | null = null;
       for (const e of this.entries.values()) {
-        if (e.pins > 0) continue;
+        if (e.pins > 0 || e.key === keep) continue;
         if (!victim || e.lastUsed < victim.lastUsed) victim = e;
       }
       if (!victim) return;
       this.entries.delete(victim.key);
-      this.dispose(victim.el);
+      this.dispose(victim);
     }
   }
 }

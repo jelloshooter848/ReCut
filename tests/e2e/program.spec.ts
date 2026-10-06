@@ -232,5 +232,50 @@ test.describe('Program Monitor', () => {
     await page.waitForTimeout(300);
     await page.screenshot({ path: path.join(ROOT, 'docs/screenshots/program-still.png') });
   });
+
+  test('a cut between two clips of one file reuses the pooled element and lands on the right frame', async () => {
+    const { page } = launched;
+    test.setTimeout(90_000);
+    const seqId = await getState<string>(page, '(s) => s.project.activeSequenceId');
+    // V1 holds 1–3 s of movie 1 at frames 0–47 and 5–7 s of the same file at 48–95 (first test). Elements are pooled
+    // per (file, kind, slot), so both clips use the same <video>: crossing the cut is a seek, not a new element.
+    await page.evaluate(() => {
+      const w = window as unknown as { __videosCreated: number };
+      w.__videosCreated = 0;
+      const ce = document.createElement.bind(document);
+      document.createElement = ((tag: string, o?: ElementCreationOptions) => { if (tag.toLowerCase() === 'video') w.__videosCreated++; return ce(tag, o); }) as typeof document.createElement;
+    });
+    /** 8x8 grid of mean luma over the bottom-right quarter (video only; the still image covers the top-left). */
+    const signature = () => page.evaluate((sel) => {
+      const c = document.querySelector(sel) as HTMLCanvasElement;
+      const x0 = Math.floor(c.width / 2), y0 = Math.floor(c.height / 2), w = c.width - x0, h = c.height - y0;
+      const d = c.getContext('2d')!.getImageData(x0, y0, w, h).data;
+      const out: number[] = [];
+      for (let gy = 0; gy < 8; gy++) for (let gx = 0; gx < 8; gx++) {
+        let s = 0, n = 0;
+        for (let y = Math.floor(gy * h / 8); y < Math.floor((gy + 1) * h / 8); y += 3) for (let x = Math.floor(gx * w / 8); x < Math.floor((gx + 1) * w / 8); x += 3) {
+          const i = (y * w + x) * 4; s += d[i] + d[i + 1] + d[i + 2]; n++;
+        }
+        out.push(Math.round(s / Math.max(1, n) / 3));
+      }
+      return out.join(',');
+    }, CANVAS);
+    /** Seek (paused) and wait until the drawn frame stops changing. */
+    const settleAt = async (frame: number): Promise<string> => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await page.evaluate(({ seqId, frame }) => { (window as any).__recut.store.getState().setView(seqId, { playhead: frame }); }, { seqId, frame });
+      let prev = '';
+      let sig = '';
+      await expect.poll(async () => { prev = sig; await page.waitForTimeout(250); sig = await signature(); return sig === prev && sig.split(',').some((v) => Number(v) > 20); }, { timeout: 20_000, intervals: [0] }).toBe(true);
+      return sig;
+    };
+    const at10: string[] = [];
+    const at70: string[] = [];
+    for (let i = 0; i < 4; i++) { at10.push(await settleAt(10)); at70.push(await settleAt(70)); }
+    expect(new Set(at10).size).toBe(1);
+    expect(new Set(at70).size).toBe(1);
+    expect(at10[0]).not.toBe(at70[0]); // 1.4 s vs 5.9 s into the movie: different burned-in frame
+    expect(await page.evaluate(() => (window as unknown as { __videosCreated: number }).__videosCreated)).toBe(0);
+  });
 });
 
