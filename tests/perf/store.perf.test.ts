@@ -15,7 +15,7 @@ import { planFrame } from '../../src/playback/planner';
 import type { MediaProbe } from '../../shared/model';
 // @ts-expect-error plain JS module shared with the Electron harness
 import { buildBigProject, buildLongSequence } from './bigProject.mjs';
-import { bench, flush, heapMB, ms, now, record, round, rssMB, stats } from './_report';
+import { bench, DIAGNOSTIC, flush, GUARDRAIL, GUARDRAIL_REF, heapMB, ms, now, record, round, rssMB, stats } from './_report';
 
 const FPS = { num: 24, den: 1 };
 const S = () => useStore.getState();
@@ -60,67 +60,67 @@ describe('store @ 2500 clips', () => {
     const mediaId = big.mediaIds[3];
     const dur = sequenceDuration(S().project.sequences[seqId]);
     const ov = bench(20, (i) => { S().insertFromSource(seqId, { mediaId, in: 1, out: 4, atFrame: 50 + i * 130, mode: 'overwrite' }); });
-    ms('commit', 'insertFromSource overwrite (median)', ov.median, 16); ms('commit', 'insertFromSource overwrite (p95)', ov.p95, 50);
+    ms('commit', 'insertFromSource overwrite (median)', ov.median, 16, undefined, GUARDRAIL); ms('commit', 'insertFromSource overwrite (p95)', ov.p95, 50, undefined, GUARDRAIL);
     const ins = bench(10, (i) => { S().insertFromSource(seqId, { mediaId, in: 1, out: 3, atFrame: 10 + i * 500, mode: 'insert' }); });
-    ms('commit', 'insertFromSource insert/ripple (median)', ins.median, 16); ms('commit', 'insertFromSource insert/ripple (p95)', ins.p95, 50);
+    ms('commit', 'insertFromSource insert/ripple (median)', ins.median, 16, undefined, GUARDRAIL); ms('commit', 'insertFromSource insert/ripple (p95)', ins.p95, 50, undefined, GUARDRAIL);
     const rz = bench(20, (i) => { S().razor(seqId, 60 + i * 360); });
-    ms('commit', 'razor all tracks (median)', rz.median, 16); ms('commit', 'razor all tracks (p95)', rz.p95, 50);
+    ms('commit', 'razor all tracks (median)', rz.median, 16, undefined, GUARDRAIL); ms('commit', 'razor all tracks (p95)', rz.p95, 50, undefined, GUARDRAIL);
     const seq = S().project.sequences[seqId];
     const v1 = seq.videoTracks[0];
     const mv = bench(20, (i) => {
       const c = S().project.sequences[seqId].videoTracks[0].clips[40 + i * 5];
       S().moveClips(seqId, [{ clipId: c.id, toTrackId: v1.id, toStart: c.start + 7 }], 'overwrite');
     });
-    ms('commit', 'moveClips 1 clip overwrite (median)', mv.median, 16); ms('commit', 'moveClips (p95)', mv.p95, 50);
+    ms('commit', 'moveClips 1 clip overwrite (median)', mv.median, 16, undefined, GUARDRAIL); ms('commit', 'moveClips (p95)', mv.p95, 50, undefined, GUARDRAIL);
     const mvi = bench(5, (i) => {
       const c = S().project.sequences[seqId].videoTracks[1].clips[100 + i * 5];
       S().moveClips(seqId, [{ clipId: c.id, toTrackId: seq.videoTracks[1].id, toStart: c.start + 3 }], 'insert');
     });
-    ms('commit', 'moveClips 1 clip insert/ripple (median)', mvi.median, 16);
+    ms('commit', 'moveClips 1 clip insert/ripple (median)', mvi.median, 16, undefined, GUARDRAIL);
     const rd = bench(10, (i) => {
       const c = S().project.sequences[seqId].videoTracks[2].clips[200 + i];
       S().select([c.id], 'set');
       S().rippleDeleteSelected(seqId);
     });
-    ms('commit', 'rippleDeleteSelected 1 clip (median)', rd.median, 16); ms('commit', 'rippleDeleteSelected (p95)', rd.p95, 50);
+    ms('commit', 'rippleDeleteSelected 1 clip (median)', rd.median, 16, undefined, GUARDRAIL); ms('commit', 'rippleDeleteSelected (p95)', rd.p95, 50, undefined, GUARDRAIL);
     const del = bench(10, (i) => {
       const c = S().project.sequences[seqId].videoTracks[3].clips[200 + i];
       S().select([c.id], 'set');
       S().deleteSelected(seqId);
     });
-    ms('commit', 'deleteSelected 1 clip (median)', del.median, 16);
+    ms('commit', 'deleteSelected 1 clip (median)', del.median, 16, undefined, GUARDRAIL);
     const en = bench(50, (i) => { const c = S().project.sequences[seqId].videoTracks[0].clips[i]; S().setClipEnabled(seqId, c.id, i % 2 === 0); });
-    ms('commit', 'setClipEnabled (tiny commit, median)', en.median, 8);
+    ms('commit', 'setClipEnabled (tiny commit, median)', en.median, 8, undefined, GUARDRAIL);
     const tr = bench(20, (i) => { const t = S().project.sequences[seqId].videoTracks[0]; const c = t.clips[10 + i]; S().addTransitionAtCut(seqId, t.id, clipEnd(c), 'crossDissolve', 12); });
-    ms('commit', 'addTransitionAtCut (median)', tr.median, 8);
+    ms('commit', 'addTransitionAtCut (median)', tr.median, 8, undefined, GUARDRAIL);
     const mk = bench(20, (i) => { S().addMarker(seqId, { time: 10 + i }); });
-    ms('commit', 'addMarker (median)', mk.median, 8);
+    ms('commit', 'addMarker (median)', mk.median, 8, undefined, GUARDRAIL);
     const spd = bench(5, (i) => { const c = S().project.sequences[seqId].videoTracks[0].clips[300 + i]; S().setClipSpeed(seqId, c.id, 1.5, { ripple: true }); });
-    ms('commit', 'setClipSpeed ripple (median)', spd.median, 16);
+    ms('commit', 'setClipSpeed ripple (median)', spd.median, 16, undefined, GUARDRAIL);
     expect(sequenceDuration(S().project.sequences[seqId])).toBeGreaterThan(dur * 0.9);
   });
 
   it('setView latency (playhead moves) with and without a selection', () => {
     S().select([], 'clear');
     const empty = bench(1000, (i) => { S().setView(seqId, { playhead: i * 7 }); });
-    ms('view', 'setView playhead, no selection (mean of 1000)', empty.mean, 0.5);
+    ms('view', 'setView playhead, no selection (mean of 1000)', empty.mean, 0.5, undefined, GUARDRAIL);
     const ids = allTracks(S().project.sequences[seqId]).flatMap((t) => t.clips.map((c) => c.id));
     S().select(ids.slice(0, 100), 'set');
     const sel = bench(1000, (i) => { S().setView(seqId, { playhead: i * 7 }); });
-    ms('view', 'setView playhead, 100 clips selected (mean)', sel.mean, 0.5, 'pruneUi walks every clip when anything is selected');
+    ms('view', 'setView playhead, 100 clips selected (mean)', sel.mean, 0.5, 'pruneUi walks every clip when anything is selected', GUARDRAIL);
     S().select(ids, 'set');
     const all = bench(200, (i) => { S().setView(seqId, { playhead: i * 7 }); });
-    ms('view', 'setView playhead, all 2500 selected (mean)', all.mean, 1);
+    ms('view', 'setView playhead, all 2500 selected (mean)', all.mean, 1, undefined, GUARDRAIL);
     const scroll = bench(500, (i) => { S().setView(seqId, { scroll: i * 3 }); });
-    ms('view', 'setView scroll (mean of 500)', scroll.mean, 0.5);
+    ms('view', 'setView scroll (mean of 500)', scroll.mean, 0.5, undefined, GUARDRAIL);
     S().select([], 'clear');
   });
 
   it('undo / redo latency', () => {
     const u = bench(30, () => { S().undo(); });
-    ms('history', 'undo (median of 30)', u.median, 16); ms('history', 'undo (max)', u.max, 50);
+    ms('history', 'undo (median of 30)', u.median, 16, undefined, GUARDRAIL); ms('history', 'undo (max)', u.max, 50, undefined, GUARDRAIL);
     const r = bench(30, () => { S().redo(); });
-    ms('history', 'redo (median of 30)', r.median, 16); ms('history', 'redo (max)', r.max, 50);
+    ms('history', 'redo (median of 30)', r.median, 16, undefined, GUARDRAIL); ms('history', 'redo (max)', r.max, 50, undefined, GUARDRAIL);
     const u2 = bench(1, () => { S().undo(); });
     ms('history', 'undo single (ms)', u2.median);
     expect(S().canRedo()).toBe(true);
@@ -145,8 +145,8 @@ describe('store @ 2500 clips', () => {
     }
     ms('memory', '300 mixed commits total', now() - t);
     marks.forEach((m, i) => record({ section: 'memory', metric: `heap after ${(i + 1) * 100} commits (MB)`, value: m, unit: 'MB' }));
-    record({ section: 'memory', metric: 'heap growth over 300 commits (MB)', value: round(marks[2] - h0), unit: 'MB', threshold: '<= 150 MB', pass: marks[2] - h0 <= 150 });
-    record({ section: 'memory', metric: 'history.past.length after 300 commits', value: S().history.past.length, unit: '', threshold: '== limit 200', pass: S().history.past.length === 200 });
+    record({ section: 'memory', metric: 'heap growth over 300 commits (MB)', value: round(marks[2] - h0), unit: 'MB', threshold: '<= 150 MB', pass: marks[2] - h0 <= 150 }, GUARDRAIL);
+    record({ section: 'memory', metric: 'history.past.length after 300 commits', value: S().history.past.length, unit: '', threshold: '== limit 200', pass: S().history.past.length === 200 }, GUARDRAIL);
     record({ section: 'memory', metric: 'history.limit', value: S().history.limit, unit: '' });
     // Per-entry retained size: razor commits create a fresh tracks array for the touched track only (immer sharing)
     S().clearHistory();
@@ -160,7 +160,7 @@ describe('store @ 2500 clips', () => {
     const project = S().project;
     let json = '';
     const ser = bench(3, () => { json = serializeProject(project); });
-    ms('io', 'serializeProject (pretty JSON, median of 3)', ser.median, 100);
+    ms('io', 'serializeProject (pretty JSON, median of 3)', ser.median, 100, undefined, DIAGNOSTIC);
     record({ section: 'io', metric: 'project JSON size (MB, pretty)', value: round(json.length / 1048576), unit: 'MB' });
     const compact = JSON.stringify(project);
     record({ section: 'io', metric: 'project JSON size (MB, compact)', value: round(compact.length / 1048576), unit: 'MB' });
@@ -170,16 +170,16 @@ describe('store @ 2500 clips', () => {
     record({ section: 'io', metric: 'bytes of big sequence alone (MB, compact)', value: round(perSeq.find((p) => p.name.startsWith('Big'))!.bytes / 1048576), unit: 'MB' });
     let raw: unknown = null;
     const parse = bench(3, () => { raw = JSON.parse(json); });
-    ms('io', 'JSON.parse (median of 3)', parse.median, 100);
+    ms('io', 'JSON.parse (median of 3)', parse.median, 100, undefined, DIAGNOSTIC);
     const norm = bench(3, () => { normalizeProject(raw); });
-    ms('io', 'normalizeProject (median of 3)', norm.median, 100);
+    ms('io', 'normalizeProject (median of 3)', norm.median, 100, undefined, GUARDRAIL_REF);
     const clone = bench(3, () => { structuredClone(project); });
-    ms('io', 'structuredClone(project) ~ IPC cost one way (median of 3)', clone.median, 100);
+    ms('io', 'structuredClone(project) ~ IPC cost one way (median of 3)', clone.median, 100, undefined, DIAGNOSTIC);
     const sfs = bench(3, () => { serializeForSave(S()); });
-    ms('io', 'serializeForSave (immer produce stamping modifiedAt)', sfs.median, 20);
+    ms('io', 'serializeForSave (immer produce stamping modifiedAt)', sfs.median, 20, undefined, GUARDRAIL);
     const loaded = normalizeProject(JSON.parse(json));
     const load = bench(3, () => { S().loadProjectData(loaded, '/tmp/x.recut'); });
-    ms('io', 'loadProjectData (store set + pruneUi)', load.median, 20);
+    ms('io', 'loadProjectData (store set + pruneUi)', load.median, 20, undefined, GUARDRAIL);
     expect(Object.keys(loaded.sequences).length).toBe(Object.keys(project.sequences).length);
   });
 
@@ -188,12 +188,12 @@ describe('store @ 2500 clips', () => {
     const media = S().project.media;
     const dur = sequenceDuration(seq);
     const pf = bench(240, (i) => { planFrame(seq, media, Math.floor((dur * i) / 240), true); });
-    ms('frame', 'planFrame (median over 240 frames)', pf.median, 2, 'runs every rAF while playing');
-    ms('frame', 'planFrame (max)', pf.max, 4);
+    ms('frame', 'planFrame (median over 240 frames)', pf.median, 2, 'runs every rAF while playing', GUARDRAIL);
+    ms('frame', 'planFrame (max)', pf.max, 4, undefined, GUARDRAIL);
     const sd = bench(100, () => { sequenceDuration(seq); });
-    ms('frame', 'sequenceDuration (mean)', sd.mean, 0.2);
+    ms('frame', 'sequenceDuration (mean)', sd.mean, 0.2, undefined, GUARDRAIL);
     const fc = bench(200, (i) => { findClip(seq, `clip_perf_${(i * 13) % 2500}`); });
-    ms('frame', 'findClip by id (mean, linear scan)', fc.mean, 0.1);
+    ms('frame', 'findClip by id (mean, linear scan)', fc.mean, 0.1, undefined, GUARDRAIL);
     // Sequence subtitle tracks anchored to clips: 8000 cues across 30 tracks via carrySubtitles-like shape.
     S().commit('perf subtitle tracks', (d) => {
       const s = d.sequences[seqId];
@@ -209,9 +209,9 @@ describe('store @ 2500 clips', () => {
     });
     const seq2 = S().project.sequences[seqId];
     const rs = bench(10, () => { resolveSubtitleCues(seq2); });
-    ms('frame', 'resolveSubtitleCues 8000 cues (median)', rs.median, 16, 'TimelinePanel recomputes on every track change');
+    ms('frame', 'resolveSubtitleCues 8000 cues (median)', rs.median, 16, 'TimelinePanel recomputes on every track change', GUARDRAIL);
     const pf2 = bench(100, (i) => { planFrame(seq2, media, Math.floor((dur * i) / 100), true); });
-    ms('frame', 'planFrame with subtitle tracks (median)', pf2.median, 2);
+    ms('frame', 'planFrame with subtitle tracks (median)', pf2.median, 2, undefined, GUARDRAIL);
     expect(resolveSubtitleCues(seq2).length).toBeGreaterThan(7000);
   });
 
@@ -233,40 +233,40 @@ describe('store @ 2500 clips', () => {
     ms('long', 'setActiveSequence big <-> multi-hour (store only, median)', sw.median);
     S().setActiveSequence(seqId);
     const pf = bench(240, (i) => { planFrame(seq, media, Math.floor((dur * i) / 240), true); });
-    ms('long', 'planFrame multi-hour (median over 240 frames)', pf.median, 2, 'runs every rAF while playing');
-    ms('long', 'planFrame multi-hour (max)', pf.max, 4);
+    ms('long', 'planFrame multi-hour (median over 240 frames)', pf.median, 2, 'runs every rAF while playing', GUARDRAIL);
+    ms('long', 'planFrame multi-hour (max)', pf.max, 4, undefined, GUARDRAIL);
     const sd = bench(100, () => { sequenceDuration(seq); });
-    ms('long', 'sequenceDuration multi-hour (mean)', sd.mean, 0.2);
+    ms('long', 'sequenceDuration multi-hour (mean)', sd.mean, 0.2, undefined, GUARDRAIL);
     // Edits on the multi-hour sequence (same budgets as the 2,500-clip rows in 'commit').
     const mediaId = big.mediaIds[3];
     const ins = bench(10, (i) => { S().insertFromSource(lid, { mediaId, in: 1, out: 3, atFrame: 1000 + i * 20000, mode: 'insert' }); });
-    ms('long', 'multi-hour insertFromSource insert/ripple (median)', ins.median, 16);
+    ms('long', 'multi-hour insertFromSource insert/ripple (median)', ins.median, 16, undefined, GUARDRAIL);
     const rz = bench(20, (i) => { S().razor(lid, 500 + i * 12000); });
-    ms('long', 'multi-hour razor all tracks (median)', rz.median, 16);
+    ms('long', 'multi-hour razor all tracks (median)', rz.median, 16, undefined, GUARDRAIL);
     const mv = bench(20, (i) => {
       const tr = S().project.sequences[lid].videoTracks[0]; const c = tr.clips[100 + i * 97];
       S().moveClips(lid, [{ clipId: c.id, toTrackId: tr.id, toStart: c.start + 5 }], 'overwrite');
     });
-    ms('long', 'multi-hour moveClips 1 clip overwrite (median)', mv.median, 16);
+    ms('long', 'multi-hour moveClips 1 clip overwrite (median)', mv.median, 16, undefined, GUARDRAIL);
     const rd = bench(10, (i) => {
       const c = S().project.sequences[lid].videoTracks[0].clips[1500 + i * 3];
       S().select([c.id], 'set'); S().rippleDeleteSelected(lid);
     });
-    ms('long', 'multi-hour rippleDeleteSelected 1 clip (median)', rd.median, 16);
+    ms('long', 'multi-hour rippleDeleteSelected 1 clip (median)', rd.median, 16, undefined, GUARDRAIL);
     S().select([], 'clear');
     const u = bench(20, () => { S().undo(); });
-    ms('long', 'multi-hour undo (median of 20)', u.median, 16);
+    ms('long', 'multi-hour undo (median of 20)', u.median, 16, undefined, GUARDRAIL);
     // Serialize sizes / time of the whole project now that it also holds the multi-hour sequence.
     const project = S().project;
     let json = '';
     const ser = bench(3, () => { json = serializeProject(project); });
-    ms('long', 'serializeProject incl. multi-hour (pretty JSON, median of 3)', ser.median, 100);
+    ms('long', 'serializeProject incl. multi-hour (pretty JSON, median of 3)', ser.median, 100, undefined, DIAGNOSTIC);
     record({ section: 'long', metric: 'project JSON size incl. multi-hour (MB, pretty)', value: round(json.length / 1048576), unit: 'MB' });
     record({ section: 'long', metric: 'project JSON size incl. multi-hour (MB, compact)', value: round(JSON.stringify(project).length / 1048576), unit: 'MB' });
     record({ section: 'long', metric: 'bytes of multi-hour sequence alone (MB, compact)', value: round(JSON.stringify(project.sequences[lid]).length / 1048576), unit: 'MB' });
     const parse = bench(3, () => { JSON.parse(json); });
-    ms('long', 'JSON.parse incl. multi-hour (median of 3)', parse.median, 100);
+    ms('long', 'JSON.parse incl. multi-hour (median of 3)', parse.median, 100, undefined, DIAGNOSTIC);
     const clone = bench(3, () => { structuredClone(project); });
-    ms('long', 'structuredClone(project) incl. multi-hour (median of 3)', clone.median, 100);
+    ms('long', 'structuredClone(project) incl. multi-hour (median of 3)', clone.median, 100, undefined, DIAGNOSTIC);
   });
 });

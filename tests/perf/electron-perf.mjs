@@ -38,12 +38,15 @@ if (!fs.existsSync(path.join(ROOT, 'dist/renderer/index.html')) || !fs.existsSyn
 
 const results = [];
 const r2 = (v, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
-function rec(section, metric, value, unit = '', threshold, pass, note) {
-  const row = { section, metric, value: typeof value === 'number' ? r2(value) : value, unit, threshold, pass: pass ?? null, note };
+// Tier of a budgeted row (tests/perf/_report.ts, docs/DEVELOPMENT.md → Performance gate): a row with no tiering is a gate.
+const GUARDRAIL = { tier: 'guardrail' }, DIAGNOSTIC = { tier: 'diagnostic', reference: true };
+function rec(section, metric, value, unit = '', threshold, pass, note, tiering) {
+  const row = { section, metric, value: typeof value === 'number' ? r2(value) : value, unit, threshold, pass: pass ?? null, note, ...tiering };
+  if (typeof row.pass === 'boolean' && !row.tier) row.tier = 'gate';
   results.push(row);
   console.log(`${section.padEnd(10)} ${metric.padEnd(66).slice(0, 66)} ${String(row.value).padStart(12)} ${unit.padEnd(6)} ${(threshold ?? '').padEnd(14)} ${pass === undefined || pass === null ? '' : pass ? 'PASS' : 'FAIL'} ${note ?? ''}`);
 }
-const ms = (section, metric, v, threshold, note) => rec(section, metric, v, 'ms', threshold !== undefined ? `<= ${threshold} ms` : undefined, threshold !== undefined ? v <= threshold : null, note);
+const ms = (section, metric, v, threshold, note, tiering) => rec(section, metric, v, 'ms', threshold !== undefined ? `<= ${threshold} ms` : undefined, threshold !== undefined ? v <= threshold : null, note, tiering);
 const stats = (xs) => { const s = [...xs].sort((a, b) => a - b); const q = (p) => s[Math.min(s.length - 1, Math.floor(p * (s.length - 1)))] ?? 0; return { median: r2(q(0.5)), p95: r2(q(0.95)), max: r2(s[s.length - 1] ?? 0), mean: r2(s.reduce((a, b) => a + b, 0) / Math.max(1, s.length)) }; };
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
 
@@ -197,13 +200,13 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
     const t = await paintAfter((id) => window.__recut.store.getState().setActiveSequence(id), SEQ);
     ms('timeline', `switch to big sequence -> first paint @ ${label}`, t, 100);
     const c = await domCounts();
-    rec('timeline', `DOM nodes in tracks content @ ${label}`, c.all, 'nodes', '<= 5000', c.all <= 5000, `${c.clips} clips, ${c.transitions} transitions, page total ${c.page}`);
+    rec('timeline', `DOM nodes in tracks content @ ${label}`, c.all, 'nodes', '<= 5000', c.all <= 5000, `${c.clips} clips, ${c.transitions} transitions, page total ${c.page}`, GUARDRAIL);
     await sleep(2500);
     const long = await lt(t0);
     rec('timeline', `long tasks in 2.5 s after switch @ ${label}`, long.length, '', '<= 1', long.length <= 1, ltSummary(long));
     const ipc = await ipcStats(true);
     const strips = ipc.counts['media:filmstrip'] || 0, thumbs = ipc.counts['media:thumbnail'] || 0, waves = ipc.counts['media:waveform'] || 0;
-    rec('timeline', `IPC filmstrip / thumbnail / waveform calls in 3 s after switch @ ${label}`, `${strips} / ${thumbs} / ${waves}`, 'calls', 'filmstrip <= 60', strips <= 60, `ffmpeg processes now: ${ffmpegCount()} (was ${ff0})`);
+    rec('timeline', `IPC filmstrip / thumbnail / waveform calls in 3 s after switch @ ${label}`, `${strips} / ${thumbs} / ${waves}`, 'calls', 'filmstrip <= 60', strips <= 60, `ffmpeg processes now: ${ffmpegCount()} (was ${ff0})`, GUARDRAIL);
     void ipc0;
     const c2 = await domCounts();
     rec('timeline', `thumb <img> / wave <canvas> mounted after 3 s @ ${label}`, `${c2.thumbs} / ${c2.waves}`, '');
@@ -244,7 +247,7 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
     rec(section, `playhead scrub fps (rAF-driven setView) ${label}`, r2(out.fps, 1), 'fps', '>= 50', out.fps >= 50, `${out.frames} frames`);
     rec(section, `DOM mutations per frame ${label} (tracks col / clips content)`, `${r2(out.mutAll / Math.max(1, out.frames), 2)} / ${r2(out.mutContent / Math.max(1, out.frames), 2)}`, '', 'content == 0', out.mutContent === 0);
     rec(section, `ClipView renders per frame ${label}`, r2(out.clipRendered / Math.max(1, out.frames), 2), '', '== 0', out.clipRendered === 0, `${out.commits} React commits, TimelineBody renders ${out.tb}, ${out.clipTotal} clip fibers`);
-    ms(section, `setView call cost ${label} (median / max)`, out.setViewMedian, 1, `max ${r2(out.setViewMax)} ms`);
+    ms(section, `setView call cost ${label} (median / max)`, out.setViewMedian, 1, `max ${r2(out.setViewMax)} ms`, GUARDRAIL);
     rec(section, `long tasks during scrub ${label}`, long.length, '', '== 0', long.length === 0, ltSummary(long));
   };
 {
@@ -350,7 +353,7 @@ await setView({ zoom: 1, scroll: 0, playhead: 0 });
   const mem1 = await page.evaluate(() => performance.memory ? performance.memory.usedJSHeapSize / 1048576 : -1);
   rec('store', 'renderer JS heap before / after 300 commits (MB)', `${r2(mem0)} / ${r2(mem1)}`, 'MB');
   rec('store', 'renderer working set before / after 300 commits (MB)', `${r0} / ${await rendererMB()}`, 'MB');
-  rec('store', 'history.past.length after 300 commits', await page.evaluate(() => window.__recut.store.getState().history.past.length), '', '== 200', true);
+  rec('store', 'history.past.length after 300 commits', await page.evaluate(() => window.__recut.store.getState().history.past.length), '', '== 200', true, undefined, GUARDRAIL);
   await page.evaluate(() => window.__recut.store.getState().clearHistory());
   await sleep(1000);
   rec('store', 'renderer JS heap after clearHistory (MB)', await page.evaluate(() => performance.memory ? performance.memory.usedJSHeapSize / 1048576 : -1), 'MB');
@@ -358,20 +361,20 @@ await setView({ zoom: 1, scroll: 0, playhead: 0 });
 {
   // Serialize size + autosave / save / load round trips.
   const size = await page.evaluate(() => { const p = window.__recut.store.getState().project; const t = performance.now(); const s = JSON.stringify(p); return { bytes: s.length, ms: performance.now() - t }; });
-  rec('io', 'project JSON size (compact, MB)', r2(size.bytes / 1048576), 'MB'); ms('io', 'JSON.stringify(project) in renderer', size.ms, 100);
+  rec('io', 'project JSON size (compact, MB)', r2(size.bytes / 1048576), 'MB'); ms('io', 'JSON.stringify(project) in renderer', size.ms, 100, undefined, DIAGNOSTIC);
   const sc = await page.evaluate(() => { const p = window.__recut.store.getState().project; const t = performance.now(); structuredClone(p); return performance.now() - t; });
-  ms('io', 'structuredClone(project) in renderer (what one IPC send costs)', sc, 100);
+  ms('io', 'structuredClone(project) in renderer (what one IPC send costs)', sc, 100, undefined, DIAGNOSTIC);
   await ipcStats(true);
   const t0 = await nowPage();
   const auto = await page.evaluate(async () => { const t = performance.now(); await window.__recut.actions.autosaveProject(); return performance.now() - t; });
   const long = await lt(t0);
   const ipc = await ipcStats(true);
-  ms('io', 'autosaveProject round trip (renderer -> main write)', auto, 500, ltSummary(long));
+  ms('io', 'autosaveProject round trip (renderer -> main write)', auto, 500, ltSummary(long), GUARDRAIL);
   // The renderer autosaves through project:autosaveJson (a string) when available, else project:autosave. A missing
   // timing means the wrapper missed the channel: report it as a failure instead of a 0 ms PASS.
   const autoMain = (ipc.times['project:autosaveJson'] || ipc.times['project:autosave'] || [])[0];
-  if (autoMain === undefined) rec('io', 'autosave main-side handler time (write; serialize too on the legacy channel)', 'not captured', 'ms', '<= 300 ms', false, `IPC channels seen: ${Object.keys(ipc.counts).join(', ') || 'none'}`);
-  else ms('io', 'autosave main-side handler time (write; serialize too on the legacy channel)', autoMain, 300, ipc.times['project:autosaveJson'] ? 'project:autosaveJson' : 'project:autosave');
+  if (autoMain === undefined) rec('io', 'autosave main-side handler time (write; serialize too on the legacy channel)', 'not captured', 'ms', '<= 300 ms', false, `IPC channels seen: ${Object.keys(ipc.counts).join(', ') || 'none'}`, GUARDRAIL);
+  else ms('io', 'autosave main-side handler time (write; serialize too on the legacy channel)', autoMain, 300, ipc.times['project:autosaveJson'] ? 'project:autosaveJson' : 'project:autosave', GUARDRAIL);
   const autoFile = path.join(userData, 'autosave', 'untitled.recut.autosave');
   rec('io', 'autosave file size on disk (pretty JSON, MB)', fs.existsSync(autoFile) ? r2(fs.statSync(autoFile).size / 1048576) : 'missing', 'MB');
   const savePath = path.join(tmp, 'perf.recut');
@@ -382,7 +385,7 @@ await setView({ zoom: 1, scroll: 0, playhead: 0 });
   const long2 = await lt(t1);
   ms('io', 'openProject round trip (main read+parse+normalize, IPC, renderer normalize+load)', op.ms, 1000, `${op.ok}; ${ltSummary(long2)}`);
   const ipc2 = await ipcStats(true);
-  ms('io', 'openProject main-side handler time', (ipc2.times['project:load'] || [0])[0], 500);
+  ms('io', 'openProject main-side handler time', (ipc2.times['project:load'] || [0])[0], 500, undefined, DIAGNOSTIC);
   await sleep(1500);
 }
 
@@ -425,7 +428,7 @@ console.log('\n--- panels ---');
   await ipcStats(true);
   await sleep(2500);
   const ipc = await ipcStats(true);
-  rec('project', 'thumbnail IPC calls in 2.5 s after scrolling 3000 scene rows', ipc.counts['media:thumbnail'] || 0, 'calls', '<= 60', (ipc.counts['media:thumbnail'] || 0) <= 60, 'useThumb limiter = 3 concurrent');
+  rec('project', 'thumbnail IPC calls in 2.5 s after scrolling 3000 scene rows', ipc.counts['media:thumbnail'] || 0, 'calls', '<= 60', (ipc.counts['media:thumbnail'] || 0) <= 60, 'useThumb limiter = 3 concurrent', GUARDRAIL);
   // Search typing latency
   const typeInto = async (testid, text, label, delay = 120) => {
     await page.evaluate((id) => { const el = document.querySelector(`[data-testid="${id}"]`); const input = el?.matches('input') ? el : el?.querySelector('input'); input?.focus(); if (input) { input.select(); } }, testid);
@@ -501,9 +504,9 @@ const poolState = () => page.evaluate(() => { const v = window.__perf.videos; re
   // can at most fill the shared pool once (MediaElementPool(16), src/app/media.ts), so more creations than its
   // capacity mean per-clip / per-frame churn (7,471 here before the fix).
   const pd1 = await mediaEls();
-  rec('pool', 'media elements (<video> + <audio>) created during 10 s playback @ 1 px/frame', pd1.media - pd0.media, '', '<= 16 (pool capacity)', pd1.media - pd0.media <= 16, `total created ${pd1.media}`);
+  rec('pool', 'media elements (<video> + <audio>) created during 10 s playback @ 1 px/frame', pd1.media - pd0.media, '', '<= 16 (pool capacity)', pd1.media - pd0.media <= 16, `total created ${pd1.media}`, GUARDRAIL);
   // ---- [playback resources, Phase 1 D] end ----
-  rec('pool', 'video elements created / live(src) / playing / in DOM after 10 s playback', `${p.created} / ${p.live} / ${p.playing} / ${p.inDom}`, '', 'live <= 16', p.live <= 16);
+  rec('pool', 'video elements created / live(src) / playing / in DOM after 10 s playback', `${p.created} / ${p.live} / ${p.playing} / ${p.inDom}`, '', 'live <= 16', p.live <= 16, undefined, GUARDRAIL);
   rec('audio', 'AudioContexts / gains / mediaElementSources / connects / disconnects', `${p.audio.contexts} / ${p.audio.gains} / ${p.audio.sources} / ${p.audio.connects} / ${p.audio.disconnects}`, '');
   await zoomFit(); await sleep(1500);
   await playFor('@ zoom-to-fit (2500 clips mounted)', 6);
@@ -519,7 +522,7 @@ const poolState = () => page.evaluate(() => { const v = window.__perf.videos; re
   ms('switch', 'switch sequence x20 -> paint (median)', s.median, 100, `max ${s.max}; ${ltSummary(long)}`);
   await sleep(1000);
   p = await poolState();
-  rec('pool', 'video elements created / live / playing after 20 sequence switches', `${p.created} / ${p.live} / ${p.playing}`, '', 'live <= 16', p.live <= 16);
+  rec('pool', 'video elements created / live / playing after 20 sequence switches', `${p.created} / ${p.live} / ${p.playing}`, '', 'live <= 16', p.live <= 16, undefined, GUARDRAIL);
   rec('audio', 'gains / sources / connects-disconnects after 20 switches', `${p.audio.gains} / ${p.audio.sources} / ${p.audio.connects - p.audio.disconnects}`, '', 'gains bounded', null, 'SequencePlayer.trackGains is keyed by trackId and never pruned');
   // ---- [playback resources, Phase 1 D] begin ----
   // Since playback (zoom-to-fit playback + 20 switches): new elements only for (file, slot) pairs not yet pooled, at
@@ -528,8 +531,8 @@ const poolState = () => page.evaluate(() => { const v = window.__perf.videos; re
   {
     const pd2 = await mediaEls();
     const dEl = pd2.media - pd1.media, dSrc = pd2.audio.sources - pd1.audio.sources, dGain = pd2.audio.gains - pd1.audio.gains;
-    rec('pool', 'media elements created by zoom-to-fit playback + 20 sequence switches', dEl, '', '<= 16 (pool capacity)', dEl <= 16);
-    rec('audio', 'MediaElementSources / GainNodes created by zoom-to-fit playback + 20 switches', `${dSrc} / ${dGain}`, '', '<= elements created', dSrc <= dEl && dGain <= dEl, `elements created ${dEl}`);
+    rec('pool', 'media elements created by zoom-to-fit playback + 20 sequence switches', dEl, '', '<= 16 (pool capacity)', dEl <= 16, undefined, GUARDRAIL);
+    rec('audio', 'MediaElementSources / GainNodes created by zoom-to-fit playback + 20 switches', `${dSrc} / ${dGain}`, '', '<= elements created', dSrc <= dEl && dGain <= dEl, `elements created ${dEl}`, GUARDRAIL);
   }
   // ---- [playback resources, Phase 1 D] end ----
   // Maximize / restore the program zone x10
@@ -541,7 +544,7 @@ const poolState = () => page.evaluate(() => { const v = window.__perf.videos; re
   rec('audio', 'gains / sources after 10 maximize/restore cycles', `${p.audio.gains} / ${p.audio.sources}`, '');
   await playFor('after 20 switches + 10 maximize cycles', 5);
   p = await poolState();
-  rec('pool', 'video elements live / playing after that playback', `${p.live} / ${p.playing}`, '', 'live <= 16', p.live <= 16);
+  rec('pool', 'video elements live / playing after that playback', `${p.live} / ${p.playing}`, '', 'live <= 16', p.live <= 16, undefined, GUARDRAIL);
 }
 
 // ================================================================ 5. MAIN PROCESS via IPC
@@ -552,10 +555,10 @@ console.log('\n--- main process ---');
   // thumbnail miss vs hit over IPC
   const miss = await page.evaluate(async (p) => { const out = []; for (let i = 0; i < 8; i++) { const t = performance.now(); await window.recut.thumbnail({ path: p, time: 7 + i * 1.37, width: 96 }); out.push(performance.now() - t); } return out; }, movie);
   const hit = await page.evaluate(async (p) => { const out = []; for (let i = 0; i < 40; i++) { const t = performance.now(); await window.recut.thumbnail({ path: p, time: 7 + (i % 8) * 1.37, width: 96 }); out.push(performance.now() - t); } return out; }, movie);
-  ms('main', 'thumbnail MISS via IPC (median of 8)', stats(miss).median, 300, `max ${stats(miss).max}`);
-  ms('main', 'thumbnail HIT via IPC (median of 40)', stats(hit).median, 5, `p95 ${stats(hit).p95}`);
+  ms('main', 'thumbnail MISS via IPC (median of 8)', stats(miss).median, 300, `max ${stats(miss).max}`, GUARDRAIL);
+  ms('main', 'thumbnail HIT via IPC (median of 40)', stats(hit).median, 5, `p95 ${stats(hit).p95}`, GUARDRAIL);
   const strip = await page.evaluate(async (p) => { const times = Array.from({ length: 48 }, (_, i) => 1 + i * 1.2); let t = performance.now(); await window.recut.filmstrip({ path: p, times, width: 128 }); const cold = performance.now() - t; t = performance.now(); await window.recut.filmstrip({ path: p, times, width: 128 }); return { cold, warm: performance.now() - t }; }, files[1]);
-  ms('main', 'filmstrip 48 frames cold via IPC', strip.cold, 3000); ms('main', 'filmstrip 48 frames warm via IPC', strip.warm, 50);
+  ms('main', 'filmstrip 48 frames cold via IPC', strip.cold, 3000, undefined, GUARDRAIL); ms('main', 'filmstrip 48 frames warm via IPC', strip.warm, 50, undefined, GUARDRAIL);
   // 500 thumbnail requests
   const r0 = await mainMB();
   const t500 = await page.evaluate(async (files) => { const t = performance.now(); const ps = []; for (let i = 0; i < 500; i++) ps.push(window.recut.thumbnail({ path: files[i % files.length], time: 0.5 + (i * 0.113) % 55, width: 96 })); await Promise.allSettled(ps); return performance.now() - t; }, files.slice(0, 3).concat(files.slice(4)));
@@ -584,10 +587,10 @@ console.log('\n--- main process ---');
     const poll = setInterval(async () => { try { peak = Math.max(peak, await mainMB()); } catch {} try { const out = execFileSync('bash', ['-c', "for p in $(pgrep -x ffmpeg); do awk '/VmRSS/{print $2}' /proc/$p/status 2>/dev/null; done"]).toString().trim(); for (const l of out.split('\n')) ffPeak = Math.max(ffPeak, Number(l) / 1024 || 0); } catch {} }, 500);
     const w = await page.evaluate(async (p) => { const t = performance.now(); const d = await window.recut.waveform(p); return { ms: performance.now() - t, peaks: d.peaks.length, duration: d.duration }; }, LONG);
     clearInterval(poll);
-    ms('main', `waveform of ${r2(w.duration / 60)} min file via IPC (cold)`, w.ms, 60_000, `${w.peaks} peaks`);
-    rec('main', 'main RSS before / peak / after waveform (MB)', `${m0} / ${peak} / ${await mainMB()}`, 'MB', 'peak - before <= 200', peak - m0 <= 200, `ffmpeg child peak ${r2(ffPeak)} MB`);
+    ms('main', `waveform of ${r2(w.duration / 60)} min file via IPC (cold)`, w.ms, 60_000, `${w.peaks} peaks`, GUARDRAIL);
+    rec('main', 'main RSS before / peak / after waveform (MB)', `${m0} / ${peak} / ${await mainMB()}`, 'MB', 'peak - before <= 200', peak - m0 <= 200, `ffmpeg child peak ${r2(ffPeak)} MB`, GUARDRAIL);
     const w2 = await page.evaluate(async (p) => { const t = performance.now(); await window.recut.waveform(p); return performance.now() - t; }, LONG);
-    ms('main', 'waveform cached via IPC', w2, 100);
+    ms('main', 'waveform cached via IPC', w2, 100, undefined, GUARDRAIL);
     // Two scene detects on the 2 h file fill the media lane: does a proxy still start?
     if (!SKIP_HEAVY) {
       await page.evaluate(async (id) => { await window.__recut.actions.startSceneDetect(id); const m = window.__recut.store.getState().project.media[id]; await window.recut.startSceneDetect({ mediaId: id + 'x', path: m.path, threshold: 0.37, duration: m.probe.duration }); }, lid);
@@ -600,9 +603,9 @@ console.log('\n--- main process ---');
       await sleep(8000);
       const jobs = await page.evaluate(() => window.recut.listJobs());
       const pj = jobs.filter((j) => j.kind === 'proxy').pop(); const sds = jobs.filter((j) => j.kind === 'sceneDetect');
-      rec('main', 'proxy status 8 s after queueing behind two 2 h scene detects', pj?.status ?? 'none', '', 'running', pj?.status === 'running', `scene detects: ${sds.map((j) => `${j.status} ${Math.round(j.progress * 100)}%`).join(', ')}`);
+      rec('main', 'proxy status 8 s after queueing behind two 2 h scene detects', pj?.status ?? 'none', '', 'running', pj?.status === 'running', `scene detects: ${sds.map((j) => `${j.status} ${Math.round(j.progress * 100)}%`).join(', ')}`, GUARDRAIL);
       const missDuring = await page.evaluate(async (p) => { const out = []; for (let i = 0; i < 6; i++) { const t = performance.now(); await window.recut.thumbnail({ path: p, time: 30 + i * 1.91, width: 96 }); out.push(performance.now() - t); } return out; }, movie);
-      ms('main', 'thumbnail MISS via IPC while 2 scene detects run (median)', stats(missDuring).median, 600, `idle median was ${stats(miss).median}`);
+      ms('main', 'thumbnail MISS via IPC while 2 scene detects run (median)', stats(missDuring).median, 600, `idle median was ${stats(miss).median}`, GUARDRAIL);
       for (const j of sds) await page.evaluate((id) => window.recut.cancelJob(id), j.id);
       await page.waitForFunction(async () => (await window.recut.listJobs()).filter((j) => j.kind === 'proxy').every((j) => j.status !== 'queued' && j.status !== 'running'), null, { timeout: 180_000, polling: 1000 }).catch(() => {});
       ms('main', 'proxy queued behind scene detects: time until done after cancel', Date.now() - t0);
@@ -634,7 +637,7 @@ console.log('\n--- main process ---');
     rec('fairness', 'export job started (54 s sequence, 1080p medium)', String(expo.ok), '', undefined, undefined, expo.ok ? '' : expo.error);
     await sleep(2500);
     const missBusy = await page.evaluate(async (p) => { const out = []; for (let i = 0; i < 6; i++) { const t = performance.now(); await window.recut.thumbnail({ path: p, time: 40 + i * 1.73, width: 96 }); out.push(performance.now() - t); } return out; }, files[2]);
-    ms('fairness', 'thumbnail MISS via IPC while export encodes (median)', stats(missBusy).median, 600, `idle median ${stats(miss).median} -> x${r2(stats(missBusy).median / Math.max(1, stats(miss).median), 1)}`);
+    ms('fairness', 'thumbnail MISS via IPC while export encodes (median)', stats(missBusy).median, 600, `idle median ${stats(miss).median} -> x${r2(stats(missBusy).median / Math.max(1, stats(miss).median), 1)}`, GUARDRAIL);
     const copy2 = path.join(tmp, 'copy-exp.mp4'); fs.copyFileSync(files[6], copy2);
     const [pid2] = await page.evaluate((p) => window.__recut.actions.importMediaFiles(p), [copy2]);
     await page.waitForFunction((id) => { const m = window.__recut.store.getState().project.media[id]; return m && m.probe; }, pid2, { timeout: 60_000 });
@@ -646,7 +649,7 @@ console.log('\n--- main process ---');
     await clickTab('timeline'); await setView({ zoom: 1, scroll: 0, playhead: 0 });
     const out = await playFor('while autosave of the big project fires at t=3 s', 7, async () => { setTimeout(() => { page.evaluate(async () => { const st = window.__recut.store; st.setState({ dirty: true }); const t = performance.now(); await window.__recut.actions.autosaveProject(); window.__perfAutosaveMs = performance.now() - t; }).catch(() => {}); }, 3000); });
     const autoMs = await page.evaluate(() => window.__perfAutosaveMs ?? -1);
-    ms('fairness', 'autosave round trip while playing', autoMs, 500, `per-second playhead updates: ${out.perSec.join(',')}`);
+    ms('fairness', 'autosave round trip while playing', autoMs, 500, `per-second playhead updates: ${out.perSec.join(',')}`, GUARDRAIL);
     if (expo.ok) await page.evaluate((id) => window.recut.cancelExport(id), expo.jobId);
   }
   rec('main', 'main process RSS at end (MB)', await mainMB(), 'MB');
@@ -675,7 +678,7 @@ console.log('\n--- multi-hour sequence ---');
     const t = await paintAfter((id) => window.__recut.store.getState().setActiveSequence(id), LSEQ);
     ms('long', `switch to multi-hour sequence -> first paint @ ${label}`, t, 100);
     const c = await domCounts();
-    rec('long', `DOM nodes in tracks content, multi-hour @ ${label}`, c.all, 'nodes', '<= 5000', c.all <= 5000, `${c.clips} clips, ${c.transitions} transitions, page total ${c.page}`);
+    rec('long', `DOM nodes in tracks content, multi-hour @ ${label}`, c.all, 'nodes', '<= 5000', c.all <= 5000, `${c.clips} clips, ${c.transitions} transitions, page total ${c.page}`, GUARDRAIL);
     await sleep(2500);
     const lg = await lt(t0);
     rec('long', `long tasks in 2.5 s after switch to multi-hour @ ${label}`, lg.length, '', '<= 1', lg.length <= 1, ltSummary(lg));
@@ -732,7 +735,7 @@ console.log('\n--- multi-hour sequence ---');
   const op = await page.evaluate(async (p) => { const t = performance.now(); const r = await window.__recut.actions.openProject(p); return { ms: performance.now() - t, ok: r.ok }; }, savePath);
   const lg2 = await lt(t2);
   ms('long', 'openProject round trip incl. multi-hour', op.ms, 1000, `${op.ok}; ${ltSummary(lg2)}`);
-  ms('long', 'openProject main-side handler time incl. multi-hour', ((await ipcStats(true)).times['project:load'] || [0])[0], 500);
+  ms('long', 'openProject main-side handler time incl. multi-hour', ((await ipcStats(true)).times['project:load'] || [0])[0], 500, undefined, DIAGNOSTIC);
 }
 
 fs.writeFileSync(path.join(OUT, 'electron.json'), JSON.stringify(results, null, 2));
