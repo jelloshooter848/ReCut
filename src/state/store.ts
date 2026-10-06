@@ -223,6 +223,8 @@ function initialState(): StoreState {
     project: createProject(),
     projectPath: null,
     dirty: false,
+    revision: 0,
+    loadedRevision: 0,
     history: emptyHistory(),
     transaction: null,
     ui: initialUi(),
@@ -257,7 +259,7 @@ export const useStore = create<RecutStore>()((set, get) => {
     const produced = produce(prev, recipe);
     if (produced === prev) return false;
     const next = stamp(prev, produced, opts.followMarkers ?? true);
-    set((s) => ({ project: next, dirty: true, history: pushHistory(s.history, prev, label), ui: pruneUi(next, s.ui) }));
+    set((s) => ({ project: next, dirty: true, revision: s.revision + 1, history: pushHistory(s.history, prev, label), ui: pruneUi(next, s.ui) }));
     return true;
   };
 
@@ -266,7 +268,7 @@ export const useStore = create<RecutStore>()((set, get) => {
     const prev = get().project;
     const next = produce(prev, recipe);
     if (next === prev) return;
-    set((s) => ({ project: next, ui: pruneUi(next, s.ui), ...(opts.dirty ? { dirty: true } : {}) }));
+    set((s) => ({ project: next, ui: pruneUi(next, s.ui), ...(opts.dirty ? { dirty: true, revision: s.revision + 1 } : {}) }));
   };
 
   const activeId = (seqId?: ID): ID | null => seqId ?? get().project.activeSequenceId;
@@ -347,7 +349,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       if (s.transaction) return false;
       const step = undoHistory(s.history, s.project);
       if (!step) return false;
-      set({ project: step.project, history: step.history, dirty: true, ui: pruneUi(step.project, s.ui) });
+      set({ project: step.project, history: step.history, dirty: true, revision: s.revision + 1, ui: pruneUi(step.project, s.ui) });
       return true;
     },
     redo() {
@@ -355,7 +357,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       if (s.transaction) return false;
       const step = redoHistory(s.history, s.project);
       if (!step) return false;
-      set({ project: step.project, history: step.history, dirty: true, ui: pruneUi(step.project, s.ui) });
+      set({ project: step.project, history: step.history, dirty: true, revision: s.revision + 1, ui: pruneUi(step.project, s.ui) });
       return true;
     },
     canUndo() { return get().history.past.length > 0; },
@@ -418,7 +420,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       if (!snapshot) return false;
       if (snapshot === s.project) { set({ transaction: null }); return false; }
       const next = stamp(snapshot, s.project);
-      set({ project: next, transaction: null, dirty: true, history: pushHistory(s.history, snapshot, label), ui: pruneUi(next, s.ui) });
+      set({ project: next, transaction: null, dirty: true, revision: s.revision + 1, history: pushHistory(s.history, snapshot, label), ui: pruneUi(next, s.ui) });
       return true;
     },
     cancelTransaction() {
@@ -431,18 +433,26 @@ export const useStore = create<RecutStore>()((set, get) => {
     newProject(name = 'Untitled Project') {
       relinkAwaitingProbe.clear();
       set((s) => ({
-        project: createProject(name), projectPath: null, dirty: false, history: emptyHistory(s.history.limit),
+        project: createProject(name), projectPath: null, dirty: false, revision: s.revision + 1, loadedRevision: s.revision + 1,
+        history: emptyHistory(s.history.limit),
         transaction: null, ui: resetSelectionUi(s.ui), playback: { playing: false, rate: 1 },
       }));
     },
     loadProjectData(project, path) {
       relinkAwaitingProbe.clear();
       set((s) => ({
-        project, projectPath: path, dirty: false, history: emptyHistory(s.history.limit), transaction: null,
+        project, projectPath: path, dirty: false, revision: s.revision + 1, loadedRevision: s.revision + 1,
+        history: emptyHistory(s.history.limit), transaction: null,
         ui: pruneUi(project, resetSelectionUi(s.ui)), playback: { playing: false, rate: 1 },
       }));
     },
-    markSaved(path) { set({ projectPath: path, dirty: false }); },
+    markSaved(path, revision) {
+      set((s) => {
+        if (revision === undefined || revision === s.revision) return { projectPath: path, dirty: false };
+        if (revision < s.loadedRevision) return {}; // that save wrote a project since replaced by new / open
+        return { projectPath: path }; // the file is this project's, without the edits made during the save
+      });
+    },
     setSettings(patch) { commit('Change settings', (d) => { Object.assign(d.settings, patch); }); },
     renameProject(name) { commit('Rename project', (d) => { d.name = name; }); },
 
