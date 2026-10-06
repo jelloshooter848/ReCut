@@ -2,7 +2,8 @@
  * Timeline panel: Premiere-style sequence editor (header bar, track headers, ruler, virtualised clip lanes,
  * drag interactions, context menus, drop target for other panels).
  */
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import type { Clip, ID, Marker, Sequence, Track, TransitionType } from '@shared/model';
 import { formatSequenceSecondsTimecode, formatSequenceTimecode, fpsLabel, validFpsOr } from '@shared/time';
@@ -37,7 +38,7 @@ import { linkedSyncOffsets, syncOffsetsByTrack } from './clipBadges';
 import type { DialogState, DragPreview } from './types';
 import { RULER_H } from './types';
 import {
-  frameToX, itemsInRange, layoutTracks, lodHit, minZoomFor, nextMountRange, rowAtY, scrollContentFrames, snapFrame, snapThresholdFrames, splitScroll,
+  frameToX, itemsInRange, layoutTracks, lodHit, minZoomFor, nextMountRange, prefetchMountRange, rowAtY, scrollContentFrames, snapFrame, snapThresholdFrames, splitScroll,
   xToFrame, xToFrameInt, zoomAround, zoomToFit, type MountRange, type TrackLayout,
 } from './viewMath';
 
@@ -48,6 +49,17 @@ const MOUNT_SLACK_PX = 16;
 const MEDIA_MARGIN_PX = 200;
 /** Px an incremental scroll mounts ahead when it leaves the mounted range (more: rarer but longer remount steps). */
 const MOUNT_AHEAD_PX = 256;
+/**
+ * Idle-time mounting ahead of an incremental scroll: when fewer than PREFETCH_LOW_PX of mounted range are left ahead
+ * of the view in the scroll direction, an idle callback extends it to PREFETCH_AHEAD_PX ahead (and drops what is
+ * behind the view), so the scroll steps that follow change no lane and the mounting runs between frames instead of
+ * inside a step. A step that still leaves the mounted range (scrolling faster than idle time allows) mounts
+ * synchronously as before (MOUNT_AHEAD_PX).
+ */
+const PREFETCH_LOW_PX = 160;
+const PREFETCH_AHEAD_PX = 416;
+/** Idle time (ms) an idle callback needs left to start mounting; with less it waits for the next idle period. */
+const PREFETCH_MIN_IDLE_MS = 3;
 /** Pixels per line / page for a wheel event in DOM_DELTA_LINE / DOM_DELTA_PAGE mode (as Chromium scrolls them). */
 const WHEEL_LINE_PX = 40;
 
@@ -96,6 +108,9 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   /** Client width of the tracks content (the tracks column minus a vertical scrollbar). */
   const [viewW, setViewW] = useState(0);
   const mountRef = useRef<MountRange | null>(null);
+  /** Direction (+1 / -1) of the last incremental scroll, 0 after a jump / zoom; the view it was computed from. */
+  const scrollDirRef = useRef<{ dir: number; scrollPx: number; zoom: number; width: number }>({ dir: 0, scrollPx: NaN, zoom: NaN, width: NaN });
+  const [, bumpMount] = useReducer((n: number) => n + 1, 0);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [drop, setDrop] = useState<Extract<DragPreview, { kind: 'drop' }> | null>(null);
   const [hasFocus, setHasFocus] = useState(false);
@@ -169,6 +184,26 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     });
   }, [scrollPx, contentPx]);
   useEffect(() => () => { const w = hscrollWant.current; if (w.raf) cancelAnimationFrame(w.raf); w.raf = 0; }, []);
+  // Idle-time mounting ahead of an incremental scroll (see PREFETCH_LOW_PX). Checked after every commit; the callback
+  // re-reads the latest mounted range, so a jump or zoom in between (direction 0) cancels it.
+  const prefetchIdle = useRef(0);
+  useEffect(() => {
+    if (!scrollDirRef.current.dir || prefetchIdle.current || typeof requestIdleCallback !== 'function') return;
+    const run = (deadline: IdleDeadline) => {
+      prefetchIdle.current = 0;
+      const m = mountRef.current; const dir = scrollDirRef.current.dir;
+      if (!m || !dir) return;
+      const next = prefetchMountRange(m, dir, MOUNT_SLACK_PX, PREFETCH_LOW_PX, PREFETCH_AHEAD_PX);
+      if (!next) return;
+      if (deadline.timeRemaining() < PREFETCH_MIN_IDLE_MS) { prefetchIdle.current = requestIdleCallback(run); return; }
+      mountRef.current = next;
+      flushSync(bumpMount);
+      // Style + layout of the newly mounted clips now, in idle time, rather than in the next frame.
+      void areaRef.current?.offsetWidth;
+    };
+    prefetchIdle.current = requestIdleCallback(run);
+  });
+  useEffect(() => () => { if (prefetchIdle.current) cancelIdleCallback(prefetchIdle.current); prefetchIdle.current = 0; }, []);
   // The tracks content is a horizontal scroller (bar hidden, opaque: composited) whose scroll offset shows view.scroll,
   // set from the store before paint. A scroll offset change of a composited scroller moves the clips without a
   // repaint, re-layout or re-layerization of the page, which a transform on the clip layer costs on every step. A
@@ -532,8 +567,16 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   // ---- render helpers --------------------------------------------------------------------------
   // Clips are mounted for the viewport (anything in a margin is invisible, and a page flip would mount and paint the
   // margins too), kept while small scroll steps stay inside the mounted range and extended ahead when they leave it
-  // (nextMountRange): a wheel step then changes no lane, LOD canvas or filmstrip range, only the scroll offset. Their
+  // (nextMountRange), or ahead of time in idle callbacks (prefetchMountRange): a wheel step then changes no lane, LOD
+  // canvas or filmstrip range, only the scroll offset. The scroll direction is tracked for the latter. Their
   // filmstrip / waveform ranges extend MEDIA_MARGIN_PX past the mounted range (prefetch for scrolling).
+  {
+    const sd = scrollDirRef.current;
+    if (sd.scrollPx !== scrollPx || sd.zoom !== zoom || sd.width !== width) {
+      const incremental = sd.zoom === zoom && sd.width === width && Math.abs(scrollPx - sd.scrollPx) <= width / 2;
+      scrollDirRef.current = { dir: incremental ? Math.sign(scrollPx - sd.scrollPx) : 0, scrollPx, zoom, width };
+    }
+  }
   const mount = (mountRef.current = nextMountRange(mountRef.current, scrollPx, width, zoom, MOUNT_SLACK_PX, MOUNT_AHEAD_PX));
   const mountX0 = mount.x0, mountX1 = mount.x1;
   const viewX0 = mountX0 - (MEDIA_MARGIN_PX - MOUNT_SLACK_PX), viewX1 = mountX1 + (MEDIA_MARGIN_PX - MOUNT_SLACK_PX);

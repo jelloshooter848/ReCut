@@ -266,6 +266,26 @@ export function nextMountRange(prev: MountRange | null, scrollPx: number, width:
 }
 
 /**
+ * The mounted range a scroll in direction `dir` (+1 right, -1 left) should be extended to ahead of time (in idle time,
+ * so that the scroll steps that follow change no lane): when fewer than `lowPx` of mounted range are left ahead of the
+ * view (plus `slackPx`), the range reaches `targetPx` ahead and the part behind the view is dropped. Null when nothing
+ * is needed. Uses the view the range was last computed for (`prev.scrollPx`, `prev.width`).
+ */
+export function prefetchMountRange(prev: MountRange, dir: number, slackPx: number, lowPx: number, targetPx: number): MountRange | null {
+  const v0 = prev.scrollPx - slackPx, v1 = prev.scrollPx + prev.width + slackPx;
+  if (dir > 0) {
+    if (prev.x1 - v1 >= lowPx) return null;
+    return { ...prev, x0: Math.max(prev.x0, v0), x1: v1 + targetPx };
+  }
+  if (dir < 0) {
+    const floor = Math.min(v0, 0);
+    if (v0 - prev.x0 >= lowPx || prev.x0 <= floor) return null;
+    return { ...prev, x0: Math.max(v0 - targetPx, floor), x1: Math.min(prev.x1, v1) };
+  }
+  return null;
+}
+
+/**
  * Splits a content scroll position (CSS px) into the part a scroller holds (`base`: whole device pixels, which is all a
  * scroll offset keeps) and the sub-device-pixel rest (`frac`, CSS px, >= 0) that a transform supplies, so that
  * base + frac === scrollPx and content lands exactly where a translateX(-scrollPx) put it.
