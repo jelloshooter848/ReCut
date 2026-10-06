@@ -323,8 +323,8 @@ export async function importEmbeddedSubtitles(mediaId: ID, streamIndex: number):
 // Project I/O
 // ------------------------------------------------------------------
 
-/** Longest stretch of project serialization / parsing run before yielding to the event loop. */
-const SLICE_MS = 12;
+/** Longest stretch of project serialization / parsing run before yielding to the event loop (under the 50 ms long-task mark). */
+const SLICE_MS = 25;
 
 /** Resolve in a new task (a MessageChannel message: not clamped like nested setTimeout, not throttled when hidden). */
 function nextTask(): Promise<void> {
@@ -453,8 +453,9 @@ export async function openProject(path: string, opts: { notify?: OpenNotify } = 
 /**
  * Autosave the dirty project. Sends compact JSON (same bytes as the main process's serializeAutosave) through
  * autosaveProjectJson when available: one string crosses IPC instead of a structured clone of the whole project
- * (P-06), serialized in slices so a big project does not block playback. Falls back to autosaveProject on older
- * bridges. Throws when the write failed.
+ * (P-06). Falls back to autosaveProject on older bridges. Throws when the write failed. (Not sliced like a manual
+ * save: the autosave runs when idle or deferred while playing, and slicing it measured slower round trips while
+ * playing without a gain in playback fps.)
  */
 export async function autosaveProject(): Promise<void> {
   const api = recutApi();
@@ -462,7 +463,7 @@ export async function autosaveProject(): Promise<void> {
   if (!api || !st.dirty) return;
   const project = serializeForSave(st);
   const res = typeof api.autosaveProjectJson === 'function'
-    ? await api.autosaveProjectJson(st.projectPath, await serializeProjectSliced(project, true))
+    ? await api.autosaveProjectJson(st.projectPath, JSON.stringify(project))
     : await api.autosaveProject(st.projectPath, project);
   if (res && res.ok === false) throw new Error(res.error);
 }
