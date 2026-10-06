@@ -13,7 +13,7 @@ import { labelColorHex } from '@/components/ui/ColorSwatch';
 import { CLIP_BAR_H, COMPACT_ROW_H } from './types';
 import { MEDIA_MIN_CLIP_PX } from './viewMath';
 import { afterMediaSettle } from './mediaSettle';
-import { drawWaveBars, validDpr, waveBarExtents, waveCanvasSize } from './waveBars';
+import { drawWaveBars, snappedBorderPx, validDpr, waveBarExtents, waveCanvasSize } from './waveBars';
 import { formatSyncOffset, mediaNeedsProxy } from './clipBadges';
 
 export type FilterLook = 'none' | 'dim' | 'hide';
@@ -163,7 +163,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   const waveW = wantMedia ? Math.min(MAX_WAVE_CANVAS_PX, Math.max(0, visTo - visFrom)) : 0;
   const dpr = validDpr(p.dpr ?? 1);
   // Backing store in device pixels; the CSS size maps it 1:1 onto them (<= 0.5 device px wider than waveW). Canvas
-  // column 0 sits at clip px waveX (the body starts inside the clip's left border, hence the -CLIP_BORDER_PX), so the
+  // column 0 sits at clip px waveX (the body starts inside the clip's left border, as rendered at this dpr), so the
   // waveform lines up with the timeline; the body clips what falls under the borders. Not squeezed by the global
   // `canvas { max-width: 100% }` (timeline.css), which would resample the bars.
   const waveSize = waveCanvasSize(waveW, bodyH, dpr);
@@ -237,7 +237,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
         {isVideo ? tileEls : (
           <>
             {WAVE_LINE}
-            {waveW > 0 ? <canvas ref={canvasRef} className="tl-wave" style={{ left: waveX - CLIP_BORDER_PX, width: waveSize.cssW, height: waveSize.cssH }} /> : null}
+            {waveW > 0 ? <canvas ref={canvasRef} className="tl-wave" style={{ left: waveX - snappedBorderPx(CLIP_BORDER_PX, dpr), width: waveSize.cssW, height: waveSize.cssH }} /> : null}
           </>
         )}
       </div>

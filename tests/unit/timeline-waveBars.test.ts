@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import type { WaveformData } from '../../shared/ipc';
 import { peaksForRange } from '../../src/playback/thumbnails';
-import { drawWaveBars, validDpr, waveBarExtents, waveBarRows, waveCanvasSize, waveHalfHeight } from '../../src/panels/timeline/waveBars';
+import { drawWaveBars, snappedBorderPx, validDpr, waveBarExtents, waveBarRows, waveCanvasSize, waveHalfHeight } from '../../src/panels/timeline/waveBars';
 
 const DPRS = [1, 1.25, 1.5, 2, 3];
 
@@ -186,6 +186,18 @@ describe('waveform bounds at every device pixel ratio', () => {
       expect(b - t).toBeLessThanOrEqual(Math.max(1, Math.round(dpr)) + 1);
       expect(t <= Math.floor(H / 2) && Math.floor(H / 2) < b).toBe(true);
     }
+  });
+
+  it('a 1px clip border renders as whole device pixels (the canvas offset that puts column 0 on the clip edge)', () => {
+    expect(snappedBorderPx(1, 1)).toBe(1);
+    expect(snappedBorderPx(1, 2)).toBe(1);
+    expect(snappedBorderPx(1, 3)).toBe(1);
+    expect(snappedBorderPx(1, 1.5)).toBeCloseTo(2 / 3, 12);
+    expect(snappedBorderPx(1, 1.25)).toBeCloseTo(0.8, 12);
+    expect(snappedBorderPx(1, 2.5)).toBeCloseTo(0.8, 12);
+    expect(snappedBorderPx(1, 0.75)).toBeCloseTo(4 / 3, 12);
+    expect(snappedBorderPx(0, 2)).toBe(0);
+    for (const dpr of DPRS) expect(Number.isInteger(Math.round(snappedBorderPx(1, dpr) * dpr * 1e9) / 1e9)).toBe(true);
   });
 
   it('validDpr falls back to 1 for unusable ratios', () => {

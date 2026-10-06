@@ -23,6 +23,17 @@ export function validDpr(dpr: number): number {
 }
 
 /**
+ * Rendered width (CSS px) of a `cssPx` border at a device pixel ratio: Chromium snaps border widths to whole device
+ * pixels (rounded down, at least 1), e.g. a 1px border is 2/3 CSS px at dpr 1.5. Used to place the waveform canvas
+ * exactly at the clip's edge from inside the clip body.
+ */
+export function snappedBorderPx(cssPx: number, dpr: number): number {
+  const d = validDpr(dpr);
+  if (!(cssPx > 0)) return 0;
+  return Math.max(1, Math.floor(cssPx * d)) / d;
+}
+
+/**
  * Backing store size (device px) of a canvas for a CSS box, and the CSS size that maps it 1:1 onto device pixels
  * (the CSS width is the device width / dpr, so columns land on device pixels without resampling).
  */
