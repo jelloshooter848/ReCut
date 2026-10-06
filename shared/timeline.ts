@@ -62,7 +62,17 @@ function locateClip(seq: Sequence, clipId: ID): { track: Track; clip: Clip; inde
 }
 
 const IMMER_STATE = Symbol.for('immer-state');
-interface DraftInternals { base_: unknown; copy_: unknown }
+interface DraftInternals { base_: unknown; copy_: unknown; modified_?: boolean }
+
+/**
+ * The object to read `item`'s fields from without drafting its nested objects: an unmodified draft's base (the
+ * same values), else `item` itself. Spreading a draft reads every field through the proxy, drafting each nested
+ * object it meets.
+ */
+function readable<T>(item: T): T {
+  const st = item !== null && typeof item === 'object' ? (item as Record<symbol, DraftInternals | undefined>)[IMMER_STATE] : undefined;
+  return st && !st.modified_ ? (st.base_ as T) : item;
+}
 
 /**
  * Read-only items of a (possibly immer-drafted) array without creating a child proxy per element. Reading the
@@ -173,6 +183,23 @@ export function sortTrack(track: Track): void {
     // Sort the raw items (stable, same order as sorting the draft) instead of drafting every clip.
     if (clips[i - 1].start > clips[i].start) { ownArray<Clip>(track, 'clips').sort(byStart); return; }
   }
+}
+
+/**
+ * Add `clip` to `track` in start order: exactly `track.clips.push(clip); sortTrack(track)` (a stable sort puts it
+ * after every clip with the same start), without sorting. On a sorted track (always, outside hostile data) it is
+ * one scan and a splice into the raw items instead of a full sort: an insert edit adds a clip to, and splits a
+ * clip on, every track, and the sorts were most of its cost before V8 has optimized them (the first edits).
+ */
+export function addClipSorted(track: Track, clip: Clip): void {
+  const items = readItems(track.clips);
+  let at = items.length;
+  for (let i = 0; i < items.length; i++) {
+    if (i > 0 && items[i - 1].start > items[i].start) { track.clips.push(clip); sortTrack(track); return; } // unsorted: as before
+    if (at === items.length && items[i].start > clip.start) at = i;
+  }
+  if (at === items.length) { track.clips.push(clip); return; }
+  ownArray<Clip>(track, 'clips').splice(at, 0, clip);
 }
 
 /** Clips sharing `clip`'s link (in track order), or just `clip`. Inside a recipe the results may be written to. */
@@ -623,8 +650,7 @@ export function overwriteClip(seq: Sequence, trackId: ID, clip: Clip): boolean {
   const track = findTrack(seq, trackId);
   if (!track || track.locked) return false;
   clearRangeIn(seq, track, clip.start, clipEnd(clip), new Set([clip.id]));
-  track.clips.push(clip);
-  sortTrack(track);
+  addClipSorted(track, clip);
   reconcileTransitions(track);
   return true;
 }
@@ -639,8 +665,7 @@ export function insertClip(seq: Sequence, trackId: ID, clip: Clip, opts: { rippl
   const tracks = opts.rippleTracks === 'own' ? [track] : allTracks(seq).filter((t) => !t.locked);
   splitTracksAt(seq, tracks, clip.start);
   rippleShift(seq, clip.start, clip.duration, { onlyTrackIds: new Set(tracks.map((t) => t.id)) });
-  track.clips.push(clip);
-  sortTrack(track);
+  addClipSorted(track, clip);
   reconcileTransitions(track);
   return true;
 }
@@ -656,13 +681,19 @@ export function placeClips(seq: Sequence, placements: { trackId: ID; clip: Clip 
   let start = Infinity, end = -Infinity;
   for (const p of placements) { start = Math.min(start, p.clip.start); end = Math.max(end, clipEnd(p.clip)); }
   const length = end - start;
-  splitTracksAt(seq, allTracks(seq).filter((t) => !t.locked), start);
-  rippleShift(seq, start, length);
+  // Split tracks are reconciled once, after the ripple (rippleShift reconciles every track it shifts): the split
+  // only shortens clips, which the ripple does not change, so one pass gives what a pass after each step gave.
+  const split: Track[] = [];
+  splitTracksAt(seq, allTracks(seq).filter((t) => !t.locked), start, { reconcile: false, split });
+  const shifted = new Set(rippleShift(seq, start, length));
+  for (const t of split) if (!shifted.has(t.id)) reconcileTransitions(t);
   for (const p of placements) {
     const t = findTrack(seq, p.trackId)!;
-    // Guard against anything still overlapping on tracks that could not ripple
-    clearRangeIn(seq, t, p.clip.start, clipEnd(p.clip), new Set([p.clip.id]));
-    t.clips.push(p.clip); sortTrack(t); reconcileTransitions(t);
+    // Guard against anything still overlapping on tracks that could not ripple. When nothing overlaps (the ripple
+    // made room) clearRange would only re-sort and re-reconcile the track, which the reconcile below covers.
+    const s = p.clip.start, e = clipEnd(p.clip);
+    if (readItems(t.clips).some((c) => c.id !== p.clip.id && c.start < e && clipEnd(c) > s)) clearRangeIn(seq, t, s, e, new Set([p.clip.id]));
+    addClipSorted(t, p.clip); reconcileTransitions(t);
   }
   return true;
 }
@@ -671,28 +702,29 @@ export function placeClips(seq: Sequence, placements: { trackId: ID; clip: Clip 
 // Split / razor
 // ------------------------------------------------------------------
 
-export function splitClip(seq: Sequence, track: Track, clip: Clip, frame: number): Clip | null {
+export function splitClip(seq: Sequence, track: Track, clip: Clip, frame: number, reconcile = true): Clip | null {
   if (frame <= clip.start || frame >= clipEnd(clip)) return null;
-  const consumedSec = (frame - clip.start) * seq.fps.den / seq.fps.num * clip.speed;
+  const src = readable(clip); // the tail copies every nested object, so read them without drafting
+  const consumedSec = (frame - src.start) * seq.fps.den / seq.fps.num * src.speed;
   const tail: Clip = {
-    ...clip,
+    ...src,
     id: uid('clip'),
     start: frame,
-    duration: clipEnd(clip) - frame,
-    sourceIn: clip.sourceIn + consumedSec,
-    transform: { ...clip.transform, crop: { ...clip.transform.crop } },
-    audio: { ...clip.audio, fadeIn: 0 },
-    tags: [...clip.tags], characters: [...clip.characters], plotlines: [...clip.plotlines], locations: [...clip.locations],
+    duration: clipEnd(src) - frame,
+    sourceIn: src.sourceIn + consumedSec,
+    transform: { ...src.transform, crop: { ...src.transform.crop } },
+    audio: { ...src.audio, fadeIn: 0 },
+    tags: [...src.tags], characters: [...src.characters], plotlines: [...src.plotlines], locations: [...src.locations],
   };
-  clip.duration = frame - clip.start;
-  clip.audio = { ...clip.audio, fadeOut: 0 };
+  clip.duration = frame - src.start;
+  clip.audio = { ...src.audio, fadeOut: 0 };
   // transitions: out transition moves to tail
   const trs = readItems(track.transitions);
   for (let j = 0; j < trs.length; j++) if (trs[j].outClipId === clip.id) writableItem<Transition>(track, 'transitions', j).outClipId = tail.id;
-  track.clips.push(tail);
-  sortTrack(track);
-  // Both halves are shorter than the original: a transition on either side may now exceed its clip.
-  reconcileTransitions(track);
+  addClipSorted(track, tail);
+  // Both halves are shorter than the original: a transition on either side may now exceed its clip (unless the
+  // caller reconciles the track itself once it is done with it).
+  if (reconcile) reconcileTransitions(track);
   // subtitle cues attached to this clip: those after the split point move to the tail, straddlers are duplicated
   splitCuesAt(seq, clip.id, tail.sourceIn, tail, tail.sourceIn);
   return tail;
@@ -701,16 +733,17 @@ export function splitClip(seq: Sequence, track: Track, clip: Clip, frame: number
 /**
  * Split whatever strictly spans `frame` on each of `tracks` (a clip boundary at `frame` is not split).
  * Tails that came from clips sharing a linkId are re-linked to each other with a fresh linkId so the
- * head pair and the tail pair stay independently linked. Returns the created tails.
+ * head pair and the tail pair stay independently linked. Returns the created tails. `reconcile: false` leaves the
+ * split tracks' transitions to the caller (`split` collects those tracks).
  */
-function splitTracksAt(seq: Sequence, tracks: Track[], frame: number): Clip[] {
+function splitTracksAt(seq: Sequence, tracks: Track[], frame: number, opts: { reconcile?: boolean; split?: Track[] } = {}): Clip[] {
   const tails: { tail: Clip; oldLink: ID | null }[] = [];
   for (const track of tracks) {
     const i = readItems(track.clips).findIndex((x) => x.start < frame && clipEnd(x) > frame);
     if (i < 0) continue;
     const c = writableClip(track, i);
-    const tail = splitClip(seq, track, c, frame);
-    if (tail) tails.push({ tail, oldLink: c.linkId });
+    const tail = splitClip(seq, track, c, frame, opts.reconcile ?? true);
+    if (tail) { tails.push({ tail, oldLink: c.linkId }); opts.split?.push(track); }
   }
   const groups = new Map<ID, Clip[]>();
   for (const t of tails) if (t.oldLink) { const g = groups.get(t.oldLink) ?? []; g.push(t.tail); groups.set(t.oldLink, g); }
@@ -1060,8 +1093,7 @@ export function moveClips(seq: Sequence, moves: MoveSpec[], mode: 'overwrite' | 
     const t = findTrack(seq, l.toTrackId)!;
     l.clip.start = l.toStart;
     clearRangeIn(seq, t, l.clip.start, clipEnd(l.clip));
-    t.clips.push(l.clip);
-    sortTrack(t);
+    addClipSorted(t, l.clip);
     touched.add(t.id);
   }
   // Tracks shifted or split above were reconciled there; the source and destination tracks are checked here.

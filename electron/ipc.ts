@@ -18,7 +18,7 @@ import type {
   AppInfo, ExportRequest, ExportStartResult, FilmstripRequest, LoadReply, MessageOptions, OpenFilesOptions,
   ProxyRequest, RecoveryReply, RecutApi, RelinkScanRequest, SaveFileOptions, SaveResult, SceneDetectRequest, ThumbnailRequest, WaveformData,
 } from '../shared/ipc';
-import { encodeProjectWire, SAVE_STREAM_IPC as IPC_SAVE, type SaveBeginResult } from '../shared/projectWire';
+import { encodeProjectWire, isAutosaveStreamRef, SAVE_STREAM_IPC as IPC_SAVE, type SaveBeginResult } from '../shared/projectWire';
 import * as io from './project/io';
 import * as fsApi from './fs';
 
@@ -254,15 +254,15 @@ export function registerIpc(deps: IpcDeps): void {
     const s = typeof id === 'string' ? saveStreams.get(id) : undefined;
     return s && s.sender === sender ? s.writer : undefined;
   };
-  ipcMain.handle(IPC_SAVE.begin, async (e, p: string): Promise<SaveBeginResult> => {
-    const file = assertString(p, 'path');
+  /** Open a streamed save (`open` creates its writer) for the window behind `e`; `label` starts its error messages. */
+  const beginStream = async (e: Electron.IpcMainInvokeEvent, label: string, open: () => Promise<io.ProjectFileWriter>): Promise<SaveBeginResult> => {
     const sender = e.sender.id;
     if ([...saveStreams.values()].filter((s) => s.sender === sender).length >= MAX_SAVE_STREAMS_PER_WINDOW) {
-      return { ok: false, error: 'Could not save project: too many saves in progress' };
+      return { ok: false, error: `${label}: too many saves in progress` };
     }
     let writer: io.ProjectFileWriter;
-    try { writer = await io.ProjectFileWriter.open(file); } catch (err) {
-      return { ok: false, error: `Could not save project: ${err instanceof Error ? err.message : String(err)}` };
+    try { writer = await open(); } catch (err) {
+      return { ok: false, error: `${label}: ${err instanceof Error ? err.message : String(err)}` };
     }
     const id = randomUUID();
     saveStreams.set(id, { writer, sender });
@@ -274,13 +274,21 @@ export function registerIpc(deps: IpcDeps): void {
       e.sender.once('destroyed', () => { watchedSenders.delete(sender); drop(); });
     }
     return { ok: true, id };
+  };
+  ipcMain.handle(IPC_SAVE.begin, (e, p: string): Promise<SaveBeginResult> => {
+    const file = assertString(p, 'path');
+    return beginStream(e, 'Could not save project', () => io.ProjectFileWriter.open(file));
   });
+  // Streamed autosave: committed over IPC.projectAutosaveJson (below) with an AutosaveStreamRef.
+  ipcMain.handle(IPC_SAVE.autosaveBegin, (e, p: unknown): Promise<SaveBeginResult> =>
+    beginStream(e, 'Autosave failed', () => io.ProjectFileWriter.openAutosave(typeof p === 'string' && p ? p : null, userData)));
   ipcMain.on(IPC_SAVE.chunk, (e, id: unknown, seq: unknown, text: unknown) => {
     saveStream(id, e.sender.id)?.append(seq as number, text as string);
   });
   ipcMain.handle(IPC_SAVE.commit, async (e, id: unknown, totals: io.SaveStreamTotals): Promise<SaveResult> => {
     const writer = saveStream(id, e.sender.id);
-    if (!writer) return { ok: false, error: 'Could not save project: no such save in progress' };
+    // An autosave stream is only committed as an autosave (never turned into a project file, with recent / .bak).
+    if (!writer || writer.kind !== 'project') return { ok: false, error: 'Could not save project: no such save in progress' };
     // Registered until the commit is done: pieces the commit message overtook still reach the writer.
     const res = await writer.commit(totals);
     saveStreams.delete(id as string);
@@ -307,7 +315,23 @@ export function registerIpc(deps: IpcDeps): void {
     return reply;
   });
   ipcMain.handle(IPC.projectAutosave, (_e, p: string | null, project: Project) => io.writeAutosave(typeof p === 'string' && p ? p : null, project, userData));
-  ipcMain.handle(IPC.projectAutosaveJson, (_e, p: string | null, json: string) => io.writeAutosaveJson(typeof p === 'string' && p ? p : null, json, userData));
+  // `json` is the autosave text, or an AutosaveStreamRef to commit the streamed autosave it names (the text was
+  // sent in pieces after IPC_SAVE.autosaveBegin for the same project path).
+  ipcMain.handle(IPC.projectAutosaveJson, async (e, p: string | null, json: unknown): Promise<SaveResult> => {
+    const projectPath = typeof p === 'string' && p ? p : null;
+    if (!isAutosaveStreamRef(json)) return io.writeAutosaveJson(projectPath, json as string, userData);
+    const writer = saveStream(json.stream, e.sender.id);
+    if (!writer || writer.kind !== 'autosave') return { ok: false, error: 'Autosave failed: no such autosave in progress' };
+    if (io.autosavePathFor(projectPath, userData) !== writer.path) {
+      saveStreams.delete(json.stream);
+      await writer.abort();
+      return { ok: false, error: 'Autosave failed: the autosave was started for another project' };
+    }
+    // Registered until the commit is done: pieces the commit message overtook still reach the writer.
+    const res = await writer.commit({ chunks: json.chunks, chars: json.chars });
+    saveStreams.delete(json.stream);
+    return res;
+  });
   ipcMain.handle(IPC.projectCheckRecovery, async (): Promise<RecoveryReply | null> => {
     const prefs = await io.readPrefs(userData);
     const info = await io.checkRecovery(userData, prefs.recentProjects);
