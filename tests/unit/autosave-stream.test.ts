@@ -171,6 +171,27 @@ describe('streamed autosave: renderer -> main -> disk', () => {
     expect(S().dirty).toBe(true); // an autosave marks nothing saved
   });
 
+  it('serializes in idle time where there is requestIdleCallback (background work), with the same bytes', async () => {
+    let idle = 0;
+    g.requestIdleCallback = (cb: (d: { didTimeout: boolean; timeRemaining(): number }) => void, o?: { timeout: number }) => {
+      idle++;
+      expect(o?.timeout).toBeGreaterThan(0);
+      setTimeout(() => cb({ didTimeout: idle % 3 === 0, timeRemaining: () => 0.5 }), 0);
+      return idle;
+    };
+    try {
+      vi.spyOn(Date, 'now').mockReturnValue(now);
+      g.recut = realAutosaveApi({ pieces: [], calls: [] });
+      const project = bigProject();
+      useStore.setState({ project, projectPath: null, dirty: true });
+      await autosaveProject();
+      expect(idle).toBeGreaterThan(0);
+      expect(await fsp.readFile(untitledAutosavePath(userData), 'utf8')).toBe(JSON.stringify({ ...project, modifiedAt: now }));
+    } finally {
+      delete g.requestIdleCallback;
+    }
+  });
+
   it('a never-saved project autosaves to the untitled autosave in app data', async () => {
     g.recut = realAutosaveApi({ pieces: [], calls: [] });
     useStore.setState({ project: createProject('Untitled one'), projectPath: null, dirty: true });

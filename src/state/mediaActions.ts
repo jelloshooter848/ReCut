@@ -347,6 +347,36 @@ function slicer(): () => Promise<void> | void {
   };
 }
 
+/** Upper bound (ms) an idle slice of background serialization waits for idle time before it runs anyway. */
+const IDLE_TIMEOUT_MS = 250;
+/** Length (ms) of a slice forced by IDLE_TIMEOUT_MS (the window never went idle meanwhile). */
+const FORCED_SLICE_MS = 8;
+type IdleDeadlineLike = { didTimeout: boolean; timeRemaining(): number };
+type RequestIdle = (cb: (d: IdleDeadlineLike) => void, o?: { timeout: number }) => number;
+
+/**
+ * slicer() for background work (autosaves): after a slice it resumes in the next idle period (requestIdleCallback),
+ * for the idle time the browser offers there (at most SLICE_MS); a slice forced by IDLE_TIMEOUT_MS runs
+ * FORCED_SLICE_MS. Edits, input and frames never wait behind it: while the user edits (or the timeline plays) it
+ * only runs in the gaps. Where there is no requestIdleCallback (node / vitest) it is slicer().
+ */
+function idleSlicer(): () => Promise<void> | void {
+  const ric = (globalThis as { requestIdleCallback?: RequestIdle }).requestIdleCallback;
+  if (typeof ric !== 'function') return slicer();
+  let since = performance.now();
+  let budget = SLICE_MS;
+  return () => {
+    if (performance.now() - since < budget) return;
+    return new Promise<void>((resolve) => {
+      ric((d) => {
+        since = performance.now();
+        budget = d.didTimeout ? FORCED_SLICE_MS : Math.min(SLICE_MS, Math.max(1, d.timeRemaining()));
+        resolve(); // the slice runs in this idle callback's microtask checkpoint
+      }, { timeout: IDLE_TIMEOUT_MS });
+    });
+  };
+}
+
 /** UTF-16 code units of file text gathered before they are handed on as one piece (a streamed save sends each). */
 const PIECE_CHARS = 1 << 20;
 
@@ -444,10 +474,9 @@ function compactValue(key: string, v: unknown): string | undefined {
  * UTF-16), yielding once SLICE_MS have passed. Values are serialized by the native JSON.stringify, several times
  * faster than the record-by-record file layout of projectJsonChunks; PROJECT_SPLIT says which containers are
  * written part by part, so no single task holds the whole project, and which frozen values reuse their text from
- * an earlier autosave (compactJsonCache).
+ * an earlier autosave (compactJsonCache). `pause` yields between parts (slicer, or idleSlicer for autosaves).
  */
-async function serializeCompactInPieces(project: Project, emit: (text: string) => void | Promise<void>): Promise<void> {
-  const pause = slicer();
+async function serializeCompactInPieces(project: Project, emit: (text: string) => void | Promise<void>, pause = slicer()): Promise<void> {
   let out: string[] = [];
   let chars = 0;
   const push = (s: string) => { out.push(s); chars += s.length; };
@@ -571,7 +600,7 @@ function autosaveStreamed(api: ProjectAutosaveStreamApi, projectPath: string | n
     chunk: (id, seq, text) => api.saveProjectChunk(id, seq, text),
     commit: (id, totals) => api.autosaveProjectCommit(projectPath, id, totals),
     abort: (id) => api.saveProjectAbort(id),
-  }, (emit) => serializeCompactInPieces(project, emit));
+  }, (emit) => serializeCompactInPieces(project, emit, idleSlicer())); // background work: only in idle time
 }
 
 /** Main refused to start a streamed save (bad path, no permission): stops the serialization, reported as is. */
