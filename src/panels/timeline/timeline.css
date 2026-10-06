@@ -137,7 +137,8 @@
 .tl-clip-body { position: absolute; top: 16px; left: 0; right: 0; bottom: 0; overflow: hidden; }
 .tl-clip.compact .tl-clip-body { top: 0; }
 .tl-thumb { position: absolute; top: 0; height: 100%; object-fit: cover; opacity: 0.92; pointer-events: none; }
-.tl-wave { position: absolute; top: 0; pointer-events: none; }
+/* max-width: none: the canvas maps 1:1 onto device pixels (ClipView); the clip body clips it at the clip borders. */
+.tl-wave { position: absolute; top: 0; pointer-events: none; max-width: none; }
 .tl-wave-line { position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: rgba(255,255,255,0.18); }
 .tl-fade { position: absolute; top: 16px; bottom: 0; pointer-events: none; z-index: 1; }
 .tl-clip.compact .tl-fade { top: 0; }

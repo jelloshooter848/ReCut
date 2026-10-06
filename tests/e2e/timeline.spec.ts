@@ -83,6 +83,37 @@ test.describe('timeline panel', () => {
       await page.screenshot({ path: out });
     });
 
+    await test.step('waveform canvases sit inside their clips, sized in device pixels', async () => {
+      // Waveforms are filled device-pixel bars (A4 rendering trade-off): the canvas backing store is its CSS box times
+      // devicePixelRatio, its columns line up with the clip's timeline pixels (column 0 at the clip's left edge, the body
+      // clipping it at the borders), its height is the clip body's, and drawn bars stay inside it. Strict geometry.
+      const audioIds = seq.audioTracks[0].clips.map((c) => c.id);
+      await page.waitForFunction(() => [...document.querySelectorAll('canvas.tl-wave')].some((c) => {
+        const cv = c as HTMLCanvasElement; const d = cv.getContext('2d')!.getImageData(0, 0, cv.width, cv.height).data;
+        for (let i = 3; i < d.length; i += 4) if (d[i]) return true; return false;
+      }), null, { timeout: 30_000 }).catch(() => undefined);
+      const waves = await page.evaluate((ids) => ids.map((id) => {
+        const clip = document.querySelector(`[data-clip-id="${id}"]`)!; const cv = clip.querySelector('canvas.tl-wave') as HTMLCanvasElement | null;
+        if (!cv) return null;
+        const body = clip.querySelector('.tl-clip-body')!.getBoundingClientRect(); const box = clip.getBoundingClientRect(); const r = cv.getBoundingClientRect(); const dpr = window.devicePixelRatio;
+        const d = cv.getContext('2d')!.getImageData(0, 0, cv.width, cv.height).data;
+        let inked = 0;
+        for (let x = 0; x < cv.width; x++) { for (let y = 0; y < cv.height; y++) if (d[(y * cv.width + x) * 4 + 3]) { inked++; break; } }
+        return { dpr, bw: cv.width, bh: cv.height, w: r.width, h: r.height, dl: r.left - box.left, dt: r.top - body.top, clipW: box.width, bodyH: body.height, inked };
+      }), audioIds);
+      expect(waves.every(Boolean)).toBe(true);
+      for (const w of waves) {
+        expect(Math.abs(w!.w * w!.dpr - w!.bw)).toBeLessThan(0.01);
+        expect(Math.abs(w!.h * w!.dpr - w!.bh)).toBeLessThan(0.01);
+        expect(Math.abs(w!.dl)).toBeLessThan(0.01);
+        expect(Math.abs(w!.dt)).toBeLessThan(0.01);
+        expect(Math.abs(w!.w - w!.clipW)).toBeLessThanOrEqual(0.5 / w!.dpr + 0.01);
+        expect(Math.abs(w!.h - w!.bodyH)).toBeLessThanOrEqual(0.5 / w!.dpr + 0.01);
+        // Once drawn, every device column has a bar (the silent baseline is at least 1 device px).
+        if (w!.inked) expect(w!.inked).toBe(w!.bw);
+      }
+    });
+
     await test.step('razor tool splits the clip under the pointer', async () => {
       await page.locator('[data-tool="razor"]').click();
       expect((await uiState(page)).tool).toBe('razor');
@@ -109,6 +140,18 @@ test.describe('timeline panel', () => {
       expect(seq.view.playhead).not.toBe(before);
       expect(seq.view.playhead).toBe(Math.round(seq.view.scroll + 100 / ZOOM));
       await expect(page.locator('[data-playhead]')).toBeVisible();
+      // The playhead line (a composited layer moved by transform, A4) sits exactly on frameToX(playhead), snapped to the
+      // device pixel grid: at dpr 1 the former Math.round(x). Strict geometry, no tolerance.
+      const g = await page.evaluate(() => {
+        const l = document.querySelector('[data-playhead]')!.getBoundingClientRect(); const h = document.querySelector('.tl-playhead-head')!.getBoundingClientRect();
+        return { lx: l.left, lw: l.width, hx: h.left, hw: h.width, dpr: window.devicePixelRatio };
+      });
+      const exactX = (seq.view.playhead - seq.view.scroll) * ZOOM;
+      expect(g.lx - r.x).toBeCloseTo(Math.round(exactX * g.dpr) / g.dpr, 6);
+      expect(g.lw).toBe(1);
+      // The head is centred on the line (13 px wide, from x - 6).
+      expect(g.hx - g.lx).toBeCloseTo(-6, 6);
+      expect(g.hw).toBe(13);
     });
 
     await test.step('selection tool trims the right edge frame-exactly', async () => {

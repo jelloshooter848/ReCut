@@ -45,6 +45,8 @@ export interface ClipViewProps {
 const MAX_TILES_PER_REQUEST = 48;
 const NO_TILES: Record<number, string> = {};
 const MAX_WAVE_CANVAS_PX = 4096;
+/** .tl-clip border width (px): the clip body (and the waveform canvas in it) starts this far inside the clip box. */
+const CLIP_BORDER_PX = 1;
 
 function quantizeTime(t: number): number { return Math.round(t * 10) / 10; }
 
@@ -160,8 +162,10 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   const waveX = visFrom;
   const waveW = wantMedia ? Math.min(MAX_WAVE_CANVAS_PX, Math.max(0, visTo - visFrom)) : 0;
   const dpr = validDpr(p.dpr ?? 1);
-  // Backing store in device pixels; the CSS size maps it 1:1 onto them (<= 0.5 device px wider than waveW: clipped
-  // by the clip body).
+  // Backing store in device pixels; the CSS size maps it 1:1 onto them (<= 0.5 device px wider than waveW). Canvas
+  // column 0 sits at clip px waveX (the body starts inside the clip's left border, hence the -CLIP_BORDER_PX), so the
+  // waveform lines up with the timeline; the body clips what falls under the borders. Not squeezed by the global
+  // `canvas { max-width: 100% }` (timeline.css), which would resample the bars.
   const waveSize = waveCanvasSize(waveW, bodyH, dpr);
   useEffect(() => {
     const cv = canvasRef.current;
@@ -233,7 +237,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
         {isVideo ? tileEls : (
           <>
             {WAVE_LINE}
-            {waveW > 0 ? <canvas ref={canvasRef} className="tl-wave" style={{ left: waveX, width: waveSize.cssW, height: waveSize.cssH }} /> : null}
+            {waveW > 0 ? <canvas ref={canvasRef} className="tl-wave" style={{ left: waveX - CLIP_BORDER_PX, width: waveSize.cssW, height: waveSize.cssH }} /> : null}
           </>
         )}
       </div>
