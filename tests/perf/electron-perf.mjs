@@ -268,29 +268,59 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
 }
 // Scrubbing: drive setView(playhead) every rAF for 3 s; measure fps, long tasks, DOM mutations, ClipView renders.
 // Defaults measure the 2,500-clip sequence; the multi-hour section passes its own sequence, duration and section.
-  const scrub = async (label, selectedCount, seqId = SEQ, seqDur = dur, section = 'scrub') => {
+// Two drivers:
+// - default: the playhead jumps dur/240 frames per frame across the whole sequence. Below zoom-to-fit it leaves the
+//   view, so the view page-flips (Playhead.tsx, pageFlipScroll) and mounts the newly visible clips.
+// - { inPage: true } (added 6 October 2026): the realistic drag. The playhead sweeps back and forth inside the
+//   currently visible page (2 % to 90 % of it, about one sweep per 2 s), so the view must never flip. The flip count
+//   is recorded as an info row, and every gate row of this driver fails if a flip happened (it would not be in-page).
+  const scrub = async (label, selectedCount, seqId = SEQ, seqDur = dur, section = 'scrub', { inPage = false } = {}) => {
     await page.evaluate(({ id, n }) => { const st = window.__recut.store.getState(); const s = st.project.sequences[id]; const ids = [...s.videoTracks, ...s.audioTracks].flatMap((t) => t.clips.map((c) => c.id)).slice(0, n); st.select(ids, n ? 'set' : 'clear'); }, { id: seqId, n: selectedCount });
     await sleep(500);
+    // In-page: start the playhead inside the visible page before measuring (outside the measured window).
+    const page0 = inPage ? await page.evaluate((id) => {
+      const st = window.__recut.store.getState(); const v = st.project.sequences[id].view;
+      const visible = (document.querySelector('.tl-tracks-col')?.clientWidth ?? 0) / v.zoom;
+      const lo = Math.ceil(v.scroll + visible * 0.02), hi = Math.floor(v.scroll + visible * 0.9);
+      st.setView(id, { playhead: lo }); return { lo, hi };
+    }, seqId) : null;
+    if (inPage) await sleep(300);
     const t0 = await nowPage();
-    const out = await page.evaluate(async ({ id, dur }) => {
+    const out = await page.evaluate(async ({ id, dur, page0 }) => {
       const st = window.__recut.store;
       const area = document.querySelector('.tl-tracks-col'); const content = document.querySelector('.tl-tracks-content');
       let mutAll = 0, mutContent = 0;
       const mo = new MutationObserver((l) => { mutAll += l.length; }); mo.observe(area, { subtree: true, attributes: true, childList: true, characterData: true });
       const mc = new MutationObserver((l) => { mutContent += l.length; }); mc.observe(content, { subtree: true, attributes: true, childList: true, characterData: true });
+      // Page flips = changes of view.scroll while scrubbing (setView mutates the LiveView in place, so compare values).
+      let flips = 0, lastScroll = st.getState().project.sequences[id].view.scroll;
+      const unsub = st.subscribe((s) => { const sc = s.project.sequences[id]?.view.scroll; if (sc !== lastScroll) { lastScroll = sc; flips++; } });
       window.__perf.commits.length = 0; window.__perf.hookOn = true;
-      const step = Math.max(1, Math.floor(dur / 240));
-      let f = 0, frames = 0; const t0 = performance.now(); const costs = [];
-      await new Promise((resolve) => { const tick = () => { const now = performance.now(); if (now - t0 >= 3000) return resolve(); f = (f + step) % dur; const a = performance.now(); st.getState().setView(id, { playhead: f }); costs.push(performance.now() - a); frames++; requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
+      const step = page0 ? Math.max(1, Math.round((page0.hi - page0.lo) / 120)) : Math.max(1, Math.floor(dur / 240));
+      let f = page0 ? page0.lo : 0, dir = 1, frames = 0; const t0 = performance.now(); const costs = [];
+      const next = page0
+        ? () => { if (f + dir * step > page0.hi || f + dir * step < page0.lo) dir = -dir; f += dir * step; return f; }
+        : () => { f = (f + step) % dur; return f; };
+      await new Promise((resolve) => { const tick = () => { const now = performance.now(); if (now - t0 >= 3000) return resolve(); const target = next(); const a = performance.now(); st.getState().setView(id, { playhead: target }); costs.push(performance.now() - a); frames++; requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
       await new Promise((r) => setTimeout(r, 50));
-      window.__perf.hookOn = false; mo.disconnect(); mc.disconnect();
+      window.__perf.hookOn = false; mo.disconnect(); mc.disconnect(); unsub();
       const commits = window.__perf.commits.filter((c) => !c.err);
       const clipRendered = commits.reduce((a, c) => a + c.clipRendered, 0), tb = commits.reduce((a, c) => a + c.timelineBody, 0);
       const elapsed = performance.now() - t0;
       costs.sort((a, b) => a - b);
-      return { frames, fps: frames / (elapsed / 1000), mutAll, mutContent, commits: commits.length, clipRendered, tb, setViewMedian: costs[Math.floor(costs.length / 2)] ?? 0, setViewMax: costs[costs.length - 1] ?? 0, clipTotal: commits[0]?.clipTotal ?? 0 };
-    }, { id: seqId, dur: seqDur });
+      return { frames, fps: frames / (elapsed / 1000), mutAll, mutContent, commits: commits.length, clipRendered, tb, flips, setViewMedian: costs[Math.floor(costs.length / 2)] ?? 0, setViewMax: costs[costs.length - 1] ?? 0, clipTotal: commits[0]?.clipTotal ?? 0 };
+    }, { id: seqId, dur: seqDur, page0 });
     const long = await lt(t0);
+    if (inPage) {
+      // The realistic drag: all four rows are gates, valid only without a page flip.
+      const noFlip = out.flips === 0, inv = noFlip ? '' : `INVALID: ${out.flips} page flips; `;
+      rec(section, `page flips during in-page scrub ${label}`, out.flips, '', undefined, undefined, `playhead swept frames ${page0.lo}-${page0.hi}, must be 0`);
+      rec(section, `playhead scrub fps (rAF-driven setView) ${label}`, r2(out.fps, 1), 'fps', '>= 50', noFlip && out.fps >= 50, `${inv}${out.frames} frames`);
+      rec(section, `DOM mutations per frame ${label} (tracks col / clips content)`, `${r2(out.mutAll / Math.max(1, out.frames), 2)} / ${r2(out.mutContent / Math.max(1, out.frames), 2)}`, '', 'content == 0', noFlip && out.mutContent === 0, inv || undefined);
+      rec(section, `ClipView renders per frame ${label}`, r2(out.clipRendered / Math.max(1, out.frames), 2), '', '== 0', noFlip && out.clipRendered === 0, `${inv}${out.commits} React commits, TimelineBody renders ${out.tb}, ${out.clipTotal} clip fibers`);
+      rec(section, `long tasks during scrub ${label}`, long.length, '', '== 0', noFlip && long.length === 0, `${inv}${ltSummary(long)}`);
+      return;
+    }
     rec(section, `playhead scrub fps (rAF-driven setView) ${label}`, r2(out.fps, 1), 'fps', '>= 50', out.fps >= 50, `${out.frames} frames`);
     rec(section, `DOM mutations per frame ${label} (tracks col / clips content)`, `${r2(out.mutAll / Math.max(1, out.frames), 2)} / ${r2(out.mutContent / Math.max(1, out.frames), 2)}`, '', 'content == 0', out.mutContent === 0);
     rec(section, `ClipView renders per frame ${label}`, r2(out.clipRendered / Math.max(1, out.frames), 2), '', '== 0', out.clipRendered === 0, `${out.commits} React commits, TimelineBody renders ${out.tb}, ${out.clipTotal} clip fibers`);
@@ -304,6 +334,10 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
   await setView({ zoom: 1, scroll: 0 }); await sleep(800);
   await scrub('@ 1 px/frame (~120 clips mounted), no selection', 0);
   await scrub('@ 1 px/frame, 50 clips selected', 50);
+  // The realistic drag inside the visible page (added after the rows above, so their conditions are unchanged).
+  await setView({ zoom: 1, scroll: 0 }); await sleep(800);
+  await scrub('@ 1 px/frame, within the visible page, no selection', 0, SEQ, dur, 'scrub', { inPage: true });
+  await scrub('@ 1 px/frame, within the visible page, 50 clips selected', 50, SEQ, dur, 'scrub', { inPage: true });
   await page.evaluate(() => window.__recut.store.getState().select([], 'clear'));
 }
 {
@@ -748,6 +782,10 @@ console.log('\n--- multi-hour sequence ---');
   await sleep(1500);
   await scrub('multi-hour @ 1 px/frame, no selection', 0, LSEQ, ldur, 'long');
   await scrub('multi-hour @ 1 px/frame, 50 clips selected', 50, LSEQ, ldur, 'long');
+  await page.evaluate((id) => window.__recut.store.getState().setView(id, { zoom: 1, scroll: 0 }), LSEQ);
+  await sleep(1500);
+  await scrub('multi-hour @ 1 px/frame, within the visible page, no selection', 0, LSEQ, ldur, 'long', { inPage: true });
+  await scrub('multi-hour @ 1 px/frame, within the visible page, 50 clips selected', 50, LSEQ, ldur, 'long', { inPage: true });
   await page.evaluate(() => window.__recut.store.getState().select([], 'clear'));
   // Edit commit -> paint on the multi-hour sequence (same budgets as section 1).
   await page.evaluate((id) => window.__recut.store.getState().setView(id, { zoom: 1, scroll: 0, playhead: 0 }), LSEQ);
