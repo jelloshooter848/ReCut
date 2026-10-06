@@ -264,7 +264,7 @@ describe('SequencePlayer element pooling', () => {
 });
 
 describe('SequencePlayer redraws while playing', () => {
-  it('skips rAF ticks where neither the timeline frame nor a layer\'s media frame changed', () => {
+  it('redraws only when a painted layer\'s element presents a new frame, not on every rAF tick or timeline frame', () => {
     let now = 1000;
     vi.spyOn(performance, 'now').mockImplementation(() => now);
     const rafs: (() => void)[] = [];
@@ -280,16 +280,18 @@ describe('SequencePlayer redraws while playing', () => {
     expect(drawn).toHaveLength(1);
     runRaf(); runRaf();             // same instant: same frame, same media frame -> no redraw
     expect(drawn).toHaveLength(1);
-    now += 1000 / 24;               // next timeline frame
+    now += 1000 / 24;               // next timeline frame, the element still on the same media frame: same picture
+    runRaf();
+    expect(drawn).toHaveLength(1);
+    const v = videos.find((x) => x.tag === 'video')!;
+    v.currentTime += 1 / 24; v.land(); // the element presents its next frame
     runRaf();
     expect(drawn).toHaveLength(2);
-    const v = videos.find((x) => x.tag === 'video')!;
-    v.currentTime += 1 / 24; v.land(); // the element presents its next frame within the same timeline frame
     runRaf();
-    expect(drawn).toHaveLength(3);
+    expect(drawn).toHaveLength(2);
     player.pause();
     runRaf();                       // pausing always redraws (lands exactly on a frame)
-    expect(drawn).toHaveLength(4);
+    expect(drawn).toHaveLength(3);
     player.destroy();
     vi.restoreAllMocks();
   });
