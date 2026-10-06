@@ -246,6 +246,38 @@ export function scrollContentFrames(durationFrames: number, scroll: number, visi
   return Math.max(durationFrames + visible * 0.5, scroll + visible, visible);
 }
 
+/**
+ * Content-space pixel range [x0, x1] of the clips the timeline mounts, with the view it was computed for. The view
+ * (scroll position plus `slackPx` either side) is always inside it. It is kept while the view stays inside, so small
+ * scroll steps (wheel, trackpad) change no clip lane at all; when an incremental scroll (at most half a viewport) leaves
+ * it, the new range reaches `aheadPx` further in the scroll direction. A jump (page flip, scrollbar drag, zoom or width
+ * change) gets the view alone, so it mounts no more clips than before.
+ */
+export interface MountRange { x0: number; x1: number; zoom: number; width: number; scrollPx: number }
+
+export function nextMountRange(prev: MountRange | null, scrollPx: number, width: number, zoom: number, slackPx: number, aheadPx: number): MountRange {
+  const v0 = scrollPx - slackPx, v1 = scrollPx + width + slackPx;
+  const same = !!prev && prev.zoom === zoom && prev.width === width;
+  if (same && v0 >= prev.x0 && v1 <= prev.x1) return prev.scrollPx === scrollPx ? prev : { ...prev, scrollPx };
+  const incremental = same && Math.abs(scrollPx - prev.scrollPx) <= width / 2;
+  if (incremental && v1 > prev.x1) return { x0: v0, x1: v1 + aheadPx, zoom, width, scrollPx };
+  if (incremental && v0 < prev.x0) return { x0: Math.max(v0 - aheadPx, Math.min(v0, 0)), x1: v1, zoom, width, scrollPx };
+  return { x0: v0, x1: v1, zoom, width, scrollPx };
+}
+
+/**
+ * Splits a content scroll position (CSS px) into the part a scroller holds (`base`: whole device pixels, which is all a
+ * scroll offset keeps) and the sub-device-pixel rest (`frac`, CSS px, >= 0) that a transform supplies, so that
+ * base + frac === scrollPx and content lands exactly where a translateX(-scrollPx) put it.
+ */
+export function splitScroll(scrollPx: number, dpr: number): { base: number; baseDev: number; frac: number } {
+  const d = dpr > 0 && Number.isFinite(dpr) ? dpr : 1;
+  const baseDev = Math.max(0, Math.floor(scrollPx * d + 1e-6));
+  const base = baseDev / d;
+  const frac = scrollPx - base;
+  return { base, baseDev, frac: frac > 1e-6 ? frac : 0 };
+}
+
 /** Frame range [from, to) that needs rendering for a viewport, with a pixel margin. */
 export function visibleRange(zoom: number, scroll: number, widthPx: number, marginPx = 200): { from: number; to: number } {
   return { from: Math.max(0, scroll - marginPx / zoom), to: scroll + (widthPx + marginPx) / zoom };

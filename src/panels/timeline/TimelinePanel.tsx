@@ -36,13 +36,19 @@ import { linkedSyncOffsets, syncOffsetsByTrack } from './clipBadges';
 import type { DialogState, DragPreview } from './types';
 import { RULER_H } from './types';
 import {
-  frameToX, itemsInRange, layoutTracks, lodHit, minZoomFor, rowAtY, scrollContentFrames, snapFrame, snapThresholdFrames, visibleRange,
-  xToFrame, xToFrameInt, zoomAround, zoomToFit, type TrackLayout,
+  frameToX, itemsInRange, layoutTracks, lodHit, minZoomFor, nextMountRange, rowAtY, scrollContentFrames, snapFrame, snapThresholdFrames, splitScroll,
+  xToFrame, xToFrameInt, zoomAround, zoomToFit, type MountRange, type TrackLayout,
 } from './viewMath';
 
 const DROP_GHOST_FRAMES = 48;
 /** Clips within this many px outside the viewport are mounted too (rounding slack only). */
 const MOUNT_SLACK_PX = 16;
+/** Filmstrip / waveform ranges reach this many px past the viewport (prefetch for scrolling). */
+const MEDIA_MARGIN_PX = 200;
+/** Px an incremental scroll mounts ahead when it leaves the mounted range (more: rarer but longer remount steps). */
+const MOUNT_AHEAD_PX = 256;
+/** Pixels per line / page for a wheel event in DOM_DELTA_LINE / DOM_DELTA_PAGE mode (as Chromium scrolls them). */
+const WHEEL_LINE_PX = 40;
 
 const cueStart = (c: { start: number }) => c.start;
 const cueEnd = (c: { end: number }) => c.end;
@@ -75,27 +81,34 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
 
   const rootRef = useRef<HTMLDivElement>(null);
   const tracksColRef = useRef<HTMLDivElement>(null);
+  /** The tracks scroller (vertical, scrolled by the user). */
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** The tracks content: pointer / drag handlers, and the horizontal scroller that shows view.scroll. */
+  const areaRef = useRef<HTMLDivElement>(null);
+  /** The viewport-aligned lane view inside it (sticky): x / y of pointer positions are measured against its box. */
   const contentRef = useRef<HTMLDivElement>(null);
   const headersScrollRef = useRef<HTMLDivElement>(null);
   const hscrollRef = useRef<HTMLDivElement>(null);
   const suppressFlip = useRef(false);
   const headerStart = useRef(headerWidth);
   const [width, setWidth] = useState(0);
+  /** Client width of the tracks content (the tracks column minus a vertical scrollbar). */
+  const [viewW, setViewW] = useState(0);
+  const mountRef = useRef<MountRange | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [drop, setDrop] = useState<Extract<DragPreview, { kind: 'drop' }> | null>(null);
   const [hasFocus, setHasFocus] = useState(false);
 
   // ---- geometry -----------------------------------------------------------------------------
   useLayoutEffect(() => {
-    const el = tracksColRef.current; if (!el) return;
-    const measure = () => setWidth(el.clientWidth);
+    const el = tracksColRef.current; const sc = areaRef.current; if (!el || !sc) return;
+    const measure = () => { setWidth(el.clientWidth); setViewW(sc.clientWidth); syncScrollLeft(); };
     measure();
     const ro = new ResizeObserver(measure);
-    ro.observe(el);
+    ro.observe(el); ro.observe(sc);
     return () => ro.disconnect();
-  }, []);
-  useEffect(() => { if (active) setWidth(tracksColRef.current?.clientWidth ?? 0); }, [active]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (active) { setWidth(tracksColRef.current?.clientWidth ?? 0); setViewW(areaRef.current?.clientWidth ?? 0); syncScrollLeft(); } }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
   // Let the global View › Zoom commands use the real viewport width.
   useEffect(() => { if (width > 0) setTimelineViewportWidth(width); }, [width]);
 
@@ -109,7 +122,6 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const visible = width / zoom;
   const contentFrames = scrollContentFrames(duration, scroll, visible);
   const contentPx = Math.ceil(contentFrames * zoom);
-  const range = useMemo(() => visibleRange(zoom, scroll, width), [zoom, scroll, width]);
   const trackById = useMemo(() => { const m = new Map<ID, Track>(); for (const t of [...(seq?.videoTracks ?? []), ...(seq?.audioTracks ?? [])]) m.set(t.id, t); return m; }, [seq?.videoTracks, seq?.audioTracks]);
   const rowById = useMemo(() => new Map(layout.rows.map((r) => [r.id, r])), [layout]);
   const cues = useMemo(() => (seq && hasSubs ? resolveSubtitleCues(seq as unknown as Sequence) : []), [seq?.videoTracks, seq?.audioTracks, seq?.subtitleTracks, seq?.fps, hasSubs]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -156,6 +168,27 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     });
   }, [scrollPx, contentPx]);
   useEffect(() => () => { const w = hscrollWant.current; if (w.raf) cancelAnimationFrame(w.raf); w.raf = 0; }, []);
+  // The tracks content is a horizontal scroller (bar hidden, opaque: composited) whose scroll offset shows view.scroll,
+  // set from the store before paint. A scroll offset change of a composited scroller moves the clips without a
+  // repaint, re-layout or re-layerization of the page, which a transform on the clip layer costs on every step. A
+  // scroll offset holds whole device pixels: the clip layer's translateX supplies the rest (constant, usually 0, while
+  // wheel steps move by whole pixels), so content sits exactly where translateX(-scrollPx) put it.
+  // Written only when the value changes (reading or writing scrollLeft forces a layout).
+  const split = splitScroll(scrollPx, window.devicePixelRatio || 1);
+  const scrollBaseRef = useRef(split.base);
+  scrollBaseRef.current = split.base;
+  const leftSet = useRef(NaN);
+  useLayoutEffect(() => {
+    const el = areaRef.current; if (!el || leftSet.current === split.base) return;
+    el.scrollLeft = split.base; leftSet.current = split.base;
+  }, [split.base, contentPx]);
+  /** Re-applies view.scroll after the scroller was resized, shown again or scrolled by something else. */
+  const syncScrollLeft = () => {
+    const el = areaRef.current; if (!el) return;
+    const want = scrollBaseRef.current;
+    if (Math.abs(el.scrollLeft - want) > 1) el.scrollLeft = want;
+    leftSet.current = want;
+  };
   const onHScroll = () => {
     const el = hscrollRef.current; if (!el) return;
     // A sync to the store's scroll is pending: this event reports an older (programmatic) scrollbar position, and
@@ -167,6 +200,8 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     st.setView(seqId, { scroll: el.scrollLeft / s.view.zoom });
   };
   const onVScroll = () => { if (headersScrollRef.current && scrollRef.current) headersScrollRef.current.scrollTop = scrollRef.current.scrollTop; };
+  /** The horizontal offset belongs to the store: undo any other scroll (e.g. drag-and-drop autoscroll at an edge). */
+  const onAreaScroll = () => { const el = areaRef.current; if (el && Math.abs(el.scrollLeft - scrollBaseRef.current) > 1) syncScrollLeft(); };
 
   // Wheel: Ctrl = zoom around pointer, Shift / trackpad-x = horizontal scroll, otherwise native vertical scroll.
   useEffect(() => {
@@ -185,7 +220,17 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
         e.preventDefault();
         const d = e.deltaX !== 0 && !e.shiftKey ? e.deltaX : e.deltaY;
         st.setView(seqId, { scroll: Math.max(0, s.view.scroll + d / s.view.zoom) });
+        return;
       }
+      // Vertical: native scrolling, except that the tracks content is a horizontal scroller (it shows view.scroll): a
+      // wheel over it with some horizontal delta (trackpads) would scroll it sideways and latch the gesture to it, so
+      // apply the vertical part to the tracks scroller. The ruler's marker layer is such a scroller too (and scrolled
+      // nothing vertically): drop it there.
+      const sc = scrollRef.current;
+      if (e.deltaX !== 0 && sc && sc.contains(e.target as Node | null)) {
+        e.preventDefault();
+        sc.scrollTop += e.deltaY * (e.deltaMode === 1 ? WHEEL_LINE_PX : e.deltaMode === 2 ? sc.clientHeight : 1);
+      } else if (e.deltaX !== 0 && (e.target as Element | null)?.closest?.('.tl-ruler-scroll')) e.preventDefault();
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
@@ -442,7 +487,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     const { row, frame } = dropTarget(e);
     setDrop((d) => (d && d.trackId === (row?.id ?? null) && d.frame === frame && d.insert === e.ctrlKey ? d : { kind: 'drop', trackId: row?.id ?? null, frame, insert: e.ctrlKey }));
   };
-  const onDragLeave = (e: React.DragEvent) => { if (!contentRef.current?.contains(e.relatedTarget as Node | null)) setDrop(null); };
+  const onDragLeave = (e: React.DragEvent) => { if (!areaRef.current?.contains(e.relatedTarget as Node | null)) setDrop(null); };
   const onDrop = (e: React.DragEvent) => {
     setDrop(null);
     const payloads = readClipDrag(e.dataTransfer);
@@ -495,10 +540,14 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   if (!seq) return <div className="panel"><div className="panel-placeholder">Sequence not found</div></div>;
 
   // ---- render helpers --------------------------------------------------------------------------
-  // Clips are mounted for the viewport only (anything in a margin is invisible, and a page flip would mount and
-  // paint the margins too); their filmstrip / waveform ranges still extend 200 px past it (prefetch for scrolling).
-  const viewX0 = scrollPx - 200, viewX1 = scrollPx + width + 200;
-  const mountX0 = scrollPx - MOUNT_SLACK_PX, mountX1 = scrollPx + width + MOUNT_SLACK_PX;
+  // Clips are mounted for the viewport (anything in a margin is invisible, and a page flip would mount and paint the
+  // margins too), kept while small scroll steps stay inside the mounted range and extended ahead when they leave it
+  // (nextMountRange): a wheel step then changes no lane, LOD canvas or filmstrip range, only the scroll offset. Their
+  // filmstrip / waveform ranges extend MEDIA_MARGIN_PX past the mounted range (prefetch for scrolling).
+  const mount = (mountRef.current = nextMountRange(mountRef.current, scrollPx, width, zoom, MOUNT_SLACK_PX, MOUNT_AHEAD_PX));
+  const mountX0 = mount.x0, mountX1 = mount.x1;
+  const viewX0 = mountX0 - (MEDIA_MARGIN_PX - MOUNT_SLACK_PX), viewX1 = mountX1 + (MEDIA_MARGIN_PX - MOUNT_SLACK_PX);
+  const lodOriginPx = Math.floor(mountX0), lodWidthPx = Math.ceil(mountX1) - lodOriginPx + 1;
   const previewTransition = preview?.kind === 'transition' ? preview : null;
   const dropRow = drop?.trackId ? rowById.get(drop.trackId) : undefined;
   const totalH = layout.total + 24;
@@ -559,7 +608,8 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
         {/* ---- ruler + tracks ---- */}
         <div className="tl-tracks-col" ref={tracksColRef}>
           <Ruler
-            seqId={seqId} fps={fps} zoom={zoom} scroll={scroll} width={width} markers={seq.markers} selectedMarkerId={selectedMarkerId}
+            seqId={seqId} fps={fps} zoom={zoom} scroll={scroll} width={width} contentPx={contentPx} mountX0={mountX0} mountX1={mountX1}
+            markers={seq.markers} selectedMarkerId={selectedMarkerId}
             inPoint={seq.inPoint} outPoint={seq.outPoint} snapping={snapping} snapCandidates={snapCandidates}
             onMarkerEdit={(m, at) => setDialog({ kind: 'marker', markerId: m.id, x: at.x, y: at.y })}
             onMarkerMenu={(m, e) => { e.preventDefault(); openContextMenu(markerMenu(m, { x: e.clientX, y: e.clientY }), e); }}
@@ -577,7 +627,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
           />
           <div className="tl-tracks-scroll" ref={scrollRef} onScroll={onVScroll}>
             <div
-              ref={contentRef} className="tl-tracks-content" style={{ height: totalH }}
+              ref={areaRef} className="tl-tracks-content" style={{ height: totalH }} onScroll={onAreaScroll}
               onPointerDown={drag.onPointerDown} onPointerMove={(e) => { drag.onPointerMove(e); onHover(e); if (!drag.dragging) updateRazorLine(e); }} onPointerUp={drag.onPointerUp} onPointerCancel={drag.onPointerUp}
               onPointerLeave={() => { useTimelineUi.getState().setHoverFrame(null); if (razorLine) setRazorLine(null); }}
               onContextMenu={onContentContextMenu}
@@ -594,45 +644,51 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
                 if (clip) openClipInSource(clip);
               }}
             >
-              {/* lane backgrounds (static) */}
-              {hasSubs ? <div className="tl-sub-lane" style={{ height: layout.subtitleLane }} /> : null}
-              {layout.rows.map((row) => {
-                const t = trackById.get(row.id)!;
-                return <div key={row.id} className={['tl-lane', row.kind, t.locked ? 'locked' : '', drop?.trackId === row.id ? 'drop' : ''].filter(Boolean).join(' ')} style={{ top: row.top, height: row.height }} />;
-              })}
-              <div className="tl-lane-divider" style={{ top: layout.dividerTop, height: 6 }} />
-              {duration === 0 && !drop ? <div className="tl-empty-hint">Drag media from the Project, Source, Scenes or Transcript panels here — or press , / . to insert from the Source monitor</div> : null}
+              <div className="tl-tracks-inner" style={{ width: contentPx, height: totalH }}>
+                {/* lane backgrounds: static (the view sticks to the scroller's left edge) */}
+                <div ref={contentRef} className="tl-tracks-view" style={{ width: viewW, height: totalH }}>
+                  {hasSubs ? <div className="tl-sub-lane" style={{ height: layout.subtitleLane }} /> : null}
+                  {layout.rows.map((row) => {
+                    const t = trackById.get(row.id)!;
+                    return <div key={row.id} className={['tl-lane', row.kind, t.locked ? 'locked' : '', drop?.trackId === row.id ? 'drop' : ''].filter(Boolean).join(' ')} style={{ top: row.top, height: row.height }} />;
+                  })}
+                  <div className="tl-lane-divider" style={{ top: layout.dividerTop, height: 6 }} />
+                </div>
 
-              {/* scrolling layer (frame coordinates) */}
-              <div className="tl-layer" style={{ transform: `translateX(${-scrollPx}px)`, width: contentPx }}>
-                {hasSubs ? itemsInRange(cues, range.from, range.to, cueStart, cueEnd).map((c) => {
-                  return (
-                    <div key={c.id} className={['tl-cue', c.orphan ? 'orphan' : ''].filter(Boolean).join(' ')} style={{ left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={c.text}
-                      onPointerDown={(e) => { e.stopPropagation(); if (e.button !== 0) return; const r = contentRef.current!.getBoundingClientRect(); setView({ playhead: xToFrameInt(e.clientX - r.left, zoom, scroll) }); }}
-                      onDoubleClick={(e) => { e.stopPropagation(); focusPanel('subtitles'); }}>
-                      {c.text}
-                    </div>
-                  );
-                }) : null}
-                {layout.rows.map((row) => {
-                  const track = trackById.get(row.id)!;
-                  return (
-                    <ClipLane key={row.id} track={track} top={row.top} height={row.height} contentPx={contentPx} zoom={zoom} mountX0={mountX0} mountX1={mountX1} viewX0={viewX0} viewX1={viewX1}
-                      selected={selectedSet} look={lookFor} offline={isOffline} media={media} fps={fps} showSourceTc={showSourceTc}
-                      syncOffsets={syncOffsets.get(track.id)} previewTransition={previewTransition && previewTransition.trackId === track.id ? previewTransition : null}
-                      selectedTransitionId={selectedTransitionId} lodOriginPx={Math.floor(scrollPx)} lodWidthPx={width + 1} />
-                  );
-                })}
-                {ghosts}
-                {razorLine ? <div className="tl-razor-line" data-razor-preview style={{ left: razorLine.frame * zoom, top: razorLine.top, height: razorLine.height }} /> : null}
-              </div>
+                {/* scrolling layer (content coordinates, scrolled by the scroller) */}
+                <div className="tl-layer" style={{ width: contentPx, transform: `translateX(${-split.frac}px)` }}>
+                  {hasSubs ? itemsInRange(cues, Math.max(0, viewX0 / zoom), viewX1 / zoom, cueStart, cueEnd).map((c) => {
+                    return (
+                      <div key={c.id} className={['tl-cue', c.orphan ? 'orphan' : ''].filter(Boolean).join(' ')} style={{ left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={c.text}
+                        onPointerDown={(e) => { e.stopPropagation(); if (e.button !== 0) return; const r = contentRef.current!.getBoundingClientRect(); setView({ playhead: xToFrameInt(e.clientX - r.left, zoom, scroll) }); }}
+                        onDoubleClick={(e) => { e.stopPropagation(); focusPanel('subtitles'); }}>
+                        {c.text}
+                      </div>
+                    );
+                  }) : null}
+                  {layout.rows.map((row) => {
+                    const track = trackById.get(row.id)!;
+                    return (
+                      <ClipLane key={row.id} track={track} top={row.top} height={row.height} contentPx={contentPx} zoom={zoom} mountX0={mountX0} mountX1={mountX1} viewX0={viewX0} viewX1={viewX1}
+                        selected={selectedSet} look={lookFor} offline={isOffline} media={media} fps={fps} showSourceTc={showSourceTc}
+                        syncOffsets={syncOffsets.get(track.id)} previewTransition={previewTransition && previewTransition.trackId === track.id ? previewTransition : null}
+                        selectedTransitionId={selectedTransitionId} lodOriginPx={lodOriginPx} lodWidthPx={lodWidthPx} />
+                    );
+                  })}
+                  {ghosts}
+                  {razorLine ? <div className="tl-razor-line" data-razor-preview style={{ left: razorLine.frame * zoom, top: razorLine.top, height: razorLine.height }} /> : null}
+                </div>
 
-              {/* static overlays */}
-              <div className="tl-overlay">
-                {preview?.kind === 'marquee' ? (
-                  <div className="tl-marquee" style={{ left: Math.min(preview.x0, preview.x1), top: Math.min(preview.y0, preview.y1), width: Math.abs(preview.x1 - preview.x0), height: Math.abs(preview.y1 - preview.y0) }} />
-                ) : null}
-                {tip ? <div className="tl-drag-tip" style={{ left: (tip as { x: number }).x, top: (tip as { y: number }).y }}>{(tip as { text: string }).text}</div> : null}
+                {/* static overlays (viewport-aligned like the lane view, above the layer) */}
+                <div className="tl-tracks-view over" style={{ width: viewW, height: totalH }}>
+                  {duration === 0 && !drop ? <div className="tl-empty-hint">Drag media from the Project, Source, Scenes or Transcript panels here — or press , / . to insert from the Source monitor</div> : null}
+                  <div className="tl-overlay">
+                    {preview?.kind === 'marquee' ? (
+                      <div className="tl-marquee" style={{ left: Math.min(preview.x0, preview.x1), top: Math.min(preview.y0, preview.y1), width: Math.abs(preview.x1 - preview.x0), height: Math.abs(preview.y1 - preview.y0) }} />
+                    ) : null}
+                    {tip ? <div className="tl-drag-tip" style={{ left: (tip as { x: number }).x, top: (tip as { y: number }).y }}>{(tip as { text: string }).text}</div> : null}
+                  </div>
+                </div>
               </div>
             </div>
           </div>

@@ -65,7 +65,9 @@
 /* tracks column */
 .tl-tracks-col { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
 .tl-ruler { height: var(--tl-ruler-h); position: relative; background: var(--bg-2); border-bottom: 1px solid var(--border); overflow: hidden; flex-shrink: 0; cursor: default; }
-.tl-ruler canvas { position: absolute; inset: 0; pointer-events: none; }
+.tl-ruler-scroll { position: absolute; inset: 0; overflow-x: scroll; overflow-y: hidden; scrollbar-width: none; background: var(--bg-2); }
+.tl-ruler-content { position: relative; height: 100%; }
+.tl-ruler canvas { position: absolute; top: 0; pointer-events: none; }
 .tl-ruler-inout { position: absolute; top: 0; bottom: 0; background: rgba(255,255,255,0.07); border-left: 1px solid var(--text); border-right: 1px solid var(--text); pointer-events: none; }
 .tl-ruler-inout.open-start { border-left-color: transparent; }
 .tl-ruler-inout.open-end { border-right-color: transparent; }
@@ -82,7 +84,14 @@
 .tl-marker-span { position: absolute; bottom: 0; height: 3px; opacity: 0.65; pointer-events: none; }
 .tl-marker-line { position: absolute; top: 0; bottom: 0; width: 1px; opacity: 0.35; pointer-events: none; z-index: 3; }
 .tl-tracks-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; position: relative; min-height: 0; background: var(--bg-1); }
-.tl-tracks-content { position: relative; overflow: hidden; width: 100%; }
+/* Scrolled horizontally to view.scroll from the store (the visible scrollbar is .tl-hscroll). User-scrollable
+   (overflow-x: scroll, bar hidden) and opaque so that it is a composited scroller: a scroll step is a compositor-only
+   offset change. The wheel handler keeps the user from scrolling it. */
+.tl-tracks-content { position: relative; width: 100%; overflow-x: scroll; overflow-y: hidden; scrollbar-width: none; background: var(--bg-1); }
+.tl-tracks-inner { position: relative; display: grid; grid-template: 100% / 100%; }
+/* Viewport-aligned views inside the scrolled content: lane backgrounds below the clip layer, overlays above it. */
+.tl-tracks-view { position: sticky; left: 0; grid-area: 1 / 1; justify-self: start; align-self: start; }
+.tl-tracks-view.over { z-index: 6; pointer-events: none; }
 .tl-lane { position: absolute; left: 0; right: 0; border-bottom: 1px solid var(--bg-0); background: #1c1c1c; }
 .tl-lane.audio { background: #1a1e1c; }
 .tl-lane.locked { background-image: repeating-linear-gradient(135deg, transparent 0 7px, rgba(255,255,255,0.045) 7px 9px); }
