@@ -6,6 +6,12 @@
  * otherwise) -> composite onto the canvas bottom to top with clip transforms and transition
  * alphas -> mix audio through WebAudio gain nodes.
  *
+ * Scrubbing (paused, the playhead moved less than SCRUB_REST_MS ago) does only what can be shown: it seeks just the
+ * video layers composited at the playhead (not occluded layers, not the silent audio), never queues a seek behind a
+ * pending one (a scrub "round" waits for its seeks, draws the frame they landed on, then seeks on to the latest
+ * playhead), and draws only when the picture changes. Once the playhead rests, every element is parked at the
+ * playhead as before, so the picture is exactly the playhead frame and playback starts from the same state.
+ *
  * The canvas internal resolution is the sequence size scaled by `playbackResolution`; CSS sizing
  * is the caller's responsibility.
  */
@@ -83,6 +89,8 @@ export interface SequencePlayerState {
 export const MAX_NATIVE_RATE = 4;
 /** Re-seek a playing element when it drifts further than this from its target (seconds). */
 export const DRIFT_TOLERANCE = 0.08;
+/** While paused, a playhead move less than this long ago (ms) means the user is scrubbing (see scrubTick). */
+export const SCRUB_REST_MS = 150;
 
 const RESOLUTION_FACTOR: Record<SequencePlayerSettings['playbackResolution'], number> = { full: 1, '1/2': 0.5, '1/4': 0.25 };
 
@@ -105,6 +113,25 @@ interface Slot<E extends HTMLMediaElement = HTMLMediaElement> {
   settled: boolean;
   /** A seek was issued since the element was lent. */
   sought: boolean;
+}
+
+/**
+ * One scrub step in flight: the frame and plan whose visible layers were sent seeking. Nothing new is sought until
+ * every one of `els` has landed; then the plan is drawn (unless the data changed meanwhile) and the next round
+ * starts at the latest playhead.
+ */
+interface ScrubRound {
+  frame: number;
+  plan: FramePlan;
+  visible: Set<LayerPlan>;
+  els: HTMLVideoElement[];
+  version: number;
+}
+
+/** Layers the canvas paints for a plan, bottom to top, from index `first` (everything below it is covered). */
+interface Composite {
+  drawable: { layer: LayerPlan; el: HTMLVideoElement | HTMLImageElement; vw: number; vh: number }[];
+  first: number;
 }
 
 /** Audio nodes of one pooled element: its (only) MediaElementAudioSourceNode -> a gain into the master bus. */
@@ -135,6 +162,22 @@ export class SequencePlayer {
   private lastPlan: FramePlan | null = null;
   /** drawKey of the last draw while playing ('' = the last draw was not a playing draw). */
   private lastDrawKey = '';
+  /** compositeKey of the last draw while paused ('' = none, or a playing draw since). */
+  private pausedKey = '';
+  /** The canvas must be redrawn even if compositeKey is unchanged (sequence, settings or size changed). */
+  private drawPending = true;
+  /** Frame of the last plan (paused or playing); -1 before the first. */
+  private plannedFrame = -1;
+  /** performance.now() of the last paused playhead move (seek); scrubbing while less than SCRUB_REST_MS ago. */
+  private lastMoveAt = -Infinity;
+  private restTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The playhead came to rest: run one full (non-scrub) update. */
+  private restPending = false;
+  /** An element event (seeked / loadeddata) arrived while paused: re-check the elements on the next tick. */
+  private mediaDirty = false;
+  private round: ScrubRound | null = null;
+  /** Bumped by every data change; a scrub round planned under an older version is not drawn. */
+  private version = 0;
   /** Device-pixel size of the canvas on screen (setDisplaySize); caps the canvas resolution. */
   private displaySize: { w: number; h: number } | null = null;
   /** clipId -> element lent to it for the current plan. */
@@ -159,7 +202,7 @@ export class SequencePlayer {
   private offPoolRelease: (() => void) | null = null;
   private ctx: CanvasRenderingContext2D | null;
   /** Redraw when a still image finishes loading (paused display would otherwise stay black). */
-  private readonly imageRedraw = () => { if (!this.destroyed) { this.lastFrame = -1; this.requestTick(); } };
+  private readonly imageRedraw = () => { if (!this.destroyed) { this.invalidate(); this.requestTick(); } };
 
   constructor(
     public readonly canvas: HTMLCanvasElement,
@@ -181,7 +224,7 @@ export class SequencePlayer {
       const plan = this.lastPlan;
       const uses = !plan || plan.layers.some((l) => l.path === path) || plan.audio.some((a) => a.path === path);
       if (!uses) return;
-      this.lastFrame = -1;
+      this.invalidate();
       this.requestTick();
     }) ?? null;
     // The pool disposes an element (LRU eviction, relink, proxy ready): forget it and drop its audio nodes.
@@ -205,8 +248,14 @@ export class SequencePlayer {
     this.fps = seq.fps;
     this.durationFrames = sequenceDuration(seq);
     if (fpsChanged || resChanged || sizeChanged) this.resizeCanvas();
-    this.lastFrame = -1; // force re-plan + redraw
+    this.invalidate(); // force re-plan + redraw
     this.requestTick();
+  }
+
+  /** Data changed: re-plan and redraw on the next tick; a scrub round planned before it is not drawn. */
+  private invalidate(): void {
+    this.lastFrame = -1;
+    this.version++;
   }
 
   // ---------------------------------------------------------------- transport
@@ -220,19 +269,42 @@ export class SequencePlayer {
     return Math.max(0, Math.min(this.durationFrames, f));
   }
 
-  seek(frame: number): void {
+  /** Move the playhead. While paused, seeks in quick succession are a scrub (see SCRUB_REST_MS). */
+  seek(frame: number): void { this.seekTo(frame, true); }
+
+  private seekTo(frame: number, scrub: boolean): void {
     const f = Math.max(0, Math.min(this.durationFrames, Math.round(frame)));
     this.clock.seek(framesToSeconds(f - this.frameOffset, this.fps) + 1e-6);
+    if (scrub && !this.playing && this.plannedFrame !== -1 && f !== this.plannedFrame) this.noteMove();
     this.lastFrame = -1;
     this.requestTick();
   }
+
+  private noteMove(): void {
+    this.lastMoveAt = performance.now();
+    if (this.restTimer === null) this.armRest(SCRUB_REST_MS);
+  }
+
+  /** Once the playhead has not moved for SCRUB_REST_MS, run one full update (pausedTick). */
+  private armRest(ms: number): void {
+    this.restTimer = setTimeout(() => {
+      this.restTimer = null;
+      if (this.destroyed || this.playing) return;
+      const left = this.lastMoveAt + SCRUB_REST_MS - performance.now();
+      if (left > 0) { this.armRest(left + 1); return; }
+      this.restPending = true;
+      this.requestTick();
+    }, ms);
+  }
+
+  private isScrubbing(): boolean { return !this.playing && performance.now() - this.lastMoveAt < SCRUB_REST_MS; }
 
   play(): void {
     if (this.destroyed || this.playing || !this.seq) return;
     if (this.rate === 0) this.rate = 1;
     const f = this.currentFrame();
-    if (this.rate > 0 && f >= (this.loop ? this.loop.outF : this.durationFrames)) this.seek(this.loop ? this.loop.inF : 0);
-    if (this.rate < 0 && f <= (this.loop ? this.loop.inF : 0)) this.seek(this.loop ? this.loop.outF - 1 : this.durationFrames - 1);
+    if (this.rate > 0 && f >= (this.loop ? this.loop.outF : this.durationFrames)) this.seekTo(this.loop ? this.loop.inF : 0, false);
+    if (this.rate < 0 && f <= (this.loop ? this.loop.inF : 0)) this.seekTo(this.loop ? this.loop.outF - 1 : this.durationFrames - 1, false);
     this.playing = true;
     this.clock.setRate(this.rate);
     if (!this.clock.isRunning) this.clock.start(this.clock.now());
@@ -257,7 +329,7 @@ export class SequencePlayer {
   /** Pause and return to the loop in-point (or frame 0). */
   stop(): void {
     this.pause();
-    this.seek(this.loop ? this.loop.inF : 0);
+    this.seekTo(this.loop ? this.loop.inF : 0, false);
   }
 
   toggle(): void { this.playing ? this.pause() : this.play(); }
@@ -304,15 +376,15 @@ export class SequencePlayer {
     if (next?.w === this.displaySize?.w && next?.h === this.displaySize?.h) return;
     this.displaySize = next;
     this.resizeCanvas();
-    this.lastFrame = -1;
+    this.invalidate();
     this.requestTick();
   }
 
-  setDrawSubtitles(on: boolean): void { this.drawSubtitles = on; this.lastFrame = -1; this.requestTick(); }
+  setDrawSubtitles(on: boolean): void { this.drawSubtitles = on; this.invalidate(); this.requestTick(); }
 
-  /** Synchronously seek to `frame`, update elements and draw once (scrubbing / thumbnails). */
+  /** Synchronously seek to `frame`, update every element (as at rest, not as a scrub step) and draw once. */
   renderFrame(frame: number): void {
-    this.seek(frame);
+    this.seekTo(frame, false);
     this.tick(true);
   }
 
@@ -323,13 +395,13 @@ export class SequencePlayer {
     const pos = this.clock.now();
     this.clock = clock;
     if (!clock.isRunning && !this.playing) clock.seek(pos);
-    this.lastFrame = -1;
+    this.invalidate();
     this.requestTick();
   }
   getClock(): PlaybackClock { return this.clock; }
 
   /** Frames added to the clock-derived frame (second player in Compare mode). */
-  setFrameOffset(frames: number): void { this.frameOffset = Math.round(frames); this.lastFrame = -1; this.requestTick(); }
+  setFrameOffset(frames: number): void { this.frameOffset = Math.round(frames); this.invalidate(); this.requestTick(); }
   getFrameOffset(): number { return this.frameOffset; }
 
   // ---------------------------------------------------------------- queries
@@ -382,6 +454,8 @@ export class SequencePlayer {
     this.playing = false;
     this.clock.stop();
     if (this.rafId !== null) { cancelAnimationFrame(this.rafId); this.rafId = null; }
+    if (this.restTimer !== null) { clearTimeout(this.restTimer); this.restTimer = null; }
+    this.round = null;
     this.pauseAllElements();
     for (const [clipId, slot] of this.activeVideo) this.releaseSlot(this.activeVideo, clipId, slot);
     for (const [clipId, slot] of this.activeAudio) this.releaseSlot(this.activeAudio, clipId, slot);
@@ -418,33 +492,163 @@ export class SequencePlayer {
       const endF = this.loop ? this.loop.outF : this.durationFrames;
       const startF = this.loop ? this.loop.inF : 0;
       if (this.rate > 0 && frame >= endF) {
-        if (this.loop) { this.seek(startF); frame = this.currentFrame(); }
-        else { this.playing = false; this.clock.stop(); this.seek(this.durationFrames); frame = this.durationFrames; this.pauseAllElements(); this.emitState(); }
+        if (this.loop) { this.seekTo(startF, false); frame = this.currentFrame(); }
+        else { this.playing = false; this.clock.stop(); this.seekTo(this.durationFrames, false); frame = this.durationFrames; this.pauseAllElements(); this.emitState(); }
       } else if (this.rate < 0 && frame <= startF) {
-        if (this.loop) { this.seek(endF - 1); frame = this.currentFrame(); }
-        else { this.playing = false; this.clock.stop(); this.seek(0); frame = 0; this.pauseAllElements(); this.emitState(); }
+        if (this.loop) { this.seekTo(endF - 1, false); frame = this.currentFrame(); }
+        else { this.playing = false; this.clock.stop(); this.seekTo(0, false); frame = 0; this.pauseAllElements(); this.emitState(); }
       }
     }
 
-    const invalidated = force || this.lastFrame === -1; // seek, new sequence / media / settings, element event
-    const needPlan = invalidated || this.playing || frame !== this.lastFrame || this.lastPlan === null;
-    if (needPlan) {
+    const invalidated = force || this.lastFrame === -1; // seek, new sequence / media / settings
+    if (this.playing) {
+      this.round = null;
       const plan = planFrame(this.seq, this.media, frame, this.settings.useProxies);
       this.lastPlan = plan;
+      this.plannedFrame = frame;
       this.updateVideoElements(plan);
       this.updateAudio(plan);
+      // While playing, rAF runs at the display rate (60 Hz) but the picture only changes when the timeline frame or
+      // the frame an element shows changes (24–30 Hz): skip the redundant redraws, each of which re-uploads the canvas.
+      const key = this.drawKey(plan, frame);
+      if (invalidated || key !== this.lastDrawKey) { this.draw(plan, frame); this.pausedKey = ''; }
+      this.lastDrawKey = key;
+    } else {
+      this.lastDrawKey = '';
+      this.pausedTick(frame, force, invalidated);
     }
-    // While playing, rAF runs at the display rate (60 Hz) but the picture only changes when the timeline frame or the
-    // frame an element shows changes (24–30 Hz): skip the redundant redraws, each of which re-uploads the canvas.
-    const key = this.playing ? this.drawKey(this.lastPlan!, frame) : '';
-    if (invalidated || !key || key !== this.lastDrawKey) this.draw(this.lastPlan!, frame);
-    this.lastDrawKey = key;
 
     if (frame !== this.lastFrame || this.playing) {
       this.lastFrame = frame;
       for (const cb of this.frameCbs) cb(frame);
     }
     if (this.playing) this.requestTick();
+  }
+
+  /**
+   * Paused: a scrub step while the playhead is moving (scrubTick); otherwise the full update, as before scrub mode
+   * existed: every element of the plan (occluded layers and audio included) is parked at the playhead, and the
+   * canvas is redrawn if its picture changed.
+   */
+  private pausedTick(frame: number, force: boolean, invalidated: boolean): void {
+    const mediaDirty = this.mediaDirty, rest = this.restPending;
+    this.mediaDirty = false;
+    this.restPending = false;
+    if (invalidated) this.drawPending = true;
+    if (!force && this.isScrubbing()) { this.scrubTick(frame); return; }
+    if (!invalidated && !mediaDirty && !rest && frame === this.plannedFrame && this.lastPlan !== null) return;
+    this.round = null;
+    const plan = planFrame(this.seq!, this.media, frame, this.settings.useProxies);
+    this.lastPlan = plan;
+    this.plannedFrame = frame;
+    this.updateVideoElements(plan);
+    this.updateAudio(plan);
+    this.paintIfChanged(plan, frame);
+  }
+
+  /**
+   * One scrub step, coalesced like a professional NLE: while the last round's seeks are pending nothing is sought
+   * (the playhead just moves on); once they have all landed, that round's frame is drawn and the visible layers are
+   * sought to the latest playhead. Only layers composited at the playhead are touched: occluded video layers and the
+   * (silent while paused) audio wait for the playhead to rest, when pausedTick parks them.
+   */
+  private scrubTick(frame: number): void {
+    const r = this.round;
+    if (r) {
+      if (r.els.some((el) => this.seekInFlight(el))) return;
+      this.round = null;
+      if (r.version === this.version && this.syncVisible(r.plan, r.visible, false).ready) this.paintIfChanged(r.plan, r.frame);
+    }
+    const seq = this.seq!;
+    const plan = planFrame(seq, this.media, frame, this.settings.useProxies);
+    this.lastPlan = plan;
+    this.plannedFrame = frame;
+    const visible = this.visibleLayers(plan, seq);
+    const items: LayerPlan[] = [];
+    for (const layer of plan.layers) {
+      if (layer.isImage) { getStillImage(layer.path, this.imageRedraw); continue; }
+      if (this.pool.getError(layer.path)) continue;
+      // A hidden layer keeps the element it already has (no churn) but is not lent a new one, nor sought.
+      if (visible.has(layer) || this.activeVideo.has(layer.clipId)) items.push(layer);
+    }
+    this.assignSlots('video', items, this.activeVideo, (path, role) => this.pool.acquireVideo(path, role), (slot) => { if (!slot.el.paused) slot.el.pause(); });
+    const { ready, els } = this.syncVisible(plan, visible, true);
+    if (ready) this.paintIfChanged(plan, frame);
+    else this.round = { frame, plan, visible, els, version: this.version };
+  }
+
+  /** A seek (or the first load) of `el` has not completed yet. */
+  private seekInFlight(el: HTMLMediaElement): boolean {
+    if (el.error || !el.getAttribute('src')) return false;
+    return el.seeking || el.readyState < 2;
+  }
+
+  /**
+   * The layers of `plan` that are composited: top-down until a video layer covers the whole frame opaquely (layers
+   * with alpha 0 and failed files never are). Sizes come from the element when it has one, else from the probe, as
+   * in composite().
+   */
+  private visibleLayers(plan: FramePlan, seq: Sequence): Set<LayerPlan> {
+    const out = new Set<LayerPlan>();
+    for (let i = plan.layers.length - 1; i >= 0; i--) {
+      const layer = plan.layers[i];
+      if (layer.alpha <= 0) continue;
+      if (layer.isImage) { out.add(layer); continue; }
+      if (this.pool.getError(layer.path)) continue;
+      out.add(layer);
+      const slot = this.activeVideo.get(layer.clipId);
+      const m = Object.hasOwn(this.media, layer.mediaId) ? this.media[layer.mediaId] : undefined;
+      const fallback = probedDisplaySize(m?.probe?.video) ?? layer.mediaSize;
+      const vw = slot?.el.videoWidth || fallback?.width || 0;
+      const vh = slot?.el.videoHeight || fallback?.height || 0;
+      if (vw && vh && this.coversFrameOpaquely(layer, vw, vh, seq)) break;
+    }
+    return out;
+  }
+
+  /**
+   * Bring the visible video layers of `plan` to their frame-centered source time (with `seek`; never behind a pending
+   * seek) and update their settled flags. `ready`: every visible layer has landed and can be drawn.
+   */
+  private syncVisible(plan: FramePlan, visible: Set<LayerPlan>, seek: boolean): { ready: boolean; els: HTMLVideoElement[] } {
+    let ready = true;
+    const els: HTMLVideoElement[] = [];
+    for (const layer of plan.layers) {
+      if (!visible.has(layer)) continue;
+      if (layer.isImage) { const im = getStillImage(layer.path); if (!im.img.complete && !im.error) ready = false; continue; }
+      const slot = this.activeVideo.get(layer.clipId);
+      if (!slot) continue;
+      const el = slot.el;
+      if (!el.paused) el.pause();
+      const fps = fpsValue(layer.mediaFps);
+      const target = this.clampToMedia(el, layer.sourceTime + 0.5 / fps, layer.timeOffset);
+      const tol = 1 / (2 * fps);
+      if (seek && !el.seeking && Math.abs(el.currentTime - target) > tol) { el.currentTime = target; slot.sought = true; }
+      if (!slot.settled && !el.seeking && el.readyState >= 2 && (slot.sought || Math.abs(el.currentTime - target) <= tol)) slot.settled = true;
+      if (el.seeking || !slot.settled || el.readyState < 2) ready = false;
+      els.push(el);
+    }
+    return { ready, els };
+  }
+
+  /** Paused draw: only when the picture differs from what the canvas shows, or a data change requires it. */
+  private paintIfChanged(plan: FramePlan, frame: number): void {
+    const comp = this.composite(plan);
+    const key = this.compositeKey(frame, comp);
+    if (!this.drawPending && key === this.pausedKey) return;
+    this.paint(comp, frame);
+    this.pausedKey = key;
+    this.drawPending = false;
+  }
+
+  /** What a paused draw of `comp` at `frame` shows: the timeline frame plus each painted layer's media frame. */
+  private compositeKey(frame: number, comp: Composite): string {
+    let key = String(frame);
+    for (let i = comp.first; i < comp.drawable.length; i++) {
+      const { layer, el, vw, vh } = comp.drawable[i];
+      key += layer.isImage ? `|${layer.clipId}:i` : `|${layer.clipId}:${Math.floor((el as HTMLVideoElement).currentTime * fpsValue(layer.mediaFps) + 1e-6)}:${vw}x${vh}`;
+    }
+    return key;
   }
 
   /** What the canvas would show for `plan` at `frame`: the timeline frame plus each video layer's media frame. */
@@ -462,7 +666,13 @@ export class SequencePlayer {
 
   private ensureListeners(el: HTMLMediaElement): void {
     if (this.listenerOffs.has(el)) return;
-    const redraw = () => { if (!this.playing) { this.lastFrame = -1; this.requestTick(); } };
+    const redraw = () => {
+      if (this.playing || this.destroyed) return;
+      this.mediaDirty = true;
+      // A scrub seek landed: draw it and seek on to the latest playhead now rather than a frame later.
+      if (this.round && this.isScrubbing()) this.tick(false);
+      else this.requestTick();
+    };
     el.addEventListener('seeked', redraw);
     el.addEventListener('loadeddata', redraw);
     this.listenerOffs.set(el, () => { el.removeEventListener('seeked', redraw); el.removeEventListener('loadeddata', redraw); });
@@ -518,6 +728,7 @@ export class SequencePlayer {
     this.listenerOffs.get(el)?.();
     this.listenerOffs.delete(el);
     for (const [clipId, slot] of this.activeVideo) if (slot.el === el) this.activeVideo.delete(clipId);
+    if (this.round?.els.includes(el as HTMLVideoElement)) this.round = null;
     for (const [clipId, slot] of this.activeAudio) if (slot.el === el) this.activeAudio.delete(clipId);
     const nodes = this.audioNodes.get(el);
     if (nodes) {
@@ -629,22 +840,19 @@ export class SequencePlayer {
   }
 
   private draw(plan: FramePlan, frame: number): void {
-    const ctx = this.ctx;
-    const seq = this.seq;
-    if (!ctx || !seq) return;
-    const W = this.canvas.width, H = this.canvas.height;
-    const sx = W / seq.width, sy = H / seq.height;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, W, H);
-    ctx.scale(sx, sy);
+    this.paint(this.composite(plan), frame);
+  }
 
-    // Resolve what each layer would draw, then start at the top-most layer that covers the whole frame opaquely:
-    // everything below it is invisible, and drawImage of a video frame is the most expensive call of a tick
-    // (software compositing). With four full-frame video tracks this draws one layer instead of four.
-    const drawable: { layer: LayerPlan; el: HTMLVideoElement | HTMLImageElement; vw: number; vh: number }[] = [];
+  /**
+   * Resolve what each layer would draw, then start at the top-most layer that covers the whole frame opaquely:
+   * everything below it is invisible, and drawImage of a video frame is the most expensive call of a tick
+   * (software compositing). With four full-frame video tracks this draws one layer instead of four.
+   */
+  private composite(plan: FramePlan): Composite {
+    const seq = this.seq;
+    const drawable: Composite['drawable'] = [];
     let first = 0;
+    if (!seq) return { drawable, first };
     for (const layer of plan.layers) {
       if (layer.alpha <= 0) continue;
       let el: HTMLVideoElement | HTMLImageElement | undefined;
@@ -669,6 +877,20 @@ export class SequencePlayer {
       if (!layer.isImage && this.coversFrameOpaquely(layer, vw, vh, seq)) first = drawable.length;
       drawable.push({ layer, el, vw, vh });
     }
+    return { drawable, first };
+  }
+
+  private paint({ drawable, first }: Composite, frame: number): void {
+    const ctx = this.ctx;
+    const seq = this.seq;
+    if (!ctx || !seq) return;
+    const W = this.canvas.width, H = this.canvas.height;
+    const sx = W / seq.width, sy = H / seq.height;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    ctx.scale(sx, sy);
 
     for (let i = first; i < drawable.length; i++) {
       const { layer, el, vw, vh } = drawable[i];
