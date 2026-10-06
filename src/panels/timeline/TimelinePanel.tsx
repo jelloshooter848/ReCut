@@ -141,12 +141,21 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const focusPanel = (id: string) => { useStore.getState().setActivePanel(id); useLayoutStore.getState().focusPanel(id); };
   const doZoomToFit = useCallback(() => { const s = fullSeq(); if (!s || width <= 0) return; setView({ zoom: zoomToFit(Math.max(1, sequenceDuration(s)), width), scroll: 0 }); }, [width, setView]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Horizontal scrollbar <-> view.scroll
+  // Horizontal scrollbar <-> view.scroll. Reading / writing scrollLeft forces a synchronous layout of everything
+  // the commit just changed (a wheel step or page flip re-lays out every mounted clip inside the event handler), so
+  // the scrollbar is synced in the next animation frame instead, right before that frame's own layout and paint.
+  const hscrollWant = useRef<{ px: number; raf: number }>({ px: 0, raf: 0 });
   useLayoutEffect(() => {
-    const el = hscrollRef.current; if (!el) return;
-    const want = Math.round(scrollPx);
-    if (Math.abs(el.scrollLeft - want) > 1) el.scrollLeft = want;
+    const w = hscrollWant.current;
+    w.px = Math.round(scrollPx);
+    if (w.raf) return;
+    w.raf = requestAnimationFrame(() => {
+      w.raf = 0;
+      const el = hscrollRef.current; if (!el) return;
+      if (Math.abs(el.scrollLeft - w.px) > 1) el.scrollLeft = w.px;
+    });
   }, [scrollPx, contentPx]);
+  useEffect(() => () => { const w = hscrollWant.current; if (w.raf) cancelAnimationFrame(w.raf); w.raf = 0; }, []);
   const onHScroll = () => {
     const el = hscrollRef.current; if (!el) return;
     const st = useStore.getState(); const s = st.project.sequences[seqId]; if (!s) return;
