@@ -108,6 +108,9 @@ const INIT_SCRIPT = `
 
 // ---------------------------------------------------------------- main
 const tmp = fs.mkdtempSync(path.join(SCRATCH, 'electron-'));
+// Each run copies the test media and writes projects / exports here (~220 MB): remove it on exit, success or not,
+// unless RECUT_PERF_KEEP=1 (to inspect a run). Left behind, a night of runs filled the disk.
+process.on('exit', () => { if (process.env.RECUT_PERF_KEEP !== '1') { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* best effort */ } } });
 const userData = path.join(tmp, 'userData'); const cacheDir = path.join(tmp, 'cache');
 fs.mkdirSync(userData, { recursive: true }); fs.mkdirSync(cacheDir, { recursive: true });
 console.log(`[perf] launching ReCut (userData ${userData})`);
