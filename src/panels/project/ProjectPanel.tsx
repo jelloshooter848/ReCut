@@ -125,6 +125,9 @@ export function ProjectPanel(_props: PanelProps) {
   }, []);
   // After an import: open the bins (or series groups) that received files and scroll the first new item into view.
   const revealRef = useRef<ID[] | null>(null);
+  // Bumped per import: the rows keep their identity when nothing they show changed (reuseRows, e.g. re-importing
+  // a file whose bins are already open), and the reveal must still run.
+  const [revealTick, setRevealTick] = useState(0);
   useEffect(() => onMediaImported((r) => {
     const ids = r.added.length ? r.added : r.existing;
     if (!ids.length) return;
@@ -142,6 +145,7 @@ export function ProjectPanel(_props: PanelProps) {
       return next;
     });
     revealRef.current = ids;
+    setRevealTick((n) => n + 1);
   }), []);
   useEffect(() => {
     const ids = revealRef.current;
@@ -152,7 +156,7 @@ export function ProjectPanel(_props: PanelProps) {
     revealRef.current = null;
     anchorRef.current = rows[i].kind === 'media' ? rows[i].key : anchorRef.current;
     requestAnimationFrame(() => listRef.current?.scrollToIndex(i, 'center'));
-  }, [rows]);
+  }, [rows, revealTick]);
 
   // Offline check once per mount (cheap stat per file).
   useEffect(() => { if (Object.keys(useStore.getState().project.media).length) void verifyMediaOnline(); }, []);
