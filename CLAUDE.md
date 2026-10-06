@@ -11,6 +11,7 @@ ReCut is an Electron + React + TypeScript non-linear video editor for fan edits.
 ## Conventions
 - Timeline positions are integer frames at the sequence fps; source positions are seconds.
 - Never mutate the project outside store actions. Timeline ops live in `shared/timeline.ts` and are called from store actions inside immer.
+- Inside a store recipe, `track.clips` may be a plain array holding frozen originals (see `shared/timeline.ts` write helpers). To modify a clip, get it via `findClip` / `linkedClips` / `clipsWithIds` (they return writable clips); never write through `track.clips[i]` directly.
 - Media is streamed via `recut-media://local/<encoded path>` (see `shared/ipc.ts`).
 - Do not add npm dependencies without noting it in your report; keep to what is in package.json.
 - Run `npm run typecheck` and `npm test` before reporting done.
