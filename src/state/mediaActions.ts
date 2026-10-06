@@ -6,7 +6,9 @@ import type { ID, JobInfo, MediaItem, MediaProbe, Project, SubtitleTrack } from 
 import type { RecutApi, SaveResult } from '../../shared/ipc';
 import { createMediaItem, normalizeProject } from '../../shared/project';
 import { projectJsonChunks } from '../../shared/projectJson';
-import { canStreamSave, decodeProjectWire, isProjectWire, type ProjectSaveStreamApi } from '../../shared/projectWire';
+import {
+  canStreamAutosave, canStreamSave, decodeProjectWire, isProjectWire, type ProjectAutosaveStreamApi, type ProjectSaveStreamApi, type SaveBeginResult,
+} from '../../shared/projectWire';
 import { parseSubtitles } from '../../shared/subtitles';
 import { uid } from '../../shared/ids';
 import { useStore } from './store';
@@ -349,14 +351,14 @@ function slicer(): () => Promise<void> | void {
 const PIECE_CHARS = 1 << 20;
 
 /**
- * Serialize `project` in slices of about SLICE_MS, yielding between them, so saving a large project never blocks
- * the window for the whole serialization. The text is handed to `emit` in order, in pieces of about PIECE_CHARS
+ * Serialize `project` in the project file layout (projectJsonChunks) in slices of about SLICE_MS, yielding between
+ * them, so saving a large project never blocks the window for the whole serialization. The text is handed to `emit` in order, in pieces of about PIECE_CHARS
  * cut between records (never inside a JSON string, so each piece is well-formed UTF-16 on its own); the pieces
  * concatenated are the whole text. `emit` may return a promise, which is awaited before serialization goes on.
  */
-async function serializeInPieces(project: Project, compact: boolean, emit: (text: string) => void | Promise<void>): Promise<void> {
+async function serializeInPieces(project: Project, emit: (text: string) => void | Promise<void>): Promise<void> {
   const out: string[] = [];
-  const it = projectJsonChunks(project, out, { compact });
+  const it = projectJsonChunks(project, out);
   const pause = slicer();
   let counted = 0;
   let chars = 0;
@@ -376,46 +378,179 @@ async function serializeInPieces(project: Project, compact: boolean, emit: (text
 }
 
 /**
- * The project text, serialized in slices (serializeInPieces). `compact`: the same text as JSON.stringify
- * (autosaves); otherwise the project file layout (serializeProject).
+ * The project text, serialized in slices. `compact`: the same text as JSON.stringify (autosaves,
+ * serializeCompactInPieces); otherwise the project file layout (serializeProject, serializeInPieces).
  */
 export async function serializeProjectSliced(project: Project, compact = false): Promise<string> {
   const pieces: string[] = [];
-  await serializeInPieces(project, compact, (text) => { pieces.push(text); });
+  const emit = (text: string) => { pieces.push(text); };
+  await (compact ? serializeCompactInPieces(project, emit) : serializeInPieces(project, emit));
   return pieces.join('');
 }
 
 /**
- * Save by streaming the file text to main while it is serialized (shared/projectWire.ts ProjectSaveStreamApi).
- * Measured on a 31 MB project (2,500-clip project plus a 3 h, 6,700-clip sequence), sending the text as one
- * string spent about 50 ms in the renderer on the IPC send (one long task), 70 ms in main receiving it and 60 ms
- * encoding it, all after the 180 ms serialization; streamed, those costs overlap the serialization of the next
- * piece, and only the last piece, the fsync and the rename follow it.
+ * Where the compact serializer may yield: these containers are written part by part (the entries of a record,
+ * the items of an array, the fields of an object, each laid out by the nested split); every other value in one
+ * native JSON.stringify. A sequence is split down to its tracks, so the longest stretch without a yield is one
+ * track or one small record.
  */
-async function saveStreamed(api: ProjectSaveStreamApi, target: string, project: Project): Promise<SaveResult> {
-  const begun = api.saveProjectBegin(target); // main opens the temp file while the first slice is serialized
+type CompactSplit = { entries: CompactSplit | null } | { fields: Record<string, CompactSplit> } | { items: CompactSplit | null };
+const SEQUENCE_SPLIT: CompactSplit = { fields: { videoTracks: { items: null }, audioTracks: { items: null }, snapshots: { items: null } } };
+const PROJECT_SPLIT: CompactSplit = {
+  fields: { media: { entries: null }, sequences: { entries: SEQUENCE_SPLIT }, scenes: { entries: null }, subtitleTracks: { entries: null } },
+};
+
+/** A plain object or array without toJSON: JSON.stringify writes it from its own enumerable properties. */
+function isPlainContainer(v: unknown): v is object {
+  if (v === null || typeof v !== 'object' || typeof (v as { toJSON?: unknown }).toJSON === 'function') return false;
+  if (Array.isArray(v)) return true;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * JSON of `v` as the value of `key` inside its parent, exactly as JSON.stringify of the whole writes it;
+ * undefined when JSON omits it (undefined, a function, a symbol). A value with toJSON (a Date, never in a
+ * project) is written through a one-key wrapper, so its toJSON gets the key as it would in the whole.
+ */
+function compactValue(key: string, v: unknown): string | undefined {
+  const t = typeof v;
+  if ((t === 'object' && v !== null) || t === 'bigint') {
+    if (typeof (v as { toJSON?: unknown }).toJSON === 'function') {
+      const w = JSON.stringify({ [key]: v });
+      return w.length === 2 ? undefined : w.slice(JSON.stringify(key).length + 2, -1);
+    }
+  }
+  return JSON.stringify(v);
+}
+
+/**
+ * The compact text of `project`, exactly JSON.stringify(project) (the autosave bytes), handed to `emit` in
+ * pieces of about PIECE_CHARS cut between values (never inside a JSON string, so each piece is well-formed
+ * UTF-16), yielding once SLICE_MS have passed. Values are serialized by the native JSON.stringify, several times
+ * faster than the record-by-record file layout of projectJsonChunks; PROJECT_SPLIT says which containers are
+ * written part by part, so no single task holds the whole project.
+ */
+async function serializeCompactInPieces(project: Project, emit: (text: string) => void | Promise<void>): Promise<void> {
+  const pause = slicer();
+  let out: string[] = [];
+  let chars = 0;
+  const push = (s: string) => { out.push(s); chars += s.length; };
+  const step = async () => {
+    if (chars >= PIECE_CHARS) {
+      const text = out.join('');
+      out = []; chars = 0;
+      const p = emit(text);
+      if (p) await p;
+    }
+    const p = pause();
+    if (p) await p;
+  };
+  /** JSON of `v` (the value of `key`) laid out by `split`, pushed; false (nothing pushed) when JSON omits it. */
+  const write = async (key: string, v: unknown, split: CompactSplit | null): Promise<boolean> => {
+    if (split === null || !isPlainContainer(v) || ('items' in split) !== Array.isArray(v)) {
+      const s = compactValue(key, v);
+      if (s === undefined) return false;
+      push(s);
+      return true;
+    }
+    if ('items' in split) {
+      const arr = v as unknown[];
+      push('[');
+      for (let i = 0; i < arr.length; i++) {
+        if (i) push(',');
+        if (!(await write(String(i), arr[i], split.items))) push('null'); // JSON writes an omitted item as null
+        await step();
+      }
+      push(']');
+      return true;
+    }
+    const rec = v as Record<string, unknown>;
+    let sep = '{';
+    for (const k of Object.keys(rec)) {
+      const sub = 'entries' in split ? split.entries : (Object.hasOwn(split.fields, k) ? split.fields[k] : null);
+      const x = rec[k];
+      // Only a value written by compactValue can be omitted: decide that before the key is pushed.
+      if (sub === null || !isPlainContainer(x)) {
+        const s = compactValue(k, x);
+        if (s === undefined) continue;
+        push(sep + JSON.stringify(k) + ':' + s);
+      } else {
+        push(sep + JSON.stringify(k) + ':');
+        await write(k, x, sub);
+      }
+      sep = ',';
+      await step();
+    }
+    push(sep === '{' ? '{}' : '}');
+    return true;
+  };
+  const whole = await write('', project, PROJECT_SPLIT);
+  if (!whole) throw new TypeError('the project is not serializable');
+  const text = out.join('');
+  if (text) { const p = emit(text); if (p) await p; }
+}
+
+/** One streamed write to main: a manual save (ProjectSaveStreamApi) or an autosave (ProjectAutosaveStreamApi). */
+interface SaveStream {
+  begin(): Promise<SaveBeginResult>;
+  chunk(id: string, seq: number, text: string): void;
+  commit(id: string, totals: { chunks: number; chars: number }): Promise<SaveResult>;
+  abort(id: string): Promise<void> | void;
+}
+
+/**
+ * Write by streaming the text to main while `serialize` produces it: each piece is sent as soon as it is
+ * written, and main encodes and appends it to a temp file while the next piece is serialized; only the commit
+ * makes it the file. Measured on a 31 MB project (2,500-clip project plus a 3 h, 6,700-clip sequence), sending
+ * the text as one string spent about 50 ms in the renderer on the IPC send (one long task), 70 ms in main
+ * receiving it and 60 ms encoding it, all after the serialization; streamed, those costs overlap the
+ * serialization of the next piece, and only the last piece, the fsync and the rename follow it.
+ */
+async function writeStreamed(s: SaveStream, serialize: (emit: (text: string) => Promise<void>) => Promise<void>): Promise<SaveResult> {
+  const begun = s.begin(); // main opens the temp file while the first slice is serialized
   begun.catch(() => undefined); // a rejection is handled where it is awaited (first piece / failure below)
   let id: string | null = null;
   let chunks = 0;
   let chars = 0;
   try {
-    await serializeInPieces(project, false, async (text) => {
+    await serialize(async (text) => {
       if (id === null) {
         const b = await begun;
         if (!b.ok) throw new SaveRefused(b);
         id = b.id;
       }
-      api.saveProjectChunk(id, chunks++, text);
+      s.chunk(id, chunks++, text);
       chars += text.length;
     });
   } catch (e) {
     if (e instanceof SaveRefused) return e.result;
     // Drop the temp file in main, also when the failure came before the first piece was sent.
     const opened = id ?? (await begun.then((b) => (b.ok ? b.id : null), () => null));
-    if (opened !== null) await Promise.resolve(api.saveProjectAbort(opened)).catch(() => undefined);
+    if (opened !== null) await Promise.resolve(s.abort(opened)).catch(() => undefined);
     throw e;
   }
-  return api.saveProjectCommit(id!, { chunks, chars });
+  return s.commit(id!, { chunks, chars });
+}
+
+/** Save by streaming the project file text (the serializeProject layout) to main while it is serialized. */
+function saveStreamed(api: ProjectSaveStreamApi, target: string, project: Project): Promise<SaveResult> {
+  return writeStreamed({
+    begin: () => api.saveProjectBegin(target),
+    chunk: (id, seq, text) => api.saveProjectChunk(id, seq, text),
+    commit: (id, totals) => api.saveProjectCommit(id, totals),
+    abort: (id) => api.saveProjectAbort(id),
+  }, (emit) => serializeInPieces(project, emit));
+}
+
+/** Autosave by streaming the compact text (serializeCompactInPieces) to main while it is serialized. */
+function autosaveStreamed(api: ProjectAutosaveStreamApi, projectPath: string | null, project: Project): Promise<SaveResult> {
+  return writeStreamed({
+    begin: () => api.autosaveProjectBegin(projectPath),
+    chunk: (id, seq, text) => api.saveProjectChunk(id, seq, text),
+    commit: (id, totals) => api.autosaveProjectCommit(projectPath, id, totals),
+    abort: (id) => api.saveProjectAbort(id),
+  }, (emit) => serializeCompactInPieces(project, emit));
 }
 
 /** Main refused to start a streamed save (bad path, no permission): stops the serialization, reported as is. */
@@ -461,8 +596,48 @@ async function saveNow(path?: string): Promise<{ ok: true; path: string } | { ok
   const res = canStreamSave(api) ? await saveStreamed(api, target, project)
     : typeof api.saveProjectJson === 'function' ? await api.saveProjectJson(target, await serializeProjectSliced(project))
       : await api.saveProject(target, project);
-  if (res.ok) useStore.getState().markSaved(res.path, revision);
+  if (res.ok) {
+    useStore.getState().markSaved(res.path, revision);
+    const after = useStore.getState();
+    // Edits made while the save ran keep the project dirty: make sure an autosave newer than this file holds them.
+    if (after.dirty && after.revision !== revision && after.loadedRevision <= revision) autosaveAfterSave(after.project.id, after.loadedRevision);
+  }
   return res;
+}
+
+/**
+ * How long after a save that left edits unsaved the follow-up autosave runs. Startup recovery offers an autosave
+ * only when it is more than a second newer than its project file (electron/project/io.ts checkRecovery), and FAT
+ * volumes keep modification times to 2 s: the lifecycle's autosave debounce (src/app/project.ts) clears both.
+ */
+export const AUTOSAVE_AFTER_SAVE_MS = 5000;
+/** An autosave that finished this long after the save is newer than the project file for recovery (see above). */
+const RECOVERY_NEWER_MS = 3000;
+
+let afterSaveTimer: ReturnType<typeof setTimeout> | null = null;
+/** When the last autosave finished writing (Date.now()); 0 before the first. */
+let lastAutosaveDoneAt = 0;
+
+/**
+ * An edit made while a manual save was in flight stays dirty (markSaved), and its debounced autosave may have
+ * landed before the save's write: recovery then takes that autosave for older than the project file and ignores
+ * it, and the lifecycle would only autosave again on its interval tick (60 s by default). Autosave once more
+ * AUTOSAVE_AFTER_SAVE_MS after such a save, unless an autosave finished since (bugs/closed/
+ * 2026-10-06-autosave-during-save-ignored-by-recovery.md). Never while playing or mid-drag (the lifecycle's rule):
+ * it waits for those to end. Dropped when the project is saved, replaced or opened meanwhile.
+ */
+function autosaveAfterSave(projectId: ID, loadedRevision: number): void {
+  if (afterSaveTimer !== null) clearTimeout(afterSaveTimer);
+  const savedAt = Date.now();
+  const fire = () => {
+    afterSaveTimer = null;
+    const st = useStore.getState();
+    if (!st.dirty || st.project.id !== projectId || st.loadedRevision !== loadedRevision) return;
+    if (lastAutosaveDoneAt - savedAt >= RECOVERY_NEWER_MS) return; // a later autosave already holds the edits
+    if (st.playback.playing || st.transaction) { afterSaveTimer = setTimeout(fire, AUTOSAVE_AFTER_SAVE_MS); return; }
+    autosaveProject().catch((e: unknown) => { console.warn('[autosave] after save failed', e); });
+  };
+  afterSaveTimer = setTimeout(fire, AUTOSAVE_AFTER_SAVE_MS);
 }
 
 /** The name a still-untitled project takes from its file (`/a/My Edit.recut` -> `My Edit`). */
@@ -531,20 +706,30 @@ export async function openProject(path: string, opts: { notify?: OpenNotify } = 
   }
 }
 
+/** The autosave in progress (or a settled promise): autosaves run one at a time, so the newest content lands last. */
+let autosaveQueue: Promise<unknown> = Promise.resolve();
+
 /**
- * Autosave the dirty project. Sends compact JSON (same bytes as the main process's serializeAutosave) through
- * autosaveProjectJson when available: one string crosses IPC instead of a structured clone of the whole project
- * (P-06). Falls back to autosaveProject on older bridges. Throws when the write failed. (Not sliced like a manual
- * save: the autosave runs when idle or deferred while playing, and slicing it measured slower round trips while
- * playing without a gain in playback fps.)
+ * Autosave the dirty project: compact JSON, the same bytes as the main process's serializeAutosave. Streamed to
+ * main while it is serialized in slices when the bridge can (ProjectAutosaveStreamApi: the IPC copies, encoding
+ * and disk writes overlap the serialization, and no task holds the whole project); else one string through
+ * autosaveProjectJson (P-06), else a structured clone through autosaveProject on older bridges. Autosaves are
+ * queued like saves; each snapshots the project when its turn comes. Throws when the write failed.
  */
-export async function autosaveProject(): Promise<void> {
+export function autosaveProject(): Promise<void> {
+  const run = autosaveQueue.then(() => autosaveNow());
+  autosaveQueue = run.catch(() => undefined);
+  return run;
+}
+
+async function autosaveNow(): Promise<void> {
   const api = recutApi();
   const st = useStore.getState();
   if (!api || !st.dirty) return;
   const project = projectToSave(st.project);
-  const res = typeof api.autosaveProjectJson === 'function'
-    ? await api.autosaveProjectJson(st.projectPath, JSON.stringify(project))
-    : await api.autosaveProject(st.projectPath, project);
+  const res = canStreamAutosave(api) ? await autosaveStreamed(api, st.projectPath, project)
+    : typeof api.autosaveProjectJson === 'function' ? await api.autosaveProjectJson(st.projectPath, JSON.stringify(project))
+      : await api.autosaveProject(st.projectPath, project);
   if (res && res.ok === false) throw new Error(res.error);
+  lastAutosaveDoneAt = Date.now();
 }

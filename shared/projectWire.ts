@@ -1,6 +1,6 @@
 /**
- * How a project crosses IPC in bulk: the renderer streams a manual save to main (ProjectSaveStreamApi), and the
- * main process hands an opened project to the renderer (ProjectWire).
+ * How a project crosses IPC in bulk: the renderer streams a manual save (ProjectSaveStreamApi) or an autosave
+ * (ProjectAutosaveStreamApi) to main, and the main process hands an opened project to the renderer (ProjectWire).
  *
  * On open, main reads, parses and normalizes the file once (electron/project/io.ts). Sending the result as an object would
  * structured-clone the whole project on both sides of IPC and land in the renderer as one long deserialization
@@ -32,6 +32,8 @@ export const SAVE_STREAM_IPC = {
   chunk: 'project:saveChunk',
   commit: 'project:saveCommit',
   abort: 'project:saveAbort',
+  /** Start a streamed autosave (ProjectAutosaveStreamApi); its pieces and abort use `chunk` / `abort`. */
+  autosaveBegin: 'project:autosaveBegin',
 } as const;
 
 export type SaveBeginResult = { ok: true; id: string } | { ok: false; error: string };
@@ -60,6 +62,43 @@ export function canStreamSave(api: unknown): api is ProjectSaveStreamApi {
   const a = api as Partial<ProjectSaveStreamApi> | null;
   return !!a && typeof a.saveProjectBegin === 'function' && typeof a.saveProjectChunk === 'function'
     && typeof a.saveProjectCommit === 'function' && typeof a.saveProjectAbort === 'function';
+}
+
+/**
+ * What the commit of a streamed autosave sends in place of the JSON text on the autosave channel
+ * (`project:autosaveJson`, RecutApi.autosaveProjectJson): the text was streamed before, under `stream`.
+ */
+export interface AutosaveStreamRef { stream: string; chunks: number; chars: number }
+
+export function isAutosaveStreamRef(v: unknown): v is AutosaveStreamRef {
+  const r = v as AutosaveStreamRef | null;
+  return !!r && typeof r === 'object' && typeof r.stream === 'string' && typeof r.chunks === 'number' && typeof r.chars === 'number';
+}
+
+/**
+ * An autosave streamed to main while the renderer serializes it, like a manual save (ProjectSaveStreamApi): the
+ * compact JSON text (the bytes of one autosaveProjectJson call) is sent in pieces with saveProjectChunk and
+ * appended to a temp file beside the autosave file (`<project>.recut.autosave`, or the untitled autosave in the
+ * app-data folder), so the IPC copies, encoding and disk writes overlap the serialization. Only the commit
+ * renames the temp file over the autosave file, after the same checks and fsync as the one-string autosave; the
+ * project file and its `.bak` are never touched, and an aborted or failed autosave leaves the previous autosave
+ * in place. The commit goes over the autosave channel itself (`project:autosaveJson`, with an AutosaveStreamRef
+ * instead of the text). A bridge without these methods autosaves through autosaveProjectJson with the whole text.
+ */
+export interface ProjectAutosaveStreamApi {
+  /** Start an autosave of the project at `projectPath` (null: never saved, the untitled autosave). */
+  autosaveProjectBegin(projectPath: string | null): Promise<SaveBeginResult>;
+  saveProjectChunk(id: string, seq: number, text: string): void;
+  /** Every piece was sent: write the autosave file (`projectPath` must be the one the autosave began with). */
+  autosaveProjectCommit(projectPath: string | null, id: string, totals: { chunks: number; chars: number }): Promise<SaveResult>;
+  saveProjectAbort(id: string): Promise<void>;
+}
+
+/** The bridge streams autosaves. */
+export function canStreamAutosave(api: unknown): api is ProjectAutosaveStreamApi {
+  const a = api as Partial<ProjectAutosaveStreamApi> | null;
+  return !!a && typeof a.autosaveProjectBegin === 'function' && typeof a.saveProjectChunk === 'function'
+    && typeof a.autosaveProjectCommit === 'function' && typeof a.saveProjectAbort === 'function';
 }
 
 // ------------------------------------------------------------------
