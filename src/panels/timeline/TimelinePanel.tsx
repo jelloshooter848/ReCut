@@ -118,13 +118,13 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   // ---- geometry -----------------------------------------------------------------------------
   useLayoutEffect(() => {
     const el = tracksColRef.current; const sc = areaRef.current; if (!el || !sc) return;
-    const measure = () => { setWidth(el.clientWidth); setViewW(sc.clientWidth); syncScrollLeft(); };
+    const measure = () => { setWidth(el.clientWidth); setViewW(sc.clientWidth); syncScrollLeft(); syncHScroll(); };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el); ro.observe(sc);
     return () => ro.disconnect();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (active) { setWidth(tracksColRef.current?.clientWidth ?? 0); setViewW(areaRef.current?.clientWidth ?? 0); syncScrollLeft(); } }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (active) { setWidth(tracksColRef.current?.clientWidth ?? 0); setViewW(areaRef.current?.clientWidth ?? 0); syncScrollLeft(); syncHScroll(); } }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
   // Let the global View › Zoom commands use the real viewport width.
   useEffect(() => { if (width > 0) setTimelineViewportWidth(width); }, [width]);
 
@@ -169,21 +169,6 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const focusPanel = (id: string) => { useStore.getState().setActivePanel(id); useLayoutStore.getState().focusPanel(id); };
   const doZoomToFit = useCallback(() => { const s = fullSeq(); if (!s || width <= 0) return; setView({ zoom: zoomToFit(Math.max(1, sequenceDuration(s)), width), scroll: 0 }); }, [width, setView]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Horizontal scrollbar <-> view.scroll. Reading / writing scrollLeft forces a synchronous layout of everything
-  // the commit just changed (a wheel step or page flip re-lays out every mounted clip inside the event handler), so
-  // the scrollbar is synced in the next animation frame instead, right before that frame's own layout and paint.
-  const hscrollWant = useRef<{ px: number; raf: number }>({ px: 0, raf: 0 });
-  useLayoutEffect(() => {
-    const w = hscrollWant.current;
-    w.px = Math.round(scrollPx);
-    if (w.raf) return;
-    w.raf = requestAnimationFrame(() => {
-      w.raf = 0;
-      const el = hscrollRef.current; if (!el) return;
-      if (Math.abs(el.scrollLeft - w.px) > 1) el.scrollLeft = w.px;
-    });
-  }, [scrollPx, contentPx]);
-  useEffect(() => () => { const w = hscrollWant.current; if (w.raf) cancelAnimationFrame(w.raf); w.raf = 0; }, []);
   // Idle-time mounting ahead of an incremental scroll (see PREFETCH_LOW_PX). Checked after every commit; the callback
   // re-reads the latest mounted range, so a jump or zoom in between (direction 0) cancels it.
   const prefetchIdle = useRef(0);
@@ -211,22 +196,21 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   // wheel steps move by whole pixels), so content sits exactly where translateX(-scrollPx) put it.
   // See useViewScrollLeft for when it is written.
   const split = splitScroll(scrollPx, window.devicePixelRatio || 1);
-  const syncScrollLeft = useViewScrollLeft(areaRef, split.base, contentPx, viewW);
-  const scrollBaseRef = useRef(split.base);
-  scrollBaseRef.current = split.base;
-  const onHScroll = () => {
-    const el = hscrollRef.current; if (!el) return;
-    // A sync to the store's scroll is pending: this event reports an older (programmatic) scrollbar position, and
-    // feeding it back would undo the store change. The store stays the source of truth until the sync lands.
-    if (hscrollWant.current.raf) return;
+  // Any other scroll of it (e.g. drag-and-drop autoscroll at an edge) is undone: the horizontal offset belongs to the store.
+  const areaScroll = useViewScrollLeft(areaRef, split.base, contentPx, viewW);
+  const syncScrollLeft = areaScroll.sync;
+  // Horizontal scrollbar <-> view.scroll. The scrollbar is written like the scrollers above (useViewScrollLeft: while
+  // this renders, before the commit changes the DOM, so the write forces no layout of a page flip's new clips). Read
+  // or written after the commit (a layout effect, or the next frame's animation callback, by when the next scrub step
+  // has been committed), it forces a synchronous style + layout of the whole commit. A user scroll of it moves the view.
+  const onUserHScroll = (scrollLeft: number) => {
     const st = useStore.getState(); const s = st.project.sequences[seqId]; if (!s) return;
-    const current = s.view.scroll * s.view.zoom;
-    if (Math.abs(el.scrollLeft - current) <= 1) return;
-    st.setView(seqId, { scroll: el.scrollLeft / s.view.zoom });
+    if (Math.abs(scrollLeft - s.view.scroll * s.view.zoom) <= 1) return;
+    st.setView(seqId, { scroll: scrollLeft / s.view.zoom });
   };
+  const hScroll = useViewScrollLeft(hscrollRef, Math.round(scrollPx), contentPx, width, onUserHScroll);
+  const syncHScroll = hScroll.sync;
   const onVScroll = () => { if (headersScrollRef.current && scrollRef.current) headersScrollRef.current.scrollTop = scrollRef.current.scrollTop; };
-  /** The horizontal offset belongs to the store: undo any other scroll (e.g. drag-and-drop autoscroll at an edge). */
-  const onAreaScroll = () => { const el = areaRef.current; if (el && Math.abs(el.scrollLeft - scrollBaseRef.current) > 1) syncScrollLeft(); };
 
   // Wheel: Ctrl = zoom around pointer, Shift / trackpad-x = horizontal scroll, otherwise native vertical scroll.
   useEffect(() => {
@@ -660,7 +644,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
           />
           <div className="tl-tracks-scroll" ref={scrollRef} onScroll={onVScroll}>
             <div
-              ref={areaRef} className="tl-tracks-content" style={{ height: totalH }} onScroll={onAreaScroll}
+              ref={areaRef} className="tl-tracks-content" style={{ height: totalH }} onScroll={areaScroll.onScroll}
               onPointerDown={drag.onPointerDown} onPointerMove={(e) => { drag.onPointerMove(e); onHover(e); if (!drag.dragging) updateRazorLine(e); }} onPointerUp={drag.onPointerUp} onPointerCancel={drag.onPointerUp}
               onPointerLeave={() => { useTimelineUi.getState().setHoverFrame(null); if (razorLine) setRazorLine(null); }}
               onContextMenu={onContentContextMenu}
@@ -726,7 +710,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
             </div>
           </div>
           <Playhead seqId={seqId} zoom={zoom} scroll={scroll} width={width} suppressFlip={suppressFlip} />
-          <div className="tl-hscroll" ref={hscrollRef} onScroll={onHScroll}><div style={{ width: contentPx }} /></div>
+          <div className="tl-hscroll" ref={hscrollRef} onScroll={hScroll.onScroll}><div style={{ width: contentPx }} /></div>
         </div>
       </div>
 

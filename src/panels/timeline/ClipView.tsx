@@ -11,7 +11,8 @@ import { thumbs, waves } from '@/app/media';
 import { peaksForRange } from '@/playback/thumbnails';
 import { labelColorHex } from '@/components/ui/ColorSwatch';
 import { CLIP_BAR_H, COMPACT_ROW_H } from './types';
-import { MEDIA_MIN_CLIP_PX, MEDIA_SETTLE_MS } from './viewMath';
+import { MEDIA_MIN_CLIP_PX } from './viewMath';
+import { afterMediaSettle } from './mediaSettle';
 import { formatSyncOffset, mediaNeedsProxy } from './clipBadges';
 
 export type FilterLook = 'none' | 'dim' | 'hide';
@@ -43,6 +44,15 @@ const NO_TILES: Record<number, string> = {};
 const MAX_WAVE_CANVAS_PX = 4096;
 
 function quantizeTime(t: number): number { return Math.round(t * 10) / 10; }
+
+// Constant parts of a clip, created once: React skips an element it already rendered (same object), so a clip slot
+// handed to another clip (a page flip) does not re-render the link icon or diff the edges.
+const LINK_ICON = <Link2 />;
+const WAVE_LINE = <div className="tl-wave-line" />;
+const EDGE_START = <div className="tl-clip-edge left " data-edge="start" />;
+const EDGE_START_CUT = <div className="tl-clip-edge left cut" data-edge="start" />;
+const EDGE_END = <div className="tl-clip-edge right " data-edge="end" />;
+const EDGE_END_CUT = <div className="tl-clip-edge right cut" data-edge="end" />;
 
 const waveMaxCache = new WeakMap<WaveformData, number>();
 /** Loudest peak of a waveform (cached per data object) used to normalise the drawing. */
@@ -77,7 +87,8 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   // effect would re-render every clip once more right after it mounts, e.g. on each playback page flip).
   const [strip, setStrip] = useState<{ key: string; tiles: Record<number, string> }>(() => ({ key: stripKey, tiles: NO_TILES }));
   // P-05: no filmstrip for narrow clips; requests wait MEDIA_SETTLE_MS for the view to settle (zooming / fast
-  // scrolling re-runs this effect and cancels the timer) and are aborted when the clip leaves the viewport.
+  // scrolling re-runs this effect and cancels the timer) and for a pause in the editing (afterMediaSettle), and are
+  // aborted when the clip leaves the viewport.
   const wantMedia = w >= MEDIA_MIN_CLIP_PX;
   const stripOn = wantMedia && isVideo && !offline && !!media && media.kind !== 'audio';
   const tileTime = (i: number) => (isImage ? 0 : quantizeTime(Math.max(0, clip.sourceIn + ((i * tileW + tileW / 2) / zoom) * frameSec * clip.speed)));
@@ -118,11 +129,11 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
       });
     };
     const ac = new AbortController();
-    // Anything not fully cached (see above) waits for the view to settle.
-    const timer = window.setTimeout(() => {
+    // Anything not fully cached (see above) waits for the view to settle and for a pause in the editing (mediaSettle).
+    const cancel = afterMediaSettle(() => {
       thumbs.filmstrip(path, times, tileW, media.id, ac.signal).then(apply).catch(() => { /* ignore */ });
-    }, MEDIA_SETTLE_MS);
-    return () => { window.clearTimeout(timer); ac.abort(); };
+    });
+    return () => { cancel(); ac.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stripOn, path, firstTile, lastTile, tileW, zoom, clip.sourceIn, clip.speed, stripKey]);
 
@@ -138,10 +149,10 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
     // Only when it differs: a same-value setState right after mount still costs a (bailed-out) render and commit.
     if (hit !== undefined) { if (hit !== wave) setWaveState({ path, data: hit }); return; }
     let alive = true;
-    const timer = window.setTimeout(() => {
+    const cancel = afterMediaSettle(() => {
       waves.get(path, media.id).then((d) => { if (alive) setWaveState((w) => (w.path === path && w.data === d ? w : { path, data: d })); }).catch(() => { /* ignore */ });
-    }, MEDIA_SETTLE_MS);
-    return () => { alive = false; window.clearTimeout(timer); };
+    });
+    return () => { alive = false; cancel(); };
   }, [wantMedia, isVideo, offline, path, media]); // eslint-disable-line react-hooks/exhaustive-deps
   const waveX = visFrom;
   const waveW = wantMedia ? Math.min(MAX_WAVE_CANVAS_PX, Math.max(0, visTo - visFrom)) : 0;
@@ -205,7 +216,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
         {syncOffset !== 0 ? (
           <span className="tl-badge sync" data-sync-offset={syncOffset} title={`Out of sync with its linked ${isVideo ? 'audio' : 'video'} by ${formatSyncOffset(syncOffset)} frames`}>{formatSyncOffset(syncOffset)}</span>
         ) : null}
-        {clip.linkId ? <Link2 /> : null}
+        {clip.linkId ? LINK_ICON : null}
         <span className="tl-clip-name">{clip.name}</span>
         {srcTc ? <span className="tl-clip-tc">{srcTc}</span> : null}
         {clip.speed !== 1 ? <span className="tl-badge speed">{Math.round(clip.speed * 100)}%</span> : null}
@@ -216,7 +227,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
       <div className="tl-clip-body" style={{ top: bodyTop }}>
         {isVideo ? tileEls : (
           <>
-            <div className="tl-wave-line" />
+            {WAVE_LINE}
             {waveW > 0 ? <canvas ref={canvasRef} className="tl-wave" style={{ left: waveX, width: waveW, height: bodyH }} /> : null}
           </>
         )}
@@ -233,8 +244,8 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
           <line x1={0} y1={0} x2={fadeOutW} y2={bodyH} stroke="rgba(255,255,255,0.8)" strokeWidth={1} />
         </svg>
       ) : null}
-      <div className={['tl-clip-edge', 'left', p.cutAtStart ? 'cut' : ''].join(' ')} data-edge="start" />
-      <div className={['tl-clip-edge', 'right', p.cutAtEnd ? 'cut' : ''].join(' ')} data-edge="end" />
+      {p.cutAtStart ? EDGE_START_CUT : EDGE_START}
+      {p.cutAtEnd ? EDGE_END_CUT : EDGE_END}
     </div>
   );
 });
