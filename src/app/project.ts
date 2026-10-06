@@ -16,11 +16,21 @@ import { setBeforeQuitHandler, setOpenProjectPathHandler } from './bootstrap';
 import { registerCommand } from '@/keyboard/shortcuts';
 import { toast } from '@/components/ui/toastStore';
 import { confirm, confirmInApp, type ConfirmOptions } from './dialogs/ConfirmDialog';
+import { createAutosaveGate } from './autosaveGate';
 
 export const PROJECT_FILTERS = [{ name: 'ReCut Project', extensions: ['recut'] }];
 /** Debounce after the last change before an autosave is written. */
 export const AUTOSAVE_DEBOUNCE_MS = 5000;
 const DEFAULT_AUTOSAVE_INTERVAL_SEC = 60;
+/**
+ * An autosave waits for a pause in the user's work (autosaveGate.ts): no store update and no input for
+ * AUTOSAVE_QUIET_MS; after AUTOSAVE_PATIENCE_MS of waiting, any AUTOSAVE_SHORT_QUIET_MS pause; after
+ * AUTOSAVE_MAX_DEFER_MS, regardless.
+ */
+export const AUTOSAVE_QUIET_MS = 2000;
+export const AUTOSAVE_SHORT_QUIET_MS = 250;
+export const AUTOSAVE_PATIENCE_MS = 15_000;
+export const AUTOSAVE_MAX_DEFER_MS = 60_000;
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -163,22 +173,39 @@ let lastAutosaveAt = 0;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let intervalTimer: ReturnType<typeof setInterval> | null = null;
 let idleHandle: number | null = null;
+/** Waiting for the user to be quiet before asking for idle time again (autosaveGate). */
+let quietTimer: ReturnType<typeof setTimeout> | null = null;
+const gate = createAutosaveGate({
+  quietMs: AUTOSAVE_QUIET_MS, shortQuietMs: AUTOSAVE_SHORT_QUIET_MS, patienceMs: AUTOSAVE_PATIENCE_MS, maxDeferMs: AUTOSAVE_MAX_DEFER_MS,
+  now: () => performance.now(),
+});
 /** An autosave came due while playing; run it (debounced) once playback stops. */
 let deferredWhilePlaying = false;
 
 type IdleApi = { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (h: number) => void };
 const idleApi = (): IdleApi => globalThis as unknown as IdleApi;
 
-/** Run `fn` when the renderer is idle (after paint / input), so a save never lands mid-interaction. */
+/**
+ * Run `fn` when the renderer is idle (after paint / input) and the user has paused (autosaveGate): idle time alone
+ * is not enough, a scrub or a drag leaves some after every frame, and the save is one long task.
+ */
 function whenIdle(fn: () => void): void {
-  if (idleHandle !== null) return; // one pending idle autosave is enough
+  if (idleHandle !== null || quietTimer !== null) return; // one pending idle autosave is enough
+  const run = () => {
+    idleHandle = null;
+    const wait = gate.waitMs();
+    if (wait > 0) { quietTimer = setTimeout(() => { quietTimer = null; whenIdle(fn); }, wait); return; }
+    fn();
+  };
   const ric = idleApi().requestIdleCallback;
-  if (ric) idleHandle = ric(() => { idleHandle = null; fn(); }, { timeout: 3000 });
-  else { idleHandle = -1; setTimeout(() => { idleHandle = null; fn(); }, 0); }
+  if (ric) idleHandle = ric(run, { timeout: 3000 });
+  else { idleHandle = -1; setTimeout(run, 0); }
 }
 function cancelIdle(): void {
   if (idleHandle !== null && idleHandle >= 0) idleApi().cancelIdleCallback?.(idleHandle);
   idleHandle = null;
+  if (quietTimer !== null) { clearTimeout(quietTimer); quietTimer = null; }
+  gate.reset();
 }
 
 async function runAutosave(force = false): Promise<void> {
@@ -300,6 +327,8 @@ export function initProjectLifecycle(): () => void {
   syncTitle();
   let prevCommitKey: unknown = null;
   disposers.push(useStore.subscribe((s, prev) => {
+    // The user at work: an edit, a playhead / view move (viewTick: setView moves the playhead in place), a selection.
+    if (s.project !== prev.project || s.viewTick !== prev.viewTick || s.ui !== prev.ui || s.transaction !== prev.transaction) gate.activity();
     if (s.project !== prev.project || s.dirty !== prev.dirty || s.projectPath !== prev.projectPath) syncTitle();
     // (c) debounced autosave after the last committed change (history grows / project replaced)
     const key = s.history.past.length + ':' + s.history.future.length;
@@ -313,6 +342,13 @@ export function initProjectLifecycle(): () => void {
 
   // (c) interval autosave
   intervalTimer = setInterval(autosaveTick, 1000);
+  // Input that may not reach the store (a drag before it commits, hover-free keys, wheel) also defers a save.
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    const onInput = (e: Event) => { if (e.type !== 'pointermove' || (e as PointerEvent).buttons !== 0) gate.activity(); };
+    const types = ['pointerdown', 'pointermove', 'keydown', 'wheel'] as const;
+    for (const t of types) window.addEventListener(t, onInput, { capture: true, passive: true });
+    disposers.push(() => { for (const t of types) window.removeEventListener(t, onInput, { capture: true }); });
+  }
   disposers.push(() => { if (intervalTimer) clearInterval(intervalTimer); intervalTimer = null; });
 
   // (b) OS / recent-menu open requests
