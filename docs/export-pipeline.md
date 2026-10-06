@@ -201,7 +201,8 @@ Chapters (`exportChapters`) are the sequence's markers of kind `chapter` in `[st
 does not move them; the latest chapter marker at or before `startF` covers the range start; two on one frame, the
 later in the list wins; each chapter ends where the next starts, the last at the output duration (the `-t` value).
 The first chapter starts at 0, because an MP4 chapter track cannot leave a gap before it (FFmpeg reads such a file
-back with the first chapter at 0). `buildRenderGraph` returns them in `chapters` and as an FFMETADATA1 file in
+back with the first chapter at 0). When no chapter marker is at or before `startF`, an untitled leading chapter runs
+from 0 to the first marker, so that marker's break is kept. `buildRenderGraph` returns them in `chapters` and as an FFMETADATA1 file in
 `chaptersContent` (`ffmetadataChapters`, `TIMEBASE=1/1000000`, names escaped by `ffmetadataEscape`: `=`, `;`, `#`,
 `\` and line breaks get a backslash; a trailing backslash is dropped, since FFmpeg 6.1–9.0 read a line break after
 an escaped backslash as escaped). With `chaptersFilePath` the file is the last input, `-f ffmetadata -i <file>`, and
