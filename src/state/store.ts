@@ -21,7 +21,7 @@ import { createProject, LiveView } from '../../shared/project';
 import {
   MIN_CLIP_FRAMES, allTracks, clipEnd, clipSourceOut, findClip, maxDurationFrom, findTrack, linkedClips, makeClip, placeClips,
   razorAt, removeClips as tlRemoveClips, rippleDeleteClips, rippleDeleteDisabledClips, removableDisabledClipIds, liftRange, extractRange, trimStart, trimEnd,
-  rippleTrimStart, rippleTrimEnd, rollEdit as tlRollEdit, slipClip, slideClip, moveClips as tlMoveClips,
+  rippleTrimStart, rippleTrimEnd, rollEdit as tlRollEdit, slipClip, slideClip, moveClips as tlMoveClips, readItems, clipsWithIds,
   addTransition as tlAddTransition, removeTransition as tlRemoveTransition, addTrack as tlAddTrack,
   removeTrack as tlRemoveTrack, reconcileTransitions, reconcileAll, rippleShift, addMarker as tlAddMarker,
   followClipMarkers, transitionLimit, type NewClipSpec, type MediaDurationLookup,
@@ -287,11 +287,8 @@ export const useStore = create<RecutStore>()((set, get) => {
     });
     return copy.id;
   };
-  const selectedIn = (seq: Sequence, ids: ID[]): Clip[] => {
-    const set_ = new Set(ids); const out: Clip[] = [];
-    for (const t of allTracks(seq)) for (const c of t.clips) if (set_.has(c.id)) out.push(c);
-    return out;
-  };
+  /** Selected clips in track order; inside a recipe they may be written to (only these are drafted). */
+  const selectedIn = (seq: Sequence, ids: ID[]): Clip[] => clipsWithIds(seq, ids);
 
   /** Media relinked since their last probe result: the next probe fits their clips to the new file. */
   const relinkAwaitingProbe = new Set<ID>();
@@ -546,9 +543,11 @@ export const useStore = create<RecutStore>()((set, get) => {
         for (const seq of Object.values(d.sequences)) {
           const removedClips = new Set<ID>();
           for (const t of allTracks(seq)) {
-            const before = t.clips.length;
-            t.clips = t.clips.filter((c) => { if (idSet.has(c.mediaId)) { removedClips.add(c.id); return false; } return true; });
-            if (t.clips.length !== before) reconcileTransitions(t);
+            // Raw scan (no proxy per clip); only tracks that lose a clip get a new array.
+            const items = readItems(t.clips);
+            if (!items.some((c) => idSet.has(c.mediaId))) continue;
+            t.clips = items.filter((c) => { if (idSet.has(c.mediaId)) { removedClips.add(c.id); return false; } return true; });
+            reconcileTransitions(t);
           }
           if (removedClips.size) for (const st of seq.subtitleTracks) st.cues = st.cues.filter((c) => !(c.clipId && removedClips.has(c.clipId)));
         }
@@ -797,7 +796,7 @@ export const useStore = create<RecutStore>()((set, get) => {
           for (const tid of media.subtitleTrackIds) {
             const st = d.subtitleTracks[tid];
             if (!st) continue;
-            const overlapping = st.cues.filter((c) => c.end > inS && c.start < outS);
+            const overlapping = readItems(st.cues).filter((c) => c.end > inS && c.start < outS); // read only: no drafts
             if (overlapping.length === 0) continue;
             // Tracks are named by language; untagged ('und') tracks take the media track's name (e.g. the SRT base name).
             const untagged = !st.language || st.language === 'und';
@@ -818,7 +817,8 @@ export const useStore = create<RecutStore>()((set, get) => {
               const e = anchor.start + Math.round((cue.end - inS) / speed * seq.fps.num / seq.fps.den);
               target.cues.push({ id: uid('scue'), clipId: anchor.id, srcStart: cue.start, srcEnd: cue.end, start: s, duration: Math.max(1, e - s), offset: 0, text: cue.text });
             }
-            target.cues.sort((a, b) => (a.srcStart ?? a.start) - (b.srcStart ?? b.start));
+            // Sort the raw items (same stable order) instead of drafting every cue of the track.
+            target.cues = [...readItems(target.cues)].sort((a, b) => (a.srcStart ?? a.start) - (b.srcStart ?? b.start));
           }
         }
       });
@@ -1070,8 +1070,9 @@ export const useStore = create<RecutStore>()((set, get) => {
           const sel = new Set(ids);
           let pairs = 0;
           for (const t of allTracks(s)) {
-            for (let i = 0; i < t.clips.length - 1; i++) {
-              const a = t.clips[i]; const b = t.clips[i + 1];
+            const tc = readItems(t.clips); // read only
+            for (let i = 0; i < tc.length - 1; i++) {
+              const a = tc[i]; const b = tc[i + 1];
               if (sel.has(a.id) && sel.has(b.id) && clipEnd(a) === b.start) { cuts.push({ trackId: t.id, frame: b.start }); pairs++; }
             }
           }
@@ -1090,12 +1091,12 @@ export const useStore = create<RecutStore>()((set, get) => {
           let best: number | null = null;
           for (const t of allTracks(s)) {
             if (t.locked) continue;
-            for (const c of t.clips) for (const f of [c.start, clipEnd(c)]) if (best === null || Math.abs(f - ph) < Math.abs(best - ph)) best = f;
+            for (const c of readItems(t.clips)) for (const f of [c.start, clipEnd(c)]) if (best === null || Math.abs(f - ph) < Math.abs(best - ph)) best = f;
           }
           if (best === null) return;
           for (const t of allTracks(s)) {
             if (t.locked) continue;
-            if (t.clips.some((c) => c.start === best || clipEnd(c) === best)) cuts.push({ trackId: t.id, frame: best });
+            if (readItems(t.clips).some((c) => c.start === best || clipEnd(c) === best)) cuts.push({ trackId: t.id, frame: best });
           }
         }
         for (const cut of cuts) {
@@ -1114,8 +1115,8 @@ export const useStore = create<RecutStore>()((set, get) => {
         const found = findTransition(seq, transitionId);
         if (!found) return;
         const tr = found.transition;
-        const out = tr.outClipId ? found.track.clips.find((c) => c.id === tr.outClipId) : null;
-        const inn = tr.inClipId ? found.track.clips.find((c) => c.id === tr.inClipId) : null;
+        const out = tr.outClipId ? readItems(found.track.clips).find((c) => c.id === tr.outClipId) : null;
+        const inn = tr.inClipId ? readItems(found.track.clips).find((c) => c.id === tr.inClipId) : null;
         // Never overlap the transition on the other edge of either clip.
         tr.duration = Math.max(1, Math.min(Math.round(frames), transitionLimit(found.track, out, inn, tr.id)));
         reconcileTransitions(found.track);
