@@ -4,7 +4,8 @@
  * media, builds the LARGE synthetic project through the store API inside the renderer, then measures the
  * store, timeline, project/transcript/scene panels, playback, main-process media layer and export IPC. Last, it
  * adds a 3 h multi-hour sequence (buildLongSequence) and measures switch, scrub, edits, playback and save/open on it
- * as new rows in section 'long'. `npm run perf:check` runs this script and gates on its budgeted rows.
+ * as new rows in section 'long'. Finally it re-opens both saved project files and times the first edit after each
+ * open. `npm run perf:check` runs this script and gates on its budgeted rows.
  *
  *   npm run build && xvfb-run -a node tests/perf/electron-perf.mjs [--media <dir>] [--long <file>] [--skip-heavy]
  *
@@ -821,6 +822,52 @@ console.log('\n--- multi-hour sequence ---');
   const lg2 = await lt(t2);
   ms('long', 'openProject round trip incl. multi-hour', op.ms, 1000, `${op.ok}; ${ltSummary(lg2)}`);
   ms('long', 'openProject main-side handler time incl. multi-hour', ((await ipcStats(true)).times['project:load'] || [0])[0], 500, undefined, DIAGNOSTIC);
+
+  // ================================================================ 7. FIRST EDIT AFTER OPEN
+  // Added 6 October 2026. The first edit after an open used to pay for immer deep-freezing the whole opened project
+  // in one task (about 370 ms on the 2,500-clip project); the store now freezes an opened project in idle slices.
+  // Measured last, so no row above changes: re-opens the 3 h project file (saved just above) and then the 2,500-clip
+  // project file (saved in section io). For each: openProject, wait FIRST_EDIT_DELAY_MS (no one edits within a second
+  // of the project appearing; the wait polls whether the project is frozen yet, an info row), then the first edit,
+  // timed to the next painted frame exactly as editToPaint does (one rAF, then a MessageChannel message), and the long
+  // tasks overlapping that edit -> paint window. A second edit 300 ms later is reported in the note for comparison.
+  const FIRST_EDIT_DELAY_MS = 1000;
+  const MOVE_ONE = 'const t = st.project.sequences[id].videoTracks[0]; const c = t.clips[40 + i * 5]; st.moveClips(id, [{ clipId: c.id, toTrackId: t.id, toStart: c.start + 7 }], "overwrite")';
+  const firstEditAfterOpen = async (section, label, file, seqId) => {
+    const r = await page.evaluate(async ({ file, seqId, src, delay }) => {
+      const f = new Function('st', 'id', 'i', src); // before any await: the page CSP allows eval only in the evaluate's own task
+      const res = await window.__recut.actions.openProject(file);
+      const opened = performance.now();
+      let frozenAt = -1;
+      while (performance.now() - opened < delay) {
+        if (frozenAt < 0 && Object.isFrozen(window.__recut.store.getState().project)) frozenAt = performance.now() - opened;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      const active = window.__recut.store.getState().project.activeSequenceId === seqId;
+      const edit = async (i) => {
+        const t = performance.now(); f(window.__recut.store.getState(), seqId, i); const commit = performance.now() - t;
+        const paint = await new Promise((resolve) => requestAnimationFrame(() => {
+          const ch = new MessageChannel();
+          ch.port1.onmessage = () => { ch.port1.close(); resolve(performance.now() - t); };
+          ch.port2.postMessage(0);
+        }));
+        return { t, commit, paint };
+      };
+      const first = await edit(0);
+      await new Promise((r) => setTimeout(r, 300));
+      const second = await edit(1);
+      await new Promise((r) => setTimeout(r, 300)); // long-task entries are delivered asynchronously
+      const lt = window.__perf.lt.filter((e) => e.t + e.d > first.t && e.t < first.t + first.paint);
+      return { ok: res.ok, frozenAt, active, first, second, lt };
+    }, { file, seqId, src: MOVE_ONE, delay: FIRST_EDIT_DELAY_MS });
+    rec(section, `opened project fully frozen (idle) after openProject resolved${label}`, r.frozenAt >= 0 ? r.frozenAt : `not within ${FIRST_EDIT_DELAY_MS} ms`, r.frozenAt >= 0 ? 'ms' : '');
+    ms(section, `first edit ${FIRST_EDIT_DELAY_MS / 1000} s after open -> paint (moveClips 1 clip overwrite)${label}`, r.first.paint, 50,
+      `commit ${r2(r.first.commit)} ms; second edit -> paint ${r2(r.second.paint)} ms (commit ${r2(r.second.commit)} ms); open ok ${r.ok}, edited sequence active ${r.active}`);
+    rec(section, `long tasks during first edit after open -> paint${label}`, r.lt.length, '', '== 0', r.lt.length === 0, ltSummary(r.lt));
+  };
+  await firstEditAfterOpen('long', ' incl. multi-hour (3 h sequence)', savePath, LSEQ);
+  await sleep(1500);
+  await firstEditAfterOpen('io', ' (2,500-clip sequence)', path.join(tmp, 'perf.recut'), SEQ);
 }
 
 } catch (e) {
