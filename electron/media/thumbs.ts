@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { FilmstripRequest, ThumbnailRequest } from '@shared/ipc';
-import { cacheKeyForPath, cacheSubdir, ensureDir, fileExists, removeQuietly } from './cache';
+import { cacheKeyForPath, cacheSubdir, ensureDir, fileExists, getCacheDir, removeQuietly } from './cache';
 import { ffmpegFileArg, fmtSeconds, runFfmpeg } from './ffmpeg';
 import { probeMedia, type ProbedVideoStreamInfo } from './probe';
 
@@ -59,14 +59,17 @@ export function thumbQueueDepth(): { active: number; waiting: number } { return 
 // ------------------------------------------------------------------
 const requesters = new Map<string, AbortController>();
 
-/** Abort the given renderer requests: their queued batches are dropped (running ffmpeg jobs finish and are cached). */
+/**
+ * Abort the given renderer requests. A batch every requester of which has canceled is dropped while queued, and its
+ * ffmpeg process is killed while running (frames it already finished are kept, partial ones deleted).
+ */
 export function cancelThumbRequests(ids: readonly string[]): void {
   for (const id of ids) { requesters.get(id)?.abort(); requesters.delete(id); }
 }
 
 /**
  * Shared extraction batch: several requesters may wait for the same frames (in-flight dedupe). The batch is
- * only abandoned (while still queued) when every requester interested in it has canceled.
+ * abandoned when every requester interested in it has canceled: dropped while queued, its ffmpeg killed while running.
  */
 interface SharedBatch { controller: AbortController; refs: number }
 const frameBatch = new Map<string, SharedBatch>();
@@ -116,12 +119,37 @@ export function thumbnailCachePath(key: string, time: number, width?: number): s
   return path.join(cacheSubdir('thumbs'), thumbDirName(key), thumbFileName(time, normWidth(width)));
 }
 
+const THUMB_FILE_RE = /^[0-9a-f]{40}[\\/]\d+_\d+\.jpg$/;
+
+/**
+ * True for a finished thumbnail / filmstrip frame in the cache (`thumbs/<dir>/<ms>_<w>.jpg`, never a `.part`). Its
+ * name is content-keyed: the directory hashes the source's path + size + mtime (cacheKeyForFile) and THUMB_VERSION,
+ * the file name the time and width, and the file only appears by a rename of a complete JPEG. So the bytes behind a
+ * name never change: a changed source gets a new directory, hence a new URL. The recut-media:// handler lets the
+ * renderer cache these (electron/media/protocol.ts).
+ */
+export function isThumbnailCacheFile(filePath: string): boolean {
+  const rel = path.relative(path.join(getCacheDir(), 'thumbs'), path.resolve(filePath));
+  return THUMB_FILE_RE.test(rel);
+}
+
+/**
+ * A complete JPEG of plausible size: at least MIN_JPEG_BYTES and ending with the EOI marker (FF D9), which entropy-coded
+ * data cannot contain (FF bytes are stuffed). A file cut short (ffmpeg killed mid-write) fails this.
+ */
 async function validOutput(p: string): Promise<boolean> {
+  let fh: fsp.FileHandle | undefined;
   try {
-    const st = await fsp.stat(p);
-    return st.isFile() && st.size >= MIN_JPEG_BYTES;
+    fh = await fsp.open(p, 'r');
+    const st = await fh.stat();
+    if (!st.isFile() || st.size < MIN_JPEG_BYTES) return false;
+    const tail = Buffer.alloc(2);
+    const { bytesRead } = await fh.read(tail, 0, 2, st.size - 2);
+    return bytesRead === 2 && tail[0] === 0xff && tail[1] === 0xd9;
   } catch {
     return false;
+  } finally {
+    await fh?.close().catch(() => { /* ignore */ });
   }
 }
 
@@ -173,8 +201,8 @@ export function thumbScaleFilter(width: number): string {
   return `scale=w='max(2,trunc(iw*sar/2)*2)':h=ih,setsar=1,scale=${width}:-2,setsar=1`;
 }
 
-/** One ffmpeg invocation: seek to `time`, grab one frame, write JPEG to `out` (via .part). */
-async function extractOne(file: string, time: number, width: number, out: string): Promise<boolean> {
+/** One ffmpeg invocation: seek to `time`, grab one frame, write JPEG to `out` (via .part). `signal` kills it. */
+async function extractOne(file: string, time: number, width: number, out: string, signal?: AbortSignal): Promise<boolean> {
   const part = `${out}.part`;
   const seek = frameSeekTime(time, await frameGrid(file));
   const args = [
@@ -189,7 +217,7 @@ async function extractOne(file: string, time: number, width: number, out: string
     ffmpegFileArg(part),
   ];
   try {
-    await runFfmpeg(args, { stdout: 'ignore' }).promise;
+    await runFfmpeg(args, { stdout: 'ignore', signal }).promise;
   } catch {
     await removeQuietly(part);
     return false;
@@ -202,14 +230,16 @@ async function extractOne(file: string, time: number, width: number, out: string
   return true;
 }
 
-/** Try the requested time, then T-0.5, then 0. */
-async function extractWithFallback(file: string, time: number, width: number, out: string): Promise<void> {
+/** Try the requested time, then T-0.5, then 0. `signal` kills the running attempt and skips the rest (AbortError). */
+async function extractWithFallback(file: string, time: number, width: number, out: string, signal?: AbortSignal): Promise<void> {
   const attempts = [time];
   if (time - 0.5 > 0) attempts.push(time - 0.5);
   if (time !== 0) attempts.push(0);
   for (const t of attempts) {
-    if (await extractOne(file, t, width, out)) return;
+    if (signal?.aborted) throw new ThumbAbortError();
+    if (await extractOne(file, t, width, out, signal)) return;
   }
+  if (signal?.aborted) throw new ThumbAbortError();
   throw new Error(`could not extract a frame from ${path.basename(file)} at ${time.toFixed(3)}s`);
 }
 
@@ -245,7 +275,9 @@ export async function getThumbnail(req: ThumbnailRequest): Promise<string> {
  * Returns file paths aligned with `req.times` ('' for frames dropped because the request was canceled).
  *
  * Queueing is LIFO (newest viewport first). `signal` (or a `requestId` later passed to `cancelThumbRequests`)
- * drops this request's still-queued batches unless another live request is waiting for the same frames.
+ * abandons this request's batches unless another live request is waiting for the same frames: a queued batch is
+ * dropped before it spawns ffmpeg, a running one has its ffmpeg killed (so it does not keep the CPU busy after the
+ * view moved on).
  */
 export async function getFilmstrip(req: FilmstripRequest, signal?: AbortSignal): Promise<string[]> {
   // Register synchronously (before any await) so a cancel arriving right behind this request finds it.
@@ -273,7 +305,11 @@ async function filmstripInner(req: FilmstripRequest, signal: AbortSignal | undef
   for (let i = 0; i < req.times.length; i++) {
     const out = outs[i];
     if (pending.has(out)) continue;
-    if (inFlight.has(out)) { const b = frameBatch.get(out); if (b) joinBatch(b, signal, joined); continue; }
+    // A batch abandoned by all its requesters (killed or dropped) settles at once: wait for it, then take the frame
+    // over (cached by then if the batch had finished it) instead of joining a batch that will not produce it.
+    let fl = inFlight.get(out);
+    while (fl && frameBatch.get(out)?.controller.signal.aborted) { await fl.catch(() => null); fl = inFlight.get(out); }
+    if (fl) { const b = frameBatch.get(out); if (b) joinBatch(b, signal, joined); continue; }
     if (await fileExists(out)) continue;
     pending.set(out, Math.max(0, req.times[i]));
   }
@@ -287,7 +323,7 @@ async function filmstripInner(req: FilmstripRequest, signal: AbortSignal | undef
     const shared: SharedBatch = { controller: new AbortController(), refs: 0 };
     joinBatch(shared, signal, joined);
     const bsig = shared.controller.signal;
-    const p = withSlot(() => extractBatch(req.path, width, batch), bsig).then(() => true, () => false);
+    const p = withSlot(() => extractBatch(req.path, width, batch, bsig), bsig).then(() => true, () => false);
     // Each frame gets its own in-flight promise: batch result, then per-frame fallback if missing.
     for (const [out, t] of batch) {
       frameBatch.set(out, shared);
@@ -295,7 +331,7 @@ async function filmstripInner(req: FilmstripRequest, signal: AbortSignal | undef
         if (await fileExists(out)) return out;
         if (!ran || bsig.aborted) return null; // dropped while queued: nobody wants it any more
         try {
-          await withSlot(() => extractWithFallback(req.path, t, width, out), bsig);
+          await withSlot(() => extractWithFallback(req.path, t, width, out, bsig), bsig);
         } catch (err) {
           if (bsig.aborted) return null;
           throw err;
@@ -329,11 +365,16 @@ async function filmstripInner(req: FilmstripRequest, signal: AbortSignal | undef
   }
 }
 
-async function extractBatch(file: string, width: number, batch: [string, number][]): Promise<void> {
-  if (batch.length === 0) return;
+/**
+ * One ffmpeg process for the batch's frames, each written to `<out>.part` and renamed to `<out>` once it is a complete
+ * JPEG. `signal` (every requester of the batch canceled) kills the process: frames it had finished are still kept,
+ * cut-short `.part` files are deleted, so the cache never holds a partial file under a final name.
+ */
+async function extractBatch(file: string, width: number, batch: [string, number][], signal?: AbortSignal): Promise<void> {
+  if (batch.length === 0 || signal?.aborted) return;
   if (batch.length === 1) {
     const [out, t] = batch[0];
-    try { await extractWithFallback(file, t, width, out); } catch { /* resolved later by getThumbnail */ }
+    try { await extractWithFallback(file, t, width, out, signal); } catch { /* resolved later by getThumbnail */ }
     return;
   }
   const args: string[] = [];
@@ -350,10 +391,11 @@ async function extractBatch(file: string, width: number, batch: [string, number]
       ffmpegFileArg(`${out}.part`),
     );
   });
+  if (signal?.aborted) return; // abandoned while probing the frame grid
   try {
-    await runFfmpeg(args, { stdout: 'ignore' }).promise;
+    await runFfmpeg(args, { stdout: 'ignore', signal }).promise;
   } catch {
-    // A failing input (e.g. time past EOF) fails the whole batch; keep whatever was written.
+    // A failing input (e.g. time past EOF) fails the whole batch, and a kill ends it: keep the complete frames.
   }
   await Promise.all(batch.map(async ([out]) => {
     const part = `${out}.part`;

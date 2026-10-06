@@ -11,15 +11,27 @@ import fsp from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { MEDIA_SCHEME } from '../../shared/ipc';
 import { contentTypeFor, mediaUrlPath, parseRange } from './range';
+import { isThumbnailCacheFile } from './thumbs';
 
 export { parseRange, contentTypeFor, mediaUrlPath } from './range';
+
+/**
+ * Thumbnail / filmstrip JPEGs in the cache are content-keyed (isThumbnailCacheFile), so the renderer may reuse its
+ * copy without ever asking again. What actually stops the reloads of re-mounted timeline tiles is the renderer
+ * holding its copies (src/playback/thumbnails.ts holdImage); measured alone, this header changed nothing. It is set so
+ * that no cache policy ever revalidates a held copy. Everything else (source media, proxies, stills) can change
+ * under the same path and stays `no-cache`.
+ */
+export function cacheControlFor(filePath: string): string {
+  return isThumbnailCacheFile(filePath) ? 'public, max-age=31536000, immutable' : 'no-cache';
+}
 
 function baseHeaders(filePath: string, st: fs.Stats): Record<string, string> {
   return {
     'Content-Type': contentTypeFor(filePath),
     'Accept-Ranges': 'bytes',
     'Last-Modified': st.mtime.toUTCString(),
-    'Cache-Control': 'no-cache',
+    'Cache-Control': cacheControlFor(filePath),
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
   };
