@@ -158,6 +158,9 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   useEffect(() => () => { const w = hscrollWant.current; if (w.raf) cancelAnimationFrame(w.raf); w.raf = 0; }, []);
   const onHScroll = () => {
     const el = hscrollRef.current; if (!el) return;
+    // A sync to the store's scroll is pending: this event reports an older (programmatic) scrollbar position, and
+    // feeding it back would undo the store change. The store stays the source of truth until the sync lands.
+    if (hscrollWant.current.raf) return;
     const st = useStore.getState(); const s = st.project.sequences[seqId]; if (!s) return;
     const current = s.view.scroll * s.view.zoom;
     if (Math.abs(el.scrollLeft - current) <= 1) return;
