@@ -5,6 +5,30 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
+## [0.2.2] - 2026-10-06
+
+Fixes chapter export. Project files are unchanged (`formatVersion` 1).
+
+### Fixed
+
+- Export kept the first chapter break only if a Chapter marker sat exactly at the start of the exported range.
+  Otherwise the first marker's chapter was moved to 0:00 and its break was lost: a sequence whose only Chapter marker
+  is "Act Two" at 30:00 exported one chapter, "Act Two", from the start. Export now adds an untitled chapter from 0:00
+  to the first marker, so every break stays where it was placed. A marker exactly at the start adds no extra chapter
+  ([report](bugs/closed/2026-10-06-first-chapter-break-lost-and-stale-roadmap.md)).
+
+### Changed
+
+- Roadmap §7 (MKV packaging) no longer lists chapter export as a prerequisite; it lists only what packaging still
+  needs.
+
+### Known issues
+
+- Unchanged from 0.2.1: 2,500-clip performance budgets
+  ([open report](bugs/open/2026-10-05-perf-budgets-2500-clips.md)), moved media rebuilds its cache
+  ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned builds, NSIS 3.0.4 (CVE-2025-43715,
+  only when an installer runs as SYSTEM).
+
 ## [0.2.1] - 2026-10-05
 
 Fixes the Windows installer crash in 0.2.0. Project files are unchanged (`formatVersion` 1).
