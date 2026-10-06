@@ -1,10 +1,16 @@
 /**
  * Playhead overlay. Subscribes to view.playhead only so moving it never re-renders the clip tree,
  * and page-flips the view when the playhead leaves it (playback, keyboard stepping).
+ *
+ * Deliberate rendering trade-off (roadmap §1, A4; docs/attack/performance.md): the line and its head are one
+ * composited layer (will-change: transform) moved by transform only, at playheadX (frameToX snapped to a device
+ * pixel). A move is then a compositor-only transform update, not a repaint + re-layerization of the page. The
+ * position is set in the same render as before (same React commit as the store update), and the layer has no
+ * pointer events, like the former line and head: clicks and drags still reach the ruler / tracks underneath.
  */
 import React, { useLayoutEffect, useRef } from 'react';
 import { useStore, usePlayhead } from '@/state';
-import { frameToX, pageFlipScroll } from './viewMath';
+import { frameToX, pageFlipScroll, playheadX } from './viewMath';
 import { RULER_H } from './types';
 
 export interface PlayheadProps {
@@ -12,11 +18,13 @@ export interface PlayheadProps {
   zoom: number;
   scroll: number;
   width: number;
+  /** Device pixel ratio (the line snaps to device pixels). */
+  dpr: number;
   /** When true (e.g. during a ruler scrub or clip drag) the view is not auto-flipped. */
   suppressFlip: React.MutableRefObject<boolean>;
 }
 
-export function Playhead({ seqId, zoom, scroll, width, suppressFlip }: PlayheadProps) {
+export function Playhead({ seqId, zoom, scroll, width, dpr, suppressFlip }: PlayheadProps) {
   const playhead = usePlayhead(seqId);
   const widthRef = useRef(width);
   widthRef.current = width;
@@ -49,11 +57,17 @@ export function Playhead({ seqId, zoom, scroll, width, suppressFlip }: PlayheadP
 
   const x = frameToX(playhead, zoom, scroll);
   if (x < -8 || x > width + 8) return null;
-  const left = Math.round(x);
+  return <PlayheadLayer x={playheadX(playhead, zoom, scroll, dpr)} />;
+}
+
+const HEAD_STYLE = { height: RULER_H * 0.55 };
+
+/** The playhead's layer at `x` (CSS px from the lane's left edge, on a device pixel: playheadX). */
+export function PlayheadLayer({ x }: { x: number }) {
   return (
-    <>
-      <div className="tl-playhead" style={{ left }} data-playhead />
-      <div className="tl-playhead-head" style={{ left, height: RULER_H * 0.55 }} />
-    </>
+    <div className="tl-playhead-layer" style={{ transform: `translateX(${x}px)` }}>
+      <div className="tl-playhead" data-playhead />
+      <div className="tl-playhead-head" style={HEAD_STYLE} />
+    </div>
   );
 }

@@ -40,6 +40,16 @@ export function frameToX(frame: number, zoom: number, scroll: number): number {
   return (frame - scroll) * zoom;
 }
 
+/**
+ * Playhead line x (CSS px from the lane's left edge): frameToX snapped to the nearest device pixel, so the line's
+ * composited layer (translated by this value) sits on whole device pixels at any zoom, scroll and dpr. At dpr 1 it
+ * is Math.round(frameToX(...)), the line's former `left`.
+ */
+export function playheadX(frame: number, zoom: number, scroll: number, dpr: number): number {
+  const d = dpr > 0 && Number.isFinite(dpr) ? dpr : 1;
+  return Math.round(frameToX(frame, zoom, scroll) * d) / d;
+}
+
 /** Fractional frame under a pixel offset. */
 export function xToFrame(x: number, zoom: number, scroll: number): number {
   return scroll + x / zoom;

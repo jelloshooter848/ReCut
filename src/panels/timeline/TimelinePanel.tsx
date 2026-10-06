@@ -22,6 +22,7 @@ import { transitionSpan, TRANSITION_LABEL } from './TransitionView';
 import { ClipLane } from './ClipLane';
 import { Ruler } from './Ruler';
 import { Playhead } from './Playhead';
+import { useDevicePixelRatio } from './useDevicePixelRatio';
 import { TrackHeader, SubtitleLaneHeader } from './TrackHeader';
 import { TimelineHeader } from './TimelineHeader';
 import { MarkerEditor, PropertiesPopover, RenameDialog, SpeedDialog, TagsDialog } from './dialogs';
@@ -91,6 +92,8 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const linkedSelection = useTimelineUi((s) => s.linkedSelection);
   const headerWidth = useTimelineUi((s) => s.headerWidth);
   const liveHeights = useTimelineUi((s) => s.liveHeights);
+  /** Waveform canvases and the playhead snap to device pixels. */
+  const dpr = useDevicePixelRatio();
 
   const rootRef = useRef<HTMLDivElement>(null);
   const tracksColRef = useRef<HTMLDivElement>(null);
@@ -689,7 +692,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
                       <ClipLane key={row.id} track={track} top={row.top} height={row.height} contentPx={contentPx} zoom={zoom} mountX0={mountX0} mountX1={mountX1} viewX0={viewX0} viewX1={viewX1}
                         selected={selectedSet} look={lookFor} offline={isOffline} media={media} fps={fps} showSourceTc={showSourceTc}
                         syncOffsets={syncOffsets.get(track.id)} previewTransition={previewTransition && previewTransition.trackId === track.id ? previewTransition : null}
-                        selectedTransitionId={selectedTransitionId} lodOriginPx={lodOriginPx} lodWidthPx={lodWidthPx} />
+                        selectedTransitionId={selectedTransitionId} lodOriginPx={lodOriginPx} lodWidthPx={lodWidthPx} dpr={dpr} />
                     );
                   })}
                   {ghosts}
@@ -709,7 +712,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
               </div>
             </div>
           </div>
-          <Playhead seqId={seqId} zoom={zoom} scroll={scroll} width={width} suppressFlip={suppressFlip} />
+          <Playhead seqId={seqId} zoom={zoom} scroll={scroll} width={width} dpr={dpr} suppressFlip={suppressFlip} />
           <div className="tl-hscroll" ref={hscrollRef} onScroll={hScroll.onScroll}><div style={{ width: contentPx }} /></div>
         </div>
       </div>
