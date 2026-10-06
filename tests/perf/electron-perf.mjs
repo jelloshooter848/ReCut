@@ -2,7 +2,9 @@
 /**
  * ReCut end-to-end performance harness: launches the built app under Playwright (xvfb), imports real
  * media, builds the LARGE synthetic project through the store API inside the renderer, then measures the
- * store, timeline, project/transcript/scene panels, playback, main-process media layer and export IPC.
+ * store, timeline, project/transcript/scene panels, playback, main-process media layer and export IPC. Last, it
+ * adds a 3 h multi-hour sequence (buildLongSequence) and measures switch, scrub, edits, playback and save/open on it
+ * as new rows in section 'long'. `npm run perf:check` runs this script and gates on its budgeted rows.
  *
  *   npm run build && xvfb-run -a node tests/perf/electron-perf.mjs [--media <dir>] [--long <file>] [--skip-heavy]
  *
@@ -115,7 +117,7 @@ const ipcWrapped = await app.evaluate(({ ipcMain }) => {
   const map = ipcMain._invokeHandlers;
   if (!(map instanceof Map)) return false;
   const S = (globalThis.__perfIpc = { counts: {}, times: {}, lastArgsBytes: {} });
-  for (const ch of ['media:thumbnail', 'media:filmstrip', 'media:waveform', 'project:autosave', 'project:save', 'project:load', 'export:previewCommand', 'media:probe']) {
+  for (const ch of ['media:thumbnail', 'media:filmstrip', 'media:waveform', 'project:autosave', 'project:autosaveJson', 'project:save', 'project:load', 'export:previewCommand', 'media:probe']) {
     const h = map.get(ch); if (!h) continue;
     map.set(ch, async (e, ...a) => {
       S.counts[ch] = (S.counts[ch] || 0) + 1;
@@ -145,8 +147,8 @@ const files = ['movies/Galaxy Saga 1 - A New Dawn.mp4', 'movies/Galaxy Saga 2 - 
 }
 
 // ---------------------------------------------------------------- build the LARGE project in the renderer
-const builderSrc = fs.readFileSync(path.join(ROOT, 'tests/perf/bigProject.mjs'), 'utf8').replace(/^export /m, '');
-await page.evaluate(`${builderSrc}\n;window.__perfBuild = buildBigProject;`);
+const builderSrc = fs.readFileSync(path.join(ROOT, 'tests/perf/bigProject.mjs'), 'utf8').replace(/^export /gm, '');
+await page.evaluate(`${builderSrc}\n;window.__perfBuild = buildBigProject; window.__perfBuildLong = buildLongSequence;`);
 const built = await page.evaluate(() => {
   const st = window.__recut.store.getState();
   const base = Object.values(st.project.media).filter((m) => m.probe && m.probe.video).map((m) => ({ name: m.name, path: m.path, probe: m.probe }));
@@ -214,10 +216,10 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
   rec('timeline', 'total filmstrip IPC calls during drain window', (s.counts['media:filmstrip'] || 0), 'calls');
   rec('timeline', 'main RSS after the storm (MB)', await mainMB(), 'MB');
 }
-{
-  // Scrubbing: drive setView(playhead) every rAF for 3 s; measure fps, long tasks, DOM mutations, ClipView renders.
-  const scrub = async (label, selectedCount) => {
-    await page.evaluate(({ id, n }) => { const st = window.__recut.store.getState(); const s = st.project.sequences[id]; const ids = [...s.videoTracks, ...s.audioTracks].flatMap((t) => t.clips.map((c) => c.id)).slice(0, n); st.select(ids, n ? 'set' : 'clear'); }, { id: SEQ, n: selectedCount });
+// Scrubbing: drive setView(playhead) every rAF for 3 s; measure fps, long tasks, DOM mutations, ClipView renders.
+// Defaults measure the 2,500-clip sequence; the multi-hour section passes its own sequence, duration and section.
+  const scrub = async (label, selectedCount, seqId = SEQ, seqDur = dur, section = 'scrub') => {
+    await page.evaluate(({ id, n }) => { const st = window.__recut.store.getState(); const s = st.project.sequences[id]; const ids = [...s.videoTracks, ...s.audioTracks].flatMap((t) => t.clips.map((c) => c.id)).slice(0, n); st.select(ids, n ? 'set' : 'clear'); }, { id: seqId, n: selectedCount });
     await sleep(500);
     const t0 = await nowPage();
     const out = await page.evaluate(async ({ id, dur }) => {
@@ -237,14 +239,15 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
       const elapsed = performance.now() - t0;
       costs.sort((a, b) => a - b);
       return { frames, fps: frames / (elapsed / 1000), mutAll, mutContent, commits: commits.length, clipRendered, tb, setViewMedian: costs[Math.floor(costs.length / 2)] ?? 0, setViewMax: costs[costs.length - 1] ?? 0, clipTotal: commits[0]?.clipTotal ?? 0 };
-    }, { id: SEQ, dur });
+    }, { id: seqId, dur: seqDur });
     const long = await lt(t0);
-    rec('scrub', `playhead scrub fps (rAF-driven setView) ${label}`, r2(out.fps, 1), 'fps', '>= 50', out.fps >= 50, `${out.frames} frames`);
-    rec('scrub', `DOM mutations per frame ${label} (tracks col / clips content)`, `${r2(out.mutAll / Math.max(1, out.frames), 2)} / ${r2(out.mutContent / Math.max(1, out.frames), 2)}`, '', 'content == 0', out.mutContent === 0);
-    rec('scrub', `ClipView renders per frame ${label}`, r2(out.clipRendered / Math.max(1, out.frames), 2), '', '== 0', out.clipRendered === 0, `${out.commits} React commits, TimelineBody renders ${out.tb}, ${out.clipTotal} clip fibers`);
-    ms('scrub', `setView call cost ${label} (median / max)`, out.setViewMedian, 1, `max ${r2(out.setViewMax)} ms`);
-    rec('scrub', `long tasks during scrub ${label}`, long.length, '', '== 0', long.length === 0, ltSummary(long));
+    rec(section, `playhead scrub fps (rAF-driven setView) ${label}`, r2(out.fps, 1), 'fps', '>= 50', out.fps >= 50, `${out.frames} frames`);
+    rec(section, `DOM mutations per frame ${label} (tracks col / clips content)`, `${r2(out.mutAll / Math.max(1, out.frames), 2)} / ${r2(out.mutContent / Math.max(1, out.frames), 2)}`, '', 'content == 0', out.mutContent === 0);
+    rec(section, `ClipView renders per frame ${label}`, r2(out.clipRendered / Math.max(1, out.frames), 2), '', '== 0', out.clipRendered === 0, `${out.commits} React commits, TimelineBody renders ${out.tb}, ${out.clipTotal} clip fibers`);
+    ms(section, `setView call cost ${label} (median / max)`, out.setViewMedian, 1, `max ${r2(out.setViewMax)} ms`);
+    rec(section, `long tasks during scrub ${label}`, long.length, '', '== 0', long.length === 0, ltSummary(long));
   };
+{
   await zoomFit(); await sleep(500);
   await scrub('@ zoom-to-fit (2500 clips mounted), no selection', 0);
   await scrub('@ zoom-to-fit, 50 clips selected', 50);
@@ -364,7 +367,11 @@ await setView({ zoom: 1, scroll: 0, playhead: 0 });
   const long = await lt(t0);
   const ipc = await ipcStats(true);
   ms('io', 'autosaveProject round trip (renderer -> main write)', auto, 500, ltSummary(long));
-  ms('io', 'autosave main-side handler time (serialize + atomic write)', (ipc.times['project:autosave'] || [0])[0], 300);
+  // The renderer autosaves through project:autosaveJson (a string) when available, else project:autosave. A missing
+  // timing means the wrapper missed the channel: report it as a failure instead of a 0 ms PASS.
+  const autoMain = (ipc.times['project:autosaveJson'] || ipc.times['project:autosave'] || [])[0];
+  if (autoMain === undefined) rec('io', 'autosave main-side handler time (write; serialize too on the legacy channel)', 'not captured', 'ms', '<= 300 ms', false, `IPC channels seen: ${Object.keys(ipc.counts).join(', ') || 'none'}`);
+  else ms('io', 'autosave main-side handler time (write; serialize too on the legacy channel)', autoMain, 300, ipc.times['project:autosaveJson'] ? 'project:autosaveJson' : 'project:autosave');
   const autoFile = path.join(userData, 'autosave', 'untitled.recut.autosave');
   rec('io', 'autosave file size on disk (pretty JSON, MB)', fs.existsSync(autoFile) ? r2(fs.statSync(autoFile).size / 1048576) : 'missing', 'MB');
   const savePath = path.join(tmp, 'perf.recut');
@@ -429,7 +436,8 @@ console.log('\n--- panels ---');
     const evs = await page.evaluate(() => window.__perf.ev.filter((e) => e.name === 'keydown' || e.name === 'input' || e.name === 'keypress' || e.name === 'keyup'));
     const long = await lt(t0);
     const worst = evs.length ? Math.max(...evs.map((e) => e.d)) : 0;
-    ms(label.split(':')[0], `${label}: worst keystroke -> next paint (Event Timing; ${evs.length} events over 16 ms)`, worst, 50, ltSummary(long));
+    // The event count goes in the note, not the metric name, so the row keeps one name across runs (perf:check).
+    ms(label.split(':')[0], `${label}: worst keystroke -> next paint (Event Timing)`, worst, 50, `${evs.length} events over 16 ms; ${ltSummary(long)}`);
     await page.keyboard.press('Control+A'); await page.keyboard.press('Backspace'); await sleep(400);
   };
   await typeInto('project-search', 'series 3 e04', 'project: search typing "series 3 e04"');
@@ -452,10 +460,10 @@ console.log('\n--- panels ---');
 console.log('\n--- playback ---');
 await clickTab('timeline');
 await setView({ zoom: 1, scroll: 0, playhead: 0 });
-const playFor = async (label, seconds, before) => {
+const playFor = async (label, seconds, before, seqId = SEQ, section = 'playback') => {
   await page.evaluate(() => { const c = document.querySelector('[data-testid="program-canvas"]'); c?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); document.querySelector('[data-testid="program-panel"]')?.focus(); });
   await sleep(300);
-  await page.evaluate((id) => window.__recut.store.getState().setView(id, { playhead: 0 }), SEQ);
+  await page.evaluate((id) => window.__recut.store.getState().setView(id, { playhead: 0 }), seqId);
   const t0 = await nowPage();
   if (before) await before();
   const out = await page.evaluate(async ({ id, seconds }) => {
@@ -471,10 +479,10 @@ const playFor = async (label, seconds, before) => {
     document.querySelector('[data-testid="program-play"]').click();
     const el = performance.now() - t;
     return { fps: updates / (el / 1000), rafs: rafs / (el / 1000), perSec, playing, frame: last };
-  }, { id: SEQ, seconds });
+  }, { id: seqId, seconds });
   const long = await lt(t0);
-  rec('playback', `program fps ${label} (store playhead updates/s over ${seconds} s)`, r2(out.fps, 1), 'fps', '>= 23', out.fps >= 23, `rAF ${r2(out.rafs, 1)}/s, per-second ${out.perSec.join(',')}; playing=${out.playing}`);
-  rec('playback', `long tasks ${label}`, long.length, '', '<= 2', long.length <= 2, ltSummary(long));
+  rec(section, `program fps ${label} (store playhead updates/s over ${seconds} s)`, r2(out.fps, 1), 'fps', '>= 23', out.fps >= 23, `rAF ${r2(out.rafs, 1)}/s, per-second ${out.perSec.join(',')}; playing=${out.playing}`);
+  rec(section, `long tasks ${label}`, long.length, '', '<= 2', long.length <= 2, ltSummary(long));
   return out;
 };
 const poolState = () => page.evaluate(() => { const v = window.__perf.videos; return { created: v.length, live: v.filter((e) => e.getAttribute('src')).length, playing: v.filter((e) => !e.paused).length, inDom: document.querySelectorAll('video').length, audio: { ...window.__perf.audio } }; });
@@ -619,6 +627,87 @@ console.log('\n--- main process ---');
   rec('main', 'main process RSS at end (MB)', await mainMB(), 'MB');
   rec('main', 'renderer working set at end (MB)', await rendererMB(), 'MB');
   rec('main', 'renderer JS heap at end (MB)', await page.evaluate(() => performance.memory ? performance.memory.usedJSHeapSize / 1048576 : -1), 'MB');
+}
+
+// ================================================================ 6. MULTI-HOUR SEQUENCE
+// Added last (buildLongSequence: 3 h @ 23.976, linked A/V, inserts, music beds, transitions, markers) so every row
+// above is measured on the same project as before. New rows only, section 'long'.
+console.log('\n--- multi-hour sequence ---');
+{
+  await clickTab('timeline');
+  await page.evaluate((id) => { const st = window.__recut.store.getState(); st.setActiveSequence(id); st.select([], 'clear'); }, SEQ);
+  const long = await page.evaluate(() => { const t = performance.now(); const out = window.__perfBuildLong(window.__recut.store, { hours: 3 }); out.totalMs = performance.now() - t; return out; });
+  ms('long', 'buildLongSequence in renderer (3 h @ 23.976, not activated)', long.totalMs);
+  for (const [k, v] of Object.entries(long.counts)) rec('long', `count ${k}`, v);
+  const LSEQ = long.seqId; const ldur = long.counts.durationFrames;
+  await sleep(1000);
+  // Switch big -> multi-hour, time to first paint at two zoom levels.
+  for (const [label, z] of [['zoom-to-fit', null], ['1 px/frame', 1]]) {
+    const zoom = z ?? (await tlWidth()) * 0.96 / ldur;
+    await page.evaluate(({ big, lid, zoom }) => { const st = window.__recut.store.getState(); st.setView(lid, { zoom, scroll: 0, playhead: 0 }); st.setActiveSequence(big); }, { big: SEQ, lid: LSEQ, zoom });
+    await sleep(1500);
+    const t0 = await nowPage();
+    const t = await paintAfter((id) => window.__recut.store.getState().setActiveSequence(id), LSEQ);
+    ms('long', `switch to multi-hour sequence -> first paint @ ${label}`, t, 100);
+    const c = await domCounts();
+    rec('long', `DOM nodes in tracks content, multi-hour @ ${label}`, c.all, 'nodes', '<= 5000', c.all <= 5000, `${c.clips} clips, ${c.transitions} transitions, page total ${c.page}`);
+    await sleep(2500);
+    const lg = await lt(t0);
+    rec('long', `long tasks in 2.5 s after switch to multi-hour @ ${label}`, lg.length, '', '<= 1', lg.length <= 1, ltSummary(lg));
+  }
+  // Let thumbnail / filmstrip requests drain before measuring interaction (bounded wait).
+  { const tD = Date.now(); let settle = 0; while (Date.now() - tD < 60_000) { if (ffmpegCount() === 0) { if (++settle >= 3) break; } else settle = 0; await sleep(1000); } }
+  // Switch x20 between the 2,500-clip and the multi-hour sequence (both at 1 px/frame).
+  await page.evaluate(({ big }) => window.__recut.store.getState().setView(big, { zoom: 1, scroll: 0 }), { big: SEQ });
+  const t1 = await nowPage();
+  const sw = await page.evaluate(async ({ big, lid }) => {
+    const st = () => window.__recut.store.getState(); const costs = [];
+    for (let i = 0; i < 20; i++) { const id = i % 2 ? lid : big; const t = performance.now(); st().setActiveSequence(id); await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); if (i % 2) costs.push(performance.now() - t); await new Promise((r) => setTimeout(r, 250)); }
+    return costs;
+  }, { big: SEQ, lid: LSEQ });
+  const sws = stats(sw);
+  ms('long', 'switch to multi-hour x10 -> paint (median)', sws.median, 100, `max ${sws.max}; ${ltSummary(await lt(t1))}`);
+  // Scrub (same driver as section 2) on the multi-hour sequence.
+  await page.evaluate((id) => window.__recut.store.getState().setActiveSequence(id), LSEQ);
+  await page.evaluate(({ id, z }) => window.__recut.store.getState().setView(id, { zoom: z, scroll: 0 }), { id: LSEQ, z: (await tlWidth()) * 0.96 / ldur });
+  await sleep(1500);
+  await scrub('multi-hour @ zoom-to-fit, no selection', 0, LSEQ, ldur, 'long');
+  await page.evaluate((id) => window.__recut.store.getState().setView(id, { zoom: 1, scroll: 0 }), LSEQ);
+  await sleep(1500);
+  await scrub('multi-hour @ 1 px/frame, no selection', 0, LSEQ, ldur, 'long');
+  await scrub('multi-hour @ 1 px/frame, 50 clips selected', 50, LSEQ, ldur, 'long');
+  await page.evaluate(() => window.__recut.store.getState().select([], 'clear'));
+  // Edit commit -> paint on the multi-hour sequence (same budgets as section 1).
+  await page.evaluate((id) => window.__recut.store.getState().setView(id, { zoom: 1, scroll: 0, playhead: 0 }), LSEQ);
+  await sleep(500);
+  const timedLong = async (label, n, src, threshold) => {
+    const costs = await page.evaluate(async ({ id, n, src }) => {
+      const f = new Function('st', 'id', 'i', src); const out = [];
+      for (let i = 0; i < n; i++) { const t = performance.now(); f(window.__recut.store.getState(), id, i); await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); out.push(performance.now() - t); }
+      return out;
+    }, { id: LSEQ, n, src });
+    const s = stats(costs);
+    ms('long', `multi-hour ${label} commit -> paint (median)`, s.median, threshold, `p95 ${s.p95} max ${s.max}`);
+  };
+  const lmedia = built.mediaIds[2];
+  await timedLong('insertFromSource insert (ripple)', 5, `st.insertFromSource(id, { mediaId: '${lmedia}', in: 1, out: 3, atFrame: 100 + i * 400, mode: 'insert' })`, 50);
+  await timedLong('razor all tracks', 10, 'st.razor(id, 60 + i * 360)', 32);
+  await timedLong('moveClips 1 clip overwrite', 10, 'const t = st.project.sequences[id].videoTracks[0]; const c = t.clips[40 + i * 5]; st.moveClips(id, [{ clipId: c.id, toTrackId: t.id, toStart: c.start + 7 }], "overwrite")', 32);
+  await timedLong('undo', 10, 'st.undo()', 32);
+  // Program playback on the multi-hour sequence (planFrame over ~6,000 clips every rAF).
+  await playFor('multi-hour @ 1 px/frame', 6, undefined, LSEQ, 'long');
+  // Save / open round trip with the multi-hour sequence in the project.
+  const size = await page.evaluate(() => JSON.stringify(window.__recut.store.getState().project).length);
+  rec('long', 'project JSON size incl. multi-hour (compact, MB)', r2(size / 1048576), 'MB');
+  const savePath = path.join(tmp, 'perf-long.recut');
+  const sv = await page.evaluate(async (p) => { const t = performance.now(); const r = await window.__recut.actions.saveProject(p); return { ms: performance.now() - t, ok: r.ok }; }, savePath);
+  ms('long', 'saveProject round trip incl. multi-hour', sv.ms, 500, String(sv.ok));
+  await ipcStats(true);
+  const t2 = await nowPage();
+  const op = await page.evaluate(async (p) => { const t = performance.now(); const r = await window.__recut.actions.openProject(p); return { ms: performance.now() - t, ok: r.ok }; }, savePath);
+  const lg2 = await lt(t2);
+  ms('long', 'openProject round trip incl. multi-hour', op.ms, 1000, `${op.ok}; ${ltSummary(lg2)}`);
+  ms('long', 'openProject main-side handler time incl. multi-hour', ((await ipcStats(true)).times['project:load'] || [0])[0], 500);
 }
 
 fs.writeFileSync(path.join(OUT, 'electron.json'), JSON.stringify(results, null, 2));

@@ -18,10 +18,13 @@ for about 3 s. Every new feature adds work to the same commit and render path, s
 **Why deferred:** the first round of fixes (in-place playhead, unmounted hidden panels, level-of-detail lane,
 virtualized lists, idle autosave, chunked export) went in on 4 October 2026, and the benchmarks had not been re-run
 until now.
-**Plan:** treat the budgets in `tests/perf` as a gate. Remove the remaining per-frame clip re-renders when
-scrubbing, keep edit commit → paint under 32 ms, and move project open / save / clone off the renderer's main thread
-(compact JSON built off-thread, one `normalizeProject` pass). Add a multi-hour sequence to `tests/perf/bigProject.mjs`.
-Re-run the perf, attack and acceptance suites before each large feature below.
+**Plan:** treat the budgets in `tests/perf` as a gate: `npm run perf:check` runs both perf suites and fails on any
+budgeted row (baseline of 6 October 2026 in `bugs/open/2026-10-05-perf-budgets-2500-clips.md`; compare medians of
+two or more runs). Remove the remaining per-frame clip re-renders when scrubbing, keep edit commit → paint under
+32 ms, and move project open / save / clone off the renderer's main thread (compact JSON built off-thread, one
+`normalizeProject` pass). The benches also cover a 3 h, 6,700-clip sequence at 23.976 fps
+(`buildLongSequence` in `tests/perf/bigProject.mjs`). Re-run the perf, attack and acceptance suites before each large
+feature below.
 
 ## 2. Fix the remaining preview gaps
 

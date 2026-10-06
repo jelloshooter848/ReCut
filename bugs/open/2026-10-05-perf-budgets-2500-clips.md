@@ -100,6 +100,178 @@ Also recorded, without a budget:
 
 ---
 
+## Baseline (2026-10-06)
+
+Roadmap §1 Phase 0: a repeatable baseline and one pass/fail gate. Measured by Claude (Claude Code session) on
+`main` at 53f619c (no source change to the store, timeline, renderer or project I/O since e89fc8b; only
+`electron/export/*`). Same container class as the report: `nproc` 4, FFmpeg 6.1.1-3ubuntu5, Node 22.22.0, xvfb +
+software GL. Each suite ran alone, one at a time; the 1-min load average before each run was 0.3–3.2 (it stays
+around 2 on this VM even with nothing of ours running, so treat it as a rough signal only).
+
+### Gate
+
+```
+npm run perf:check                 # node suite, build, electron-perf.mjs, one PASS/FAIL table; exit 1 on any FAIL
+npm run perf:check -- --runs 2     # median of 2 runs; a row passes only if it passed in more than half of them
+npm run perf:check -- --from <dir> [<dir> …]   # aggregate earlier result folders without running
+```
+
+`tests/perf/perf-check.mjs` reads `test-results/perf/{store,panels,main,export,electron}.json` and gates on every row
+that carries a threshold. The thresholds are only the ones the benches already pass to `ms()` / `record()` / `rec()`
+(no budget was changed or loosened). One run takes about 15 min here (node 9 min, build 15 s, Electron 4.5 min).
+See `docs/DEVELOPMENT.md` → Performance gate. On the branch that adds it (2 runs): **223 budgeted rows, 167 PASS,
+56 FAIL → RESULT: FAIL** (exit 1). That is the expected Phase 0 result: the gate is red until Phase 1 lands.
+
+### Noise: per-metric median and spread on 53f619c
+
+Three node runs (`NODE_OPTIONS=--expose-gc npx vitest run -c tests/perf/vitest.config.ts`, 8.7–9.0 min each, 16
+passed / 1 skipped every time) and three Electron runs (`electron-perf.mjs`, 3.6–3.9 min each). Value = median of
+the 3 runs, spread = min–max. "Reliable" = failed in 3/3 runs; "flaky" = failed in 1 or 2 of 3. Every other
+budgeted row passed in 3/3 runs.
+
+Node (`tests/perf/*.perf.test.ts`, 96 budgeted rows):
+
+| Metric | Median (min–max) | Budget | Verdict |
+|---|---|---|---|
+| insertFromSource insert/ripple commit (median) | 23.3 ms (23.0–23.9) | ≤ 16 ms | reliable FAIL |
+| razor all tracks commit (median) | 25.4 ms (25.1–26.0) | ≤ 16 ms | reliable FAIL |
+| moveClips 1 clip insert/ripple commit (median) | 16.2 ms (14.0–16.5) | ≤ 16 ms | flaky (2/3 FAIL) |
+| serializeProject (pretty JSON, median of 3) | 326 ms (325–335) | ≤ 100 ms | reliable FAIL |
+| JSON.parse (median of 3) | 158 ms (154–164) | ≤ 100 ms | reliable FAIL |
+| normalizeProject (median of 3) | 110 ms (107–126) | ≤ 100 ms | reliable FAIL |
+| structuredClone(project) (median of 3) | 234 ms (232–248) | ≤ 100 ms | reliable FAIL |
+| filmstrip 48 frames cold (node, 20-min file) | 2,799 ms (2,642–3,053) | ≤ 3,000 ms | flaky (1/3 FAIL) |
+| ffmpeg single-graph parse @ 2,500 clips: exit / peak RSS | killed at 6,156 MB (6,152–6,159) | exit 0, ≤ 4,096 MB | reliable FAIL (not the export path: export is chunked) |
+| setClipSpeed ripple (median) | 11.2 ms (10.6–15.6) | ≤ 16 ms | PASS, closest to budget |
+| sequenceDuration (mean) | 0.11 ms (0.11–0.12) | ≤ 0.2 ms | PASS (0.28 ms FAIL in the report was noise) |
+
+Electron (`electron-perf.mjs`, 87 budgeted rows on 53f619c):
+
+| Metric | Median (min–max) | Budget | Verdict |
+|---|---|---|---|
+| Edit commit → paint (median): insert overwrite | 91.4 ms (90.3–96.8) | ≤ 32 ms | reliable FAIL |
+| … insert ripple | 123.7 ms (116.2–128.0) | ≤ 50 ms | reliable FAIL |
+| … razor all tracks | 101.8 ms (101.3–105.8) | ≤ 32 ms | reliable FAIL |
+| … moveClips overwrite | 80.3 ms (79.3–80.4) | ≤ 32 ms | reliable FAIL |
+| … rippleDeleteSelected | 82.2 ms (81.1–98.1) | ≤ 32 ms | reliable FAIL |
+| … undo / redo | 76.2 (74.9–76.4) / 76.6 (75.3–79.8) ms | ≤ 32 ms | reliable FAIL |
+| 300 mixed commits with UI mounted (no budget) | 8.8 s (8.7–9.0), 31–32 long tasks, max 322–347 ms | — | — |
+| Scrub fps @ 1 px/frame, no selection / 50 selected | 39.2 (38.9–40.1) / 34.0 (33.2–34.7) fps | ≥ 50 | reliable FAIL |
+| ClipView renders per scrub frame @ 1 px/frame, no sel. / 50 sel. | 20.5 (20.2–21.1) / 22.4 (22.1–22.7) | == 0 | reliable FAIL |
+| DOM mutations in clips content per scrub frame @ 1 px/frame | 38.6–39.7 / 50.6–52.6 | == 0 | reliable FAIL |
+| Long tasks during scrub @ 1 px/frame, no sel. / 50 sel. | 9 (6–10) / 10 (9–11) | == 0 | reliable FAIL |
+| setView call cost, 50 selected @ zoom-to-fit / @ 1 px/frame | 1.1 (1.1–1.2) / 1.2 (1.1–1.2) ms | ≤ 1 ms | reliable FAIL |
+| Wheel ×100 @ 1 px/frame, event → render (median) | 10.3 ms (8.9–10.9) | ≤ 8 ms | reliable FAIL |
+| Wheel ×100 @ 1 px/frame, long tasks | 1 (0–1) | == 0 | flaky (2/3 FAIL) |
+| Switch to big sequence → first paint @ zoom-to-fit | 106.9 ms (93.1–165.9) | ≤ 100 ms | flaky (2/3 FAIL) |
+| Long tasks in 2.5 s after that switch @ zoom-to-fit | 3 (1–3) | ≤ 1 | flaky (2/3 FAIL) |
+| Switch to big sequence → first paint @ 1 px/frame | 101.5 ms (100.2–102.2) | ≤ 100 ms | reliable FAIL (by 1–2 %) |
+| Switch sequence ×20 → paint (median) | 111.8 ms (108.9–113.0) | ≤ 100 ms | reliable FAIL |
+| JSON.stringify / structuredClone(project) in renderer | 131 (130–165) / 275 (261–277) ms | ≤ 100 ms | reliable FAIL |
+| saveProject round trip | 1,916 ms (1,872–1,956) | ≤ 500 ms | reliable FAIL |
+| openProject round trip | 2,785 ms (2,704–2,821), one 2.1–2.2 s long task | ≤ 1,000 ms | reliable FAIL |
+| Project search keystroke → paint (worst) | 48 ms (48–56) | ≤ 50 ms | flaky (1/3 FAIL) |
+| Program playback long tasks after 20 switches + 10 maximize cycles | 2 (1–3) | ≤ 2 | flaky (1/3 FAIL) |
+
+Now passing in 3/3 runs (were over budget in the report): Program playback long tasks @ zoom-to-fit (0),
+openProject main-side handler (392 ms, 390–414; was 735), autosave round trip (346 ms, 325–421), sequenceDuration.
+Still worth watching without a budget: Program playback @ 1 px/frame had one 1.48–1.54 s long task in 2 of 3 runs
+(right after play starts); `<video>` elements created reach 10,327–10,391 after 20 switches (16 live).
+
+**Noise verdict.** On an idle machine the three runs agree within about ±5 % for most timing rows and ±10–15 % for
+a few (normalizeProject, filmstrip, the switch at zoom-to-fit). The rows that fail fail by a wide margin, except
+the four flaky rows and `switch @ 1 px/frame` (1–2 % over). Contention from other jobs on the shared VM can still
+double a row (see the bisect below), so the gate documentation says: treat ±30 % as noise and compare medians of
+at least two runs.
+
+### serializeProject 704 ms vs 344 ms: noise, not a regression
+
+There is nothing to bisect. `git diff --stat 92eb1f1 e89fc8b` touches only docs, bugs, CI and three test files;
+`shared/project.ts` (`serializeProject` = `JSON.stringify(p, null, 2)`), the store and `bigProject.mjs` are
+identical, and e89fc8b → 53f619c changes only `electron/export/*`. Measured in isolation (a scratch vitest file that
+builds the big project and times `serializeProject` 7× without and 7× with a forced GC before each call; 3 fresh
+processes per commit, interleaved good / bad / main, same `node_modules`):
+
+| Commit | Without GC: medians of the 3 processes (all 21 samples min–max) | With GC: medians (min–max) | Output |
+|---|---|---|---|
+| 92eb1f1 (good) | 318.6 / 311.8 / 316.8 ms (304–353) | 302.6 / 306.6 / 306.7 ms (298–318) | 68,390,062 chars |
+| e89fc8b (bad) | 306.9 / 320.0 / 312.0 ms (302–338) | 301.2 / 319.9 / 305.2 ms (296–348) | 68,390,062 chars |
+| 53f619c (main) | 317.1 / 322.6 / 311.2 ms (304–347) | 310.5 / 314.8 / 308.2 ms (302–343) | 68,390,062 chars |
+
+All three commits serialize the same 68.4 M-character string in 296–353 ms; the full-suite row reads 325–335 ms in
+the three node runs above. The 704 ms of the report was a contended run (other agents on the machine), not a code
+change. The row still fails its 100 ms budget by 3×; that is Phase 1 C (project I/O), not a regression.
+
+### Multi-hour sequence
+
+`buildLongSequence(store, { hours: 3 })` in `tests/perf/bigProject.mjs` adds a 3 h sequence at 23.976 fps
+(258,941 frames) to the big project, not activated, after every existing row has been measured, so the 2,500-clip
+sequence and all earlier rows are unchanged. Content (deterministic, seeded): V1 a continuous cut of 3,084 shots
+1.5–9.5 s long (skewed short, mean ~4 s) with linked A1 audio; every 18th shot a linked 2–5 s insert on V2/A2 (171
+pairs); unlinked music beds on A3 (157 in node, 215 with the shorter real media in Electron); 480 transitions (240
+V1 dissolves / dips + matching A1 crossfades); 119 markers (beats every 2 min, chapters every 15 min, continuity
+notes every 10 min). 6,667 clips in node (6,725 in Electron); 3.04 MB compact. New rows (section `long`), two runs on
+this branch, median (min–max):
+
+| Metric | Value | Budget | |
+|---|---|---|---|
+| planFrame median / max (240 frames) | 0.01 / 1.25 ms (1.23–1.27) | ≤ 2 / ≤ 4 ms | PASS |
+| sequenceDuration (mean) | 0.12 ms (0.11–0.13) | ≤ 0.2 ms | PASS |
+| Commit insert/ripple / razor / ripple delete (node) | 55.0 (53.6–56.3) / 30.9 (30.1–31.6) / 21.7 (21.2–22.3) ms | ≤ 16 ms | FAIL |
+| Commit moveClips overwrite / undo (node) | 15.8 (15.7–15.8) / 0.34 ms | ≤ 16 ms | PASS (move by 1 %) |
+| serializeProject / JSON.parse / structuredClone incl. multi-hour | 369 / 179 / 506 ms | ≤ 100 ms | FAIL |
+| Project JSON incl. multi-hour, pretty / compact | 75.8 / 30.7 MB (was 68.4 / 27.3) | — | |
+| Switch → first paint @ zoom-to-fit / @ 1 px/frame | 50.3 (49.7–50.8) / 57.8 (54.3–61.2) ms | ≤ 100 ms | PASS |
+| Switch big ↔ multi-hour ×10 → paint (median) | 54.9 ms (54.8–55.0) | ≤ 100 ms | PASS |
+| Scrub @ zoom-to-fit (LOD lane, 0 clips mounted) | 58.2 fps, 0 ClipView renders, 0 long tasks | ≥ 50 | PASS |
+| Scrub @ 1 px/frame, no sel. / 50 sel. | 27.9 (27.1–28.7) / 24.9 (24.0–25.7) fps; 56 ClipView renders and ~91 clip DOM mutations per frame | ≥ 50, == 0 | FAIL |
+| Edit commit → paint: insert ripple / razor / move / undo | 87.2 / 49.3 / 35.9 / 33.2 ms | ≤ 50 / 32 / 32 / 32 | FAIL |
+| Program playback @ 1 px/frame | 24.0 fps, 0 long tasks | ≥ 23, ≤ 2 | PASS |
+| saveProject / openProject round trip incl. multi-hour | 3,179 (3,152–3,206) / 3,001 (2,907–3,095) ms | ≤ 500 / ≤ 1,000 ms | FAIL |
+| openProject main-side handler incl. multi-hour | 425 ms | ≤ 500 ms | PASS |
+
+Reading: per-frame work (planFrame, sequenceDuration, playback, LOD at fit) scales fine to 3 h. Store commits that
+ripple scale with the clips after the edit point (insert ripple 23 → 55 ms). The scrub driver steps `duration / 240`
+frames per animation frame; on the 3 h sequence that is 1,079 frames, close to the whole ~1,400-frame viewport at
+1 px/frame, so the Playhead page-flips the view on almost every frame and every mounted clip re-renders (56 per
+frame, against 20.5 on the 26-min sequence where a flip comes every ~6 frames). See "Phase 1 notes".
+
+### Rows changed in tests/perf (no budget changed)
+
+- `electron-perf.mjs`: the IPC wrapper did not wrap `project:autosaveJson`, which the renderer now uses for
+  autosave, so "autosave main-side handler time" read 0 ms and passed vacuously. It now wraps both channels, reports
+  the one used (176 ms, ≤ 300 ms, PASS), and records a FAIL "not captured" if neither is seen. The metric name says
+  "(write; serialize too on the legacy channel)".
+- `electron-perf.mjs`: the transcript / project / scenes keystroke rows put the varying "N events over 16 ms" count
+  in the metric name, so the same row had a different name in every run. The count moved to the note.
+- `export.perf.test.ts` already asserts the real input-count invariant (bugs/closed/2026-10-05-export-perf-inputcount-stale.md):
+  16 passed / 1 skipped (the opt-in CPU profile) in all node runs.
+
+### Phase 1 notes (from these measurements; hypotheses with pointers)
+
+- **Edit latency is mostly render, not store.** Node commits cost 4–25 ms; the same edits cost 76–124 ms commit →
+  paint in the app, including undo / redo whose store cost is 0.4 ms. So ≥ 70 ms per edit is React work after the
+  commit (TimelineBody pass and panels deriving from `project.sequences`, `src/panels/timeline/TimelinePanel.tsx`
+  ~:560–630). Store side, a CPU profile of razor / insert ripple (`RECUT_PERF_PROFILE=1`,
+  `profile-commit.perf.test.ts`, now with `insertRipple` and `moveInsert`) puts ~40 % in immer draft proxies
+  (`isDraftable` / `get` / `finalize`) created by scans over drafted clip arrays: `linkedClips`
+  (`shared/timeline.ts:72`, 11 % of razor), `findClip` (:41), `sortTrack` sorting the drafted array (:65),
+  `razorAt` / `splitTracksAt` `track.clips.find` (:555, :534), `rippleShift` `track.clips.filter` (:277).
+- **Scrub at working zoom is page-flip remounting.** `Playhead.tsx` page-flips the scroll when the playhead leaves
+  the view; every flip changes `visFrom` / `visTo` for every mounted `ClipView` (`TimelinePanel.tsx:612–615`), so
+  all of them re-render. On the 26-min sequence TimelineBody renders 18–19 times in ~119 scrub frames (a flip every
+  ~6 frames) and each pass re-renders ~130 clips: 20.5 per frame on average. On the 3 h sequence it renders 79–88
+  times in ~85 frames (a flip every frame), ~55 clips each: 56 per frame. Without a flip a playhead step renders 0
+  clips (the zoom-to-fit rows, where the whole sequence is in view). Either make a flip cheap (clip props in absolute coordinates inside a translated container,
+  `visFrom` / `visTo` quantized to filmstrip tiles) or add a realistic in-view drag row next to the page-flip row.
+- **Open / save is serialization on the main threads.** Save: `src/state/mediaActions.ts:330` structured-clones the
+  whole project (275 ms in the renderer), main pretty-prints it (`electron/project/io.ts:147`, 326 ms) and writes
+  68 MB. Open: main parse + normalize (392 ms), clone back, renderer `normalizeProject` again
+  (`mediaActions.ts:365`) and load + render in one 2.1–2.2 s long task. Autosave already sends compact JSON
+  (`mediaActions.ts:398`) and passes.
+
+---
+
 ## Verification
 <!-- Filled in by whoever works the bug. -->
 
