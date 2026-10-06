@@ -7,7 +7,7 @@
 import { useStore } from '@/state/store';
 import {
   DEFAULT_PROJECT_NAME, autosaveProject, openProject, projectFromReply, projectNameFromPath, recutApi, repairedMessage, saveProject,
-  verifyMediaOnline,
+  setAutosaveRequester, verifyMediaOnline,
 } from '@/state/mediaActions';
 import { activeSequence } from '@/state/selectors';
 import type { RecoveryReply } from '@shared/ipc';
@@ -351,6 +351,9 @@ export function initProjectLifecycle(): () => void {
     disposers.push(() => { for (const t of types) window.removeEventListener(t, onInput, { capture: true }); });
   }
   disposers.push(() => { if (intervalTimer) clearInterval(intervalTimer); intervalTimer = null; });
+  // (c) the autosave that follows a save which left edits unsaved (mediaActions autosaveAfterSave) waits for idle
+  // time and a pause of the user's work like every other autosave, instead of writing directly.
+  disposers.push(setAutosaveRequester(() => whenIdle(() => { void runAutosave(); })));
 
   // (b) OS / recent-menu open requests
   setOpenProjectPathHandler((path) => { void requestOpenProject(path); });
