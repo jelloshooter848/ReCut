@@ -25,6 +25,7 @@ import { canStreamAutosave, decodeProjectWire, encodeProjectWire, type ProjectAu
 import { autosavePathFor, checkRecovery, ProjectFileWriter, untitledAutosavePath, writeAutosaveJson } from '../../electron/project/io';
 import { useStore, resetStore } from '../../src/state/store';
 import { AUTOSAVE_AFTER_SAVE_MS, autosaveProject, saveProject, serializeProjectSliced, setAutosaveRequester } from '../../src/state/mediaActions';
+import { AUTOSAVE_QUIET_MS, initProjectLifecycle } from '../../src/app/project';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Any = any;
@@ -445,6 +446,35 @@ describe('autosave after a save that left edits unsaved', () => {
       expect(autosaves).toHaveLength(0); // the schedule decides when; nothing was written directly
     } finally {
       restore();
+    }
+  });
+
+  it('in the app, waits for a pause of the user\'s work like every autosave (lifecycle idle + autosave gate)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance'] });
+    api();
+    const dispose = initProjectLifecycle();
+    try {
+      useStore.setState({ projectPath: projectFile() });
+      S().renameProject('A');
+      const s1 = saveProject();
+      await untilCommits(1);
+      S().renameProject('B');
+      await pending[0].resolve();
+      await s1;
+      expect(S().dirty).toBe(true);
+      // The user keeps scrubbing (a playhead step every 200 ms) well past the follow-up's due time: no autosave
+      // lands mid-gesture (directly, it would have been written AUTOSAVE_AFTER_SAVE_MS after the save).
+      const id = S().project.activeSequenceId!;
+      for (let k = 1; k * 200 <= AUTOSAVE_AFTER_SAVE_MS + 3000; k++) { S().setView(id, { playhead: k }); await vi.advanceTimersByTimeAsync(200); }
+      await tick();
+      expect(autosaves).toHaveLength(0);
+      // Once the user pauses, it is written.
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_QUIET_MS + 500);
+      await tick();
+      expect(autosaves.length).toBeGreaterThanOrEqual(1);
+      expect(nameIn(autosaves[autosaves.length - 1])).toBe('B');
+    } finally {
+      dispose();
     }
   });
 
