@@ -56,11 +56,8 @@ export function Ruler(p: RulerProps) {
   // The scroller holds the whole device pixels of the view's scroll (set before paint, like the tracks scroller);
   // view positions plus `base` are content positions.
   const { base, baseDev } = splitScroll(p.scroll * p.zoom, dpr);
-  const baseRef = useRef(base);
-  baseRef.current = base;
-  const syncScrollLeft = useViewScrollLeft(scrollerRef, base, p.contentPx, Math.round(p.width));
-  /** The offset belongs to the view: undo any other scroll of the (hidden-bar) scroller. */
-  const onScrollerScroll = () => { const el = scrollerRef.current; if (el && Math.abs(el.scrollLeft - baseRef.current) > 1) syncScrollLeft(); };
+  // The offset belongs to the view: any other scroll of the (hidden-bar) scroller is undone.
+  const scroller = useViewScrollLeft(scrollerRef, base, p.contentPx, Math.round(p.width));
   // Canvas placement: the mounted range on the device pixel grid.
   const cvDev0 = Math.floor(Math.max(0, Math.min(p.mountX0, base)) * dpr);
   const cvDevW = Math.max(1, Math.ceil(Math.max(p.mountX1, base + p.width) * dpr) - cvDev0);
@@ -188,7 +185,7 @@ export function Ruler(p: RulerProps) {
       }}
       title="Click or drag to scrub"
     >
-      <div className="tl-ruler-scroll" ref={scrollerRef} onScroll={onScrollerScroll}>
+      <div className="tl-ruler-scroll" ref={scrollerRef} onScroll={scroller.onScroll}>
         <div className="tl-ruler-content" style={{ width: p.contentPx }}>
           <canvas ref={canvasRef} />
           {showInOut ? (
