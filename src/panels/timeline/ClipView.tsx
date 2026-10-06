@@ -11,7 +11,8 @@ import { thumbs, waves } from '@/app/media';
 import { peaksForRange } from '@/playback/thumbnails';
 import { labelColorHex } from '@/components/ui/ColorSwatch';
 import { CLIP_BAR_H, COMPACT_ROW_H } from './types';
-import { MEDIA_MIN_CLIP_PX, MEDIA_SETTLE_MS } from './viewMath';
+import { MEDIA_MIN_CLIP_PX } from './viewMath';
+import { afterMediaSettle } from './mediaSettle';
 import { formatSyncOffset, mediaNeedsProxy } from './clipBadges';
 
 export type FilterLook = 'none' | 'dim' | 'hide';
@@ -86,7 +87,8 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   // effect would re-render every clip once more right after it mounts, e.g. on each playback page flip).
   const [strip, setStrip] = useState<{ key: string; tiles: Record<number, string> }>(() => ({ key: stripKey, tiles: NO_TILES }));
   // P-05: no filmstrip for narrow clips; requests wait MEDIA_SETTLE_MS for the view to settle (zooming / fast
-  // scrolling re-runs this effect and cancels the timer) and are aborted when the clip leaves the viewport.
+  // scrolling re-runs this effect and cancels the timer) and for a pause in the editing (afterMediaSettle), and are
+  // aborted when the clip leaves the viewport.
   const wantMedia = w >= MEDIA_MIN_CLIP_PX;
   const stripOn = wantMedia && isVideo && !offline && !!media && media.kind !== 'audio';
   const tileTime = (i: number) => (isImage ? 0 : quantizeTime(Math.max(0, clip.sourceIn + ((i * tileW + tileW / 2) / zoom) * frameSec * clip.speed)));
@@ -127,11 +129,11 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
       });
     };
     const ac = new AbortController();
-    // Anything not fully cached (see above) waits for the view to settle.
-    const timer = window.setTimeout(() => {
+    // Anything not fully cached (see above) waits for the view to settle and for a pause in the editing (mediaSettle).
+    const cancel = afterMediaSettle(() => {
       thumbs.filmstrip(path, times, tileW, media.id, ac.signal).then(apply).catch(() => { /* ignore */ });
-    }, MEDIA_SETTLE_MS);
-    return () => { window.clearTimeout(timer); ac.abort(); };
+    });
+    return () => { cancel(); ac.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stripOn, path, firstTile, lastTile, tileW, zoom, clip.sourceIn, clip.speed, stripKey]);
 
@@ -147,10 +149,10 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
     // Only when it differs: a same-value setState right after mount still costs a (bailed-out) render and commit.
     if (hit !== undefined) { if (hit !== wave) setWaveState({ path, data: hit }); return; }
     let alive = true;
-    const timer = window.setTimeout(() => {
+    const cancel = afterMediaSettle(() => {
       waves.get(path, media.id).then((d) => { if (alive) setWaveState((w) => (w.path === path && w.data === d ? w : { path, data: d })); }).catch(() => { /* ignore */ });
-    }, MEDIA_SETTLE_MS);
-    return () => { alive = false; window.clearTimeout(timer); };
+    });
+    return () => { alive = false; cancel(); };
   }, [wantMedia, isVideo, offline, path, media]); // eslint-disable-line react-hooks/exhaustive-deps
   const waveX = visFrom;
   const waveW = wantMedia ? Math.min(MAX_WAVE_CANVAS_PX, Math.max(0, visTo - visFrom)) : 0;
