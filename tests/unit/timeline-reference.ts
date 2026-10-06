@@ -1,11 +1,17 @@
 /**
+ * REFERENCE ONLY (tests): shared/timeline.ts as it was before the store-commit performance pass (Roadmap §1
+ * Phase 1 B, branch claude/perf-b-store, base 895e9e9). timeline-equivalence.test.ts runs random edits through
+ * this and through the optimized module and requires deep-equal results. Do not import it from app code and do
+ * not "fix" it: it is the behavioural baseline.
+ */
+/**
  * Pure timeline operations. These functions mutate the Sequence passed in (intended to be an immer draft)
  * and never touch anything outside of it. All positions are integer frames.
  */
-import type { Clip, ClipAudio, ClipTransform, Sequence, SequenceSubtitleCue, StoryBlock, Track, Transition, TransitionType, ID, Rational, Marker } from './model';
+import type { Clip, ClipAudio, ClipTransform, Sequence, Track, Transition, TransitionType, ID, Rational, Marker } from '../../shared/model';
 import { isDraft } from 'immer';
-import { uid } from './ids';
-import { secondsToFrames } from './time';
+import { uid } from '../../shared/ids';
+import { secondsToFrames } from '../../shared/time';
 
 export type MediaDurationLookup = (mediaId: ID) => number; // seconds (Infinity for images/unknown)
 
@@ -38,163 +44,41 @@ export function findTrack(seq: Sequence, trackId: ID): Track | undefined {
 
 export interface ClipLocation { track: Track; clip: Clip; index: number }
 
-/**
- * The clip with `clipId`, its track and index. Inside a recipe the returned clip may be written to (it is a draft,
- * or a private copy put in place of an original); only the matching clip is drafted, the scan reads raw items.
- */
 export function findClip(seq: Sequence, clipId: ID): ClipLocation | undefined {
   for (const track of allTracks(seq)) {
-    const items = readItems(track.clips);
-    for (let index = 0; index < items.length; index++) {
-      if (items[index].id === clipId) return { track, clip: writableClip(track, index), index };
-    }
-  }
-  return undefined;
-}
-
-/** Read-only findClip: the raw clip (never drafted). Use it when the clip is only read or its track is checked. */
-function locateClip(seq: Sequence, clipId: ID): { track: Track; clip: Clip; index: number } | undefined {
-  for (const track of allTracks(seq)) {
-    const items = readItems(track.clips);
-    for (let index = 0; index < items.length; index++) if (items[index].id === clipId) return { track, clip: items[index], index };
+    const index = track.clips.findIndex((c) => c.id === clipId);
+    if (index >= 0) return { track, clip: track.clips[index], index };
   }
   return undefined;
 }
 
 const IMMER_STATE = Symbol.for('immer-state');
-interface DraftInternals { base_: unknown; copy_: unknown }
 
 /**
  * Read-only items of a (possibly immer-drafted) array without creating a child proxy per element. Reading the
  * elements of a draft array drafts each one; scanning 600+ clips that way on every commit dominated edit latency
  * (P-03). Items already drafted come back as their draft (reading primitive fields off them is free); the rest are
  * the untouched originals. `current()` is not used: with auto-freeze off it deep-copies every untouched clip.
- * Never mutate through the result: write through writableClip / writableItem, or replace the array.
+ * Never mutate through the result.
  */
 export function readItems<T>(arr: T[]): readonly T[] {
   if (!isDraft(arr)) return arr;
-  const st = (arr as unknown as Record<symbol, DraftInternals | undefined>)[IMMER_STATE];
+  const st = (arr as unknown as Record<symbol, { copy_?: unknown; base_?: unknown } | undefined>)[IMMER_STATE];
   const raw = st ? (st.copy_ ?? st.base_) : undefined;
   return Array.isArray(raw) ? (raw as T[]) : arr;
 }
 
-// ------------------------------------------------------------------
-// Writing inside an immer recipe without drafting whole arrays
-// ------------------------------------------------------------------
-//
-// The ops below scan raw items (readItems) and only draft what they change. When a clip array is reordered or
-// rebuilt from raw items (sortTrack, clearRange, removeClips, rippleShift), it is replaced by a plain array that
-// may hold *originals* (objects of the base state, usually frozen) at new indexes. Immer does not draft those on
-// read (it only drafts an item that still sits at its base index), so every write to an item goes through
-// writableItem: drafts and objects created during this recipe are written in place, an original is replaced
-// by a private copy. Outside a recipe (plain data, as in the unit tests) everything is written in place, as before.
-
-/** Clips copied shallowly from an original (nested transform / audio / arrays still shared with it). */
-const shallowCopies = new WeakSet<object>();
-/** Members of base arrays that are not frozen (a project that was loaded and not yet committed). */
-const unfrozenBaseMembers = new WeakMap<readonly unknown[], Set<unknown>>();
-
-function isPlainData(v: unknown): v is object {
-  if (!v || typeof v !== 'object') return false;
-  if (Array.isArray(v)) return true;
-  const proto = Object.getPrototypeOf(v);
-  return proto === Object.prototype || proto === null;
-}
-
-/** Deep copy of plain data (an original never contains drafts). */
-function thaw<T>(v: T): T {
-  if (Array.isArray(v)) return v.map(thaw) as unknown as T;
-  if (!isPlainData(v)) return v;
-  const out: Record<string, unknown> = {};
-  for (const k of Object.keys(v)) out[k] = thaw((v as Record<string, unknown>)[k]);
-  return out as T;
-}
-
-/** Is `item` (raw, read from `owner[key]`) an object of the base state, which must never be written? */
-function isOriginalItem(owner: object, key: string, item: object): boolean {
-  if (Object.isFrozen(item)) return true;
-  const st = (owner as Record<symbol, DraftInternals | undefined>)[IMMER_STATE];
-  const base = st ? (st.base_ as Record<string, unknown>)[key] : undefined;
-  // A frozen base array was produced by immer with auto-freeze: every original item in it is frozen as well.
-  if (!Array.isArray(base) || Object.isFrozen(base)) return false;
-  let members = unfrozenBaseMembers.get(base);
-  if (!members) { members = new Set(base); unfrozenBaseMembers.set(base, members); }
-  return members.has(item);
-}
-
-/** `owner[key][i]`, safe to write: a draft, an object created in this recipe, or a private copy of an original. */
-function writableItem<T extends object>(owner: object, key: string, i: number): T {
-  const arr = (owner as Record<string, T[]>)[key];
-  const item = arr[i]; // a draft when the array is a draft and the item still sits at its base index
-  if (!isDraft(owner) || isDraft(item)) return item;
-  if (isOriginalItem(owner, key, item)) { const w = thaw(item); arr[i] = w; return w; }
-  if (shallowCopies.has(item)) {
-    shallowCopies.delete(item);
-    const rec = item as Record<string, unknown>;
-    for (const k of Object.keys(rec)) if (isPlainData(rec[k])) rec[k] = thaw(rec[k]);
-  }
-  return item;
-}
-
-function writableClip(track: Track, i: number): Clip { return writableItem<Clip>(track, 'clips', i); }
-
-/**
- * `owner[key]` as a plain array that may be reordered / filled in place: a draft array is replaced by a plain
- * copy of its raw items (no proxy per element). Items still need writableItem (or copyOnWrite) before a write.
- */
-function ownArray<T>(owner: object, key: string): T[] {
-  const arr = (owner as Record<string, T[]>)[key];
-  if (!isDraft(arr)) return arr;
-  const plain = readItems(arr).slice();
-  (owner as Record<string, T[]>)[key] = plain;
-  return plain;
-}
-
-/**
- * Write `patch` into `arr[i]` (arr = ownArray(owner, key)): in place for drafts / new objects / plain data,
- * else a shallow copy replaces the original. Cheaper than drafting when many items change (ripple).
- */
-function patchItem<T extends object>(owner: object, key: string, arr: T[], i: number, patch: Partial<T>): T {
-  const item = arr[i];
-  if (!isDraft(owner) || isDraft(item) || !isOriginalItem(owner, key, item)) { Object.assign(item, patch); return item; }
-  const w = { ...item, ...patch };
-  // A frozen original was deep-frozen by immer, so its nested objects are frozen too: freezing the copy makes it
-  // a finished value immer does not walk again when it finalizes the array (and a later write copies it again).
-  if (Object.isFrozen(item)) Object.freeze(w); else shallowCopies.add(w);
-  arr[i] = w;
-  return w;
-}
-
-const byStart = (a: Clip, b: Clip) => a.start - b.start;
-
 export function sortTrack(track: Track): void {
   const clips = readItems(track.clips);
   for (let i = 1; i < clips.length; i++) {
-    // Sort the raw items (stable, same order as sorting the draft) instead of drafting every clip.
-    if (clips[i - 1].start > clips[i].start) { ownArray<Clip>(track, 'clips').sort(byStart); return; }
+    if (clips[i - 1].start > clips[i].start) { track.clips.sort((a, b) => a.start - b.start); return; }
   }
 }
 
-/** Clips sharing `clip`'s link (in track order), or just `clip`. Inside a recipe the results may be written to. */
 export function linkedClips(seq: Sequence, clip: Clip): Clip[] {
   if (!clip.linkId) return [clip];
   const out: Clip[] = [];
-  for (const t of allTracks(seq)) {
-    const items = readItems(t.clips);
-    for (let i = 0; i < items.length; i++) if (items[i].linkId === clip.linkId) out.push(writableClip(t, i));
-  }
-  return out;
-}
-
-/** Clips whose id is in `ids`, in track order. Inside a recipe the results may be written to. */
-export function clipsWithIds(seq: Sequence, ids: Iterable<ID>): Clip[] {
-  const set = ids instanceof Set ? ids as Set<ID> : new Set(ids);
-  const out: Clip[] = [];
-  if (set.size === 0) return out;
-  for (const t of allTracks(seq)) {
-    const items = readItems(t.clips);
-    for (let i = 0; i < items.length; i++) if (set.has(items[i].id)) out.push(writableClip(t, i));
-  }
+  for (const t of allTracks(seq)) for (const c of t.clips) if (c.linkId === clip.linkId) out.push(c);
   return out;
 }
 
@@ -248,14 +132,11 @@ export function maxClipEnd(clip: Clip, mediaDuration: number, fps: Rational): nu
 /** Drop transitions whose clips are gone or no longer adjacent. */
 export function reconcileTransitions(track: Track): void {
   if (track.transitions.length === 0) return;
-  // Clips are only read: scan them without creating draft proxies, index (by id) only the clips that a
-  // transition names: tracks hold thousands of clips and a few hundred transitions.
+  // Clips are only read: scan them without creating draft proxies, index by id once.
   const clips = readItems(track.clips);
-  const trs = readItems(track.transitions);
-  const named = new Set<ID>();
-  for (const t of trs) { if (t.outClipId) named.add(t.outClipId); if (t.inClipId) named.add(t.inClipId); }
   const byId = new Map<ID, Clip>();
-  for (const c of clips) if (named.has(c.id)) byId.set(c.id, c);
+  for (const c of clips) byId.set(c.id, c);
+  const trs = readItems(track.transitions);
   const kept: Transition[] = [];
   for (let i = 0; i < trs.length; i++) {
     let tr = trs[i];
@@ -269,7 +150,7 @@ export function reconcileTransitions(track: Track): void {
     let d = tr.duration;
     if (!Number.isFinite(d) || d < 1) d = 1;
     if (d > limit) d = Math.max(1, limit);
-    if (d !== tr.duration) { tr = writableItem<Transition>(track, 'transitions', i); tr.duration = d; } // draft only what changes
+    if (d !== tr.duration) { tr = track.transitions[i]; tr.duration = d; } // draft only what changes
     kept.push(tr);
   }
   // Only replace the array when something was dropped, so untouched tracks keep their identity.
@@ -293,33 +174,30 @@ export function reconcileTransitions(track: Track): void {
     }
     if (!overlap) return;
   }
-  // Work on indexes into the (raw) list and write through writableItem: the list may hold originals.
-  const at = (j: number) => readItems(track.transitions)[j];
-  const live = readItems(track.transitions);
-  const ins = new Map<ID, number[]>();
-  const outs = new Map<ID, number[]>();
-  for (let j = 0; j < live.length; j++) {
-    const t = live[j];
-    if (t.inClipId) { const l = ins.get(t.inClipId); if (l) l.push(j); else ins.set(t.inClipId, [j]); }
-    if (t.outClipId) { const l = outs.get(t.outClipId); if (l) l.push(j); else outs.set(t.outClipId, [j]); }
+  const live = track.transitions;
+  const ins = new Map<ID, Transition[]>();
+  const outs = new Map<ID, Transition[]>();
+  for (const t of live) {
+    if (t.inClipId) { const l = ins.get(t.inClipId); if (l) l.push(t); else ins.set(t.inClipId, [t]); }
+    if (t.outClipId) { const l = outs.get(t.outClipId); if (l) l.push(t); else outs.set(t.outClipId, [t]); }
   }
   const drop = new Set<ID>();
   for (const c of clips) {
     const il = ins.get(c.id); if (!il) continue;
     const ol = outs.get(c.id); if (!ol) continue;
-    const tin = il.find((j) => !drop.has(at(j).id));
-    const tout = ol.find((j) => !drop.has(at(j).id));
-    if (tin === undefined || tout === undefined || tin === tout) continue;
-    if (at(tin).duration + at(tout).duration <= c.duration) continue;
-    const room = c.duration - at(tin).duration;
-    if (room >= 1) writableItem<Transition>(track, 'transitions', tout).duration = room; else drop.add(at(tout).id);
+    const tin = il.find((t) => !drop.has(t.id));
+    const tout = ol.find((t) => !drop.has(t.id));
+    if (!tin || !tout || tin === tout) continue;
+    if (tin.duration + tout.duration <= c.duration) continue;
+    const room = c.duration - tin.duration;
+    if (room >= 1) tout.duration = room; else drop.add(tout.id);
   }
-  if (drop.size) track.transitions = readItems(track.transitions).filter((t) => !drop.has(t.id));
+  if (drop.size) track.transitions = live.filter((t) => !drop.has(t.id));
 }
 
 /** Frames of `clip` already used by its transition on the other edge (excluding `exceptId`). */
 function otherEdgeUse(track: Track, clip: Clip, edge: 'in' | 'out', exceptId?: ID): number {
-  const t = readItems(track.transitions).find((x) => x.id !== exceptId && (edge === 'in' ? x.inClipId === clip.id : x.outClipId === clip.id));
+  const t = track.transitions.find((x) => x.id !== exceptId && (edge === 'in' ? x.inClipId === clip.id : x.outClipId === clip.id));
   return t ? t.duration : 0;
 }
 
@@ -348,10 +226,9 @@ export function transitionsForClip(track: Track, clipId: ID): { in?: Transition;
 export function addTransition(seq: Sequence, trackId: ID, frame: number, type: TransitionType, duration: number): Transition | null {
   const track = findTrack(seq, trackId);
   if (!track || track.locked) return null;
-  // Find the cut at `frame`: clip ending at frame and/or clip starting at frame (read only: raw items).
-  const clips = readItems(track.clips);
-  const outClip = clips.find((c) => clipEnd(c) === frame);
-  const inClip = clips.find((c) => c.start === frame);
+  // Find the cut at `frame`: clip ending at frame and/or clip starting at frame.
+  const outClip = track.clips.find((c) => clipEnd(c) === frame);
+  const inClip = track.clips.find((c) => c.start === frame);
   if (!outClip && !inClip) return null;
   if ((type === 'audioCrossfade') !== (track.kind === 'audio')) {
     // allow crossDissolve on audio to mean crossfade
@@ -359,26 +236,23 @@ export function addTransition(seq: Sequence, trackId: ID, frame: number, type: T
     else return null;
   }
   // Remove existing transition at this cut
-  const atCut = (t: Transition) => (outClip && t.outClipId === outClip.id) || (inClip && t.inClipId === inClip.id);
-  if (readItems(track.transitions).some(atCut)) track.transitions = readItems(track.transitions).filter((t) => !atCut(t));
+  track.transitions = track.transitions.filter((t) => !(
+    (outClip && t.outClipId === outClip.id) || (inClip && t.inClipId === inClip.id)
+  ));
   let dur = Math.max(1, Math.min(duration, transitionLimit(track, outClip, inClip)));
   if (transitionLimit(track, outClip, inClip) < 1) {
     // A clip's other edge already uses every frame: share the clip between both transitions instead
     // (the existing one is shortened; on a 1-frame clip it gives way entirely).
-    const trs = readItems(track.transitions);
     const sides = [
-      { clip: outClip, other: outClip && trs.find((t) => t.inClipId === outClip.id) },
-      { clip: inClip, other: inClip && trs.find((t) => t.outClipId === inClip.id) },
+      { clip: outClip, other: outClip && track.transitions.find((t) => t.inClipId === outClip.id) },
+      { clip: inClip, other: inClip && track.transitions.find((t) => t.outClipId === inClip.id) },
     ];
     dur = Math.max(1, duration);
     for (const { clip, other } of sides) if (clip) dur = Math.min(dur, other ? Math.max(1, Math.floor(clip.duration / 2)) : clip.duration);
     for (const { clip, other } of sides) {
       if (!clip || !other || other.duration + dur <= clip.duration) continue;
-      // Indexes may have shifted (a transition dropped on the other side): look it up by id, write a writable item.
-      const j = readItems(track.transitions).findIndex((t) => t.id === other.id);
-      const w = writableItem<Transition>(track, 'transitions', j);
-      w.duration = clip.duration - dur;
-      if (w.duration < 1) track.transitions = readItems(track.transitions).filter((t) => t !== w);
+      other.duration = clip.duration - dur;
+      if (other.duration < 1) track.transitions = track.transitions.filter((t) => t !== other);
     }
   }
   const tr: Transition = {
@@ -390,10 +264,7 @@ export function addTransition(seq: Sequence, trackId: ID, frame: number, type: T
 }
 
 export function removeTransition(seq: Sequence, transitionId: ID): void {
-  for (const t of allTracks(seq)) {
-    const trs = readItems(t.transitions);
-    if (trs.some((tr) => tr.id === transitionId)) t.transitions = trs.filter((tr) => tr.id !== transitionId);
-  }
+  for (const t of allTracks(seq)) t.transitions = t.transitions.filter((tr) => tr.id !== transitionId);
 }
 
 // ------------------------------------------------------------------
@@ -408,28 +279,22 @@ export function removeTransition(seq: Sequence, transitionId: ID): void {
 export function rippleShift(seq: Sequence, fromFrame: number, delta: number, opts: { onlyTrackIds?: Set<ID>; except?: Set<ID>; skipTrackIds?: Set<ID> } = {}): ID[] {
   const shifted: ID[] = [];
   if (delta === 0) return shifted;
-  const except = opts.except;
   for (const track of allTracks(seq)) {
     if (track.locked) continue;
     if (opts.onlyTrackIds && !opts.onlyTrackIds.has(track.id)) continue;
     if (opts.skipTrackIds && opts.skipTrackIds.has(track.id)) continue;
-    // Scan raw items; only the movers are written (copies of originals, no proxy per clip).
-    const items = readItems(track.clips);
-    let firstMover = Infinity; // no spread: tracks can hold 100k+ clips
-    for (const c of items) if (c.start >= fromFrame && !except?.has(c.id) && c.start < firstMover) firstMover = c.start;
-    if (firstMover === Infinity) continue;
+    const movers = track.clips.filter((c) => c.start >= fromFrame && !(opts.except?.has(c.id)));
+    if (movers.length === 0) continue;
     if (delta < 0) {
       // Leftward shift: block the whole track if the earliest mover would land before frame 0, or if a
       // non-moving clip would be overlapped by it after the shift (e.g. a clip spanning the gap being closed).
+      let firstMover = Infinity;
+      for (const c of movers) if (c.start < firstMover) firstMover = c.start; // no spread: tracks can hold 100k+ clips
       if (firstMover + delta < 0) continue;
-      const blocker = items.some((c) => !except?.has(c.id) && c.start < fromFrame && clipEnd(c) > firstMover + delta);
+      const blocker = track.clips.find((c) => !opts.except?.has(c.id) && c.start < fromFrame && clipEnd(c) > firstMover + delta);
       if (blocker) continue;
     }
-    const arr = ownArray<Clip>(track, 'clips');
-    for (let i = 0; i < arr.length; i++) {
-      const c = arr[i];
-      if (c.start >= fromFrame && !except?.has(c.id)) patchItem<Clip>(track, 'clips', arr, i, { start: c.start + delta });
-    }
+    for (const c of movers) c.start += delta;
     // Markers stay anchored to time (Premiere behaviour).
     shifted.push(track.id);
     reconcileTransitions(track);
@@ -439,27 +304,14 @@ export function rippleShift(seq: Sequence, fromFrame: number, delta: number, opt
   const lo = Math.min(fromFrame, fromFrame + delta);
   const mapStart = (f: number) => (f >= fromFrame ? f + delta : f > lo ? lo : f);
   const mapEnd = (f: number) => (f > fromFrame ? f + delta : f > lo ? lo : f);
-  // A block that falls entirely inside the removed region collapses to nothing and is dropped. The list is only
-  // replaced when a block changes.
-  const blocks = readItems(seq.storyBlocks);
-  let changed = false;
-  for (const b of blocks) {
+  // A block that falls entirely inside the removed region collapses to nothing and is dropped.
+  seq.storyBlocks = seq.storyBlocks.filter((b) => {
     const start = Math.max(0, mapStart(b.start));
     const end = mapEnd(b.end);
-    if (end <= start || start !== b.start || end !== b.end) { changed = true; break; }
-  }
-  if (changed) {
-    const arr = ownArray<StoryBlock>(seq, 'storyBlocks');
-    const kept: StoryBlock[] = [];
-    for (let i = 0; i < arr.length; i++) {
-      const b = arr[i];
-      const start = Math.max(0, mapStart(b.start));
-      const end = mapEnd(b.end);
-      if (end <= start) continue;
-      kept.push(start === b.start && end === b.end ? b : patchItem<StoryBlock>(seq, 'storyBlocks', arr, i, { start, end }));
-    }
-    seq.storyBlocks = kept;
-  }
+    if (end <= start) return false;
+    b.start = start; b.end = end;
+    return true;
+  });
   return shifted;
 }
 
@@ -477,40 +329,31 @@ export interface ClearRangeResult {
 export function clearRange(track: Track, start: number, end: number, fps: Rational, except: Set<ID> = new Set()): ClearRangeResult {
   const res: ClearRangeResult = { removed: [], splits: [] };
   if (end <= start) return res;
-  const hit = (c: Clip) => !(except.has(c.id) || clipEnd(c) <= start || c.start >= end);
-  // Raw scan first: a track with nothing in the range keeps its array. It is still sorted / reconciled as before:
-  // callers (moveClips) rely on that check running between placements.
-  const items = readItems(track.clips);
-  if (!items.some(hit)) { sortTrack(track); reconcileTransitions(track); return res; }
   const result: Clip[] = [];
-  for (const c of items) {
-    if (!hit(c)) { result.push(c); continue; }
+  for (const c of track.clips) {
+    if (except.has(c.id) || clipEnd(c) <= start || c.start >= end) { result.push(c); continue; }
     const cEnd = clipEnd(c);
     if (c.start >= start && cEnd <= end) { res.removed.push(c.id); continue; }
-    // Heads and tails are new objects (shallow copies, as before): mark those made from an original so a later
-    // writableItem in the same recipe un-shares their nested objects first.
-    const fresh = (x: Clip): Clip => { if (isDraft(track) && !isDraft(c)) shallowCopies.add(x); return x; };
     let head: Clip | null = null;
     if (c.start < start) {
       // keep head
-      head = fresh({ ...c, duration: start - c.start });
+      head = { ...c, duration: start - c.start };
       result.push(head);
     }
     if (cEnd > end) {
       // keep tail (new id so both halves can coexist)
       const consumed = end - c.start;
-      const tail: Clip = fresh({
+      const tail: Clip = {
         ...c,
         id: c.start < start ? uid('clip') : c.id,
         start: end,
         duration: cEnd - end,
         sourceIn: c.sourceIn + consumed * (fps.den / fps.num) * c.speed,
-      });
+      };
       if (c.start < start) {
         // Cut in two: the tail is a new clip, so the out-transition (if any) must follow it.
         tail.audio = { ...c.audio, fadeIn: 0 };
-        const trs = readItems(track.transitions);
-        for (let j = 0; j < trs.length; j++) if (trs[j].outClipId === c.id) writableItem<Transition>(track, 'transitions', j).outClipId = tail.id;
+        for (const tr of track.transitions) if (tr.outClipId === c.id) tr.outClipId = tail.id;
         if (head) res.splits.push({ head, tail });
       }
       result.push(tail);
@@ -526,11 +369,7 @@ export function clearRange(track: Track, start: number, end: number, fps: Ration
 export function dropCuesForClips(seq: Sequence, clipIds: Iterable<ID>): void {
   const ids = clipIds instanceof Set ? clipIds as Set<ID> : new Set(clipIds);
   if (ids.size === 0) return;
-  const attached = (c: { clipId?: ID }) => !!c.clipId && ids.has(c.clipId);
-  for (const st of seq.subtitleTracks) {
-    const cues = readItems(st.cues);
-    if (cues.some(attached)) st.cues = cues.filter((c) => !attached(c));
-  }
+  for (const st of seq.subtitleTracks) st.cues = st.cues.filter((c) => !(c.clipId && ids.has(c.clipId)));
 }
 
 /**
@@ -541,13 +380,8 @@ export function dropCuesForClips(seq: Sequence, clipIds: Iterable<ID>): void {
 export function splitCuesAt(seq: Sequence, headId: ID, headEndSrc: number, tail: Clip, tailStartSrc: number): void {
   for (const st of seq.subtitleTracks) {
     const extra: typeof st.cues = [];
-    const cues = readItems(st.cues); // raw scan: only the head's cues are drafted
-    for (let j = 0; j < cues.length; j++) {
-      const raw = cues[j];
-      if (raw.clipId !== headId || raw.srcStart === undefined || raw.srcEnd === undefined) continue;
-      if (raw.srcEnd <= tailStartSrc + 1e-9 && raw.srcStart < tailStartSrc - 1e-9) continue; // stays on the head
-      const cue = writableItem<SequenceSubtitleCue>(st, 'cues', j);
-      if (cue.srcStart === undefined || cue.srcEnd === undefined) continue;
+    for (const cue of st.cues) {
+      if (cue.clipId !== headId || cue.srcStart === undefined || cue.srcEnd === undefined) continue;
       if (cue.srcStart >= tailStartSrc - 1e-9) { cue.clipId = tail.id; continue; }
       if (cue.srcEnd <= tailStartSrc + 1e-9) continue; // entirely before the tail: stays on the head
       if (cue.srcStart >= headEndSrc - 1e-9) {
@@ -687,8 +521,7 @@ export function splitClip(seq: Sequence, track: Track, clip: Clip, frame: number
   clip.duration = frame - clip.start;
   clip.audio = { ...clip.audio, fadeOut: 0 };
   // transitions: out transition moves to tail
-  const trs = readItems(track.transitions);
-  for (let j = 0; j < trs.length; j++) if (trs[j].outClipId === clip.id) writableItem<Transition>(track, 'transitions', j).outClipId = tail.id;
+  for (const tr of track.transitions) if (tr.outClipId === clip.id) tr.outClipId = tail.id;
   track.clips.push(tail);
   sortTrack(track);
   // Both halves are shorter than the original: a transition on either side may now exceed its clip.
@@ -706,9 +539,8 @@ export function splitClip(seq: Sequence, track: Track, clip: Clip, frame: number
 function splitTracksAt(seq: Sequence, tracks: Track[], frame: number): Clip[] {
   const tails: { tail: Clip; oldLink: ID | null }[] = [];
   for (const track of tracks) {
-    const i = readItems(track.clips).findIndex((x) => x.start < frame && clipEnd(x) > frame);
-    if (i < 0) continue;
-    const c = writableClip(track, i);
+    const c = track.clips.find((x) => x.start < frame && clipEnd(x) > frame);
+    if (!c) continue;
     const tail = splitClip(seq, track, c, frame);
     if (tail) tails.push({ tail, oldLink: c.linkId });
   }
@@ -726,13 +558,12 @@ export function razorAt(seq: Sequence, frame: number, trackIds?: ID[], opts: { l
   const done = new Set<ID>();
   for (const track of targets) {
     if (track.locked) continue;
-    const i = readItems(track.clips).findIndex((c) => c.start < frame && clipEnd(c) > frame);
-    if (i < 0 || done.has(readItems(track.clips)[i].id)) continue;
-    const clip = writableClip(track, i);
+    const clip = track.clips.find((c) => c.start < frame && clipEnd(c) > frame);
+    if (!clip || done.has(clip.id)) continue;
     const group = linked ? linkedClips(seq, clip) : [clip];
     const newLink = group.length > 1 ? uid('link') : null;
     for (const g of group) {
-      const loc = locateClip(seq, g.id)!;
+      const loc = findClip(seq, g.id)!;
       if (loc.track.locked) continue;
       const tail = splitClip(seq, loc.track, g, frame);
       done.add(g.id);
@@ -751,10 +582,7 @@ export function removeClips(seq: Sequence, clipIds: ID[]): void {
   const removed = new Set<ID>();
   for (const t of allTracks(seq)) {
     if (t.locked) continue;
-    // Raw scan: only tracks that lose a clip get a new array (and a transition check).
-    const items = readItems(t.clips);
-    if (!items.some((c) => ids.has(c.id))) continue;
-    t.clips = items.filter((c) => { if (ids.has(c.id)) { removed.add(c.id); return false; } return true; });
+    t.clips = t.clips.filter((c) => { if (ids.has(c.id)) { removed.add(c.id); return false; } return true; });
     reconcileTransitions(t);
   }
   // Only cues attached to clips that were actually removed (clips on locked tracks keep theirs).
@@ -763,7 +591,7 @@ export function removeClips(seq: Sequence, clipIds: ID[]): void {
 
 /** Ripple delete: remove the clips and close the gaps they leave. Processes gaps right-to-left. */
 export function rippleDeleteClips(seq: Sequence, clipIds: ID[]): void {
-  const locs = clipIds.map((id) => locateClip(seq, id)).filter((l): l is ClipLocation => !!l && !l.track.locked);
+  const locs = clipIds.map((id) => findClip(seq, id)).filter((l): l is ClipLocation => !!l && !l.track.locked);
   const ranges = locs.map((l) => ({ start: l.clip.start, end: clipEnd(l.clip) }));
   removeClips(seq, locs.map((l) => l.clip.id));
   // Merge overlapping/adjacent ranges (across tracks) into gap intervals, then close them right-to-left
@@ -785,7 +613,7 @@ export function rippleDeleteClips(seq: Sequence, clipIds: ID[]): void {
 /** Disabled clips that can be removed (not on a locked track), in track order. */
 export function removableDisabledClipIds(seq: Sequence): ID[] {
   const out: ID[] = [];
-  for (const t of allTracks(seq)) if (!t.locked) for (const c of readItems(t.clips)) if (!c.enabled) out.push(c.id);
+  for (const t of allTracks(seq)) if (!t.locked) for (const c of t.clips) if (!c.enabled) out.push(c.id);
   return out;
 }
 
@@ -818,10 +646,9 @@ export function extractRange(seq: Sequence, inF: number, outF: number, trackIds?
 export interface TrimLimits { minStart: number; maxStart: number; minEnd: number; maxEnd: number }
 
 export function trimLimits(seq: Sequence, track: Track, clip: Clip, mediaDur: number): TrimLimits {
-  const clips = readItems(track.clips); // read only; holds `clip` itself when it was drafted / made writable
-  const idx = clips.indexOf(clip);
-  const prev = clips[idx - 1];
-  const next = clips[idx + 1];
+  const idx = track.clips.indexOf(clip);
+  const prev = track.clips[idx - 1];
+  const next = track.clips[idx + 1];
   const handleBefore = Math.floor((clip.sourceIn / clip.speed) * seq.fps.num / seq.fps.den + 1e-6); // frames of media available before sourceIn
   const maxDur = maxDurationFrom(clip.sourceIn, clip.speed, mediaDur, seq.fps);
   // The limits only ever bound how far an edge may move outward: they never lie on the inner side of the
@@ -875,7 +702,7 @@ export function rippleTrimStart(seq: Sequence, clipId: ID, newStart: number, med
   const loc = findClip(seq, clipId);
   if (!loc || loc.track.locked) return NaN;
   const oldStart = loc.clip.start;
-  const group = linkedClips(seq, loc.clip).filter((c) => c.start === oldStart && !locateClip(seq, c.id)!.track.locked);
+  const group = linkedClips(seq, loc.clip).filter((c) => c.start === oldStart && !findClip(seq, c.id)!.track.locked);
   let target = newStart;
   for (const g of group) {
     const handleBefore = Math.floor((g.sourceIn / g.speed) * seq.fps.num / seq.fps.den + 1e-6);
@@ -899,7 +726,7 @@ export function rippleTrimEnd(seq: Sequence, clipId: ID, newEnd: number, mediaDu
   if (!loc || loc.track.locked) return NaN;
   const oldEnd = clipEnd(loc.clip);
   // Like rippleTrimStart: linked clips on locked tracks are left alone (their track does not ripple either).
-  const group = linkedClips(seq, loc.clip).filter((c) => clipEnd(c) === oldEnd && !locateClip(seq, c.id)!.track.locked);
+  const group = linkedClips(seq, loc.clip).filter((c) => clipEnd(c) === oldEnd && !findClip(seq, c.id)!.track.locked);
   let target = newEnd;
   for (const g of group) {
     target = Math.max(g.start + MIN_CLIP_FRAMES, Math.min(maxClipEnd(g, mediaDur(g.mediaId), seq.fps), target));
@@ -937,7 +764,7 @@ export function rollEdit(seq: Sequence, outClipId: ID, inClipId: ID, newFrame: n
 export function slipClip(seq: Sequence, clipId: ID, deltaFrames: number, mediaDur: MediaDurationLookup): number {
   const loc = findClip(seq, clipId);
   if (!loc || loc.track.locked) return 0;
-  const group = linkedClips(seq, loc.clip).filter((g) => !locateClip(seq, g.id)!.track.locked); // locked tracks never change
+  const group = linkedClips(seq, loc.clip).filter((g) => !findClip(seq, g.id)!.track.locked); // locked tracks never change
   let d = deltaFrames;
   for (const g of group) {
     const handleBefore = Math.floor((g.sourceIn / g.speed) * seq.fps.num / seq.fps.den + 1e-6);
@@ -954,10 +781,8 @@ export function slideClip(seq: Sequence, clipId: ID, deltaFrames: number, mediaD
   const loc = findClip(seq, clipId);
   if (!loc || loc.track.locked) return 0;
   const { track, clip, index } = loc;
-  // Neighbours are read raw and only made writable when they are trimmed.
-  const raw = readItems(track.clips);
-  const prev = raw[index - 1];
-  const next = raw[index + 1];
+  const prev = track.clips[index - 1];
+  const next = track.clips[index + 1];
   let d = deltaFrames;
   // An adjacent neighbour is trimmed to compensate; across a gap the clip may only move within the gap.
   if (prev) {
@@ -976,11 +801,10 @@ export function slideClip(seq: Sequence, clipId: ID, deltaFrames: number, mediaD
     } else d = Math.min(d, Math.max(0, gap));
   }
   if (d === 0) return 0;
-  if (prev && clipEnd(prev) === clip.start) writableClip(track, index - 1).duration += d;
+  if (prev && clipEnd(prev) === clip.start) prev.duration += d;
   if (next && next.start === clipEnd(clip)) {
-    const n = writableClip(track, index + 1);
-    n.sourceIn = Math.max(0, n.sourceIn + d * seq.fps.den / seq.fps.num * n.speed);
-    n.start += d; n.duration -= d;
+    next.sourceIn = Math.max(0, next.sourceIn + d * seq.fps.den / seq.fps.num * next.speed);
+    next.start += d; next.duration -= d;
   }
   clip.start += d;
   sortTrack(track);
@@ -1014,15 +838,9 @@ export function moveClips(seq: Sequence, moves: MoveSpec[], mode: 'overwrite' | 
     if (!loc || loc.track.locked || !dest || dest.locked || dest.kind !== loc.track.kind) return false;
     lifted.push({ clip: loc.clip, toTrackId: m.toTrackId, toStart: m.toStart + shift, fromTrackId: loc.track.id, fromStart: loc.clip.start });
   }
-  // remove from source tracks (raw scan; only tracks that lose a clip get a new array)
+  // remove from source tracks
   const ids = new Set(lifted.map((l) => l.clip.id));
-  const touched = new Set<ID>();
-  for (const t of allTracks(seq)) {
-    const items = readItems(t.clips);
-    if (!items.some((c) => ids.has(c.id))) continue;
-    t.clips = items.filter((c) => !ids.has(c.id));
-    touched.add(t.id);
-  }
+  for (const t of allTracks(seq)) t.clips = t.clips.filter((c) => !ids.has(c.id));
   if (mode === 'insert') {
     // Close the vacated ranges like a ripple delete (all unlocked tracks, so tracks that were not touched
     // stay in sync; a track with a clip spanning a gap is left alone). Right-to-left so earlier ranges
@@ -1037,7 +855,7 @@ export function moveClips(seq: Sequence, moves: MoveSpec[], mode: 'overwrite' | 
     for (let i = gaps.length - 1; i >= 0; i--) {
       const g = gaps[i];
       // A track with nothing after the gap has nothing to shift but counts as closed.
-      const idle = allTracks(seq).filter((t) => !t.locked && !readItems(t.clips).some((c) => c.start >= g.end)).map((t) => t.id);
+      const idle = allTracks(seq).filter((t) => !t.locked && !t.clips.some((c) => c.start >= g.end)).map((t) => t.id);
       for (const id of [...rippleShift(seq, g.end, -(g.end - g.start)), ...idle]) g.tracks.add(id);
     }
     // Destinations are given in the pre-move timeline: map them through the gaps that closed on the
@@ -1062,10 +880,8 @@ export function moveClips(seq: Sequence, moves: MoveSpec[], mode: 'overwrite' | 
     clearRangeIn(seq, t, l.clip.start, clipEnd(l.clip));
     t.clips.push(l.clip);
     sortTrack(t);
-    touched.add(t.id);
   }
-  // Tracks shifted or split above were reconciled there; the source and destination tracks are checked here.
-  for (const t of allTracks(seq)) if (touched.has(t.id)) reconcileTransitions(t);
+  for (const t of allTracks(seq)) reconcileTransitions(t);
   return true;
 }
 
@@ -1099,7 +915,7 @@ export function removeTrack(seq: Sequence, trackId: ID): boolean {
     if (i < 0) continue;
     if (list.length <= 1) return false;
     const [gone] = list.splice(i, 1);
-    dropCuesForClips(seq, readItems(gone.clips).map((c) => c.id));
+    dropCuesForClips(seq, gone.clips.map((c) => c.id));
     renameTracks(seq);
     return true;
   }
@@ -1119,9 +935,9 @@ export function editPoints(seq: Sequence, trackIds?: ID[]): number[] {
   const set = new Set<number>([0]);
   for (const t of allTracks(seq)) {
     if (trackIds && !trackIds.includes(t.id)) continue;
-    for (const c of readItems(t.clips)) { set.add(c.start); set.add(clipEnd(c)); }
+    for (const c of t.clips) { set.add(c.start); set.add(clipEnd(c)); }
   }
-  for (const m of readItems(seq.markers)) set.add(m.time);
+  for (const m of seq.markers) set.add(m.time);
   return [...set].sort((a, b) => a - b);
 }
 
@@ -1139,7 +955,7 @@ export function prevEdit(seq: Sequence, frame: number): number | null {
 export function addMarker(seq: Sequence, marker: Omit<Marker, 'id'>): Marker {
   const m: Marker = { id: uid('mk'), ...marker };
   seq.markers.push(m);
-  ownArray<Marker>(seq, 'markers').sort((a, b) => a.time - b.time); // raw sort: no proxy per marker
+  seq.markers.sort((a, b) => a.time - b.time);
   return m;
 }
 
@@ -1189,29 +1005,26 @@ export function resolveSubtitleCues(seq: Sequence): ResolvedCue[] {
  * longer exists the marker keeps its time and loses its `clipId`. Mutates `next` (an immer draft).
  */
 export function followClipMarkers(prev: Sequence, next: Sequence): void {
-  // Raw reads throughout (no proxy per marker / clip); only markers that change are made writable.
-  const markers = readItems(next.markers);
-  if (!markers.some((m) => m.clipId)) return;
+  if (!next.markers.some((m) => m.clipId)) return;
   const index = (seq: Sequence) => {
     const map = new Map<ID, Clip>();
-    for (const t of allTracks(seq)) for (const c of readItems(t.clips)) map.set(c.id, c);
+    for (const t of allTracks(seq)) for (const c of t.clips) map.set(c.id, c);
     return map;
   };
   const before = index(prev);
   const after = index(next);
   let moved = false;
-  for (let j = 0; j < markers.length; j++) {
-    const m = markers[j];
+  for (const m of next.markers) {
     if (!m.clipId) continue;
     const a = before.get(m.clipId);
     if (!a) continue; // the clip did not exist before this edit (e.g. marker just linked): nothing to follow
     const b = after.get(m.clipId);
-    if (!b) { delete writableItem<Marker>(next, 'markers', j).clipId; continue; }
+    if (!b) { delete m.clipId; continue; }
     if (a === b || (a.start === b.start && a.sourceIn === b.sourceIn && a.speed === b.speed && prev.fps.num * next.fps.den === next.fps.num * prev.fps.den)) continue;
     const src = a.sourceIn + ((m.time - a.start) * prev.fps.den / prev.fps.num) * a.speed;
     const t = b.start + Math.round(((src - b.sourceIn) / b.speed) * next.fps.num / next.fps.den);
     const time = Math.max(0, t);
-    if (time !== m.time) { writableItem<Marker>(next, 'markers', j).time = time; moved = true; }
+    if (time !== m.time) { m.time = time; moved = true; }
   }
-  if (moved) ownArray<Marker>(next, 'markers').sort((x, y) => x.time - y.time);
+  if (moved) next.markers.sort((x, y) => x.time - y.time);
 }
