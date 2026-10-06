@@ -11,15 +11,27 @@ import fsp from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { MEDIA_SCHEME } from '../../shared/ipc';
 import { contentTypeFor, mediaUrlPath, parseRange } from './range';
+import { isThumbnailCacheFile } from './thumbs';
 
 export { parseRange, contentTypeFor, mediaUrlPath } from './range';
+
+/**
+ * Thumbnail / filmstrip JPEGs in the cache are content-keyed (isThumbnailCacheFile): the renderer may keep and reuse
+ * them without asking again. Without this, every <img> that re-mounts a tile the renderer had already shown (a
+ * timeline page visited again while scrubbing) revalidated it through the browser process and this handler, about
+ * 1.2-1.8 ms of resource loading per frame on a page flip. Everything else (source media, proxies, stills) can change
+ * under the same path and stays `no-cache`.
+ */
+export function cacheControlFor(filePath: string): string {
+  return isThumbnailCacheFile(filePath) ? 'public, max-age=31536000, immutable' : 'no-cache';
+}
 
 function baseHeaders(filePath: string, st: fs.Stats): Record<string, string> {
   return {
     'Content-Type': contentTypeFor(filePath),
     'Accept-Ranges': 'bytes',
     'Last-Modified': st.mtime.toUTCString(),
-    'Cache-Control': 'no-cache',
+    'Cache-Control': cacheControlFor(filePath),
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
   };
