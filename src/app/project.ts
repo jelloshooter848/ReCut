@@ -6,11 +6,11 @@
  */
 import { useStore } from '@/state/store';
 import {
-  DEFAULT_PROJECT_NAME, autosaveProject, openProject, projectNameFromPath, recutApi, repairedMessage, saveProject, verifyMediaOnline,
+  DEFAULT_PROJECT_NAME, autosaveProject, openProject, projectFromReply, projectNameFromPath, recutApi, repairedMessage, saveProject,
+  verifyMediaOnline,
 } from '@/state/mediaActions';
 import { activeSequence } from '@/state/selectors';
-import { normalizeProject } from '@shared/project';
-import type { RecoveryInfo } from '@shared/ipc';
+import type { RecoveryReply } from '@shared/ipc';
 import { useShellStore } from './shellStore';
 import { setBeforeQuitHandler, setOpenProjectPathHandler } from './bootstrap';
 import { registerCommand } from '@/keyboard/shortcuts';
@@ -203,9 +203,10 @@ export function autosaveNow(): Promise<void> { return runAutosave(true); }
 // ------------------------------------------------------------------
 
 /** The startup recovery prompt; warns when the autosave needed repairs to load (RecoveryInfo.repaired). */
-export function recoveryPrompt(info: RecoveryInfo): ConfirmOptions {
+export function recoveryPrompt(info: RecoveryReply): ConfirmOptions {
   const when = new Date(info.savedAt).toLocaleString();
-  const what = info.projectPath ? `"${info.project?.name ?? fileName(info.projectPath)}" (${fileName(info.projectPath)})` : 'an unsaved project';
+  const name = 'projectWire' in info ? info.projectName : info.project?.name;
+  const what = info.projectPath ? `"${name ?? fileName(info.projectPath)}" (${fileName(info.projectPath)})` : 'an unsaved project';
   const repaired = Array.isArray(info.repaired) ? info.repaired : [];
   const n = repaired.length;
   const damage = n
@@ -229,7 +230,8 @@ export async function checkStartupRecovery(): Promise<boolean> {
   const choice = await confirmInApp(recoveryPrompt(info));
   if (choice === 0) {
     try {
-      const project = normalizeProject(info.project);
+      // Normalized once: by main for a projectWire, here for a plain object (older bridge).
+      const project = await projectFromReply(info);
       useStore.getState().loadProjectData(project, info.projectPath);
       // Recovered content differs from the file on disk: keep it dirty so the user is asked to save.
       useStore.setState({ dirty: true });

@@ -138,7 +138,8 @@ Thresholds are the budgets the scripts assert: 60 fps interactions → ≤16 ms 
 All scripts write JSON to `$RECUT_PERF_OUT` (default `test-results/perf/`) and print a table.
 
 ```
-# pure / main-process / export benches (node; about 4 min; needs ffmpeg; generates a 2-h file on first run)
+# pure / main-process / export benches (node; about 9 min, most of it the chunked export of the whole 26-min
+# sequence; needs ffmpeg; generates a 20-min file on first run). `npm run perf:check` runs both suites and gates.
 NODE_OPTIONS=--expose-gc RECUT_PERF_SCRATCH=/tmp/recut-perf npx vitest run -c tests/perf/vitest.config.ts
 #   store.perf.test.ts   commits, undo/redo, heap over 300 commits, serialize/parse/normalize/clone, planFrame
 #   panels.perf.test.ts  project rows, transcript search, scene filter/sort, timeline culling
@@ -147,7 +148,7 @@ NODE_OPTIONS=--expose-gc RECUT_PERF_SCRATCH=/tmp/recut-perf npx vitest run -c te
 RECUT_PERF_PROFILE=1 npx vitest run -c tests/perf/vitest.config.ts tests/perf/profile-commit.perf.test.ts  # P-03 CPU profile
 
 # Electron (needs npm run build; media from scripts/make-test-media.sh is generated on first run)
-xvfb-run -a -s "-screen 0 1920x1080x24" node tests/perf/electron-perf.mjs [--long <2h file>]   # full suite, about 12 min
+xvfb-run -a -s "-screen 0 1920x1080x24" node tests/perf/electron-perf.mjs [--long <2h file>]   # full suite, about 4 min
 xvfb-run -a -s "-screen 0 1920x1080x24" node tests/perf/electron-probe.mjs     # renders per playhead/scroll step by panel (P-02)
 xvfb-run -a -s "-screen 0 1920x1080x24" node tests/perf/electron-cpuprof.mjs   # CDP CPU profile mapped through sourcemaps
 xvfb-run -a -s "-screen 0 1920x1080x24" node tests/perf/electron-attrib.mjs    # same scenarios under 4 layouts

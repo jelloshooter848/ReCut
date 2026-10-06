@@ -42,6 +42,8 @@ const api: RecutApi = {
   message: (opts: MessageOptions) => ipcRenderer.invoke(IPC.dialogMessage, opts),
 
   saveProject: (path: string, project: Project) => ipcRenderer.invoke(IPC.projectSave, path, project),
+  // Same channel: main writes a string as-is and serializes an object itself.
+  saveProjectJson: (path: string, json: string) => ipcRenderer.invoke(IPC.projectSave, path, json),
   loadProject: (path: string) => ipcRenderer.invoke(IPC.projectLoad, path),
   autosaveProject: (path: string | null, project: Project) => ipcRenderer.invoke(IPC.projectAutosave, path, project),
   autosaveProjectJson: (path: string | null, json: string) => ipcRenderer.invoke(IPC.projectAutosaveJson, path, json),

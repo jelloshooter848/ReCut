@@ -14,9 +14,10 @@ import { getFfmpegPath, getFfprobePath } from './media/ffmpeg';
 import type { AppPreferences, ID, JobInfo, MediaProbe, Project } from '../shared/model';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import type {
-  AppInfo, ExportRequest, ExportStartResult, FilmstripRequest, MessageOptions, OpenFilesOptions,
-  ProxyRequest, RecutApi, RelinkScanRequest, SaveFileOptions, SceneDetectRequest, ThumbnailRequest, WaveformData,
+  AppInfo, ExportRequest, ExportStartResult, FilmstripRequest, LoadReply, MessageOptions, OpenFilesOptions,
+  ProxyRequest, RecoveryReply, RecutApi, RelinkScanRequest, SaveFileOptions, SceneDetectRequest, ThumbnailRequest, WaveformData,
 } from '../shared/ipc';
+import { encodeProjectWire } from '../shared/projectWire';
 import * as io from './project/io';
 import * as fsApi from './fs';
 
@@ -229,28 +230,42 @@ export function registerIpc(deps: IpcDeps): void {
   });
 
   // --- project ---
-  ipcMain.handle(IPC.projectSave, async (_e, p: string, project: Project) => {
-    const res = await io.saveProjectFile(assertString(p, 'path'), project);
+  // A string is the project already serialized by the renderer (saveProjectJson): written as-is. An object
+  // (saveProject, older renderers) is serialized here.
+  ipcMain.handle(IPC.projectSave, async (_e, p: string, data: Project | string) => {
+    const file = assertString(p, 'path');
+    const isJson = typeof data === 'string';
+    const res = isJson ? await io.saveProjectJson(file, data) : await io.saveProjectFile(file, data);
     if (res.ok) {
-      await io.addRecentProject(userData, res.path);
-      await io.clearUntitledAutosaveFor(project, userData);
+      await Promise.all([
+        io.addRecentProject(userData, res.path),
+        io.clearUntitledAutosaveForId(isJson ? io.topLevelProjectId(data) : data?.id, userData),
+      ]);
       deps.onRecentChanged?.();
     }
     return res;
   });
-  ipcMain.handle(IPC.projectLoad, async (_e, p: string) => {
+  // The project is read, parsed and normalized once here and sent as JSON pieces (shared/projectWire.ts): no
+  // structured clone of the whole project, and the renderer does not normalize it again.
+  ipcMain.handle(IPC.projectLoad, async (_e, p: string): Promise<LoadReply> => {
     const res = await io.loadProjectFile(assertString(p, 'path'));
-    if (res.ok) {
-      await io.addRecentProject(userData, res.path);
-      deps.onRecentChanged?.();
-    }
-    return res;
+    if (!res.ok) return res;
+    const recent = io.addRecentProject(userData, res.path); // prefs I/O overlaps the encoding below
+    const { project, ...rest } = res;
+    let reply: LoadReply;
+    try { reply = { ...rest, projectWire: encodeProjectWire(project) }; } catch (e) { await recent.catch(() => undefined); throw e; }
+    await recent;
+    deps.onRecentChanged?.();
+    return reply;
   });
   ipcMain.handle(IPC.projectAutosave, (_e, p: string | null, project: Project) => io.writeAutosave(typeof p === 'string' && p ? p : null, project, userData));
   ipcMain.handle(IPC.projectAutosaveJson, (_e, p: string | null, json: string) => io.writeAutosaveJson(typeof p === 'string' && p ? p : null, json, userData));
-  ipcMain.handle(IPC.projectCheckRecovery, async () => {
+  ipcMain.handle(IPC.projectCheckRecovery, async (): Promise<RecoveryReply | null> => {
     const prefs = await io.readPrefs(userData);
-    return io.checkRecovery(userData, prefs.recentProjects);
+    const info = await io.checkRecovery(userData, prefs.recentProjects);
+    if (!info) return null;
+    const { project, ...rest } = info;
+    return { ...rest, projectName: project.name, projectWire: encodeProjectWire(project) };
   });
   ipcMain.handle(IPC.projectDiscardRecovery, (_e, p: string) => io.discardRecovery(assertString(p, 'autosavePath')));
   ipcMain.handle(IPC.projectRecent, () => io.existingRecentProjects(userData));

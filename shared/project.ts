@@ -9,6 +9,7 @@ import { uid } from './ids';
 import { makeTrack, defaultTransform, defaultAudio, reconcileTransitions, SPEED_PERCENT_MIN, SPEED_PERCENT_MAX } from './timeline';
 import { isValidFps, parseFps } from './time';
 import { saneSar } from './media';
+import { formatProjectJson } from './projectJson';
 import {
   MAX_TIMELINE_FRAMES, MAX_SOURCE_SECONDS, MAX_PROJECT_DEPTH, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX, PROXY_HEIGHTS,
   AUTOSAVE_INTERVAL_MIN_SEC, AUTOSAVE_INTERVAL_MAX_SEC, DEFAULT_TRANSITION_FRAMES_MIN, DEFAULT_TRANSITION_FRAMES_MAX,
@@ -261,6 +262,7 @@ function nullableStr(v: unknown): string | null {
 }
 function strList(v: unknown): string[] {
   if (!Array.isArray(v)) { if (v !== undefined) note(FIELD_RESET); return []; }
+  if (every(v, isStr)) return v; // the common case: keep the (fresh, parsed) array instead of copying it
   const out = v.filter(isStr);
   note('list entry that is not text removed', v.length - out.length);
   return out;
@@ -268,9 +270,15 @@ function strList(v: unknown): string[] {
 /** The object entries of a list; `what` names an entry in the repair report. */
 function objList(v: unknown, what = 'list entry'): Obj[] {
   if (!Array.isArray(v)) { if (v !== undefined) note(FIELD_RESET); return []; }
+  if (every(v, isObj)) return v as Obj[];
   const out = v.filter(isObj);
   note(`${what} that is not an object removed`, v.length - out.length);
   return out;
+}
+/** Every index of `v` (holes included, unlike Array#every) passes `ok`. */
+function every(v: unknown[], ok: (x: unknown) => boolean): boolean {
+  for (let i = 0; i < v.length; i++) if (!ok(v[i])) return false;
+  return true;
 }
 /** `v` when it is one of the keys of `table` (own keys only: never "toString" & co.), else `d`. */
 function oneOf<K extends string>(v: unknown, table: Record<K, true>, d: K): K {
@@ -307,36 +315,32 @@ function frameEnd(start: number, length: number, what: string): number {
 
 /**
  * Remove every object / array nested deeper than MAX_PROJECT_DEPTH (the root is depth 1); returns how many.
- * Iterative, so arbitrarily deep input cannot overflow the stack here; afterwards JSON.stringify /
- * structuredClone of the project cannot either.
+ * Recursive, but it never descends below MAX_PROJECT_DEPTH (the children there are removed, not visited), so
+ * arbitrarily deep input cannot overflow the stack here; afterwards JSON.stringify / structuredClone of the project
+ * cannot either. (Recursion instead of an explicit stack: about a third faster on a 27 MB project.)
  */
-function pruneDeepValues(root: Obj): number {
+function pruneDeepValues(v: Obj | unknown[], depth = 1): number {
   let removed = 0;
-  const nodes: (Obj | unknown[])[] = [root];
-  const depths: number[] = [1];
-  while (nodes.length) {
-    const v = nodes.pop()!;
-    const depth = depths.pop()!;
-    const tooDeep = depth >= MAX_PROJECT_DEPTH;
-    if (Array.isArray(v)) {
-      let w = 0;
-      for (let i = 0; i < v.length; i++) {
-        const x: unknown = v[i];
-        if (x !== null && typeof x === 'object') {
-          if (tooDeep) { removed++; continue; }
-          nodes.push(x as Obj); depths.push(depth + 1);
-        }
-        if (w !== i) v[w] = x;
-        w++;
+  const tooDeep = depth >= MAX_PROJECT_DEPTH;
+  if (Array.isArray(v)) {
+    let w = 0;
+    const n = v.length;
+    for (let i = 0; i < n; i++) {
+      const x: unknown = v[i];
+      if (x !== null && typeof x === 'object') {
+        if (tooDeep) { removed++; continue; }
+        removed += pruneDeepValues(x as Obj, depth + 1);
       }
-      if (w !== v.length) v.length = w;
-    } else {
-      // Parsed JSON: plain objects without enumerable inherited keys, so for-in sees own keys only.
-      for (const k in v) {
-        const x = v[k];
-        if (x === null || typeof x !== 'object') continue;
-        if (tooDeep) { delete v[k]; removed++; } else { nodes.push(x as Obj); depths.push(depth + 1); }
-      }
+      if (w !== i) v[w] = x;
+      w++;
+    }
+    if (w !== n) v.length = w;
+  } else {
+    // Parsed JSON: plain objects without enumerable inherited keys, so for-in sees own keys only.
+    for (const k in v) {
+      const x = v[k];
+      if (x === null || typeof x !== 'object') continue;
+      if (tooDeep) { delete v[k]; removed++; } else removed += pruneDeepValues(x as Obj, depth + 1);
     }
   }
   return removed;
@@ -476,6 +480,7 @@ function repairTrack(t: Obj, kind: Track['kind'], index: number, fps: Rational, 
 
 /** reconcileTransitions, reporting what it dropped or shortened. */
 function reconcileLoadedTransitions(track: Track): void {
+  if (track.transitions.length === 0) return; // nothing to drop or fit
   const before = track.transitions.map((t) => t.duration);
   reconcileTransitions(track);
   const after = track.transitions;
@@ -695,29 +700,32 @@ function repairView(raw: unknown, defaults: Sequence['view']): Sequence['view'] 
  */
 function dedupeSequenceIds(seq: Sequence): void {
   const tracks = [...seq.videoTracks, ...seq.audioTracks];
-  uniqueIds(tracks, (t) => uid(t.kind === 'video' ? 'v' : 'a'), 'track');
+  uniqueIds([tracks], (t) => uid(t.kind === 'video' ? 'v' : 'a'), 'track');
   const renamedFrom = new Map<Clip, ID>();
-  uniqueIds(tracks.flatMap((t) => t.clips), () => uid('clip'), 'clip', (c, old) => renamedFrom.set(c, old));
+  uniqueIds(tracks.map((t) => t.clips), () => uid('clip'), 'clip', (c, old) => renamedFrom.set(c, old));
   if (renamedFrom.size) for (const t of tracks) retargetTransitions(t, renamedFrom);
-  uniqueIds(tracks.flatMap((t) => t.transitions), () => uid('tr'), 'transition');
-  uniqueIds(seq.markers, () => uid('mk'), 'marker');
-  uniqueIds(seq.storyBlocks, () => uid('sb'), 'story block');
-  uniqueIds(seq.subtitleTracks, () => uid('sst'), 'subtitle track');
-  uniqueIds(seq.subtitleTracks.flatMap((t) => t.cues), () => uid('scue'), 'subtitle cue');
+  uniqueIds(tracks.map((t) => t.transitions), () => uid('tr'), 'transition');
+  uniqueIds([seq.markers], () => uid('mk'), 'marker');
+  uniqueIds([seq.storyBlocks], () => uid('sb'), 'story block');
+  uniqueIds([seq.subtitleTracks], () => uid('sst'), 'subtitle track');
+  uniqueIds(seq.subtitleTracks.map((t) => t.cues), () => uid('scue'), 'subtitle cue');
 }
 
-function uniqueIds<T extends { id: ID }>(items: T[], make: (item: T) => ID, what: string, renamed?: (item: T, old: ID) => void): void {
+/** Ids unique across the items of all `lists`, in order (lists instead of one flattened copy: no big temporary). */
+function uniqueIds<T extends { id: ID }>(lists: T[][], make: (item: T) => ID, what: string, renamed?: (item: T, old: ID) => void): void {
   const seen = new Set<ID>();
-  for (const it of items) {
-    if (seen.has(it.id)) {
-      const old = it.id;
-      let id = make(it);
-      while (seen.has(id)) id = make(it);
-      it.id = id;
-      note(`duplicate ${what} id re-issued`);
-      renamed?.(it, old);
+  for (const items of lists) {
+    for (const it of items) {
+      if (seen.has(it.id)) {
+        const old = it.id;
+        let id = make(it);
+        while (seen.has(id)) id = make(it);
+        it.id = id;
+        note(`duplicate ${what} id re-issued`);
+        renamed?.(it, old);
+      }
+      seen.add(it.id);
     }
-    seen.add(it.id);
   }
 }
 
@@ -981,6 +989,10 @@ function repairBins(p: Project): void {
   }
 }
 
+/**
+ * Project file text for manual saves: the structure indented, one record (clip, marker, cue, ...) per line; see
+ * shared/projectJson.ts. Parses to the same value as JSON.stringify(p); any JSON layout reads back.
+ */
 export function serializeProject(p: Project): string {
-  return JSON.stringify(p, null, 2);
+  return formatProjectJson(p);
 }
