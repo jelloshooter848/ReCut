@@ -3,7 +3,7 @@
  * inside `useStore((s) => ...)`.
  */
 import type { Clip, ID, Marker, MediaItem, Rational, SceneRecord, Sequence, SubtitleCue, Track } from '../../shared/model';
-import { allTracks, clipEnd, findClip, sourceTimeAt } from '../../shared/timeline';
+import { allTracks, clipEnd, findClip, sequenceDuration, sourceTimeAt } from '../../shared/timeline';
 import { formatSequenceSecondsTimecode, validFpsOr } from '../../shared/time';
 import type { FilterState, StoreState } from './types';
 
@@ -34,6 +34,26 @@ export function mediaDuration(state: StoreState): (id: ID) => number {
     if (m.kind === 'image') return Infinity;
     return m.probe?.duration ?? Infinity;
   };
+}
+
+const durationCache = new WeakMap<Track[], { audioTracks: Track[]; frames: number }>();
+/**
+ * End frame of the sequence's last clip (shared/timeline `sequenceDuration`), cached on the identity of its track
+ * arrays. Selectors run on every store update (each playhead step while scrubbing or playing), and a scan over every
+ * clip of a 6,700-clip sequence on each of them is a measurable part of the frame; edits replace the arrays.
+ */
+export function sequenceDurationOf(seq: Sequence | null | undefined): number {
+  if (!seq) return 0;
+  const hit = durationCache.get(seq.videoTracks);
+  if (hit && hit.audioTracks === seq.audioTracks) return hit.frames;
+  const frames = sequenceDuration(seq);
+  durationCache.set(seq.videoTracks, { audioTracks: seq.audioTracks, frames });
+  return frames;
+}
+
+/** Duration (frames) of the active sequence; cached like sequenceDurationOf. 0 when there is none. */
+export function activeSequenceDuration(state: StoreState): number {
+  return sequenceDurationOf(activeSequence(state));
 }
 
 export function clipById(seq: Sequence | null | undefined, id: ID): Clip | undefined {
