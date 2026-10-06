@@ -689,8 +689,10 @@ export function placeClips(seq: Sequence, placements: { trackId: ID; clip: Clip 
   for (const t of split) if (!shifted.has(t.id)) reconcileTransitions(t);
   for (const p of placements) {
     const t = findTrack(seq, p.trackId)!;
-    // Guard against anything still overlapping on tracks that could not ripple
-    clearRangeIn(seq, t, p.clip.start, clipEnd(p.clip), new Set([p.clip.id]));
+    // Guard against anything still overlapping on tracks that could not ripple. When nothing overlaps (the ripple
+    // made room) clearRange would only re-sort and re-reconcile the track, which the reconcile below covers.
+    const s = p.clip.start, e = clipEnd(p.clip);
+    if (readItems(t.clips).some((c) => c.id !== p.clip.id && c.start < e && clipEnd(c) > s)) clearRangeIn(seq, t, s, e, new Set([p.clip.id]));
     addClipSorted(t, p.clip); reconcileTransitions(t);
   }
   return true;
