@@ -10,7 +10,7 @@
  * Usage: `useStore((s) => s.project)` in React, `useStore.getState()` anywhere else.
  */
 import { create } from 'zustand';
-import { produce, current } from 'immer';
+import { produce, current, freeze, isDraftable } from 'immer';
 import type {
   Bin, Clip, DetectedScene, ID, Marker, MediaItem, MediaKind, MediaProbe, Project, SceneRecord, Sequence,
   SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock, Track, Transition, TransitionType, TagVocabulary, SequenceView,
@@ -215,6 +215,107 @@ export function cloneSequenceWithNewIds(src: Sequence, newName: string): Sequenc
 }
 
 // ------------------------------------------------------------------
+// Freezing an opened project in idle slices
+// ------------------------------------------------------------------
+//
+// immer auto-freezes what it produces, and its finalize step deep-walks every value of the result that is not
+// frozen yet. A project from loadProjectData (parsed from the file) starts unfrozen, so the first produce after an
+// open used to walk and freeze the whole project in one task: about 370 ms on a 2,500-clip project, paid by the
+// first edit. Instead, loadProjectData starts a walk that freezes the project in idle slices; a produce afterwards
+// only meets frozen values, which immer skips.
+//
+// Children are frozen before their parent (post-order), so "frozen" always means "frozen all the way down": that
+// is what immer assumes when it skips a frozen value, and what shared/timeline.ts (isOriginalItem / patchItem)
+// assumes of a frozen base array or item. Only what immer itself freezes is frozen (isDraftable values: plain
+// objects and arrays here); a sequence's LiveView is a class instance and stays mutable (setView's fast path).
+// Every store write that produces from the project finishes a pending walk first (settleProjectFreeze), with this
+// walker, which is several times cheaper than immer's finalize walk, so an edit that lands before the idle walk is
+// done still finds a fully frozen project and is never slower than it was without the walk.
+
+/**
+ * Longest stretch of one idle freeze slice, well under the 50 ms long-task mark. A slice uses the idle time the
+ * browser offers up to this cap (one slice per idle period: a callback requested during an idle period runs in the
+ * next one); a slice forced by the timeout runs FREEZE_FORCED_SLICE_MS.
+ */
+const FREEZE_SLICE_MS = 24;
+const FREEZE_FORCED_SLICE_MS = 8;
+/** Upper bound (ms) an idle slice waits for idle time before it runs anyway. */
+const FREEZE_IDLE_TIMEOUT_MS = 100;
+
+/** Post-order walk state: a stack of objects, their child values and the next child index. */
+interface FreezeWalk { objs: object[]; vals: unknown[][]; idx: number[] }
+
+let pendingFreeze: FreezeWalk | null = null;
+
+function childValues(o: object): unknown[] { return Array.isArray(o) ? o : Object.values(o); }
+
+/** Plain object or plain array: the project's data, frozen with Object.freeze directly (immer's freeze is slower). */
+function isPlainData(v: object): boolean {
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === Array.prototype || proto === null;
+}
+
+/** Freezes what immer would freeze, children first. Returns true when done, false when `budgetMs` ran out first. */
+function runFreezeWalk(w: FreezeWalk, budgetMs = Infinity): boolean {
+  const { objs, vals, idx } = w;
+  const end = performance.now() + budgetMs;
+  let n = 0;
+  while (objs.length) {
+    if ((++n & 255) === 0 && budgetMs !== Infinity && performance.now() >= end) return false;
+    const top = objs.length - 1;
+    const vs = vals[top];
+    let i = idx[top];
+    let child: object | null = null;
+    while (i < vs.length) {
+      const v = vs[i++];
+      if (v !== null && typeof v === 'object' && !Object.isFrozen(v) && (isPlainData(v) || isDraftable(v))) { child = v; break; }
+    }
+    if (child) { idx[top] = i; objs.push(child); vals.push(childValues(child)); idx.push(0); continue; }
+    const o = objs[top]; // shallow freeze: every child is frozen already
+    if (isPlainData(o)) Object.freeze(o); else freeze(o); // immer's freeze also guards Map / Set mutators
+    objs.pop(); vals.pop(); idx.pop();
+  }
+  return true;
+}
+
+type IdleDeadlineLike = { didTimeout: boolean; timeRemaining(): number };
+type IdleScheduler = (cb: (d?: IdleDeadlineLike) => void) => void;
+/** requestIdleCallback in the renderer; a plain macrotask where there is none (node / vitest). */
+const scheduleIdle: IdleScheduler = (cb) => {
+  const ric = (globalThis as { requestIdleCallback?: (cb: (d: IdleDeadlineLike) => void, o?: { timeout: number }) => number }).requestIdleCallback;
+  if (typeof ric === 'function') ric(cb, { timeout: FREEZE_IDLE_TIMEOUT_MS });
+  else setTimeout(cb, 0);
+};
+
+/** Start freezing `project` in idle slices (replaces any walk still pending for an earlier project). */
+function freezeInIdleSlices(project: Project): void {
+  if (Object.isFrozen(project)) { pendingFreeze = null; return; }
+  const walk: FreezeWalk = { objs: [project], vals: [childValues(project)], idx: [0] };
+  pendingFreeze = walk;
+  const slice = (d?: IdleDeadlineLike) => {
+    if (pendingFreeze !== walk) return; // finished by settleProjectFreeze, or another project was loaded
+    const budget = d && !d.didTimeout ? Math.min(FREEZE_SLICE_MS, Math.max(1, d.timeRemaining() - 1)) : FREEZE_FORCED_SLICE_MS;
+    if (runFreezeWalk(walk, budget)) pendingFreeze = null;
+    else scheduleIdle(slice);
+  };
+  scheduleIdle(slice);
+}
+
+/**
+ * Finish the pending idle freeze of an opened project now (no-op when none is pending). Called before every
+ * produce from the store's project so immer never walks an unfrozen opened project itself.
+ */
+export function settleProjectFreeze(): void {
+  const w = pendingFreeze;
+  if (!w) return;
+  pendingFreeze = null;
+  runFreezeWalk(w);
+}
+
+/** True while an opened project is still being frozen in idle slices (tests / perf diagnostics). */
+export function projectFreezePending(): boolean { return pendingFreeze !== null; }
+
+// ------------------------------------------------------------------
 // Store
 // ------------------------------------------------------------------
 
@@ -255,6 +356,7 @@ export const useStore = create<RecutStore>()((set, get) => {
 
   /** `followMarkers: false` for recipes that replace a sequence wholesale (its markers are already right). */
   const commit = (label: string, recipe: Recipe, opts: { followMarkers?: boolean } = {}): boolean => {
+    settleProjectFreeze();
     const prev = get().project;
     const produced = produce(prev, recipe);
     if (produced === prev) return false;
@@ -265,6 +367,7 @@ export const useStore = create<RecutStore>()((set, get) => {
 
   /** Apply a recipe without touching history (view / active sequence / transient drags / job status mirrors). */
   const quiet = (recipe: Recipe, opts: { dirty?: boolean } = {}): void => {
+    settleProjectFreeze();
     const prev = get().project;
     const next = produce(prev, recipe);
     if (next === prev) return;
@@ -347,6 +450,7 @@ export const useStore = create<RecutStore>()((set, get) => {
     undo() {
       const s = get();
       if (s.transaction) return false;
+      settleProjectFreeze();
       const step = undoHistory(s.history, s.project);
       if (!step) return false;
       set({ project: step.project, history: step.history, dirty: true, revision: s.revision + 1, ui: pruneUi(step.project, s.ui) });
@@ -355,6 +459,7 @@ export const useStore = create<RecutStore>()((set, get) => {
     redo() {
       const s = get();
       if (s.transaction) return false;
+      settleProjectFreeze();
       const step = redoHistory(s.history, s.project);
       if (!step) return false;
       set({ project: step.project, history: step.history, dirty: true, revision: s.revision + 1, ui: pruneUi(step.project, s.ui) });
@@ -386,6 +491,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       }
       // Zoom / in / out (or a frozen plain view): replace the view object so every consumer of the sequence
       // re-renders. The new view is a LiveView (never frozen), so later playhead moves take the fast path.
+      settleProjectFreeze();
       const prev = get().project;
       const next = produce(prev, (d) => {
         const seq = d.sequences[seqId];
@@ -419,6 +525,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       const snapshot = s.transaction;
       if (!snapshot) return false;
       if (snapshot === s.project) { set({ transaction: null }); return false; }
+      settleProjectFreeze();
       const next = stamp(snapshot, s.project);
       set({ project: next, transaction: null, dirty: true, revision: s.revision + 1, history: pushHistory(s.history, snapshot, label), ui: pruneUi(next, s.ui) });
       return true;
@@ -432,6 +539,7 @@ export const useStore = create<RecutStore>()((set, get) => {
     // ---------------------------------------------------------------- project
     newProject(name = 'Untitled Project') {
       relinkAwaitingProbe.clear();
+      pendingFreeze = null; // a walk still freezing the previous project is not needed any more
       set((s) => ({
         project: createProject(name), projectPath: null, dirty: false, revision: s.revision + 1, loadedRevision: s.revision + 1,
         history: emptyHistory(s.history.limit),
@@ -445,6 +553,8 @@ export const useStore = create<RecutStore>()((set, get) => {
         history: emptyHistory(s.history.limit), transaction: null,
         ui: pruneUi(project, resetSelectionUi(s.ui)), playback: { playing: false, rate: 1 },
       }));
+      // Opened projects arrive unfrozen: freeze them off the critical path, so the first edit does not pay for it.
+      freezeInIdleSlices(project);
     },
     markSaved(path, revision) {
       set((s) => {
@@ -1456,6 +1566,7 @@ export const useStore = create<RecutStore>()((set, get) => {
 
 /** Project data ready for saving (pure data already; just stamps modifiedAt). */
 export function serializeForSave(state: StoreState = useStore.getState()): Project {
+  settleProjectFreeze();
   return produce(state.project, (d) => { d.modifiedAt = Date.now(); });
 }
 

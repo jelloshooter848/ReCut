@@ -20,6 +20,35 @@ export const r2 = (v, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
 export const sleep = (t) => new Promise((r) => setTimeout(r, t));
 export const stats = (xs) => { const s = [...xs].sort((a, b) => a - b); const q = (p) => s[Math.min(s.length - 1, Math.floor(p * (s.length - 1)))] ?? 0; return { median: r2(q(0.5)), p95: r2(q(0.95)), max: r2(s[s.length - 1] ?? 0), mean: r2(s.reduce((a, b) => a + b, 0) / Math.max(1, s.length)) }; };
 
+/**
+ * `app.evaluate(fn, arg)` for the Electron main process that cannot fail with "Resulting promise was garbage
+ * collected". Use it for every main-process evaluate in the perf scripts.
+ *
+ * Why plain `app.evaluate` fails: Playwright evaluates through the V8 inspector (Runtime.callFunctionOn with
+ * awaitPromise). For a value that is not a promise, V8 wraps it in an already-settled promise, attaches its result
+ * handler with then(), and holds that promise only *weakly* (src/inspector/injected-script.cc,
+ * ProtocolPromiseHandler). The queued then-job does not reference the promise, so a GC before that job runs
+ * collects the promise and V8 answers "Promise was collected" (Playwright: "Resulting promise was garbage
+ * collected"). Node's inspector dispatches messages by interrupting whatever JS the main process is running, and
+ * Electron's main process drains microtasks only at its next checkpoint, so when main is busy (serving the bench's
+ * thumbnail / probe / proxy IPC) that JS keeps allocating, a scavenge runs first, and the evaluate fails even
+ * though `fn` ran. Measured with a standalone probe: 176 of 300 sync evaluates failed while main ran
+ * allocation-heavy JS, 0 of 300 on an idle main, 0 of 300 with this helper on the same busy main.
+ *
+ * The fix: `fn` still runs synchronously at dispatch (what it measures is unchanged), but its result is returned
+ * through a promise that stays *pending* until a fresh setImmediate macrotask. A pending promise is strongly held
+ * by whatever will settle it (here the setImmediate callback), so V8 cannot collect it, and it settles in a
+ * microtask drain that contains only this chain, so the inspector's then-job runs straight after.
+ * `fn` gets the electron module and `arg` like app.evaluate, may return a promise, and must not use closures.
+ */
+export function evalMain(app, fn, arg) {
+  return app.evaluate((electron, { src, arg }) => new Promise((resolve, reject) => {
+    let out;
+    try { out = Promise.resolve((0, eval)(`(${src})`)(electron, arg)); } catch (e) { out = Promise.reject(e); }
+    out.then((v) => setImmediate(() => resolve(v)), (e) => setImmediate(() => reject(e)));
+  }), { src: fn.toString(), arg });
+}
+
 export function makeRecorder() {
   const results = [];
   // tiering: { tier: 'guardrail' | 'diagnostic', reference? } as in tests/perf/_report.ts; a budgeted row without one is a gate.
@@ -79,10 +108,15 @@ export const INIT_SCRIPT = `
     }
     return out;
   };
+  // Prime the counter: call right before setting hookOn, in the same task. walk() only knows fibers it has seen, so a
+  // component that rendered while the hook was off still carries its stale PerformedWork flag and would be counted
+  // in the first commit of the window. Walking the last committed tree once marks every current fiber as seen with
+  // its present props/state; a real render inside the window changes props or state and is still counted.
+  P.prime = () => { if (P.lastRoot) walk(P.lastRoot); };
   window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
     supportsFiber: true, isDisabled: false, renderers: new Map(), on() {}, off() {}, emit() {}, sub() { return () => {}; }, checkDCE() {},
     inject() { P.hook = true; return 1; },
-    onCommitFiberRoot(id, root) { if (!P.hookOn) return; try { const t = performance.now(); const o = walk(root); o.walkMs = performance.now() - t; P.commits.push(o); } catch (e) { P.commits.push({ err: String(e) }); } },
+    onCommitFiberRoot(id, root) { P.lastRoot = root; if (!P.hookOn) return; try { const t = performance.now(); const o = walk(root); o.walkMs = performance.now() - t; P.commits.push(o); } catch (e) { P.commits.push({ err: String(e) }); } },
     onCommitFiberUnmount() {}, onPostCommitFiberRoot() {},
   };
 })();
@@ -102,13 +136,13 @@ export async function launchAndBuild({ width = 1900, height = 1050, tag = 'elect
   page.on('pageerror', (e) => console.log('[renderer:pageerror]', e.message));
   page.on('console', (m) => { if (m.type() === 'error') console.log('[renderer:error]', m.text().slice(0, 300)); });
   await page.waitForSelector('#root .layout', { timeout: 60_000 });
-  await app.evaluate(({ BrowserWindow }, { width, height }) => { const w = BrowserWindow.getAllWindows()[0]; w.setSize(width, height); w.center(); }, { width, height });
+  await evalMain(app, ({ BrowserWindow }, { width, height }) => { const w = BrowserWindow.getAllWindows()[0]; w.setSize(width, height); w.center(); }, { width, height });
   await page.evaluate(() => { localStorage.removeItem('recut.layout.v1'); localStorage.removeItem('recut.shortcuts.v1'); });
   await app.context().addInitScript(INIT_SCRIPT);
   await page.reload();
   await page.waitForSelector('#root .layout', { timeout: 60_000 });
   await page.waitForFunction(() => Boolean(window.__recut) && Boolean(window.__perf));
-  const ipcWrapped = await app.evaluate(({ ipcMain }) => {
+  const ipcWrapped = await evalMain(app, ({ ipcMain }) => {
     const map = ipcMain._invokeHandlers; if (!(map instanceof Map)) return false;
     const S = (globalThis.__perfIpc = { counts: {}, times: {} });
     for (const ch of ['media:thumbnail', 'media:filmstrip', 'media:waveform', 'project:autosave', 'project:autosaveJson', 'project:save', 'project:load', 'export:previewCommand', 'media:probe']) {
@@ -131,8 +165,8 @@ export async function launchAndBuild({ width = 1900, height = 1050, tag = 'elect
   const dur = await page.evaluate((id) => { const s = window.__recut.store.getState().project.sequences[id]; let e = 0; for (const t of [...s.videoTracks, ...s.audioTracks]) for (const c of t.clips) e = Math.max(e, c.start + c.duration); return e; }, SEQ);
   const h = {
     app, page, tmp, userData, cacheDir, files, built, SEQ, ALT: built.altIds, dur, ipcWrapped,
-    ipcStats: (reset = true) => app.evaluate(({ }, reset) => { const S = globalThis.__perfIpc; const out = JSON.parse(JSON.stringify(S)); if (reset) { S.counts = {}; S.times = {}; } return out; }, reset),
-    metrics: () => app.evaluate(({ app }) => app.getAppMetrics().map((m) => ({ type: m.type, pid: m.pid, ws: Math.round(m.memory.workingSetSize / 1024), cpu: m.cpu.percentCPUUsage }))),
+    ipcStats: (reset = true) => evalMain(app, ({ }, reset) => { const S = globalThis.__perfIpc; const out = JSON.parse(JSON.stringify(S)); if (reset) { S.counts = {}; S.times = {}; } return out; }, reset),
+    metrics: () => evalMain(app, ({ app }) => app.getAppMetrics().map((m) => ({ type: m.type, pid: m.pid, ws: Math.round(m.memory.workingSetSize / 1024), cpu: m.cpu.percentCPUUsage }))),
     nowPage: () => page.evaluate(() => performance.now()),
     lt: (since) => page.evaluate((since) => window.__perf.lt.filter((e) => e.t >= since), since),
     ltSummary: (list) => `${list.length} long tasks, max ${r2(Math.max(0, ...list.map((e) => e.d)))} ms, total ${r2(list.reduce((a, e) => a + e.d, 0))} ms`,
