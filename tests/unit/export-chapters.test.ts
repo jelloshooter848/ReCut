@@ -5,7 +5,8 @@
  *   stream titles / handler names / languages, in a single-pass or a chunked export;
  * - the sequence's Chapter markers (kind 'chapter' only) are the output's chapters: names (FFMETADATA-escaped),
  *   times relative to the export range, unaffected by output frame-rate conversion, identical single-pass and
- *   chunked; no chapter markers, no chapters.
+ *   chunked; no chapter markers, no chapters; when no chapter marker is at or before the range start, an untitled
+ *   leading chapter keeps the first break (bugs/closed/2026-10-06-first-chapter-break-lost-and-stale-roadmap.md).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFile } from 'node:child_process';
@@ -106,8 +107,8 @@ function marker(time: number, name: string, kind: Marker['kind'] = 'chapter'): M
 }
 
 /** Linked V+A clips from `m`, back to back from frame 0: [sourceIn seconds, frames] each. */
-function seqWith(m: MediaItem, clips: [number, number][], markers: Marker[] = []): Sequence {
-  const s = createSequence('Chapters', F24, 64, 36);
+function seqWith(m: MediaItem, clips: [number, number][], markers: Marker[] = [], fps: Rational = F24): Sequence {
+  const s = createSequence('Chapters', fps, 64, 36);
   let t = 0;
   for (const [srcIn, frames] of clips) {
     s.videoTracks[0].clips.push(makeClip({ mediaId: m.id, name: 'v', sourceIn: srcIn, duration: frames, kind: 'video' }, t));
@@ -229,11 +230,62 @@ describe('export chapters: the sequence Chapter markers', () => {
     expect(b.chapters).toEqual(a.chapters);
   });
 
-  it('a first chapter marker after the start: the first chapter starts at 0', async () => {
-    const s = seqWith(mkv, [[0, 48]], [marker(12, 'Late')]);
-    const out = await exportInfo(request(s, mkv), 'single');
-    expect(chapterRows(out)).toEqual([[0, 2, 'Late']]);
+  // bugs/closed/2026-10-06-first-chapter-break-lost-and-stale-roadmap.md: when no chapter marker is at or before the
+  // range start, an untitled leading chapter runs from 0 to the first marker, so the first break is kept.
+  for (const mode of MODES) {
+    it(`a single chapter marker mid-sequence (${mode}): an untitled leading chapter, then the marker's chapter`, async () => {
+      const s = seqWith(mkv, [[0, 24], [2, 24]], [marker(12, 'Late')]);
+      const out = await exportInfo(request(s, mkv), mode);
+      if (mode === 'chunked') expect(out.chunks).toBeGreaterThan(1);
+      expect(chapterRows(out)).toEqual([[0, 0.5, ''], [0.5, 2, 'Late']]);
+      expectNothingFromSources(out);
+    });
+
+    it(`In/Out range, no chapter marker at or before In (${mode}): untitled leading chapter from In`, async () => {
+      const s = seqWith(mkv, [[0, 48], [2, 48]], [
+        marker(84, 'Outside'), marker(60, 'Inside B'), marker(42, 'Inside A'), marker(78, 'At Out'), marker(20, 'Note', 'marker'),
+      ]);
+      s.view.inPoint = 30;
+      s.view.outPoint = 78;
+      const out = await exportInfo(request(s, mkv, { rangeMode: 'inOut' }), mode);
+      if (mode === 'chunked') expect(out.chunks).toBeGreaterThan(1);
+      expect(chapterRows(out)).toEqual([[0, 0.5, ''], [0.5, 1.25, 'Inside A'], [1.25, 2, 'Inside B']]);
+    });
+
+    it(`In/Out range, first chapter marker exactly at In (${mode}): no leading chapter`, async () => {
+      const s = seqWith(mkv, [[0, 48], [2, 48]], [marker(30, 'At In'), marker(54, 'Next')]);
+      s.view.inPoint = 30;
+      s.view.outPoint = 78;
+      const out = await exportInfo(request(s, mkv, { rangeMode: 'inOut' }), mode);
+      expect(chapterRows(out)).toEqual([[0, 1, 'At In'], [1, 2, 'Next']]);
+    });
+  }
+
+  it('an untitled leading chapter: single pass and chunked export write identical chapters', async () => {
+    const s = seqWith(mkv, [[0, 24], [2, 24]], [marker(30, 'Second'), marker(6, 'First')]);
+    const a = await exportInfo(request(s, mkv), 'single');
+    const b = await exportInfo(request(s, mkv), 'chunked');
+    expect(b.chunks).toBeGreaterThan(1);
+    expect(chapterRows(a)).toEqual([[0, 0.25, ''], [0.25, 1.25, 'First'], [1.25, 2, 'Second']]);
+    expect(b.chapters).toEqual(a.chapters);
   });
+
+  // A one-frame leading chapter survives the MP4 round trip: FFmpeg 6.1 and 8.1 read MP4 chapter times back in
+  // milliseconds (1/23.976 s -> 0.042), 9.0 at full precision; it is neither dropped nor merged.
+  const FPS_CASES: [string, Rational][] = [['23.976', { num: 24000, den: 1001 }], ['24', F24], ['30', F30]];
+  for (const [label, fps] of FPS_CASES) {
+    it(`first chapter marker one frame after the start at ${label} fps: a one-frame leading chapter`, async () => {
+      const s = seqWith(mkv, [[0, 24], [2, 24]], [marker(1, 'One frame in')], fps);
+      const out = await exportInfo(request(s, mkv, { fps }), 'single');
+      const frame = fps.den / fps.num;
+      expect(out.chapters.map((c) => c.title)).toEqual(['', 'One frame in']);
+      expect(out.chapters[0].start).toBe(0);
+      expect(Math.abs(out.chapters[0].end - frame)).toBeLessThan(0.001);
+      expect(Math.abs(out.chapters[1].start - frame)).toBeLessThan(0.001);
+      expect(out.chapters[1].start).toBe(out.chapters[0].end);
+      expect(Math.abs(out.chapters[1].end - out.duration)).toBeLessThan(0.05);
+    });
+  }
 
   it('chapter markers only outside the In/Out range: no chapters', async () => {
     const s = seqWith(mkv, [[0, 48], [2, 48]], [marker(84, 'Outside'), marker(78, 'At Out')]);
@@ -256,7 +308,35 @@ describe('export chapters: graph and FFMETADATA (pure)', () => {
       { start: 28 / 24, end: 3.5, title: 'Mid wins' },
     ]);
     expect(exportChapters({ fps: F24, markers: [marker(5, 'x', 'marker')] }, 0, 48, 2)).toEqual([]);
+    expect(exportChapters({ fps: F24, markers: [marker(48, 'At end')] }, 0, 48, 2)).toEqual([]);
     expect(exportChapters({ fps: F24, markers: [] }, 0, 48, 2)).toEqual([]);
+  });
+
+  it('exportChapters: an untitled leading chapter only when no chapter marker is at or before the range start', () => {
+    const at = (markers: Marker[], startF = 0, endF = 48) => exportChapters({ fps: F24, markers }, startF, endF, (endF - startF) / 24);
+    // First marker after the start: leading chapter from 0 to it.
+    expect(at([marker(12, 'Late')])).toEqual([{ start: 0, end: 0.5, title: '' }, { start: 0.5, end: 2, title: 'Late' }]);
+    // Exactly at the start, or before it and still current: no leading chapter.
+    expect(at([marker(0, 'Start')])).toEqual([{ start: 0, end: 2, title: 'Start' }]);
+    expect(at([marker(12, 'At In')], 12, 48)).toEqual([{ start: 0, end: 1.5, title: 'At In' }]);
+    expect(at([marker(3, 'Before In'), marker(24, 'Mid')], 12, 48)).toEqual([
+      { start: 0, end: 0.5, title: 'Before In' }, { start: 0.5, end: 1.5, title: 'Mid' },
+    ]);
+    // One frame after the start: a one-frame leading chapter.
+    expect(at([marker(13, 'One frame in')], 12, 48)).toEqual([
+      { start: 0, end: 1 / 24, title: '' }, { start: 1 / 24, end: 1.5, title: 'One frame in' },
+    ]);
+    // Same-frame rule after a leading chapter: the later marker in the list wins.
+    expect(at([marker(24, 'first'), marker(24, 'second')])).toEqual([
+      { start: 0, end: 1, title: '' }, { start: 1, end: 2, title: 'second' },
+    ]);
+    // Frame-rate independent: sequence seconds at 30 fps.
+    expect(exportChapters({ fps: F30, markers: [marker(45, 'B')] }, 15, 75, 2.0)).toEqual([
+      { start: 0, end: 1, title: '' }, { start: 1, end: 2, title: 'B' },
+    ]);
+    // Only markers at or after the range end, or none: no chapters, no leading chapter.
+    expect(at([marker(60, 'After')])).toEqual([]);
+    expect(at([marker(10, 'Note', 'marker')])).toEqual([]);
   });
 
   it('ffmetadataEscape / ffmetadataChapters', () => {
