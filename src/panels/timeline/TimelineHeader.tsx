@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import {
   ArrowLeftRight, ChevronsLeftRight, Filter, Hand, Link, Magnet, MousePointer2, MoveHorizontal, Plus, Rows3, Scissors, UnfoldHorizontal, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
@@ -28,9 +28,10 @@ function PlayheadTimecode({ seqId, fps }: { seqId: string; fps: Rational }) {
   return <TimecodeField value={playhead} fps={fps} min={0} onChange={(f) => useStore.getState().setView(seqId, { playhead: f })} title="Playhead (click to type, drag to scrub)" />;
 }
 
-export interface TimelineHeaderProps { seqId: string; fps: Rational; zoom: number; scroll: number; viewWidth: number; /** Dynamic lower zoom bound (long sequences). */ minZoom?: number }
+export interface TimelineHeaderProps { seqId: string; fps: Rational; zoom: number; viewWidth: number; /** Dynamic lower zoom bound (long sequences). */ minZoom?: number }
 
-export function TimelineHeader({ seqId, fps, zoom, scroll, viewWidth, minZoom }: TimelineHeaderProps) {
+/** Memoised and independent of the scroll position (read at click time), so scrolling / page flips skip it. */
+export const TimelineHeader = memo(function TimelineHeader({ seqId, fps, zoom, viewWidth, minZoom }: TimelineHeaderProps) {
   // Primitives only: useShallow compares array items with Object.is, so fresh objects would re-render forever.
   const order = useStore((s) => s.project.sequenceOrder);
   const names = useStore(useShallow((s) => s.project.sequenceOrder.map((id) => s.project.sequences[id]?.name ?? id)));
@@ -45,6 +46,7 @@ export function TimelineHeader({ seqId, fps, zoom, scroll, viewWidth, minZoom }:
     const st = useStore.getState();
     const seq = st.project.sequences[seqId];
     if (!seq) return;
+    const scroll = seq.view.scroll;
     const phX = frameToX(seq.view.playhead, zoom, scroll);
     const anchorX = phX >= 0 && phX <= viewWidth ? phX : viewWidth / 2;
     st.setView(seqId, zoomAround(zoom, scroll, anchorX, newZoom, minZoom));
@@ -96,4 +98,4 @@ export function TimelineHeader({ seqId, fps, zoom, scroll, viewWidth, minZoom }:
       </div>
     </div>
   );
-}
+});

@@ -2,7 +2,7 @@
  * Pure selectors over StoreState. None of these touch zustand; pass `useStore.getState()` or use them
  * inside `useStore((s) => ...)`.
  */
-import type { Clip, ID, Marker, MediaItem, Rational, SceneRecord, Sequence, SubtitleCue } from '../../shared/model';
+import type { Clip, ID, Marker, MediaItem, Rational, SceneRecord, Sequence, SubtitleCue, Track } from '../../shared/model';
 import { allTracks, clipEnd, findClip, sourceTimeAt } from '../../shared/timeline';
 import { formatSequenceSecondsTimecode, validFpsOr } from '../../shared/time';
 import type { FilterState, StoreState } from './types';
@@ -40,13 +40,78 @@ export function clipById(seq: Sequence | null | undefined, id: ID): Clip | undef
   return seq ? findClip(seq, id)?.clip : undefined;
 }
 
-export function selectedClips(state: StoreState): Clip[] {
+const NO_CLIPS: Clip[] = [];
+
+/** Selection derived data for the active sequence, recomputed only when its tracks or the selection change. */
+interface SelectionInfo {
+  videoTracks: Track[]; audioTracks: Track[]; ids: readonly ID[];
+  clips: Clip[]; tracks: Track[]; linkedAudio: Clip[] | null; linkedCount: number | null;
+}
+let selectionCache: SelectionInfo | null = null;
+
+/**
+ * Selected clips of the active sequence plus their tracks. Selectors run on every store update (each playhead
+ * step), so this is cached on the identity of the sequence's track arrays and of `ui.selectedClipIds`: a scan
+ * over every clip of the sequence happens once per edit or selection change, not once per update.
+ */
+function selectionInfo(state: StoreState): SelectionInfo | null {
   const seq = activeSequence(state);
-  if (!seq || state.ui.selectedClipIds.length === 0) return [];
-  const ids = new Set(state.ui.selectedClipIds);
-  const out: Clip[] = [];
-  for (const t of allTracks(seq)) for (const c of t.clips) if (ids.has(c.id)) out.push(c);
+  const ids = state.ui.selectedClipIds;
+  if (!seq || ids.length === 0) return null;
+  const c = selectionCache;
+  if (c && c.videoTracks === seq.videoTracks && c.audioTracks === seq.audioTracks && c.ids === ids) return c;
+  const want = new Set(ids);
+  const clips: Clip[] = []; const tracks: Track[] = [];
+  for (const t of allTracks(seq)) for (const cl of t.clips) if (want.has(cl.id)) { clips.push(cl); tracks.push(t); }
+  selectionCache = { videoTracks: seq.videoTracks, audioTracks: seq.audioTracks, ids, clips, tracks, linkedAudio: null, linkedCount: null };
+  return selectionCache;
+}
+
+export function selectedClips(state: StoreState): Clip[] {
+  return selectionInfo(state)?.clips ?? NO_CLIPS;
+}
+
+/** The track of each clip of `selectedClips(state)` (same order). Cached like selectedClips. */
+export function selectedClipTracks(state: StoreState): Track[] {
+  return selectionInfo(state)?.tracks ?? [];
+}
+
+/**
+ * Audio clips an edit of the selection's audio applies to: the selected audio clips plus the audio clips linked to
+ * selected video clips (in selection order, each once). Cached like selectedClips.
+ */
+export function selectedAudioTargets(state: StoreState): Clip[] {
+  const info = selectionInfo(state);
+  if (!info) return NO_CLIPS;
+  if (info.linkedAudio) return info.linkedAudio;
+  const out: Clip[] = []; const seen = new Set<ID>();
+  let byLink: Map<ID, Clip[]> | null = null;
+  for (const c of info.clips) {
+    if (c.kind === 'audio') { if (!seen.has(c.id)) { seen.add(c.id); out.push(c); } continue; }
+    if (!c.linkId) continue;
+    if (!byLink) {
+      byLink = new Map();
+      for (const t of info.audioTracks) for (const a of t.clips) if (a.linkId) { const g = byLink.get(a.linkId); if (g) g.push(a); else byLink.set(a.linkId, [a]); }
+    }
+    for (const a of byLink.get(c.linkId) ?? []) if (!seen.has(a.id)) { seen.add(a.id); out.push(a); }
+  }
+  info.linkedAudio = out;
   return out;
+}
+
+/** linkedClips(seq, clip).length for a single selected clip (0 otherwise). Cached like selectedClips. */
+export function selectedLinkedCount(state: StoreState): number {
+  const info = selectionInfo(state);
+  if (!info || info.clips.length !== 1) return 0;
+  if (info.linkedCount === null) {
+    const clip = info.clips[0];
+    let n = 0;
+    if (!clip.linkId) n = 1;
+    else for (const t of info.videoTracks) for (const c of t.clips) if (c.linkId === clip.linkId) n++;
+    if (clip.linkId) for (const t of info.audioTracks) for (const c of t.clips) if (c.linkId === clip.linkId) n++;
+    info.linkedCount = n;
+  }
+  return info.linkedCount;
 }
 
 export function sequenceList(state: StoreState): Sequence[] {

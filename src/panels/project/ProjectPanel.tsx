@@ -42,9 +42,13 @@ function sequenceSig(s: Sequence): string {
   return sig;
 }
 /** Changes only when a sequence's tree-visible fields change, not on every clip edit (P-04). */
+let lastSig: { sequences: Project['sequences']; order: Project['sequenceOrder']; sig: string } | null = null;
 function sequencesSignature(p: Project): string {
+  // Runs on every store update (each playhead step): reuse the last result while the map and order are the same.
+  if (lastSig && lastSig.sequences === p.sequences && lastSig.order === p.sequenceOrder) return lastSig.sig;
   let out = p.sequenceOrder.join(',');
   for (const s of Object.values(p.sequences)) out += '\u0002' + sequenceSig(s);
+  lastSig = { sequences: p.sequences, order: p.sequenceOrder, sig: out };
   return out;
 }
 

@@ -39,6 +39,7 @@ export interface ClipViewProps {
 }
 
 const MAX_TILES_PER_REQUEST = 48;
+const NO_TILES: Record<number, string> = {};
 const MAX_WAVE_CANVAS_PX = 4096;
 
 function quantizeTime(t: number): number { return Math.round(t * 10) / 10; }
@@ -71,38 +72,59 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   const tileCount = Math.ceil(w / tileW);
   const firstTile = Math.max(0, Math.floor(visFrom / tileW));
   const lastTile = Math.min(tileCount, Math.ceil(visTo / tileW));
-  const [tiles, setTiles] = useState<Record<number, string>>({});
-  const tilesGen = useRef(0);
   const stripKey = `${path}|${tileW}|${zoom}|${clip.sourceIn}|${clip.speed}`;
-  useEffect(() => { setTiles({}); tilesGen.current++; }, [stripKey]);
+  // Tiles are tagged with the strip they belong to: a new strip shows none without an extra state update (a reset
+  // effect would re-render every clip once more right after it mounts, e.g. on each playback page flip).
+  const [strip, setStrip] = useState<{ key: string; tiles: Record<number, string> }>(() => ({ key: stripKey, tiles: NO_TILES }));
   // P-05: no filmstrip for narrow clips; requests wait MEDIA_SETTLE_MS for the view to settle (zooming / fast
   // scrolling re-runs this effect and cancels the timer) and are aborted when the clip leaves the viewport.
   const wantMedia = w >= MEDIA_MIN_CLIP_PX;
+  const stripOn = wantMedia && isVideo && !offline && !!media && media.kind !== 'audio';
+  const tileTime = (i: number) => (isImage ? 0 : quantizeTime(Math.max(0, clip.sourceIn + ((i * tileW + tileW / 2) / zoom) * frameSec * clip.speed)));
+  // Fully cached strips (revisiting a view, a playback page flip) paint in the same render, read from the thumbnail
+  // cache, instead of through an effect + state update (a second render and commit of every such clip). Kept in a
+  // ref for the strip so a later LRU eviction cannot drop a tile already shown.
+  const cachedRef = useRef<{ key: string; tiles: Record<number, string> }>({ key: '', tiles: NO_TILES });
+  if (cachedRef.current.key !== stripKey) cachedRef.current = { key: stripKey, tiles: NO_TILES };
+  let tiles = strip.key === stripKey ? strip.tiles : NO_TILES;
+  if (cachedRef.current.tiles !== NO_TILES) tiles = tiles === NO_TILES ? cachedRef.current.tiles : { ...cachedRef.current.tiles, ...tiles };
+  if (stripOn && lastTile > firstTile) {
+    let n = 0; let got: Record<number, string> | null = {};
+    for (let i = firstTile; i < lastTile && n < MAX_TILES_PER_REQUEST; i++) {
+      if (tiles[i]) continue;
+      n++;
+      const u = thumbs.peek(path, tileTime(i), tileW);
+      if (!u) { got = null; break; }
+      got[i] = u;
+    }
+    if (got && n) { cachedRef.current = { key: stripKey, tiles: { ...cachedRef.current.tiles, ...got } }; tiles = { ...tiles, ...got }; }
+  }
   useEffect(() => {
-    if (!wantMedia || !isVideo || offline || !media || media.kind === 'audio' || lastTile <= firstTile) return;
-    const gen = tilesGen.current;
+    if (!stripOn || lastTile <= firstTile) return;
     const idx: number[] = []; const times: number[] = [];
     for (let i = firstTile; i < lastTile && idx.length < MAX_TILES_PER_REQUEST; i++) {
       if (tiles[i]) continue;
       idx.push(i);
-      times.push(isImage ? 0 : quantizeTime(Math.max(0, clip.sourceIn + ((i * tileW + tileW / 2) / zoom) * frameSec * clip.speed)));
+      times.push(tileTime(i));
     }
     if (!idx.length) return;
     const apply = (urls: string[]) => {
-      if (ac.signal.aborted || gen !== tilesGen.current) return;
+      if (ac.signal.aborted) return;
       if (!urls.some(Boolean)) return;
-      setTiles((prev) => { const next = { ...prev }; idx.forEach((i, j) => { if (urls[j]) next[i] = urls[j]; }); return next; });
+      setStrip((prev) => {
+        const next = prev.key === stripKey ? { ...prev.tiles } : {};
+        idx.forEach((i, j) => { if (urls[j]) next[i] = urls[j]; });
+        return { key: stripKey, tiles: next };
+      });
     };
     const ac = new AbortController();
-    // Fully cached strips (revisiting a view) paint at once; anything else waits for the view to settle.
-    const cached = idx.map((_, j) => thumbs.peek(path, times[j], tileW) ?? '');
-    if (cached.every(Boolean)) { apply(cached); return; }
+    // Anything not fully cached (see above) waits for the view to settle.
     const timer = window.setTimeout(() => {
       thumbs.filmstrip(path, times, tileW, media.id, ac.signal).then(apply).catch(() => { /* ignore */ });
     }, MEDIA_SETTLE_MS);
     return () => { window.clearTimeout(timer); ac.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wantMedia, isVideo, offline, path, firstTile, lastTile, tileW, zoom, clip.sourceIn, clip.speed, stripKey]);
+  }, [stripOn, path, firstTile, lastTile, tileW, zoom, clip.sourceIn, clip.speed, stripKey]);
 
   // ---- waveform --------------------------------------------------------------------------
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -137,10 +159,13 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
     const scale = 1 / Math.max(0.16, waveMax(wave) / 255);
     const gain = Math.max(0, Math.min(2, clip.audio.volume)) * (clip.audio.muted ? 0.25 : 1) * scale;
     ctx.fillStyle = p.selected ? 'rgba(230, 245, 236, 0.95)' : 'rgba(175, 232, 200, 0.85)';
+    // One path filled once (the 1 px columns never overlap, so the pixels match one fillRect per column).
+    ctx.beginPath();
     for (let i = 0; i < cw; i++) {
       const v = Math.max(0.5, Math.min(mid, (peaks[i] / 255) * mid * gain));
-      ctx.fillRect(i, mid - v, 1, v * 2);
+      ctx.rect(i, mid - v, 1, v * 2);
     }
+    ctx.fill();
   }, [wave, waveX, waveW, bodyH, zoom, clip.sourceIn, clip.speed, clip.audio.volume, clip.audio.muted, frameSec, isVideo, p.selected]);
 
   // ---- labels ----------------------------------------------------------------------------

@@ -336,3 +336,40 @@ export function lodHit(
   return clip ? { track, clip, index: track.clips.indexOf(clip) } : undefined;
 }
 
+
+// ------------------------------------------------------------------
+// Range queries over start-sorted lists (clips of a track, resolved cues)
+// ------------------------------------------------------------------
+
+const maxEndCache = new WeakMap<readonly object[], Float64Array>();
+
+/**
+ * Index of the first item of `items` (sorted by start) whose extent can reach past `from`: a binary search over the
+ * prefix maximum of the item ends, computed once per (immutable) array and cached. Every item before the returned
+ * index ends at or before `from`; callers iterate from it while `start < to` and still test each item for overlap.
+ * Overlapping items are handled (the prefix maximum is monotonic either way).
+ */
+export function firstOverlapIndex<T extends object>(items: readonly T[], from: number, endOf: (item: T) => number): number {
+  let m = maxEndCache.get(items);
+  if (!m || m.length !== items.length) {
+    m = new Float64Array(items.length);
+    let mx = -Infinity;
+    for (let i = 0; i < items.length; i++) { const e = endOf(items[i]); if (e > mx) mx = e; m[i] = mx; }
+    maxEndCache.set(items, m);
+  }
+  let lo = 0, hi = items.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (m[mid] > from) hi = mid; else lo = mid + 1; }
+  return lo;
+}
+
+/** Items of `items` (sorted by start) overlapping [from, to): `firstOverlapIndex` plus a forward scan. */
+export function itemsInRange<T extends object>(items: readonly T[], from: number, to: number, startOf: (item: T) => number, endOf: (item: T) => number): T[] {
+  const out: T[] = [];
+  for (let i = firstOverlapIndex(items, from, endOf); i < items.length; i++) {
+    const it = items[i];
+    const s = startOf(it);
+    if (s >= to) break;
+    if (endOf(it) > from) out.push(it);
+  }
+  return out;
+}
