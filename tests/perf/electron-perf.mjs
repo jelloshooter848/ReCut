@@ -90,10 +90,16 @@ const INIT_SCRIPT = `
     }
     return out;
   };
+  // Prime the counter: call right before setting hookOn (same task, so no commit can slip in between). fresh() only
+  // knows fibers it has walked, so a clip that rendered while the hook was off (e.g. select() or filmstrip / waveform
+  // data arriving during setup) still carries its stale PerformedWork flag and would be counted in the first commit
+  // of the window. Walking the last committed tree once marks every current fiber as seen with its present
+  // props/state; a real render inside the window changes props or state and is still counted.
+  P.prime = () => { if (P.lastRoot) walk(P.lastRoot); };
   window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
     supportsFiber: true, isDisabled: false, renderers: new Map(), on() {}, off() {}, emit() {}, sub() { return () => {}; }, checkDCE() {},
     inject() { P.hook = true; return 1; },
-    onCommitFiberRoot(id, root) { if (!P.hookOn) return; try { P.commits.push(walk(root)); } catch (e) { P.commits.push({ err: String(e) }); } },
+    onCommitFiberRoot(id, root) { P.lastRoot = root; if (!P.hookOn) return; try { P.commits.push(walk(root)); } catch (e) { P.commits.push({ err: String(e) }); } },
     onCommitFiberUnmount() {}, onPostCommitFiberRoot() {},
   };
 })();
@@ -295,7 +301,7 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
       // Page flips = changes of view.scroll while scrubbing (setView mutates the LiveView in place, so compare values).
       let flips = 0, lastScroll = st.getState().project.sequences[id].view.scroll;
       const unsub = st.subscribe((s) => { const sc = s.project.sequences[id]?.view.scroll; if (sc !== lastScroll) { lastScroll = sc; flips++; } });
-      window.__perf.commits.length = 0; window.__perf.hookOn = true;
+      window.__perf.prime(); window.__perf.commits.length = 0; window.__perf.hookOn = true;
       const step = page0 ? Math.max(1, Math.round((page0.hi - page0.lo) / 120)) : Math.max(1, Math.floor(dur / 240));
       let f = page0 ? page0.lo : 0, dir = 1, frames = 0; const t0 = performance.now(); const costs = [];
       const next = page0
