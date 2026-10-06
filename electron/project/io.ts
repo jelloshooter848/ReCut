@@ -142,13 +142,37 @@ export function serializeAutosave(p: Project): string {
 /** Save a project. The `.recut` extension is appended when missing; the final path is returned. */
 export async function saveProjectFile(filePath: string, project: Project): Promise<SaveResult> {
   try {
-    const target = ensureProjectExt(path.resolve(filePath));
     const toWrite: Project = { ...project, modifiedAt: project.modifiedAt || Date.now() };
-    await atomicWriteFile(target, serializeProject(toWrite), { followSymlink: true });
-    return { ok: true, path: target };
+    return await writeProjectText(filePath, serializeProject(toWrite));
   } catch (e) {
     return { ok: false, error: `Could not save project: ${errMsg(e)}` };
   }
+}
+
+/** A cheap shape check for project JSON text from the renderer (it is written as-is, never parsed here). */
+function looksLikeProjectJson(json: unknown): json is string {
+  return typeof json === 'string' && json.length >= 2 && json[0] === '{' && json[json.length - 1] === '}';
+}
+
+/**
+ * Save a project the renderer already serialized (the serializeProject layout, written in slices by
+ * projectJsonChunks): one string crosses IPC instead of a structured clone of the whole project, and main only
+ * writes it, atomically, with the same `.bak` and symlink handling as saveProjectFile. Like writeAutosaveJson it
+ * is not parsed or normalized here (opening the file does that); a cheap shape check guards against garbage.
+ */
+export async function saveProjectJson(filePath: string, json: string): Promise<SaveResult> {
+  if (!looksLikeProjectJson(json)) return { ok: false, error: 'Could not save project: not a serialized project (expected a JSON object string)' };
+  try {
+    return await writeProjectText(filePath, json);
+  } catch (e) {
+    return { ok: false, error: `Could not save project: ${errMsg(e)}` };
+  }
+}
+
+async function writeProjectText(filePath: string, text: string): Promise<SaveResult> {
+  const target = ensureProjectExt(path.resolve(filePath));
+  await atomicWriteFile(target, text, { followSymlink: true });
+  return { ok: true, path: target };
 }
 
 export async function readProjectJson(filePath: string): Promise<Project> {
@@ -309,9 +333,7 @@ export async function writeAutosave(projectPath: string | null, project: Project
  * (recovery parses and normalizes it on load). Only a cheap shape check guards against garbage.
  */
 export async function writeAutosaveJson(projectPath: string | null, json: string, userData: string): Promise<SaveResult> {
-  if (typeof json !== 'string' || json.length < 2 || json[0] !== '{' || json[json.length - 1] !== '}') {
-    return { ok: false, error: 'Autosave failed: not a serialized project (expected a JSON object string)' };
-  }
+  if (!looksLikeProjectJson(json)) return { ok: false, error: 'Autosave failed: not a serialized project (expected a JSON object string)' };
   const refused = autosaveTargetError(projectPath);
   if (refused) return refused;
   try {
@@ -392,12 +414,105 @@ export async function discardRecovery(autosavePath: string): Promise<void> {
  * belongs to the same project (so it is not offered for recovery on next launch).
  */
 export async function clearUntitledAutosaveFor(project: Project, userData: string): Promise<void> {
+  await clearUntitledAutosaveForId(project.id, userData);
+}
+
+/** Bytes of the untitled autosave read to find its project id (the second key of every file ReCut writes). */
+const ID_PROBE_BYTES = 64 * 1024;
+
+/**
+ * clearUntitledAutosaveFor by project id. Reads only the head of the autosave to find its top-level id (the
+ * autosave of a big project is tens of MB, and parsing it whole took longer than the save itself); parses the
+ * whole file only when the head does not settle it.
+ */
+export async function clearUntitledAutosaveForId(projectId: unknown, userData: string): Promise<void> {
+  if (typeof projectId !== 'string' || !projectId) return;
   const p = untitledAutosavePath(userData);
   try {
-    const text = await fsp.readFile(p, 'utf8');
-    const raw = JSON.parse(text) as { id?: unknown };
-    if (raw && raw.id === project.id) await fsp.rm(p, { force: true });
+    let id: string | null | undefined;
+    const fh = await fsp.open(p, 'r');
+    try {
+      const buf = Buffer.alloc(ID_PROBE_BYTES);
+      const { bytesRead } = await fh.read(buf, 0, ID_PROBE_BYTES, 0);
+      id = topLevelProjectId(buf.toString('utf8', 0, bytesRead));
+    } finally {
+      await fh.close();
+    }
+    if (id === undefined) {
+      const raw = JSON.parse(await fsp.readFile(p, 'utf8')) as { id?: unknown } | null;
+      id = raw && typeof raw.id === 'string' ? raw.id : null;
+    }
+    if (id === projectId) await fsp.rm(p, { force: true });
   } catch { /* nothing to do */ }
+}
+
+const JSON_WS = new Set([' ', '\n', '\r', '\t']);
+
+/**
+ * The top-level `"id"` string of a project JSON text, scanning only as far as that key: null when the object has
+ * no string id, undefined when the text is not a JSON object or ends before the answer (a file head cut short).
+ * The first top-level "id" key counts (ReCut never writes duplicate keys).
+ */
+export function topLevelProjectId(text: string): string | null | undefined {
+  const n = text.length;
+  let i = 0;
+  const skipWs = () => { while (i < n && JSON_WS.has(text[i])) i++; };
+  /** End (exclusive) of the string starting at `s` (a '"'), or -1 when it does not end within the text. */
+  const stringEnd = (s: number): number => {
+    for (let j = s + 1; j < n; j++) {
+      const c = text[j];
+      if (c === '\\') j++;
+      else if (c === '"') return j + 1;
+    }
+    return -1;
+  };
+  /** End (exclusive) of the value starting at `s`, or -1. */
+  const valueEnd = (s: number): number => {
+    const c = text[s];
+    if (c === '"') return stringEnd(s);
+    if (c === '{' || c === '[') {
+      let depth = 0;
+      for (let j = s; j < n; j++) {
+        const d = text[j];
+        if (d === '"') { const e = stringEnd(j); if (e < 0) return -1; j = e - 1; }
+        else if (d === '{' || d === '[') depth++;
+        else if ((d === '}' || d === ']') && --depth === 0) return j + 1;
+      }
+      return -1;
+    }
+    let j = s;
+    while (j < n && text[j] !== ',' && text[j] !== '}' && !JSON_WS.has(text[j])) j++;
+    return j < n ? j : -1;
+  };
+  skipWs();
+  if (text[i] !== '{') return undefined;
+  i++;
+  for (;;) {
+    skipWs();
+    if (i >= n) return undefined;
+    if (text[i] === '}') return null;
+    if (text[i] !== '"') return undefined;
+    const keyEnd = stringEnd(i);
+    if (keyEnd < 0) return undefined;
+    let key: unknown;
+    try { key = JSON.parse(text.slice(i, keyEnd)); } catch { return undefined; }
+    i = keyEnd;
+    skipWs();
+    if (text[i] !== ':') return undefined;
+    i++;
+    skipWs();
+    if (i >= n) return undefined;
+    const end = valueEnd(i);
+    if (end < 0) return undefined;
+    if (key === 'id') {
+      if (text[i] !== '"') return null;
+      try { return JSON.parse(text.slice(i, end)) as string; } catch { return undefined; }
+    }
+    i = end;
+    skipWs();
+    if (text[i] === ',') { i++; continue; }
+    return text[i] === '}' ? null : undefined;
+  }
 }
 
 // ------------------------------------------------------------------

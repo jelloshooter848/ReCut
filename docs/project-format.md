@@ -8,6 +8,20 @@ stays small (typically well under 10 MB even for long-form work) and can be put 
 The authoritative TypeScript definitions are in `shared/model.ts`; `shared/project.ts` contains
 `normalizeProject()`, which repairs/migrates older or partially damaged files on load.
 
+## Text layout
+
+Any JSON layout loads: ReCut only parses the file. What it writes:
+
+* **Saves** (`serializeProject`, `shared/projectJson.ts`): the structure (project, media items, sequences, tracks,
+  snapshots, subtitle tracks, settings, tags) is indented two spaces per level with one field per line, and each record
+  inside it (a clip, transition, marker, story block, cue, detected scene, scene, bin) is compact JSON on a line of its
+  own. A change to one clip is a one-line diff. ReCut 0.2.2 and earlier wrote a full 2-space pretty print, which is 2.4x
+  larger (a 2,500-clip project: 68 MB vs 28 MB) and about 2.5x slower to write; both parse to the same project.
+* **Autosaves**: compact JSON on one line (`JSON.stringify`).
+
+The renderer serializes the project in slices (yielding to the UI between them) and sends the text to the main process,
+which writes it as-is.
+
 ## Top level
 
 | Field | Type | Notes |

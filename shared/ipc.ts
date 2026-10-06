@@ -4,6 +4,7 @@
  * Main-process handlers are registered under the channel names in `IPC`.
  */
 import type { AppPreferences, ExportSettings, ID, JobInfo, MediaProbe, Project, Sequence, MediaItem } from './model';
+import type { ProjectWire } from './projectWire';
 
 export const IPC = {
   // app
@@ -117,6 +118,16 @@ export interface RecoveryInfo {
   repaired?: string[];
 }
 
+/**
+ * What `loadProject` resolves to over IPC: a LoadResult whose project travels as `projectWire` (JSON pieces of the
+ * project main already normalized; see shared/projectWire.ts) instead of a structured-cloned object. A plain
+ * LoadResult (`project`, e.g. from an older bridge or a test double) is still accepted and normalized by the renderer.
+ */
+export type LoadReply = LoadResult | (Omit<Extract<LoadResult, { ok: true }>, 'project'> & { projectWire: ProjectWire });
+
+/** What `checkRecovery` resolves to over IPC: RecoveryInfo with the project as `projectWire` (and its name for the prompt). */
+export type RecoveryReply = RecoveryInfo | (Omit<RecoveryInfo, 'project'> & { projectWire: ProjectWire; projectName: string });
+
 export interface RelinkCandidate { missingMediaId: ID; path: string; confidence: 'name+size' | 'name' }
 export interface RelinkScanRequest { folder: string; missing: { mediaId: ID; fileName: string; size?: number }[] }
 
@@ -188,7 +199,12 @@ export interface RecutApi {
   message(opts: MessageOptions): Promise<number>;
 
   saveProject(path: string, project: Project): Promise<SaveResult>;
-  loadProject(path: string): Promise<LoadResult>;
+  /**
+   * Same as saveProject with the project already serialized in the renderer (serializeProject layout): one string
+   * crosses IPC instead of a structured clone of the whole project; main writes it as-is (atomic, `.bak`).
+   */
+  saveProjectJson(path: string, json: string): Promise<SaveResult>;
+  loadProject(path: string): Promise<LoadReply>;
   /** Writes <projectPath>.autosave (or an app-data file when the project has never been saved). */
   autosaveProject(path: string | null, project: Project): Promise<SaveResult>;
   /**
@@ -197,7 +213,7 @@ export interface RecutApi {
    * (atomically, no re-parse / normalize).
    */
   autosaveProjectJson(path: string | null, json: string): Promise<SaveResult>;
-  checkRecovery(): Promise<RecoveryInfo | null>;
+  checkRecovery(): Promise<RecoveryReply | null>;
   discardRecovery(autosavePath: string): Promise<void>;
   recentProjects(): Promise<string[]>;
 

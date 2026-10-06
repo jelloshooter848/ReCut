@@ -5,6 +5,8 @@
 import type { ID, JobInfo, MediaItem, MediaProbe, Project, SubtitleTrack } from '../../shared/model';
 import type { RecutApi } from '../../shared/ipc';
 import { createMediaItem, normalizeProject } from '../../shared/project';
+import { projectJsonChunks } from '../../shared/projectJson';
+import { decodeProjectWire, isProjectWire } from '../../shared/projectWire';
 import { parseSubtitles } from '../../shared/subtitles';
 import { uid } from '../../shared/ids';
 import { useStore, serializeForSave } from './store';
@@ -321,13 +323,63 @@ export async function importEmbeddedSubtitles(mediaId: ID, streamIndex: number):
 // Project I/O
 // ------------------------------------------------------------------
 
+/** Longest stretch of project serialization / parsing run before yielding to the event loop. */
+const SLICE_MS = 12;
+
+/** Resolve in a new task (a MessageChannel message: not clamped like nested setTimeout, not throttled when hidden). */
+function nextTask(): Promise<void> {
+  if (typeof MessageChannel === 'undefined') return new Promise((r) => setTimeout(r, 0));
+  return new Promise((r) => {
+    const ch = new MessageChannel();
+    ch.port1.onmessage = () => { ch.port1.close(); r(); };
+    ch.port2.postMessage(null);
+  });
+}
+
+/** A pause function that yields a task once SLICE_MS have passed since the last yield (else resolves at once). */
+function slicer(): () => Promise<void> | void {
+  let since = performance.now();
+  return () => {
+    if (performance.now() - since < SLICE_MS) return;
+    return nextTask().then(() => { since = performance.now(); });
+  };
+}
+
+/**
+ * Serialize `project` in slices of about SLICE_MS, yielding between them, so saving a large project never blocks
+ * the window for the whole serialization. `compact`: the same text as JSON.stringify (autosaves); otherwise the
+ * project file layout (serializeProject).
+ */
+export async function serializeProjectSliced(project: Project, compact = false): Promise<string> {
+  const out: string[] = [];
+  const chunks: string[] = [];
+  const it = projectJsonChunks(project, out, { compact });
+  const pause = slicer();
+  while (!it.next().done) {
+    const p = pause();
+    if (p) {
+      // Join this slice's pieces now (in this task), so the final join only concatenates a few dozen chunks.
+      chunks.push(out.join(''));
+      out.length = 0;
+      await p;
+    }
+  }
+  chunks.push(out.join(''));
+  return chunks.join('');
+}
+
 export async function saveProject(path?: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
   const api = recutApi();
   if (!api) return { ok: false, error: 'IPC unavailable' };
   const st = useStore.getState();
   const target = path ?? st.projectPath;
   if (!target) return { ok: false, error: 'No project path' };
-  const res = await api.saveProject(target, serializeForSave(st));
+  const project = serializeForSave(st);
+  // Serialize here, in slices, and send one string (P-06): a structured clone of the whole project across IPC
+  // cost more than the serialization, and main then pretty-printed it again on its own thread.
+  const res = typeof api.saveProjectJson === 'function'
+    ? await api.saveProjectJson(target, await serializeProjectSliced(project))
+    : await api.saveProject(target, project);
   if (res.ok) useStore.getState().markSaved(res.path);
   return res;
 }
@@ -346,6 +398,19 @@ export function repairedMessage(repaired: string[], preRepairPath?: string): str
   return `Some project data was damaged and has been repaired (${what}). ${kept}`;
 }
 
+/**
+ * The project of a load / recovery reply, normalized exactly once: a `projectWire` was normalized by main and is
+ * only decoded (parsed piece by piece, yielding between pieces); a plain `project` object (older bridge, test
+ * double) is normalized here.
+ */
+export async function projectFromReply(res: { project: Project } | { projectWire: unknown }): Promise<Project> {
+  if ('projectWire' in res) {
+    if (!isProjectWire(res.projectWire)) throw new Error('Could not open project: unexpected reply from the main process');
+    return decodeProjectWire(res.projectWire, slicer());
+  }
+  return normalizeProject(res.project);
+}
+
 /** How open reports what happened: kind, text and (optionally) how long the message stays up. */
 export type OpenNotify = (kind: 'ok' | 'warn', text: string, timeoutMs?: number) => void;
 
@@ -362,7 +427,7 @@ export async function openProject(path: string, opts: { notify?: OpenNotify } = 
   const res = await api.loadProject(path);
   if (!res.ok) return res;
   try {
-    let project = normalizeProject(res.project);
+    let project = await projectFromReply(res);
     if (project.name === DEFAULT_PROJECT_NAME) {
       const name = projectNameFromPath(res.path);
       if (name) project = { ...project, name };
@@ -388,7 +453,8 @@ export async function openProject(path: string, opts: { notify?: OpenNotify } = 
 /**
  * Autosave the dirty project. Sends compact JSON (same bytes as the main process's serializeAutosave) through
  * autosaveProjectJson when available: one string crosses IPC instead of a structured clone of the whole project
- * (P-06). Falls back to autosaveProject on older bridges. Throws when the write failed.
+ * (P-06), serialized in slices so a big project does not block playback. Falls back to autosaveProject on older
+ * bridges. Throws when the write failed.
  */
 export async function autosaveProject(): Promise<void> {
   const api = recutApi();
@@ -396,7 +462,7 @@ export async function autosaveProject(): Promise<void> {
   if (!api || !st.dirty) return;
   const project = serializeForSave(st);
   const res = typeof api.autosaveProjectJson === 'function'
-    ? await api.autosaveProjectJson(st.projectPath, JSON.stringify(project))
+    ? await api.autosaveProjectJson(st.projectPath, await serializeProjectSliced(project, true))
     : await api.autosaveProject(st.projectPath, project);
   if (res && res.ok === false) throw new Error(res.error);
 }
