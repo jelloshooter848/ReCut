@@ -199,6 +199,32 @@ const paintAfter = (fn, arg) => page.evaluate(async ({ src, arg }) => {
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   return performance.now() - t0;
 }, { src: fn.toString(), arg });
+// Edit commit -> paint (sections 1 and 6). Runs `src` (body of (st, id, i) => …) n times on sequence `id` and times each
+// edit twice in the same iteration:
+// - paint: edit -> the next painted frame. One requestAnimationFrame, then a MessageChannel message posted from inside
+//   that rAF callback. rAF callbacks run at the start of the frame's rendering update, and style, layout, paint and the
+//   commit to the compositor follow in the same task; the message is a new task queued behind that work, so it fires
+//   right after the frame that contains the edit was painted. This is the well-known "after next paint" signal (the
+//   requestPostAnimationFrame polyfill pattern, e.g. the `afterframe` package). MessageChannel rather than setTimeout(0),
+//   which can be clamped. A double rAF instead waits out a whole second vsync, so at 60 Hz it is always >= 33.3 ms and
+//   a 32 ms budget could never pass (owner's decision, 6 October 2026).
+// - twoFrames: the previous method (edit -> second rAF; the second rAF is requested from the first rAF callback exactly
+//   as before), kept as a diagnostic reference row so nothing is hidden.
+const editToPaint = (id, n, src) => page.evaluate(async ({ id, n, src }) => {
+  const f = new Function('st', 'id', 'i', src); const paint = [], twoFrames = [];
+  for (let i = 0; i < n; i++) {
+    const t = performance.now(); f(window.__recut.store.getState(), id, i);
+    const [paintMs, twoFramesMs] = await new Promise((resolve) => requestAnimationFrame(() => {
+      let p = -1, q = -1; const done = () => { if (p >= 0 && q >= 0) resolve([p, q]); };
+      const ch = new MessageChannel();
+      ch.port1.onmessage = () => { p = performance.now() - t; ch.port1.close(); done(); };
+      ch.port2.postMessage(0);
+      requestAnimationFrame(() => { q = performance.now() - t; done(); });
+    }));
+    paint.push(paintMs); twoFrames.push(twoFramesMs);
+  }
+  return { paint, twoFrames };
+}, { id, n, src });
 const domCounts = () => page.evaluate(() => ({
   all: document.querySelectorAll('.tl-tracks-content *').length, clips: document.querySelectorAll('[data-clip-id]').length,
   thumbs: document.querySelectorAll('.tl-thumb').length, waves: document.querySelectorAll('canvas.tl-wave').length, transitions: document.querySelectorAll('[data-transition-id]').length,
@@ -334,13 +360,10 @@ console.log('\n--- store (renderer) ---');
 await setView({ zoom: 1, scroll: 0, playhead: 0 });
 {
   const timed = async (label, n, src, threshold) => {
-    const costs = await page.evaluate(async ({ id, n, src }) => {
-      const f = new Function('st', 'id', 'i', src); const out = [];
-      for (let i = 0; i < n; i++) { const t = performance.now(); f(window.__recut.store.getState(), id, i); await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); out.push(performance.now() - t); }
-      return out;
-    }, { id: SEQ, n, src });
-    const s = stats(costs);
+    const { paint, twoFrames } = await editToPaint(SEQ, n, src);
+    const s = stats(paint), s2 = stats(twoFrames);
     ms('store', `${label} commit -> paint (median)`, s.median, threshold, `p95 ${s.p95} max ${s.max}`);
+    ms('store', `${label} commit -> paint (median) (two frames, reference)`, s2.median, threshold, `p95 ${s2.p95} max ${s2.max}`, DIAGNOSTIC);
   };
   const mediaId = built.mediaIds[2];
   await timed('insertFromSource overwrite', 10, `st.insertFromSource(id, { mediaId: '${mediaId}', in: 1, out: 4, atFrame: 50 + i * 130, mode: 'overwrite' })`, 32);
@@ -730,13 +753,10 @@ console.log('\n--- multi-hour sequence ---');
   await page.evaluate((id) => window.__recut.store.getState().setView(id, { zoom: 1, scroll: 0, playhead: 0 }), LSEQ);
   await sleep(500);
   const timedLong = async (label, n, src, threshold) => {
-    const costs = await page.evaluate(async ({ id, n, src }) => {
-      const f = new Function('st', 'id', 'i', src); const out = [];
-      for (let i = 0; i < n; i++) { const t = performance.now(); f(window.__recut.store.getState(), id, i); await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); out.push(performance.now() - t); }
-      return out;
-    }, { id: LSEQ, n, src });
-    const s = stats(costs);
+    const { paint, twoFrames } = await editToPaint(LSEQ, n, src);
+    const s = stats(paint), s2 = stats(twoFrames);
     ms('long', `multi-hour ${label} commit -> paint (median)`, s.median, threshold, `p95 ${s.p95} max ${s.max}`);
+    ms('long', `multi-hour ${label} commit -> paint (median) (two frames, reference)`, s2.median, threshold, `p95 ${s2.p95} max ${s2.max}`, DIAGNOSTIC);
   };
   const lmedia = built.mediaIds[2];
   await timedLong('insertFromSource insert (ripple)', 5, `st.insertFromSource(id, { mediaId: '${lmedia}', in: 1, out: 3, atFrame: 100 + i * 400, mode: 'insert' })`, 50);
