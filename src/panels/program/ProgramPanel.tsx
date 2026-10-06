@@ -8,7 +8,7 @@
  *  - Frame-driven UI (timecode readouts, scrub playhead) listens to a FrameSignal (<= ~15 Hz while playing)
  *    instead of React state, so the panel itself never re-renders per frame.
  */
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftToLine, ArrowRightToLine, ArrowUpFromLine, BookmarkPlus, Captions, CaptionsOff, ChevronFirst, ChevronLast, Ellipsis, Expand, FoldHorizontal,
   Film, Frame, Maximize2, Minimize2, Monitor, Pause, Play, Repeat, SkipBack, SkipForward, StepBack, StepForward, TriangleAlert, Volume2, VolumeX, WifiOff, X,
@@ -31,7 +31,7 @@ import { COMMAND_IDS } from '@/keyboard/commandIds';
 import type { PanelProps } from '../registry';
 import { createFrameSignal, useFrame, type FrameSignal } from './frameSignal';
 import { createProgramTransport } from './programTransport';
-import { ScrubBar } from './ScrubBar';
+import { ScrubBar, type ScrubBarProps } from './ScrubBar';
 import { AudioMeter } from './AudioMeter';
 import { classifyMissing, sequenceMissing } from './missing';
 import './program.css';
@@ -78,7 +78,8 @@ function fitBox(cw: number, ch: number, w: number, h: number): { w: number; h: n
 
 function TimecodeOverlay({ frame, fps, mode, onToggle }: { frame: FrameSignal; fps: Rational; mode: 'sequence' | 'source'; onToggle(): void }) {
   const f = useFrame(frame);
-  const videoTracks = useStore((s) => activeSequence(s)?.videoTracks);
+  // Only the source timecode depends on the clips: in sequence mode an edit does not render this readout.
+  const videoTracks = useStore((s) => (mode === 'source' ? activeSequence(s)?.videoTracks : undefined));
   let text = formatSequenceTimecode(f, fps);
   let file = '';
   if (mode === 'source' && videoTracks) {
@@ -101,10 +102,25 @@ function TimecodeOverlay({ frame, fps, mode, onToggle }: { frame: FrameSignal; f
   );
 }
 
-function CurrentTimecode({ frame, fps, max, onSeek }: { frame: FrameSignal; fps: Rational; max: number; onSeek(f: number): void }) {
+function CurrentTimecode({ frame, fps, onSeek }: { frame: FrameSignal; fps: Rational; onSeek(f: number): void }) {
   const f = useFrame(frame);
-  return <TimecodeField className="pm-tcfield" value={f} fps={fps} min={0} max={max} onChange={onSeek} title="Current time (click to type, drag to scrub)" />;
+  const max = useStore(activeSequenceDuration);
+  return <TimecodeField className="pm-tcfield" value={f} fps={fps} min={0} max={Math.max(0, max)} onChange={onSeek} title="Current time (click to type, drag to scrub)" />;
 }
+
+// ---------------------------------------------------------------- duration-driven parts
+// The sequence duration changes with most timeline edits (a ripple insert, a trim at the end): only these read it,
+// so an edit does not re-render the whole panel (its transport and tool buttons).
+
+const SequenceDurationField = memo(function SequenceDurationField({ fps }: { fps: Rational }) {
+  const duration = useStore(activeSequenceDuration);
+  return <TimecodeField className="pm-dur" value={duration} fps={fps} onChange={() => { /* read-only */ }} scrub={false} disabled tone="default" title="Sequence duration" />;
+});
+
+const ProgramScrubBar = memo(function ProgramScrubBar(props: Omit<ScrubBarProps, 'durationFrames'>) {
+  const duration = useStore(activeSequenceDuration);
+  return <ScrubBar durationFrames={duration} {...props} />;
+});
 
 function RateChip({ playing, rate }: { playing: boolean; rate: number }) {
   if (!playing || rate === 1) return null;
@@ -128,8 +144,9 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
   const seqH = useStore((s) => activeSequence(s)?.height ?? 1080);
   const inPoint = useStore((s) => activeSequence(s)?.view.inPoint ?? null);
   const outPoint = useStore((s) => activeSequence(s)?.view.outPoint ?? null);
-  // Cached on the track arrays: this selector runs on every store update (each scrub / playback step).
-  const duration = useStore(activeSequenceDuration);
+  // Cached on the track arrays: this selector runs on every store update (each scrub / playback step). A boolean, so
+  // edits that change the duration do not re-render the panel (the duration readouts subscribe themselves).
+  const empty = useStore((s) => activeSequenceDuration(s) === 0);
   const markers = useStore((s) => activeSequence(s)?.markers ?? NO_MARKERS);
   const playing = useStore((s) => s.playback.playing);
   const rate = useStore((s) => s.playback.rate);
@@ -400,7 +417,7 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
           ) : null}
         </div>
         {!seqId ? <div className="pm-empty"><Monitor /><span>No sequence open</span></div> : null}
-        {seqId && duration === 0 ? (
+        {seqId && empty ? (
           <div className="pm-empty" data-testid="program-empty-hint">
             <Film />
             <span className="pm-empty-title">Sequence is empty</span>
@@ -439,11 +456,11 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
         </div>
       </div>
 
-      <ScrubBar durationFrames={duration} inPoint={inPoint} outPoint={outPoint} markers={markers} frame={frameSig} onScrub={onScrub} />
+      <ProgramScrubBar inPoint={inPoint} outPoint={outPoint} markers={markers} frame={frameSig} onScrub={onScrub} />
 
       <div className="pm-bar" onClick={(e) => { if ((e.target as HTMLElement).closest('button')) focusRoot(); }}>
         <div className="pm-row main">
-          <CurrentTimecode frame={frameSig} fps={fps} max={Math.max(0, duration)} onSeek={seekTo} />
+          <CurrentTimecode frame={frameSig} fps={fps} onSeek={seekTo} />
           <div className="pm-center">
             <IconButton icon={ChevronFirst} label="Go to start" shortcut={getShortcutLabel(COMMAND_IDS.goToStart)} data-testid="program-go-start" onClick={() => transport()?.goToStart()} />
             <IconButton icon={SkipBack} label="Go to previous edit" shortcut={getShortcutLabel(COMMAND_IDS.prevEdit)} onClick={goPrevEdit} />
@@ -454,7 +471,7 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
             <IconButton icon={SkipForward} label="Go to next edit" shortcut={getShortcutLabel(COMMAND_IDS.nextEdit)} onClick={goNextEdit} />
             <IconButton icon={ChevronLast} label="Go to end" shortcut={getShortcutLabel(COMMAND_IDS.goToEnd)} data-testid="program-go-end" onClick={() => transport()?.goToEnd()} />
           </div>
-          <TimecodeField className="pm-dur" value={duration} fps={fps} onChange={() => { /* read-only */ }} scrub={false} disabled tone="default" title="Sequence duration" />
+          <SequenceDurationField fps={fps} />
         </div>
         <div className="pm-row tools">
           <div className="pm-group">
