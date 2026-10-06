@@ -13,7 +13,7 @@ import type { ID, MediaItem, Rational, Sequence, VideoStreamInfo } from '../../s
 import { secondsToFramesFloor, framesToSeconds, fpsValue } from '../../shared/time';
 import { sequenceDuration, resolveSubtitleCues, type ResolvedCue } from '../../shared/timeline';
 import { PlaybackClock } from './clock';
-import { MediaElementPool } from './elementPool';
+import { MediaElementPool, poolKey } from './elementPool';
 import { planFrame, type FramePlan, type LayerPlan, type AudioPlan, type MissingMedia } from './planner';
 import { clampElementTime, toElementTime } from './mediaSource';
 import { pathToMediaUrl } from '../../shared/ipc';
@@ -88,12 +88,36 @@ const RESOLUTION_FACTOR: Record<SequencePlayerSettings['playbackResolution'], nu
 
 let playerCounter = 0;
 
-interface AudioRoute {
-  el: HTMLVideoElement;
-  source: MediaElementAudioSourceNode;
-  clipGain: GainNode;
-  trackId: ID;
+/**
+ * A pooled element lent to one clip. Elements are pooled per (path, kind, slot), not per clip: when a clip leaves the
+ * plan its slot is free, and the next clip on the same file reuses the already-loaded element (one seek instead of a
+ * new <video>, a new decoder and, for audio, a new MediaElementAudioSourceNode). Slot `k` is the k-th element of that
+ * file in use at one frame (two clips of one file overlap only in transitions or on stacked tracks).
+ */
+interface Slot<E extends HTMLMediaElement = HTMLMediaElement> {
+  el: E;
+  path: string;
+  role: string;
+  /**
+   * False from the moment the element is lent to a clip until it has landed on that clip's source time. A reused
+   * element still shows (and plays) the previous clip's position meanwhile, so it is not drawn and stays silent.
+   */
+  settled: boolean;
+  /** A seek was issued since the element was lent. */
+  sought: boolean;
 }
+
+/** Audio nodes of one pooled element: its (only) MediaElementAudioSourceNode -> a gain into the master bus. */
+interface AudioNodes {
+  source: MediaElementAudioSourceNode;
+  gain: GainNode;
+}
+
+/**
+ * MediaElementAudioSourceNode of each element, shared by every player: the node can be created only once per element,
+ * so a player recreated on the same AudioContext (the Program monitor remounting) must reuse it.
+ */
+const elementSources = new WeakMap<HTMLMediaElement, MediaElementAudioSourceNode>();
 
 export class SequencePlayer {
   private seq: Sequence | null = null;
@@ -109,12 +133,23 @@ export class SequencePlayer {
   private rafId: number | null = null;
   private lastFrame = -1;
   private lastPlan: FramePlan | null = null;
-  private activeVideo = new Map<ID, HTMLVideoElement>();
-  private activeAudio = new Map<ID, AudioRoute>();
-  private trackGains = new Map<ID, GainNode>();
+  /** drawKey of the last draw while playing ('' = the last draw was not a playing draw). */
+  private lastDrawKey = '';
+  /** Device-pixel size of the canvas on screen (setDisplaySize); caps the canvas resolution. */
+  private displaySize: { w: number; h: number } | null = null;
+  /** clipId -> element lent to it for the current plan. */
+  private activeVideo = new Map<ID, Slot<HTMLVideoElement>>();
+  /** Audio slots hold <audio> elements: they play the sound without a second video decoder per clip. */
+  private activeAudio = new Map<ID, Slot>();
+  /** Audio graph per pooled element (created once per element, dropped when the pool disposes the element). */
+  private audioNodes = new Map<HTMLMediaElement, AudioNodes>();
   private master: GainNode | null = null;
-  private sourceNodes = new WeakMap<HTMLMediaElement, MediaElementAudioSourceNode>();
-  private listened = new WeakSet<HTMLMediaElement>();
+  /** Pool keys this player acquired (released on destroy when the player's role id is not reusable). */
+  private acquired = new Map<string, { path: string; role: string }>();
+  private readonly ownsRoles: boolean;
+  private offPoolDispose: (() => void) | null = null;
+  /** Removes this player's listeners from an element (elements outlive a player with a reusable id). */
+  private listenerOffs = new Map<HTMLMediaElement, () => void>();
   private subtitleCache = new WeakMap<Sequence, ResolvedCue[]>();
   private frameCbs = new Set<(frame: number) => void>();
   private stateCbs = new Set<(s: SequencePlayerState) => void>();
@@ -135,6 +170,9 @@ export class SequencePlayer {
     this.clock = options.clock ?? new PlaybackClock();
     this.drawSubtitles = options.drawSubtitles ?? true;
     this.id = options.id ?? `p${++playerCounter}`;
+    // A caller-chosen id (the Program monitor's 'program') is reused by the next player, which then reuses the pooled
+    // elements; an auto id never comes back, so its elements are released on destroy.
+    this.ownsRoles = options.id === undefined;
     this.ctx = canvas.getContext('2d', { alpha: false });
     // A released path (proxy ready, relink) disposes elements this player may still hold: re-acquire and redraw.
     this.offPoolRelease = pool.onPathReleased?.((path) => {
@@ -143,10 +181,11 @@ export class SequencePlayer {
       const plan = this.lastPlan;
       const uses = !plan || plan.layers.some((l) => l.path === path) || plan.audio.some((a) => a.path === path);
       if (!uses) return;
-      for (const [clipId, el] of this.activeVideo) if (!el.getAttribute('src')) this.activeVideo.delete(clipId);
       this.lastFrame = -1;
       this.requestTick();
     }) ?? null;
+    // The pool disposes an element (LRU eviction, relink, proxy ready): forget it and drop its audio nodes.
+    this.offPoolDispose = pool.onDispose?.((el, path, role) => this.forgetElement(el, path, role)) ?? null;
     if (audioContext) {
       this.master = audioContext.createGain();
       this.master.connect(audioContext.destination);
@@ -157,7 +196,6 @@ export class SequencePlayer {
 
   /** Cheap to call on every store change: stores refs and schedules one redraw. */
   setSequence(seq: Sequence, media: Record<ID, MediaItem>, settings: SequencePlayerSettings): void {
-    if (seq !== this.seq) this.pruneAudio(seq);
     const fpsChanged = !this.seq || this.seq.fps.num !== seq.fps.num || this.seq.fps.den !== seq.fps.den;
     const resChanged = settings.playbackResolution !== this.settings.playbackResolution;
     const sizeChanged = !this.seq || this.seq.width !== seq.width || this.seq.height !== seq.height;
@@ -257,6 +295,19 @@ export class SequencePlayer {
     this.master.gain.setTargetAtTime(Math.max(0, v), this.audioContext.currentTime, 0.01);
   }
 
+  /**
+   * Size of the canvas on screen in device pixels (null = unknown). The canvas resolution (sequence size x playback
+   * resolution) is capped to it, keeping the sequence aspect ratio.
+   */
+  setDisplaySize(width: number, height: number): void {
+    const next = width > 0 && height > 0 ? { w: Math.round(width), h: Math.round(height) } : null;
+    if (next?.w === this.displaySize?.w && next?.h === this.displaySize?.h) return;
+    this.displaySize = next;
+    this.resizeCanvas();
+    this.lastFrame = -1;
+    this.requestTick();
+  }
+
   setDrawSubtitles(on: boolean): void { this.drawSubtitles = on; this.lastFrame = -1; this.requestTick(); }
 
   /** Synchronously seek to `frame`, update elements and draw once (scrubbing / thumbnails). */
@@ -327,18 +378,25 @@ export class SequencePlayer {
     if (this.destroyed) return;
     this.destroyed = true;
     this.offPoolRelease?.(); this.offPoolRelease = null;
+    this.offPoolDispose?.(); this.offPoolDispose = null;
     this.playing = false;
     this.clock.stop();
     if (this.rafId !== null) { cancelAnimationFrame(this.rafId); this.rafId = null; }
     this.pauseAllElements();
-    for (const route of this.activeAudio.values()) {
-      try { route.source.disconnect(); route.clipGain.disconnect(); } catch { /* ignore */ }
+    for (const [clipId, slot] of this.activeVideo) this.releaseSlot(this.activeVideo, clipId, slot);
+    for (const [clipId, slot] of this.activeAudio) this.releaseSlot(this.activeAudio, clipId, slot);
+    // Disconnect this player's audio graph. The source nodes stay attached to their elements (elementSources) so a
+    // later player on the same AudioContext can reconnect them.
+    for (const nodes of this.audioNodes.values()) {
+      try { nodes.source.disconnect(); } catch { /* ignore */ }
+      try { nodes.gain.disconnect(); } catch { /* ignore */ }
     }
-    this.activeAudio.clear();
-    for (const g of this.trackGains.values()) { try { g.disconnect(); } catch { /* ignore */ } }
-    this.trackGains.clear();
+    this.audioNodes.clear();
+    for (const off of this.listenerOffs.values()) off();
+    this.listenerOffs.clear();
     if (this.master) { try { this.master.disconnect(); } catch { /* ignore */ } }
-    this.activeVideo.clear();
+    if (this.ownsRoles) for (const { path, role } of this.acquired.values()) this.pool.release(path, role);
+    this.acquired.clear();
     this.frameCbs.clear();
     this.stateCbs.clear();
   }
@@ -368,14 +426,19 @@ export class SequencePlayer {
       }
     }
 
-    const needPlan = force || this.playing || frame !== this.lastFrame || this.lastPlan === null;
+    const invalidated = force || this.lastFrame === -1; // seek, new sequence / media / settings, element event
+    const needPlan = invalidated || this.playing || frame !== this.lastFrame || this.lastPlan === null;
     if (needPlan) {
       const plan = planFrame(this.seq, this.media, frame, this.settings.useProxies);
       this.lastPlan = plan;
       this.updateVideoElements(plan);
       this.updateAudio(plan);
     }
-    this.draw(this.lastPlan!, frame);
+    // While playing, rAF runs at the display rate (60 Hz) but the picture only changes when the timeline frame or the
+    // frame an element shows changes (24–30 Hz): skip the redundant redraws, each of which re-uploads the canvas.
+    const key = this.playing ? this.drawKey(this.lastPlan!, frame) : '';
+    if (invalidated || !key || key !== this.lastDrawKey) this.draw(this.lastPlan!, frame);
+    this.lastDrawKey = key;
 
     if (frame !== this.lastFrame || this.playing) {
       this.lastFrame = frame;
@@ -384,12 +447,25 @@ export class SequencePlayer {
     if (this.playing) this.requestTick();
   }
 
+  /** What the canvas would show for `plan` at `frame`: the timeline frame plus each video layer's media frame. */
+  private drawKey(plan: FramePlan, frame: number): string {
+    let key = String(frame);
+    for (const layer of plan.layers) {
+      if (layer.isImage) { key += `|i${getStillImage(layer.path).img.complete ? 1 : 0}`; continue; }
+      const slot = this.activeVideo.get(layer.clipId);
+      if (!slot) { key += '|-'; continue; }
+      const el = slot.el;
+      key += `|${slot.settled && el.readyState >= 2 ? Math.floor(el.currentTime * fpsValue(layer.mediaFps) + 1e-6) : 'x'}`;
+    }
+    return key;
+  }
+
   private ensureListeners(el: HTMLMediaElement): void {
-    if (this.listened.has(el)) return;
-    this.listened.add(el);
+    if (this.listenerOffs.has(el)) return;
     const redraw = () => { if (!this.playing) { this.lastFrame = -1; this.requestTick(); } };
     el.addEventListener('seeked', redraw);
     el.addEventListener('loadeddata', redraw);
+    this.listenerOffs.set(el, () => { el.removeEventListener('seeked', redraw); el.removeEventListener('loadeddata', redraw); });
   }
 
   /** Source time -> clamped element currentTime (originals with a container start offset are absolute-pts based). */
@@ -397,34 +473,91 @@ export class SequencePlayer {
     return clampElementTime(toElementTime(sourceTime, offset), el.duration, offset);
   }
 
+  /**
+   * Lend a pooled element to every clip in `items` (one per clip): a clip keeps the element it had, the others take
+   * the lowest free slot of their file (reusing a loaded element when one is idle). Slots of clips that left the plan
+   * (or whose file changed) are unpinned and passed to `onFree` (pause / silence); their elements stay pooled for the
+   * next clip on that file.
+   */
+  private assignSlots<E extends HTMLMediaElement>(kind: 'video' | 'audio', items: readonly { clipId: ID; path: string }[], active: Map<ID, Slot<E>>,
+    acquire: (path: string, role: string) => E, onFree: (slot: Slot<E>) => void): void {
+    const wanted = new Map<ID, string>();
+    for (const it of items) wanted.set(it.clipId, it.path);
+    const claimed = new Set<string>();
+    for (const [clipId, slot] of active) {
+      if (wanted.get(clipId) === slot.path && this.pool.has(slot.path, slot.role)) {
+        claimed.add(poolKey(slot.path, slot.role));
+        this.pool.touch(slot.path, slot.role);
+        continue;
+      }
+      this.releaseSlot(active, clipId, slot);
+      onFree(slot);
+    }
+    for (const it of items) {
+      if (active.has(it.clipId)) continue;
+      let k = 0;
+      let role = `${kind}:${k}#${this.id}`;
+      while (claimed.has(poolKey(it.path, role))) role = `${kind}:${++k}#${this.id}`;
+      claimed.add(poolKey(it.path, role));
+      const el = acquire(it.path, role);
+      this.pool.pin(it.path, role); // never evicted while lent, even with more files in view than the pool holds
+      this.acquired.set(poolKey(it.path, role), { path: it.path, role });
+      this.ensureListeners(el);
+      active.set(it.clipId, { el, path: it.path, role, settled: false, sought: false });
+    }
+  }
+
+  private releaseSlot<E extends HTMLMediaElement>(active: Map<ID, Slot<E>>, clipId: ID, slot: Slot<E>): void {
+    active.delete(clipId);
+    this.pool.unpin(slot.path, slot.role);
+  }
+
+  /** The pool disposed `el`: drop every reference to it (slots, audio nodes) so it and its decoder can be collected. */
+  private forgetElement(el: HTMLMediaElement, path: string, role: string): void {
+    this.acquired.delete(poolKey(path, role));
+    this.listenerOffs.get(el)?.();
+    this.listenerOffs.delete(el);
+    for (const [clipId, slot] of this.activeVideo) if (slot.el === el) this.activeVideo.delete(clipId);
+    for (const [clipId, slot] of this.activeAudio) if (slot.el === el) this.activeAudio.delete(clipId);
+    const nodes = this.audioNodes.get(el);
+    if (nodes) {
+      try { nodes.source.disconnect(); } catch { /* ignore */ }
+      try { nodes.gain.disconnect(); } catch { /* ignore */ }
+      this.audioNodes.delete(el);
+    }
+    elementSources.delete(el);
+  }
+
+  /**
+   * Keep a lent element at its clip's source time (native playback at forward rates <= MAX_NATIVE_RATE, parked and
+   * seeked otherwise). The slot is settled once the element has data at that time: it is within `tol`, or the seek
+   * issued since it was lent has completed (an element clamps a seek past its end, so it may never come within `tol`).
+   */
+  private syncElement(slot: Slot, target: number, speed: number, native: boolean, tol: number): void {
+    const el = slot.el;
+    if (native) {
+      const wanted = Math.max(0.0625, Math.min(16, speed * this.rate));
+      if (Math.abs(el.playbackRate - wanted) > 1e-3) el.playbackRate = wanted;
+    } else if (!el.paused) el.pause();
+    if (Math.abs(el.currentTime - target) > tol && !el.seeking) { el.currentTime = target; slot.sought = true; }
+    if (native && el.paused) void el.play().catch(() => {});
+    if (!slot.settled && !el.seeking && el.readyState >= 2 && (slot.sought || Math.abs(el.currentTime - target) <= tol)) slot.settled = true;
+  }
+
   private updateVideoElements(plan: FramePlan): void {
     const native = this.isNative();
-    const seen = new Set<ID>();
+    const items: LayerPlan[] = [];
     for (const layer of plan.layers) {
       if (layer.isImage) { getStillImage(layer.path, this.imageRedraw); continue; }
-      seen.add(layer.clipId);
       if (this.pool.getError(layer.path)) continue;
-      const role = `video:${layer.clipId}#${this.id}`;
-      const el = this.pool.acquire(layer.path, role);
-      this.ensureListeners(el);
-      this.activeVideo.set(layer.clipId, el);
-      const target = this.clampToMedia(el, layer.sourceTime + 0.5 / fpsValue(layer.mediaFps), layer.timeOffset);
-      if (native) {
-        const wanted = Math.max(0.0625, Math.min(16, layer.speed * this.rate));
-        if (Math.abs(el.playbackRate - wanted) > 1e-3) el.playbackRate = wanted;
-        if (Math.abs(el.currentTime - target) > DRIFT_TOLERANCE && !el.seeking) el.currentTime = target;
-        if (el.paused) void el.play().catch(() => {});
-      } else {
-        if (!el.paused) el.pause();
-        const tol = 1 / (2 * fpsValue(layer.mediaFps));
-        if (Math.abs(el.currentTime - target) > tol && !el.seeking) el.currentTime = target;
-      }
+      items.push(layer);
     }
-    for (const [clipId, el] of this.activeVideo) {
-      if (!seen.has(clipId)) {
-        if (!el.paused) el.pause();
-        this.activeVideo.delete(clipId);
-      }
+    this.assignSlots('video', items, this.activeVideo, (path, role) => this.pool.acquireVideo(path, role), (slot) => { if (!slot.el.paused) slot.el.pause(); });
+    for (const layer of items) {
+      const slot = this.activeVideo.get(layer.clipId);
+      if (!slot) continue;
+      const target = this.clampToMedia(slot.el, layer.sourceTime + 0.5 / fpsValue(layer.mediaFps), layer.timeOffset);
+      this.syncElement(slot, target, layer.speed, native, native ? DRIFT_TOLERANCE : 1 / (2 * fpsValue(layer.mediaFps)));
     }
   }
 
@@ -433,102 +566,49 @@ export class SequencePlayer {
     if (!ctx || !this.master) return;
     const native = this.isNative();
     const now = ctx.currentTime;
-    const seen = new Set<ID>();
-    for (const a of plan.audio) {
-      seen.add(a.clipId);
-      if (this.pool.getError(a.path)) continue;
-      const role = `audio:${a.clipId}#${this.id}`;
-      const el = this.pool.acquire(a.path, role);
-      this.ensureListeners(el);
-      if (el.muted) el.muted = false;
-      let route = this.activeAudio.get(a.clipId);
-      if (!route || route.el !== el) {
-        if (route) { try { route.source.disconnect(); } catch { /* ignore */ } }
-        let source = this.sourceNodes.get(el);
-        if (!source) {
-          try { source = ctx.createMediaElementSource(el); } catch { continue; }
-          this.sourceNodes.set(el, source);
-        } else {
-          try { source.disconnect(); } catch { /* ignore */ }
-        }
-        const clipGain = route?.clipGain ?? ctx.createGain();
-        clipGain.gain.value = 0;
-        source.connect(clipGain);
-        route = { el, source, clipGain, trackId: a.trackId };
-        this.activeAudio.set(a.clipId, route);
-        clipGain.connect(this.trackGain(a.trackId));
-      } else if (route.trackId !== a.trackId) {
-        try { route.clipGain.disconnect(); } catch { /* ignore */ }
-        route.clipGain.connect(this.trackGain(a.trackId));
-        route.trackId = a.trackId;
-      }
-      route.clipGain.gain.setTargetAtTime(a.gain, now, 0.01);
-      this.trackGain(a.trackId).gain.setTargetAtTime(a.trackVolume, now, 0.01);
-
-      const target = this.clampToMedia(el, a.sourceTime, a.timeOffset);
-      if (native) {
-        const wanted = Math.max(0.0625, Math.min(16, a.speed * this.rate));
-        if (Math.abs(el.playbackRate - wanted) > 1e-3) el.playbackRate = wanted;
-        if (Math.abs(el.currentTime - target) > DRIFT_TOLERANCE && !el.seeking) el.currentTime = target;
-        if (el.paused) void el.play().catch(() => {});
-      } else {
-        // Scrubbing / reverse / fast shuttle: silent, but keep the element parked near the frame.
-        if (!el.paused) el.pause();
-        if (Math.abs(el.currentTime - target) > 0.25 && !el.seeking) el.currentTime = target;
-      }
-    }
-    for (const [clipId, route] of this.activeAudio) {
-      if (seen.has(clipId)) continue;
-      route.clipGain.gain.setTargetAtTime(0, now, 0.01);
-      if (!route.el.paused) route.el.pause();
-      // Keep the route (the clip may come back next frame) unless the pool evicted the element,
-      // which clears its src.
-      if (!route.el.getAttribute('src')) {
-        try { route.source.disconnect(); route.clipGain.disconnect(); } catch { /* ignore */ }
-        this.activeAudio.delete(clipId);
-      }
+    const items = plan.audio.filter((a) => !this.pool.getError(a.path));
+    this.assignSlots('audio', items, this.activeAudio, (path, role) => this.pool.acquire(path, role), (slot) => {
+      this.audioNodes.get(slot.el)?.gain.gain.setTargetAtTime(0, now, 0.01);
+      if (!slot.el.paused) slot.el.pause();
+    });
+    for (const a of items) {
+      const slot = this.activeAudio.get(a.clipId);
+      if (!slot) continue;
+      if (slot.el.muted) slot.el.muted = false;
+      const nodes = this.audioNodesFor(slot.el);
+      if (!nodes) continue;
+      // Scrubbing / reverse / fast shuttle (not native): silent, but keep the element parked near the frame.
+      this.syncElement(slot, this.clampToMedia(slot.el, a.sourceTime, a.timeOffset), a.speed, native, native ? DRIFT_TOLERANCE : 0.25);
+      // Track volume is folded into the element's gain: one GainNode per pooled element, none per track (P-12).
+      nodes.gain.gain.setTargetAtTime(slot.settled ? a.gain * a.trackVolume : 0, now, 0.01);
     }
   }
 
-  /**
-   * Disconnect audio routes whose clip is no longer in `seq` and track gains whose track is gone (sequence switch,
-   * deleted clips / tracks). Without this, GainNodes accumulate across sequence switches (P-12).
-   */
-  private pruneAudio(seq: Sequence): void {
-    if (!this.activeAudio.size && !this.trackGains.size) return;
-    const trackIds = new Set<ID>();
-    const clipIds = new Set<ID>();
-    for (const t of seq.audioTracks) {
-      trackIds.add(t.id);
-      if (this.activeAudio.size) for (const c of t.clips) clipIds.add(c.id);
+  /** The element's source -> gain -> master chain, created on first use (null if the element cannot be routed). */
+  private audioNodesFor(el: HTMLMediaElement): AudioNodes | null {
+    const existing = this.audioNodes.get(el);
+    if (existing) return existing;
+    const ctx = this.audioContext!;
+    let source = elementSources.get(el);
+    if (source && source.context !== ctx) return null; // routed into another AudioContext for good
+    if (!source) {
+      try { source = ctx.createMediaElementSource(el); } catch { return null; }
+      elementSources.set(el, source);
+    } else {
+      try { source.disconnect(); } catch { /* ignore */ }
     }
-    for (const [clipId, route] of this.activeAudio) {
-      if (clipIds.has(clipId) && trackIds.has(route.trackId)) continue;
-      try { route.clipGain.gain.value = 0; } catch { /* ignore */ }
-      if (!route.el.paused) route.el.pause();
-      try { route.source.disconnect(); route.clipGain.disconnect(); } catch { /* ignore */ }
-      this.activeAudio.delete(clipId);
-    }
-    for (const [trackId, g] of this.trackGains) {
-      if (trackIds.has(trackId)) continue;
-      try { g.disconnect(); } catch { /* ignore */ }
-      this.trackGains.delete(trackId);
-    }
-  }
-
-  private trackGain(trackId: ID): GainNode {
-    let g = this.trackGains.get(trackId);
-    if (!g) {
-      g = this.audioContext!.createGain();
-      g.connect(this.master!);
-      this.trackGains.set(trackId, g);
-    }
-    return g;
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    source.connect(gain);
+    gain.connect(this.master!);
+    const nodes = { source, gain };
+    this.audioNodes.set(el, nodes);
+    return nodes;
   }
 
   private pauseAllElements(): void {
-    for (const el of this.activeVideo.values()) { if (!el.paused) el.pause(); }
-    for (const r of this.activeAudio.values()) { if (!r.el.paused) r.el.pause(); }
+    for (const s of this.activeVideo.values()) { if (!s.el.paused) s.el.pause(); }
+    for (const s of this.activeAudio.values()) { if (!s.el.paused) s.el.pause(); }
   }
 
   // ---------------------------------------------------------------- drawing
@@ -536,8 +616,14 @@ export class SequencePlayer {
   private resizeCanvas(): void {
     if (!this.seq) return;
     const factor = RESOLUTION_FACTOR[this.settings.playbackResolution] ?? 1;
-    const w = Math.max(2, Math.round(this.seq.width * factor));
-    const h = Math.max(2, Math.round(this.seq.height * factor));
+    let w = this.seq.width * factor, h = this.seq.height * factor;
+    // Never render more pixels than the monitor shows: the canvas is scaled down to its box on screen anyway, and
+    // drawImage of a video frame costs in proportion to the pixels written (a 1080p canvas in a 700 px monitor spent
+    // 25-45 ms per draw in software compositing, the long tasks of Program playback).
+    const cap = this.displaySize;
+    if (cap) { const s = Math.min(1, cap.w / w, cap.h / h); w *= s; h *= s; }
+    w = Math.max(2, Math.round(w));
+    h = Math.max(2, Math.round(h));
     if (this.canvas.width !== w) this.canvas.width = w;
     if (this.canvas.height !== h) this.canvas.height = h;
   }
@@ -554,6 +640,11 @@ export class SequencePlayer {
     ctx.fillRect(0, 0, W, H);
     ctx.scale(sx, sy);
 
+    // Resolve what each layer would draw, then start at the top-most layer that covers the whole frame opaquely:
+    // everything below it is invisible, and drawImage of a video frame is the most expensive call of a tick
+    // (software compositing). With four full-frame video tracks this draws one layer instead of four.
+    const drawable: { layer: LayerPlan; el: HTMLVideoElement | HTMLImageElement; vw: number; vh: number }[] = [];
+    let first = 0;
     for (const layer of plan.layers) {
       if (layer.alpha <= 0) continue;
       let el: HTMLVideoElement | HTMLImageElement | undefined;
@@ -563,8 +654,10 @@ export class SequencePlayer {
         if (!img.complete || !img.naturalWidth) continue;
         el = img; vw = img.naturalWidth; vh = img.naturalHeight;
       } else {
-        const v = this.activeVideo.get(layer.clipId);
-        if (!v || v.readyState < 2) continue;
+        const slot = this.activeVideo.get(layer.clipId);
+        // A reused element still shows the previous clip's frame until its seek lands: draw nothing rather than that.
+        if (!slot || !slot.settled || slot.el.readyState < 2) continue;
+        const v = slot.el;
         el = v;
         // videoWidth / videoHeight are the display size (SAR applied); the probe fallback must match it.
         const m = Object.hasOwn(this.media, layer.mediaId) ? this.media[layer.mediaId] : undefined;
@@ -573,6 +666,12 @@ export class SequencePlayer {
         vh = v.videoHeight || fallback?.height || 0;
       }
       if (!vw || !vh) continue;
+      if (!layer.isImage && this.coversFrameOpaquely(layer, vw, vh, seq)) first = drawable.length;
+      drawable.push({ layer, el, vw, vh });
+    }
+
+    for (let i = first; i < drawable.length; i++) {
+      const { layer, el, vw, vh } = drawable[i];
       const fit = Math.min(seq.width / vw, seq.height / vh);
       const tr = layer.transform;
       const c = tr.crop;
@@ -594,6 +693,30 @@ export class SequencePlayer {
 
     if (this.drawSubtitles) this.drawSubtitleOverlay(ctx, seq, frame);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /**
+   * Whether a video layer paints every pixel of the frame with full opacity (so layers below it cannot show): alpha 1,
+   * not rotated, and its cropped, scaled, offset rectangle contains the whole frame. Media that may carry an alpha
+   * channel (VP8 / VP9 originals, alpha pixel formats) never counts; proxies are H.264.
+   */
+  private coversFrameOpaquely(layer: LayerPlan, vw: number, vh: number, seq: Sequence): boolean {
+    const tr = layer.transform;
+    if (layer.alpha < 1 || (tr.rotation || 0) % 360 !== 0) return false;
+    if (!layer.usingProxy) {
+      const v = Object.hasOwn(this.media, layer.mediaId) ? this.media[layer.mediaId].probe?.video : undefined;
+      if (!v || /^vp[89]$/i.test(v.codec) || /^(yuva|rgba|bgra|argb|abgr|gbrap|ya|pal8)/i.test(v.pixFmt ?? '')) return false;
+    }
+    const fit = Math.min(seq.width / vw, seq.height / vh);
+    const c = tr.crop;
+    const x0 = Math.max(0, Math.min(1, c.left)) * vw, x1 = Math.max(0, Math.min(1, 1 - c.right)) * vw;
+    const y0 = Math.max(0, Math.min(1, c.top)) * vh, y1 = Math.max(0, Math.min(1, 1 - c.bottom)) * vh;
+    if (x1 <= x0 || y1 <= y0) return false;
+    const k = fit * tr.scale;
+    const xa = seq.width / 2 + tr.x + (x0 - vw / 2) * k, xb = seq.width / 2 + tr.x + (x1 - vw / 2) * k;
+    const ya = seq.height / 2 + tr.y + (y0 - vh / 2) * k, yb = seq.height / 2 + tr.y + (y1 - vh / 2) * k;
+    const eps = 1e-6;
+    return Math.min(xa, xb) <= eps && Math.max(xa, xb) >= seq.width - eps && Math.min(ya, yb) <= eps && Math.max(ya, yb) >= seq.height - eps;
   }
 
   private drawSubtitleOverlay(ctx: CanvasRenderingContext2D, seq: Sequence, frame: number): void {
