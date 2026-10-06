@@ -9,7 +9,8 @@
  *   npm run build && xvfb-run -a node tests/perf/electron-perf.mjs [--media <dir>] [--long <file>] [--skip-heavy]
  *
  * Env: RECUT_PERF_SCRATCH (scratch root), RECUT_PERF_OUT (results dir), RECUT_PERF_MEDIA, RECUT_PERF_LONG_FILE.
- * Writes <out>/electron.json and prints a measurement table. No source files are touched.
+ * Writes <out>/electron.json and prints a measurement table. No source files are touched. If a step fails, the rows
+ * measured before it are still written and the script exits 1.
  */
 import { _electron as electron } from 'playwright';
 import { execFileSync } from 'node:child_process';
@@ -17,6 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evalMain } from './_electron-common.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
@@ -88,10 +90,16 @@ const INIT_SCRIPT = `
     }
     return out;
   };
+  // Prime the counter: call right before setting hookOn (same task, so no commit can slip in between). fresh() only
+  // knows fibers it has walked, so a clip that rendered while the hook was off (e.g. select() or filmstrip / waveform
+  // data arriving during setup) still carries its stale PerformedWork flag and would be counted in the first commit
+  // of the window. Walking the last committed tree once marks every current fiber as seen with its present
+  // props/state; a real render inside the window changes props or state and is still counted.
+  P.prime = () => { if (P.lastRoot) walk(P.lastRoot); };
   window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
     supportsFiber: true, isDisabled: false, renderers: new Map(), on() {}, off() {}, emit() {}, sub() { return () => {}; }, checkDCE() {},
     inject() { P.hook = true; return 1; },
-    onCommitFiberRoot(id, root) { if (!P.hookOn) return; try { P.commits.push(walk(root)); } catch (e) { P.commits.push({ err: String(e) }); } },
+    onCommitFiberRoot(id, root) { P.lastRoot = root; if (!P.hookOn) return; try { P.commits.push(walk(root)); } catch (e) { P.commits.push({ err: String(e) }); } },
     onCommitFiberUnmount() {}, onPostCommitFiberRoot() {},
   };
 })();
@@ -102,12 +110,31 @@ const tmp = fs.mkdtempSync(path.join(SCRATCH, 'electron-'));
 const userData = path.join(tmp, 'userData'); const cacheDir = path.join(tmp, 'cache');
 fs.mkdirSync(userData, { recursive: true }); fs.mkdirSync(cacheDir, { recursive: true });
 console.log(`[perf] launching ReCut (userData ${userData})`);
-const app = await electron.launch({ args: [path.join(ROOT, 'dist/electron/main.js'), '--no-sandbox'], cwd: ROOT, env: { ...process.env, RECUT_USER_DATA: userData, RECUT_CACHE_DIR: cacheDir, RECUT_DISABLE_GPU: '1' }, timeout: 90_000 });
+
+// Every row measured so far is written even when a later step throws, so one failure never loses the whole table;
+// the exit code stays non-zero, so perf:check still reports the suite as failed. The measurement body below is one
+// try block (left at top-level indentation to keep its diff readable).
+let app;
+let finishing = false;
+async function finish(error) {
+  if (finishing) return;
+  finishing = true;
+  if (error) console.error(`\n[perf] FAILED after ${results.length} measurements: ${error?.stack ?? error}`);
+  const file = path.join(OUT, 'electron.json');
+  fs.writeFileSync(file, JSON.stringify(results, null, 2));
+  console.log(`\n[perf] ${results.length} measurements -> ${file}${error ? ' (INCOMPLETE: the run failed, exiting 1)' : ''}`);
+  if (app) { try { await Promise.race([app.evaluate(({ app }) => app.exit(0)), sleep(3000)]); } catch {} try { app.process().kill('SIGKILL'); } catch {} } // app.close() can hang on the unsaved-changes prompt
+  process.exit(error ? 1 : 0);
+}
+process.on('uncaughtException', (e) => finish(e));
+process.on('unhandledRejection', (e) => finish(e));
+try {
+app = await electron.launch({ args: [path.join(ROOT, 'dist/electron/main.js'), '--no-sandbox'], cwd: ROOT, env: { ...process.env, RECUT_USER_DATA: userData, RECUT_CACHE_DIR: cacheDir, RECUT_DISABLE_GPU: '1' }, timeout: 90_000 });
 const page = await app.firstWindow();
 page.on('pageerror', (e) => console.log('[renderer:pageerror]', e.message));
 page.on('console', (m) => { if (m.type() === 'error') console.log('[renderer:error]', m.text().slice(0, 300)); });
 await page.waitForSelector('#root .layout', { timeout: 60_000 });
-await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setSize(1600, 1000); w.center(); });
+await evalMain(app, ({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setSize(1600, 1000); w.center(); });
 await page.evaluate(() => { localStorage.removeItem('recut.layout.v1'); localStorage.removeItem('recut.shortcuts.v1'); });
 await app.context().addInitScript(INIT_SCRIPT);
 await page.reload();
@@ -116,7 +143,7 @@ await page.waitForFunction(() => Boolean(window.__recut) && Boolean(window.__per
 rec('env', 'React DevTools hook attached (ClipView render counting)', String(await page.evaluate(() => window.__perf.hook)));
 
 // Main-process IPC instrumentation (counts + durations per channel) via ipcMain's handler map.
-const ipcWrapped = await app.evaluate(({ ipcMain }) => {
+const ipcWrapped = await evalMain(app, ({ ipcMain }) => {
   const map = ipcMain._invokeHandlers;
   if (!(map instanceof Map)) return false;
   const S = (globalThis.__perfIpc = { counts: {}, times: {}, lastArgsBytes: {} });
@@ -131,8 +158,8 @@ const ipcWrapped = await app.evaluate(({ ipcMain }) => {
   return true;
 });
 rec('env', 'main-process IPC handlers wrapped', String(ipcWrapped));
-const ipcStats = async (reset = true) => app.evaluate(({ }, reset) => { const S = globalThis.__perfIpc; const out = JSON.parse(JSON.stringify(S)); if (reset) { S.counts = {}; S.times = {}; } return out; }, reset);
-const metrics = async () => app.evaluate(({ app }) => app.getAppMetrics().map((m) => ({ type: m.type, pid: m.pid, ws: Math.round(m.memory.workingSetSize / 1024), cpu: m.cpu.percentCPUUsage })));
+const ipcStats = async (reset = true) => evalMain(app, ({ }, reset) => { const S = globalThis.__perfIpc; const out = JSON.parse(JSON.stringify(S)); if (reset) { S.counts = {}; S.times = {}; } return out; }, reset);
+const metrics = async () => evalMain(app, ({ app }) => app.getAppMetrics().map((m) => ({ type: m.type, pid: m.pid, ws: Math.round(m.memory.workingSetSize / 1024), cpu: m.cpu.percentCPUUsage })));
 const mainMB = async () => (await metrics()).find((m) => m.type === 'Browser')?.ws ?? -1;
 const rendererMB = async () => (await metrics()).filter((m) => m.type === 'Tab').reduce((a, m) => a + m.ws, 0);
 const lt = async (since) => page.evaluate((since) => window.__perf.lt.filter((e) => e.t >= since), since);
@@ -178,6 +205,32 @@ const paintAfter = (fn, arg) => page.evaluate(async ({ src, arg }) => {
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   return performance.now() - t0;
 }, { src: fn.toString(), arg });
+// Edit commit -> paint (sections 1 and 6). Runs `src` (body of (st, id, i) => …) n times on sequence `id` and times each
+// edit twice in the same iteration:
+// - paint: edit -> the next painted frame. One requestAnimationFrame, then a MessageChannel message posted from inside
+//   that rAF callback. rAF callbacks run at the start of the frame's rendering update, and style, layout, paint and the
+//   commit to the compositor follow in the same task; the message is a new task queued behind that work, so it fires
+//   right after the frame that contains the edit was painted. This is the well-known "after next paint" signal (the
+//   requestPostAnimationFrame polyfill pattern, e.g. the `afterframe` package). MessageChannel rather than setTimeout(0),
+//   which can be clamped. A double rAF instead waits out a whole second vsync, so at 60 Hz it is always >= 33.3 ms and
+//   a 32 ms budget could never pass (owner's decision, 6 October 2026).
+// - twoFrames: the previous method (edit -> second rAF; the second rAF is requested from the first rAF callback exactly
+//   as before), kept as a diagnostic reference row so nothing is hidden.
+const editToPaint = (id, n, src) => page.evaluate(async ({ id, n, src }) => {
+  const f = new Function('st', 'id', 'i', src); const paint = [], twoFrames = [];
+  for (let i = 0; i < n; i++) {
+    const t = performance.now(); f(window.__recut.store.getState(), id, i);
+    const [paintMs, twoFramesMs] = await new Promise((resolve) => requestAnimationFrame(() => {
+      let p = -1, q = -1; const done = () => { if (p >= 0 && q >= 0) resolve([p, q]); };
+      const ch = new MessageChannel();
+      ch.port1.onmessage = () => { p = performance.now() - t; ch.port1.close(); done(); };
+      ch.port2.postMessage(0);
+      requestAnimationFrame(() => { q = performance.now() - t; done(); });
+    }));
+    paint.push(paintMs); twoFrames.push(twoFramesMs);
+  }
+  return { paint, twoFrames };
+}, { id, n, src });
 const domCounts = () => page.evaluate(() => ({
   all: document.querySelectorAll('.tl-tracks-content *').length, clips: document.querySelectorAll('[data-clip-id]').length,
   thumbs: document.querySelectorAll('.tl-thumb').length, waves: document.querySelectorAll('canvas.tl-wave').length, transitions: document.querySelectorAll('[data-transition-id]').length,
@@ -221,29 +274,59 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
 }
 // Scrubbing: drive setView(playhead) every rAF for 3 s; measure fps, long tasks, DOM mutations, ClipView renders.
 // Defaults measure the 2,500-clip sequence; the multi-hour section passes its own sequence, duration and section.
-  const scrub = async (label, selectedCount, seqId = SEQ, seqDur = dur, section = 'scrub') => {
+// Two drivers:
+// - default: the playhead jumps dur/240 frames per frame across the whole sequence. Below zoom-to-fit it leaves the
+//   view, so the view page-flips (Playhead.tsx, pageFlipScroll) and mounts the newly visible clips.
+// - { inPage: true } (added 6 October 2026): the realistic drag. The playhead sweeps back and forth inside the
+//   currently visible page (2 % to 90 % of it, about one sweep per 2 s), so the view must never flip. The flip count
+//   is recorded as an info row, and every gate row of this driver fails if a flip happened (it would not be in-page).
+  const scrub = async (label, selectedCount, seqId = SEQ, seqDur = dur, section = 'scrub', { inPage = false } = {}) => {
     await page.evaluate(({ id, n }) => { const st = window.__recut.store.getState(); const s = st.project.sequences[id]; const ids = [...s.videoTracks, ...s.audioTracks].flatMap((t) => t.clips.map((c) => c.id)).slice(0, n); st.select(ids, n ? 'set' : 'clear'); }, { id: seqId, n: selectedCount });
     await sleep(500);
+    // In-page: start the playhead inside the visible page before measuring (outside the measured window).
+    const page0 = inPage ? await page.evaluate((id) => {
+      const st = window.__recut.store.getState(); const v = st.project.sequences[id].view;
+      const visible = (document.querySelector('.tl-tracks-col')?.clientWidth ?? 0) / v.zoom;
+      const lo = Math.ceil(v.scroll + visible * 0.02), hi = Math.floor(v.scroll + visible * 0.9);
+      st.setView(id, { playhead: lo }); return { lo, hi };
+    }, seqId) : null;
+    if (inPage) await sleep(300);
     const t0 = await nowPage();
-    const out = await page.evaluate(async ({ id, dur }) => {
+    const out = await page.evaluate(async ({ id, dur, page0 }) => {
       const st = window.__recut.store;
       const area = document.querySelector('.tl-tracks-col'); const content = document.querySelector('.tl-tracks-content');
       let mutAll = 0, mutContent = 0;
       const mo = new MutationObserver((l) => { mutAll += l.length; }); mo.observe(area, { subtree: true, attributes: true, childList: true, characterData: true });
       const mc = new MutationObserver((l) => { mutContent += l.length; }); mc.observe(content, { subtree: true, attributes: true, childList: true, characterData: true });
-      window.__perf.commits.length = 0; window.__perf.hookOn = true;
-      const step = Math.max(1, Math.floor(dur / 240));
-      let f = 0, frames = 0; const t0 = performance.now(); const costs = [];
-      await new Promise((resolve) => { const tick = () => { const now = performance.now(); if (now - t0 >= 3000) return resolve(); f = (f + step) % dur; const a = performance.now(); st.getState().setView(id, { playhead: f }); costs.push(performance.now() - a); frames++; requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
+      // Page flips = changes of view.scroll while scrubbing (setView mutates the LiveView in place, so compare values).
+      let flips = 0, lastScroll = st.getState().project.sequences[id].view.scroll;
+      const unsub = st.subscribe((s) => { const sc = s.project.sequences[id]?.view.scroll; if (sc !== lastScroll) { lastScroll = sc; flips++; } });
+      window.__perf.prime(); window.__perf.commits.length = 0; window.__perf.hookOn = true;
+      const step = page0 ? Math.max(1, Math.round((page0.hi - page0.lo) / 120)) : Math.max(1, Math.floor(dur / 240));
+      let f = page0 ? page0.lo : 0, dir = 1, frames = 0; const t0 = performance.now(); const costs = [];
+      const next = page0
+        ? () => { if (f + dir * step > page0.hi || f + dir * step < page0.lo) dir = -dir; f += dir * step; return f; }
+        : () => { f = (f + step) % dur; return f; };
+      await new Promise((resolve) => { const tick = () => { const now = performance.now(); if (now - t0 >= 3000) return resolve(); const target = next(); const a = performance.now(); st.getState().setView(id, { playhead: target }); costs.push(performance.now() - a); frames++; requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
       await new Promise((r) => setTimeout(r, 50));
-      window.__perf.hookOn = false; mo.disconnect(); mc.disconnect();
+      window.__perf.hookOn = false; mo.disconnect(); mc.disconnect(); unsub();
       const commits = window.__perf.commits.filter((c) => !c.err);
       const clipRendered = commits.reduce((a, c) => a + c.clipRendered, 0), tb = commits.reduce((a, c) => a + c.timelineBody, 0);
       const elapsed = performance.now() - t0;
       costs.sort((a, b) => a - b);
-      return { frames, fps: frames / (elapsed / 1000), mutAll, mutContent, commits: commits.length, clipRendered, tb, setViewMedian: costs[Math.floor(costs.length / 2)] ?? 0, setViewMax: costs[costs.length - 1] ?? 0, clipTotal: commits[0]?.clipTotal ?? 0 };
-    }, { id: seqId, dur: seqDur });
+      return { frames, fps: frames / (elapsed / 1000), mutAll, mutContent, commits: commits.length, clipRendered, tb, flips, setViewMedian: costs[Math.floor(costs.length / 2)] ?? 0, setViewMax: costs[costs.length - 1] ?? 0, clipTotal: commits[0]?.clipTotal ?? 0 };
+    }, { id: seqId, dur: seqDur, page0 });
     const long = await lt(t0);
+    if (inPage) {
+      // The realistic drag: all four rows are gates, valid only without a page flip.
+      const noFlip = out.flips === 0, inv = noFlip ? '' : `INVALID: ${out.flips} page flips; `;
+      rec(section, `page flips during in-page scrub ${label}`, out.flips, '', undefined, undefined, `playhead swept frames ${page0.lo}-${page0.hi}, must be 0`);
+      rec(section, `playhead scrub fps (rAF-driven setView) ${label}`, r2(out.fps, 1), 'fps', '>= 50', noFlip && out.fps >= 50, `${inv}${out.frames} frames`);
+      rec(section, `DOM mutations per frame ${label} (tracks col / clips content)`, `${r2(out.mutAll / Math.max(1, out.frames), 2)} / ${r2(out.mutContent / Math.max(1, out.frames), 2)}`, '', 'content == 0', noFlip && out.mutContent === 0, inv || undefined);
+      rec(section, `ClipView renders per frame ${label}`, r2(out.clipRendered / Math.max(1, out.frames), 2), '', '== 0', noFlip && out.clipRendered === 0, `${inv}${out.commits} React commits, TimelineBody renders ${out.tb}, ${out.clipTotal} clip fibers`);
+      rec(section, `long tasks during scrub ${label}`, long.length, '', '== 0', noFlip && long.length === 0, `${inv}${ltSummary(long)}`);
+      return;
+    }
     rec(section, `playhead scrub fps (rAF-driven setView) ${label}`, r2(out.fps, 1), 'fps', '>= 50', out.fps >= 50, `${out.frames} frames`);
     rec(section, `DOM mutations per frame ${label} (tracks col / clips content)`, `${r2(out.mutAll / Math.max(1, out.frames), 2)} / ${r2(out.mutContent / Math.max(1, out.frames), 2)}`, '', 'content == 0', out.mutContent === 0);
     rec(section, `ClipView renders per frame ${label}`, r2(out.clipRendered / Math.max(1, out.frames), 2), '', '== 0', out.clipRendered === 0, `${out.commits} React commits, TimelineBody renders ${out.tb}, ${out.clipTotal} clip fibers`);
@@ -257,6 +340,10 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
   await setView({ zoom: 1, scroll: 0 }); await sleep(800);
   await scrub('@ 1 px/frame (~120 clips mounted), no selection', 0);
   await scrub('@ 1 px/frame, 50 clips selected', 50);
+  // The realistic drag inside the visible page (added after the rows above, so their conditions are unchanged).
+  await setView({ zoom: 1, scroll: 0 }); await sleep(800);
+  await scrub('@ 1 px/frame, within the visible page, no selection', 0, SEQ, dur, 'scrub', { inPage: true });
+  await scrub('@ 1 px/frame, within the visible page, 50 clips selected', 50, SEQ, dur, 'scrub', { inPage: true });
   await page.evaluate(() => window.__recut.store.getState().select([], 'clear'));
 }
 {
@@ -313,13 +400,10 @@ console.log('\n--- store (renderer) ---');
 await setView({ zoom: 1, scroll: 0, playhead: 0 });
 {
   const timed = async (label, n, src, threshold) => {
-    const costs = await page.evaluate(async ({ id, n, src }) => {
-      const f = new Function('st', 'id', 'i', src); const out = [];
-      for (let i = 0; i < n; i++) { const t = performance.now(); f(window.__recut.store.getState(), id, i); await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); out.push(performance.now() - t); }
-      return out;
-    }, { id: SEQ, n, src });
-    const s = stats(costs);
+    const { paint, twoFrames } = await editToPaint(SEQ, n, src);
+    const s = stats(paint), s2 = stats(twoFrames);
     ms('store', `${label} commit -> paint (median)`, s.median, threshold, `p95 ${s.p95} max ${s.max}`);
+    ms('store', `${label} commit -> paint (median) (two frames, reference)`, s2.median, threshold, `p95 ${s2.p95} max ${s2.max}`, DIAGNOSTIC);
   };
   const mediaId = built.mediaIds[2];
   await timed('insertFromSource overwrite', 10, `st.insertFromSource(id, { mediaId: '${mediaId}', in: 1, out: 4, atFrame: 50 + i * 130, mode: 'overwrite' })`, 32);
@@ -704,18 +788,19 @@ console.log('\n--- multi-hour sequence ---');
   await sleep(1500);
   await scrub('multi-hour @ 1 px/frame, no selection', 0, LSEQ, ldur, 'long');
   await scrub('multi-hour @ 1 px/frame, 50 clips selected', 50, LSEQ, ldur, 'long');
+  await page.evaluate((id) => window.__recut.store.getState().setView(id, { zoom: 1, scroll: 0 }), LSEQ);
+  await sleep(1500);
+  await scrub('multi-hour @ 1 px/frame, within the visible page, no selection', 0, LSEQ, ldur, 'long', { inPage: true });
+  await scrub('multi-hour @ 1 px/frame, within the visible page, 50 clips selected', 50, LSEQ, ldur, 'long', { inPage: true });
   await page.evaluate(() => window.__recut.store.getState().select([], 'clear'));
   // Edit commit -> paint on the multi-hour sequence (same budgets as section 1).
   await page.evaluate((id) => window.__recut.store.getState().setView(id, { zoom: 1, scroll: 0, playhead: 0 }), LSEQ);
   await sleep(500);
   const timedLong = async (label, n, src, threshold) => {
-    const costs = await page.evaluate(async ({ id, n, src }) => {
-      const f = new Function('st', 'id', 'i', src); const out = [];
-      for (let i = 0; i < n; i++) { const t = performance.now(); f(window.__recut.store.getState(), id, i); await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); out.push(performance.now() - t); }
-      return out;
-    }, { id: LSEQ, n, src });
-    const s = stats(costs);
+    const { paint, twoFrames } = await editToPaint(LSEQ, n, src);
+    const s = stats(paint), s2 = stats(twoFrames);
     ms('long', `multi-hour ${label} commit -> paint (median)`, s.median, threshold, `p95 ${s.p95} max ${s.max}`);
+    ms('long', `multi-hour ${label} commit -> paint (median) (two frames, reference)`, s2.median, threshold, `p95 ${s2.p95} max ${s2.max}`, DIAGNOSTIC);
   };
   const lmedia = built.mediaIds[2];
   await timedLong('insertFromSource insert (ripple)', 5, `st.insertFromSource(id, { mediaId: '${lmedia}', in: 1, out: 3, atFrame: 100 + i * 400, mode: 'insert' })`, 50);
@@ -738,7 +823,7 @@ console.log('\n--- multi-hour sequence ---');
   ms('long', 'openProject main-side handler time incl. multi-hour', ((await ipcStats(true)).times['project:load'] || [0])[0], 500, undefined, DIAGNOSTIC);
 }
 
-fs.writeFileSync(path.join(OUT, 'electron.json'), JSON.stringify(results, null, 2));
-console.log(`\n[perf] ${results.length} measurements -> ${path.join(OUT, 'electron.json')}`);
-try { await Promise.race([app.evaluate(({ app }) => app.exit(0)), new Promise((r) => setTimeout(r, 3000))]); } catch {} try { app.process().kill('SIGKILL'); } catch {} // app.close() can hang on the unsaved-changes prompt
-process.exit(0);
+} catch (e) {
+  await finish(e ?? new Error('electron-perf failed'));
+}
+await finish(null);

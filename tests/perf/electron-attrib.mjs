@@ -18,7 +18,7 @@ await H.clickTab('timeline'); await H.setView({ zoom: 1, scroll: 0, playhead: 0 
 
 const hookRun = async (label, body, arg) => page.evaluate(async ({ src, arg }) => {
   const f = new Function('arg', `return (${src})(arg)`);
-  window.__perf.commits.length = 0; window.__perf.hookOn = true;
+  window.__perf.prime(); window.__perf.commits.length = 0; window.__perf.hookOn = true;
   const t0 = performance.now(); const r = await f(arg); await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   const el = performance.now() - t0; window.__perf.hookOn = false;
   const commits = window.__perf.commits.filter((c) => !c.err);
@@ -50,7 +50,7 @@ const scrub = async (label, hook, zoomFit) => {
   await H.setView({ playhead: 10 }); await sleep(1200);
   const t0 = await H.nowPage();
   const out = await page.evaluate(async ({ id, hook }) => {
-    const st = window.__recut.store; window.__perf.commits.length = 0; window.__perf.hookOn = hook;
+    const st = window.__recut.store; if (hook) window.__perf.prime(); window.__perf.commits.length = 0; window.__perf.hookOn = hook;
     let f = 10, frames = 0; const t = performance.now();
     await new Promise((resolve) => { const tick = () => { if (performance.now() - t >= 3000) return resolve(); f += 1; st.getState().setView(id, { playhead: f }); frames++; requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
     const el = performance.now() - t; window.__perf.hookOn = false;

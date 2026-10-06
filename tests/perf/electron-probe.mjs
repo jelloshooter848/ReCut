@@ -38,7 +38,7 @@ const step = async (label, patchSrc) => page.evaluate(async ({ id, patchSrc, lab
   const st = window.__recut.store; const P = window.__perf;
   const target = document.querySelector('.tl-tracks-content') || document.querySelector('.tl-tracks-col');
   let muts = 0; const mo = new MutationObserver((l) => { muts += l.length; }); if (target) mo.observe(target, { subtree: true, childList: true, attributes: true, characterData: true });
-  P.commits.length = 0; P.hookOn = true; const N = 10; const times = []; const per = []; const slices = {};
+  P.prime(); P.commits.length = 0; P.hookOn = true; const N = 10; const times = []; const per = []; const slices = {};
   let prevS = st.getState(); const un = st.subscribe((s2) => { for (const k of Object.keys(s2)) if (s2[k] !== prevS[k]) slices[k] = (slices[k] || 0) + 1; for (const k of Object.keys(s2.ui || {})) if (s2.ui[k] !== prevS.ui[k]) slices['ui.' + k] = (slices['ui.' + k] || 0) + 1; for (const k of Object.keys(s2.project || {})) if (s2.project[k] !== prevS.project[k]) slices['project.' + k] = (slices['project.' + k] || 0) + 1; prevS = s2; });
   for (let i = 0; i < N; i++) { const c0 = P.commits.length;
     const v = st.getState().project.sequences[id].view; const t = performance.now();
