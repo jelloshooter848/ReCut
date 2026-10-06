@@ -347,18 +347,20 @@ function slicer(): () => Promise<void> | void {
   };
 }
 
-/** Upper bound (ms) an idle slice of background serialization waits for idle time before it runs anyway. */
-const IDLE_TIMEOUT_MS = 250;
-/** Length (ms) of a slice forced by IDLE_TIMEOUT_MS (the window never went idle meanwhile). */
-const FORCED_SLICE_MS = 8;
+/**
+ * Upper bound (ms) an idle slice of background serialization waits for idle time before it runs anyway (a full
+ * SLICE_MS slice then): a window that never idles (playback while the CPU is busy) still finishes the autosave,
+ * at most one slice per IDLE_TIMEOUT_MS.
+ */
+const IDLE_TIMEOUT_MS = 100;
 type IdleDeadlineLike = { didTimeout: boolean; timeRemaining(): number };
 type RequestIdle = (cb: (d: IdleDeadlineLike) => void, o?: { timeout: number }) => number;
 
 /**
  * slicer() for background work (autosaves): after a slice it resumes in the next idle period (requestIdleCallback),
- * for the idle time the browser offers there (at most SLICE_MS); a slice forced by IDLE_TIMEOUT_MS runs
- * FORCED_SLICE_MS. Edits, input and frames never wait behind it: while the user edits (or the timeline plays) it
- * only runs in the gaps. Where there is no requestIdleCallback (node / vitest) it is slicer().
+ * for the idle time the browser offers there (at most SLICE_MS), or SLICE_MS when IDLE_TIMEOUT_MS passed without
+ * idle time. Edits, input and frames do not queue behind back-to-back slices: while the user edits it runs in the
+ * gaps. Where there is no requestIdleCallback (node / vitest) it is slicer().
  */
 function idleSlicer(): () => Promise<void> | void {
   const ric = (globalThis as { requestIdleCallback?: RequestIdle }).requestIdleCallback;
@@ -370,7 +372,7 @@ function idleSlicer(): () => Promise<void> | void {
     return new Promise<void>((resolve) => {
       ric((d) => {
         since = performance.now();
-        budget = d.didTimeout ? FORCED_SLICE_MS : Math.min(SLICE_MS, Math.max(1, d.timeRemaining()));
+        budget = d.didTimeout ? SLICE_MS : Math.min(SLICE_MS, Math.max(1, d.timeRemaining()));
         resolve(); // the slice runs in this idle callback's microtask checkpoint
       }, { timeout: IDLE_TIMEOUT_MS });
     });
