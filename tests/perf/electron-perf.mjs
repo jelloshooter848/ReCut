@@ -487,8 +487,22 @@ const playFor = async (label, seconds, before, seqId = SEQ, section = 'playback'
 };
 const poolState = () => page.evaluate(() => { const v = window.__perf.videos; return { created: v.length, live: v.filter((e) => e.getAttribute('src')).length, playing: v.filter((e) => !e.paused).length, inDom: document.querySelectorAll('video').length, audio: { ...window.__perf.audio } }; });
 {
+  // ---- [playback resources, Phase 1 D] begin: snapshot before playback (rows recorded below) ----
+  // Audio-only pool roles use <audio> elements (no video decoder), which the init script's <video> counter misses:
+  // count them here so the rows below cover every media element the player creates.
+  await page.evaluate(() => { const d = (window.__perfD = { audioEls: 0 }); const ce = document.createElement; document.createElement = function (tag, o) { if (String(tag).toLowerCase() === 'audio') d.audioEls++; return ce.call(this, tag, o); }; });
+  const mediaEls = async () => { const p = await poolState(); return { ...p, media: p.created + (await page.evaluate(() => window.__perfD.audioEls)) }; };
+  const pd0 = await mediaEls();
+  // ---- [playback resources, Phase 1 D] end ----
   await playFor('@ 1 px/frame timeline', 10);
   let p = await poolState();
+  // ---- [playback resources, Phase 1 D] begin ----
+  // The Program player lends pooled elements per (file, kind, slot) (src/playback/sequencePlayer.ts): 10 s of playback
+  // can at most fill the shared pool once (MediaElementPool(16), src/app/media.ts), so more creations than its
+  // capacity mean per-clip / per-frame churn (7,471 here before the fix).
+  const pd1 = await mediaEls();
+  rec('pool', 'media elements (<video> + <audio>) created during 10 s playback @ 1 px/frame', pd1.media - pd0.media, '', '<= 16 (pool capacity)', pd1.media - pd0.media <= 16, `total created ${pd1.media}`);
+  // ---- [playback resources, Phase 1 D] end ----
   rec('pool', 'video elements created / live(src) / playing / in DOM after 10 s playback', `${p.created} / ${p.live} / ${p.playing} / ${p.inDom}`, '', 'live <= 16', p.live <= 16);
   rec('audio', 'AudioContexts / gains / mediaElementSources / connects / disconnects', `${p.audio.contexts} / ${p.audio.gains} / ${p.audio.sources} / ${p.audio.connects} / ${p.audio.disconnects}`, '');
   await zoomFit(); await sleep(1500);
@@ -507,6 +521,17 @@ const poolState = () => page.evaluate(() => { const v = window.__perf.videos; re
   p = await poolState();
   rec('pool', 'video elements created / live / playing after 20 sequence switches', `${p.created} / ${p.live} / ${p.playing}`, '', 'live <= 16', p.live <= 16);
   rec('audio', 'gains / sources / connects-disconnects after 20 switches', `${p.audio.gains} / ${p.audio.sources} / ${p.audio.connects - p.audio.disconnects}`, '', 'gains bounded', null, 'SequencePlayer.trackGains is keyed by trackId and never pruned');
+  // ---- [playback resources, Phase 1 D] begin ----
+  // Since playback (zoom-to-fit playback + 20 switches): new elements only for (file, slot) pairs not yet pooled, at
+  // most one pool's worth; one MediaElementAudioSourceNode and one GainNode per new audio element (no per-clip or
+  // per-track nodes), so each node count grows by at most the elements created.
+  {
+    const pd2 = await mediaEls();
+    const dEl = pd2.media - pd1.media, dSrc = pd2.audio.sources - pd1.audio.sources, dGain = pd2.audio.gains - pd1.audio.gains;
+    rec('pool', 'media elements created by zoom-to-fit playback + 20 sequence switches', dEl, '', '<= 16 (pool capacity)', dEl <= 16);
+    rec('audio', 'MediaElementSources / GainNodes created by zoom-to-fit playback + 20 switches', `${dSrc} / ${dGain}`, '', '<= elements created', dSrc <= dEl && dGain <= dEl, `elements created ${dEl}`);
+  }
+  // ---- [playback resources, Phase 1 D] end ----
   // Maximize / restore the program zone x10
   const t1 = await nowPage();
   for (let i = 0; i < 10; i++) { await page.evaluate(() => document.querySelector('[data-zone="monitor-right"] .zone-tab')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))); await sleep(300); await page.evaluate(() => document.querySelector('[data-zone="monitor-right"] .zone-tab')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))); await sleep(300); }
