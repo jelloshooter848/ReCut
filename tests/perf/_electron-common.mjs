@@ -108,10 +108,15 @@ export const INIT_SCRIPT = `
     }
     return out;
   };
+  // Prime the counter: call right before setting hookOn, in the same task. walk() only knows fibers it has seen, so a
+  // component that rendered while the hook was off still carries its stale PerformedWork flag and would be counted
+  // in the first commit of the window. Walking the last committed tree once marks every current fiber as seen with
+  // its present props/state; a real render inside the window changes props or state and is still counted.
+  P.prime = () => { if (P.lastRoot) walk(P.lastRoot); };
   window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
     supportsFiber: true, isDisabled: false, renderers: new Map(), on() {}, off() {}, emit() {}, sub() { return () => {}; }, checkDCE() {},
     inject() { P.hook = true; return 1; },
-    onCommitFiberRoot(id, root) { if (!P.hookOn) return; try { const t = performance.now(); const o = walk(root); o.walkMs = performance.now() - t; P.commits.push(o); } catch (e) { P.commits.push({ err: String(e) }); } },
+    onCommitFiberRoot(id, root) { P.lastRoot = root; if (!P.hookOn) return; try { const t = performance.now(); const o = walk(root); o.walkMs = performance.now() - t; P.commits.push(o); } catch (e) { P.commits.push({ err: String(e) }); } },
     onCommitFiberUnmount() {}, onPostCommitFiberRoot() {},
   };
 })();
