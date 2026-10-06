@@ -42,7 +42,7 @@ if (!fs.existsSync(path.join(ROOT, 'dist/renderer/index.html')) || !fs.existsSyn
 const results = [];
 const r2 = (v, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
 // Tier of a budgeted row (tests/perf/_report.ts, docs/DEVELOPMENT.md → Performance gate): a row with no tiering is a gate.
-const GUARDRAIL = { tier: 'guardrail' }, DIAGNOSTIC = { tier: 'diagnostic', reference: true };
+const GUARDRAIL = { tier: 'guardrail' }, GUARDRAIL_REF = { tier: 'guardrail', reference: true }, DIAGNOSTIC = { tier: 'diagnostic', reference: true };
 function rec(section, metric, value, unit = '', threshold, pass, note, tiering) {
   const row = { section, metric, value: typeof value === 'number' ? r2(value) : value, unit, threshold, pass: pass ?? null, note, ...tiering };
   if (typeof row.pass === 'boolean' && !row.tier) row.tier = 'gate';
@@ -281,7 +281,12 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
 // - { inPage: true } (added 6 October 2026): the realistic drag. The playhead sweeps back and forth inside the
 //   currently visible page (2 % to 90 % of it, about one sweep per 2 s), so the view must never flip. The flip count
 //   is recorded as an info row, and every gate row of this driver fails if a flip happened (it would not be in-page).
-  const scrub = async (label, selectedCount, seqId = SEQ, seqDur = dur, section = 'scrub', { inPage = false } = {}) => {
+  // Two passes over the same sweep (user decision of 7 October 2026): the React render counter walks the whole fiber
+  // tree on every commit (2-4.5 ms per frame with 50 clips selected), so measuring fps with it on measures the
+  // counter too. Pass 1 (timing) runs with the counter and the MutationObservers off: fps, long tasks, setView cost.
+  // Pass 2 (counting), from the same starting view, runs with them on: ClipView renders and DOM mutations, plus its
+  // own fps as a diagnostic reference (the combined number this row used to report).
+  const scrub = async (label, selectedCount, seqId = SEQ, seqDur = dur, section = 'scrub', { inPage = false, pageFlip = false } = {}) => {
     await page.evaluate(({ id, n }) => { const st = window.__recut.store.getState(); const s = st.project.sequences[id]; const ids = [...s.videoTracks, ...s.audioTracks].flatMap((t) => t.clips.map((c) => c.id)).slice(0, n); st.select(ids, n ? 'set' : 'clear'); }, { id: seqId, n: selectedCount });
     await sleep(500);
     // In-page: start the playhead inside the visible page before measuring (outside the measured window).
@@ -292,55 +297,77 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
       st.setView(id, { playhead: lo }); return { lo, hi };
     }, seqId) : null;
     if (inPage) await sleep(300);
-    const t0 = await nowPage();
-    const out = await page.evaluate(async ({ id, dur, page0 }) => {
+    // Both passes start from this view (pass 1 moves the playhead and, page-flipping, the scroll).
+    const start = await page.evaluate((id) => { const v = window.__recut.store.getState().project.sequences[id].view; return { playhead: v.playhead, scroll: v.scroll }; }, seqId);
+    const sweep = (count) => page.evaluate(async ({ id, dur, page0, count }) => {
       const st = window.__recut.store;
       const area = document.querySelector('.tl-tracks-col'); const content = document.querySelector('.tl-tracks-content');
-      let mutAll = 0, mutContent = 0;
-      const mo = new MutationObserver((l) => { mutAll += l.length; }); mo.observe(area, { subtree: true, attributes: true, childList: true, characterData: true });
-      const mc = new MutationObserver((l) => { mutContent += l.length; }); mc.observe(content, { subtree: true, attributes: true, childList: true, characterData: true });
+      let mutAll = 0, mutContent = 0, mo = null, mc = null;
+      if (count) {
+        mo = new MutationObserver((l) => { mutAll += l.length; }); mo.observe(area, { subtree: true, attributes: true, childList: true, characterData: true });
+        mc = new MutationObserver((l) => { mutContent += l.length; }); mc.observe(content, { subtree: true, attributes: true, childList: true, characterData: true });
+      }
       // Page flips = changes of view.scroll while scrubbing (setView mutates the LiveView in place, so compare values).
       let flips = 0, lastScroll = st.getState().project.sequences[id].view.scroll;
       const unsub = st.subscribe((s) => { const sc = s.project.sequences[id]?.view.scroll; if (sc !== lastScroll) { lastScroll = sc; flips++; } });
-      window.__perf.prime(); window.__perf.commits.length = 0; window.__perf.hookOn = true;
+      if (count) { window.__perf.prime(); window.__perf.commits.length = 0; window.__perf.hookOn = true; }
       const step = page0 ? Math.max(1, Math.round((page0.hi - page0.lo) / 120)) : Math.max(1, Math.floor(dur / 240));
       let f = page0 ? page0.lo : 0, dir = 1, frames = 0; const t0 = performance.now(); const costs = [];
       const next = page0
         ? () => { if (f + dir * step > page0.hi || f + dir * step < page0.lo) dir = -dir; f += dir * step; return f; }
         : () => { f = (f + step) % dur; return f; };
       await new Promise((resolve) => { const tick = () => { const now = performance.now(); if (now - t0 >= 3000) return resolve(); const target = next(); const a = performance.now(); st.getState().setView(id, { playhead: target }); costs.push(performance.now() - a); frames++; requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
-      await new Promise((r) => setTimeout(r, 50));
-      window.__perf.hookOn = false; mo.disconnect(); mc.disconnect(); unsub();
-      const commits = window.__perf.commits.filter((c) => !c.err);
-      const clipRendered = commits.reduce((a, c) => a + c.clipRendered, 0), tb = commits.reduce((a, c) => a + c.timelineBody, 0);
       const elapsed = performance.now() - t0;
+      await new Promise((r) => setTimeout(r, 50));
+      window.__perf.hookOn = false; mo?.disconnect(); mc?.disconnect(); unsub();
+      const commits = window.__perf.commits.filter((c) => !c.err);
+      const clipRendered = count ? commits.reduce((a, c) => a + c.clipRendered, 0) : 0, tb = count ? commits.reduce((a, c) => a + c.timelineBody, 0) : 0;
       costs.sort((a, b) => a - b);
-      return { frames, fps: frames / (elapsed / 1000), mutAll, mutContent, commits: commits.length, clipRendered, tb, flips, setViewMedian: costs[Math.floor(costs.length / 2)] ?? 0, setViewMax: costs[costs.length - 1] ?? 0, clipTotal: commits[0]?.clipTotal ?? 0 };
-    }, { id: seqId, dur: seqDur, page0 });
-    const long = await lt(t0);
+      return { t0, t1: t0 + elapsed, frames, fps: frames / (elapsed / 1000), mutAll, mutContent, commits: count ? commits.length : 0, clipRendered, tb, flips, setViewMedian: costs[Math.floor(costs.length / 2)] ?? 0, setViewMax: costs[costs.length - 1] ?? 0, clipTotal: count ? (commits[0]?.clipTotal ?? 0) : 0 };
+    }, { id: seqId, dur: seqDur, page0, count });
+    // Long tasks overlapping a pass's window (the 50 ms settle after it included, as before).
+    const longIn = async (o) => (await lt(o.t0 - 1)).filter((e) => e.t < o.t1 + 50);
+    const time = await sweep(false);
+    const long = await longIn(time);
+    await page.evaluate(({ id, start }) => window.__recut.store.getState().setView(id, start), { id: seqId, start });
+    await sleep(300);
+    const cnt = await sweep(true);
+    const perFrame = (n) => r2(n / Math.max(1, cnt.frames), 2);
+    const refFps = (extra = '') => rec(section, `playhead scrub fps with the render counter on ${label} (reference)`, r2(cnt.fps, 1), 'fps', '>= 50', cnt.fps >= 50, `${extra}${cnt.frames} frames; counting pass`, DIAGNOSTIC);
     if (inPage) {
-      // The realistic drag: all four rows are gates, valid only without a page flip.
-      const noFlip = out.flips === 0, inv = noFlip ? '' : `INVALID: ${out.flips} page flips; `;
-      rec(section, `page flips during in-page scrub ${label}`, out.flips, '', undefined, undefined, `playhead swept frames ${page0.lo}-${page0.hi}, must be 0`);
-      rec(section, `playhead scrub fps (rAF-driven setView) ${label}`, r2(out.fps, 1), 'fps', '>= 50', noFlip && out.fps >= 50, `${inv}${out.frames} frames`);
-      rec(section, `DOM mutations per frame ${label} (tracks col / clips content)`, `${r2(out.mutAll / Math.max(1, out.frames), 2)} / ${r2(out.mutContent / Math.max(1, out.frames), 2)}`, '', 'content == 0', noFlip && out.mutContent === 0, inv || undefined);
-      rec(section, `ClipView renders per frame ${label}`, r2(out.clipRendered / Math.max(1, out.frames), 2), '', '== 0', noFlip && out.clipRendered === 0, `${inv}${out.commits} React commits, TimelineBody renders ${out.tb}, ${out.clipTotal} clip fibers`);
-      rec(section, `long tasks during scrub ${label}`, long.length, '', '== 0', noFlip && long.length === 0, `${inv}${ltSummary(long)}`);
+      // The realistic drag: every gate row is valid only if neither pass flipped the page.
+      const flips = time.flips + cnt.flips, noFlip = flips === 0, inv = noFlip ? '' : `INVALID: ${time.flips} + ${cnt.flips} page flips; `;
+      rec(section, `page flips during in-page scrub ${label}`, flips, '', undefined, undefined, `playhead swept frames ${page0.lo}-${page0.hi} twice (timing + counting pass), must be 0`);
+      rec(section, `playhead scrub fps (rAF-driven setView) ${label}`, r2(time.fps, 1), 'fps', '>= 50', noFlip && time.fps >= 50, `${inv}${time.frames} frames; timing pass (render counter off)`);
+      rec(section, `DOM mutations per frame ${label} (tracks col / clips content)`, `${perFrame(cnt.mutAll)} / ${perFrame(cnt.mutContent)}`, '', 'content == 0', noFlip && cnt.mutContent === 0, inv ? `${inv}counting pass` : 'counting pass');
+      rec(section, `ClipView renders per frame ${label}`, perFrame(cnt.clipRendered), '', '== 0', noFlip && cnt.clipRendered === 0, `${inv}${cnt.commits} React commits, TimelineBody renders ${cnt.tb}, ${cnt.clipTotal} clip fibers; counting pass`);
+      rec(section, `long tasks during scrub ${label}`, long.length, '', '== 0', noFlip && long.length === 0, `${inv}${ltSummary(long)}; timing pass`);
+      refFps(inv);
       return;
     }
-    rec(section, `playhead scrub fps (rAF-driven setView) ${label}`, r2(out.fps, 1), 'fps', '>= 50', out.fps >= 50, `${out.frames} frames`);
-    rec(section, `DOM mutations per frame ${label} (tracks col / clips content)`, `${r2(out.mutAll / Math.max(1, out.frames), 2)} / ${r2(out.mutContent / Math.max(1, out.frames), 2)}`, '', 'content == 0', out.mutContent === 0);
-    rec(section, `ClipView renders per frame ${label}`, r2(out.clipRendered / Math.max(1, out.frames), 2), '', '== 0', out.clipRendered === 0, `${out.commits} React commits, TimelineBody renders ${out.tb}, ${out.clipTotal} clip fibers`);
-    ms(section, `setView call cost ${label} (median / max)`, out.setViewMedian, 1, `max ${r2(out.setViewMax)} ms`, GUARDRAIL);
-    rec(section, `long tasks during scrub ${label}`, long.length, '', '== 0', long.length === 0, ltSummary(long));
+    rec(section, `playhead scrub fps (rAF-driven setView) ${label}`, r2(time.fps, 1), 'fps', '>= 50', time.fps >= 50, `${time.frames} frames; timing pass (render counter off)`);
+    if (pageFlip) {
+      // Page-flip scrub counts: guardrails with a reference budget (user decision of 7 October 2026). Each flip mounts
+      // the newly visible clips, so 0 is not reachable; they fail on a regression against tests/perf/baseline.json.
+      // The in-page rows above are the gates for 0 renders / mutations. Numeric value (clips content), so the
+      // regression check applies; the tracks column count is in the note.
+      rec(section, `DOM mutations per frame ${label} (clips content)`, perFrame(cnt.mutContent), '', 'content == 0', cnt.mutContent === 0, `tracks col ${perFrame(cnt.mutAll)}; ${cnt.flips} page flips; counting pass`, GUARDRAIL_REF);
+      rec(section, `ClipView renders per frame ${label}`, perFrame(cnt.clipRendered), '', '== 0', cnt.clipRendered === 0, `${cnt.commits} React commits, TimelineBody renders ${cnt.tb}, ${cnt.clipTotal} clip fibers; counting pass`, GUARDRAIL_REF);
+    } else {
+      rec(section, `DOM mutations per frame ${label} (tracks col / clips content)`, `${perFrame(cnt.mutAll)} / ${perFrame(cnt.mutContent)}`, '', 'content == 0', cnt.mutContent === 0, 'counting pass');
+      rec(section, `ClipView renders per frame ${label}`, perFrame(cnt.clipRendered), '', '== 0', cnt.clipRendered === 0, `${cnt.commits} React commits, TimelineBody renders ${cnt.tb}, ${cnt.clipTotal} clip fibers; counting pass`);
+    }
+    ms(section, `setView call cost ${label} (median / max)`, time.setViewMedian, 1, `max ${r2(time.setViewMax)} ms; timing pass`, GUARDRAIL);
+    rec(section, `long tasks during scrub ${label}`, long.length, '', '== 0', long.length === 0, `${ltSummary(long)}; timing pass`);
+    refFps();
   };
 {
   await zoomFit(); await sleep(500);
   await scrub('@ zoom-to-fit (2500 clips mounted), no selection', 0);
   await scrub('@ zoom-to-fit, 50 clips selected', 50);
   await setView({ zoom: 1, scroll: 0 }); await sleep(800);
-  await scrub('@ 1 px/frame (~120 clips mounted), no selection', 0);
-  await scrub('@ 1 px/frame, 50 clips selected', 50);
+  await scrub('@ 1 px/frame (~120 clips mounted), no selection', 0, SEQ, dur, 'scrub', { pageFlip: true });
+  await scrub('@ 1 px/frame, 50 clips selected', 50, SEQ, dur, 'scrub', { pageFlip: true });
   // The realistic drag inside the visible page (added after the rows above, so their conditions are unchanged).
   await setView({ zoom: 1, scroll: 0 }); await sleep(800);
   await scrub('@ 1 px/frame, within the visible page, no selection', 0, SEQ, dur, 'scrub', { inPage: true });
@@ -787,8 +814,8 @@ console.log('\n--- multi-hour sequence ---');
   await scrub('multi-hour @ zoom-to-fit, no selection', 0, LSEQ, ldur, 'long');
   await page.evaluate((id) => window.__recut.store.getState().setView(id, { zoom: 1, scroll: 0 }), LSEQ);
   await sleep(1500);
-  await scrub('multi-hour @ 1 px/frame, no selection', 0, LSEQ, ldur, 'long');
-  await scrub('multi-hour @ 1 px/frame, 50 clips selected', 50, LSEQ, ldur, 'long');
+  await scrub('multi-hour @ 1 px/frame, no selection', 0, LSEQ, ldur, 'long', { pageFlip: true });
+  await scrub('multi-hour @ 1 px/frame, 50 clips selected', 50, LSEQ, ldur, 'long', { pageFlip: true });
   await page.evaluate((id) => window.__recut.store.getState().setView(id, { zoom: 1, scroll: 0 }), LSEQ);
   await sleep(1500);
   await scrub('multi-hour @ 1 px/frame, within the visible page, no selection', 0, LSEQ, ldur, 'long', { inPage: true });
