@@ -688,6 +688,20 @@ export const AUTOSAVE_AFTER_SAVE_MS = 5000;
 const RECOVERY_NEWER_MS = 3000;
 
 let afterSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+const autosaveDirectly = () => { autosaveProject().catch((e: unknown) => { console.warn('[autosave] after save failed', e); }); };
+/** How the follow-up autosave is started: the app lifecycle routes it through its own schedule (setAutosaveRequester). */
+let requestAutosave: () => void = autosaveDirectly;
+
+/**
+ * Let the app lifecycle start the follow-up autosave (autosaveAfterSave) through its own schedule, e.g. its idle
+ * callback and autosave gate (src/app/autosaveGate.ts: only in a pause of the user's work), instead of directly.
+ * Returns a function that restores the direct autosave.
+ */
+export function setAutosaveRequester(fn: () => void): () => void {
+  requestAutosave = fn;
+  return () => { if (requestAutosave === fn) requestAutosave = autosaveDirectly; };
+}
 /** When the last autosave finished writing (Date.now()); 0 before the first. */
 let lastAutosaveDoneAt = 0;
 
@@ -708,7 +722,7 @@ function autosaveAfterSave(projectId: ID, loadedRevision: number): void {
     if (!st.dirty || st.project.id !== projectId || st.loadedRevision !== loadedRevision) return;
     if (lastAutosaveDoneAt - savedAt >= RECOVERY_NEWER_MS) return; // a later autosave already holds the edits
     if (st.playback.playing || st.transaction) { afterSaveTimer = setTimeout(fire, AUTOSAVE_AFTER_SAVE_MS); return; }
-    autosaveProject().catch((e: unknown) => { console.warn('[autosave] after save failed', e); });
+    requestAutosave();
   };
   afterSaveTimer = setTimeout(fire, AUTOSAVE_AFTER_SAVE_MS);
 }

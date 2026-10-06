@@ -24,7 +24,7 @@ import type { SaveResult } from '../../shared/ipc';
 import { canStreamAutosave, decodeProjectWire, encodeProjectWire, type ProjectAutosaveStreamApi, type ProjectSaveStreamApi } from '../../shared/projectWire';
 import { autosavePathFor, checkRecovery, ProjectFileWriter, untitledAutosavePath, writeAutosaveJson } from '../../electron/project/io';
 import { useStore, resetStore } from '../../src/state/store';
-import { AUTOSAVE_AFTER_SAVE_MS, autosaveProject, saveProject, serializeProjectSliced } from '../../src/state/mediaActions';
+import { AUTOSAVE_AFTER_SAVE_MS, autosaveProject, saveProject, serializeProjectSliced, setAutosaveRequester } from '../../src/state/mediaActions';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Any = any;
@@ -424,6 +424,28 @@ describe('autosave after a save that left edits unsaved', () => {
     await vi.advanceTimersByTimeAsync(AUTOSAVE_AFTER_SAVE_MS * 2);
     await tick();
     expect(autosaves).toHaveLength(0);
+  });
+
+  it('goes through the lifecycle schedule when one is registered (setAutosaveRequester)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    api();
+    const requested: number[] = [];
+    const restore = setAutosaveRequester(() => { requested.push(Date.now()); });
+    try {
+      useStore.setState({ projectPath: projectFile() });
+      S().renameProject('A');
+      const s1 = saveProject();
+      await untilCommits(1);
+      S().renameProject('B');
+      await pending[0].resolve();
+      await s1;
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_AFTER_SAVE_MS + 100);
+      await tick();
+      expect(requested).toHaveLength(1);
+      expect(autosaves).toHaveLength(0); // the schedule decides when; nothing was written directly
+    } finally {
+      restore();
+    }
   });
 
   it('waits for playback to stop before autosaving', async () => {

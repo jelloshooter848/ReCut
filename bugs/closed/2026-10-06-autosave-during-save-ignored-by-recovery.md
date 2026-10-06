@@ -69,7 +69,7 @@ the lifecycle's next interval autosave (60 s by default).
 | Closed by / date | perf-E agent, 2026-10-06 |
 | Fix | src/state/mediaActions.ts `autosaveAfterSave` (called from `saveNow`), autosave queue |
 | Files changed | src/state/mediaActions.ts, tests/unit/autosave-stream.test.ts |
-| Regression test | tests/unit/autosave-stream.test.ts, describe "autosave after a save that left edits unsaved" (3 tests) |
+| Regression test | tests/unit/autosave-stream.test.ts, describe "autosave after a save that left edits unsaved" (4 tests) |
 
 ### Root cause
 As reported: recovery compares file times (`autoSt.mtimeMs <= projSt.mtimeMs + 1000` skips the autosave), and nothing
@@ -118,5 +118,10 @@ None.
 - Autosaves are serialized: an autosave that never resolves would hold back later ones (as saves already do).
 
 ### Follow-ups
-- If the lifecycle (src/app/project.ts) is reworked, the follow-up can move there as the report suggested (schedule
-  the debounced autosave when a save resolves with the project dirty); the mediaActions timer can then go.
+- The follow-up starts through `requestAutosave`, which the app lifecycle can point at its own schedule with
+  `setAutosaveRequester` (src/state/mediaActions.ts), so it waits for the autosave gate (src/app/autosaveGate.ts,
+  PR #31) like every other autosave. That needs one line in src/app/project.ts `initProjectLifecycle` (outside this
+  change): `disposers.push(setAutosaveRequester(() => whenIdle(() => { void runAutosave(); })));`. Until then the
+  follow-up autosaves directly (streamed, in idle slices).
+- If the lifecycle is reworked, the follow-up can move there as the report suggested (schedule the debounced
+  autosave when a save resolves with the project dirty); the mediaActions timer can then go.
