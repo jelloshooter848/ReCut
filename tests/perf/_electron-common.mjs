@@ -22,12 +22,14 @@ export const stats = (xs) => { const s = [...xs].sort((a, b) => a - b); const q 
 
 export function makeRecorder() {
   const results = [];
-  const rec = (section, metric, value, unit = '', threshold, pass, note) => {
-    const row = { section, metric, value: typeof value === 'number' ? r2(value) : value, unit, threshold, pass: pass ?? null, note };
+  // tiering: { tier: 'guardrail' | 'diagnostic', reference? } as in tests/perf/_report.ts; a budgeted row without one is a gate.
+  const rec = (section, metric, value, unit = '', threshold, pass, note, tiering) => {
+    const row = { section, metric, value: typeof value === 'number' ? r2(value) : value, unit, threshold, pass: pass ?? null, note, ...tiering };
+    if (typeof row.pass === 'boolean' && !row.tier) row.tier = 'gate';
     results.push(row);
     console.log(`${section.padEnd(10)} ${metric.padEnd(70).slice(0, 70)} ${String(row.value).padStart(12)} ${unit.padEnd(6)} ${(threshold ?? '').padEnd(14)} ${pass === undefined || pass === null ? '' : pass ? 'PASS' : 'FAIL'} ${note ?? ''}`);
   };
-  const ms = (section, metric, v, threshold, note) => rec(section, metric, v, 'ms', threshold !== undefined ? `<= ${threshold} ms` : undefined, threshold !== undefined ? v <= threshold : null, note);
+  const ms = (section, metric, v, threshold, note, tiering) => rec(section, metric, v, 'ms', threshold !== undefined ? `<= ${threshold} ms` : undefined, threshold !== undefined ? v <= threshold : null, note, tiering);
   const save = (name) => { fs.mkdirSync(OUT, { recursive: true }); const f = path.join(OUT, `${name}.json`); fs.writeFileSync(f, JSON.stringify(results, null, 2)); console.log(`\n[perf] ${results.length} measurements -> ${f}`); };
   return { results, rec, ms, save };
 }
