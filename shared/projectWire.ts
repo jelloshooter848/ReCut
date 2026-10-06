@@ -1,7 +1,8 @@
 /**
- * How the main process hands an opened project to the renderer.
+ * How a project crosses IPC in bulk: the renderer streams a manual save to main (ProjectSaveStreamApi), and the
+ * main process hands an opened project to the renderer (ProjectWire).
  *
- * Main reads, parses and normalizes the file once (electron/project/io.ts). Sending the result as an object would
+ * On open, main reads, parses and normalizes the file once (electron/project/io.ts). Sending the result as an object would
  * structured-clone the whole project on both sides of IPC and land in the renderer as one long deserialization
  * task, and the renderer used to normalize it again. Instead main sends JSON text cut at record boundaries (the
  * top level, each collection, each sequence): strings cross IPC as a copy, and the renderer parses the pieces one
@@ -15,7 +16,55 @@
  * Pure: no DOM, no Node.
  */
 import type { Project, Sequence, SequenceSnapshot } from './model';
+import type { SaveResult } from './ipc';
 import { LiveView } from './project';
+
+// ------------------------------------------------------------------
+// Renderer -> main on save
+// ------------------------------------------------------------------
+
+/**
+ * IPC channels of a streamed project save (ProjectSaveStreamApi). `chunk` is a one-way message (ipcRenderer.send);
+ * the others are invoke / handle.
+ */
+export const SAVE_STREAM_IPC = {
+  begin: 'project:saveBegin',
+  chunk: 'project:saveChunk',
+  commit: 'project:saveCommit',
+  abort: 'project:saveAbort',
+} as const;
+
+export type SaveBeginResult = { ok: true; id: string } | { ok: false; error: string };
+
+/**
+ * A manual save streamed to main while the renderer serializes it (src/state/mediaActions.ts): each piece of
+ * the file text (about a megabyte, cut between records) is sent as soon as it is written, and main encodes and
+ * appends it to a temp file beside the target while the next piece is serialized. The bytes on disk are those
+ * of one saveProjectJson call with the whole text; only the commit makes them the project file, with the same
+ * fsync, `.bak` and atomic rename (electron/project/io.ts ProjectFileWriter). Exposed on `window.recut` next to
+ * RecutApi; a bridge without it saves through saveProjectJson.
+ */
+export interface ProjectSaveStreamApi {
+  /** Start a save of the project file at `path` (main opens the temp file). */
+  saveProjectBegin(path: string): Promise<SaveBeginResult>;
+  /** Piece number `seq` (0, 1, 2, ...) of the text. One-way: a failed write is reported by the commit. */
+  saveProjectChunk(id: string, seq: number, text: string): void;
+  /** Every piece was sent (`chunks` pieces, `chars` UTF-16 code units in all): write the file. */
+  saveProjectCommit(id: string, totals: { chunks: number; chars: number }): Promise<SaveResult>;
+  /** Give up: the temp file is removed, the project file left as it was. */
+  saveProjectAbort(id: string): Promise<void>;
+}
+
+/** The bridge streams saves (an older preload or a test double may not). */
+export function canStreamSave(api: unknown): api is ProjectSaveStreamApi {
+  const a = api as Partial<ProjectSaveStreamApi> | null;
+  return !!a && typeof a.saveProjectBegin === 'function' && typeof a.saveProjectChunk === 'function'
+    && typeof a.saveProjectCommit === 'function' && typeof a.saveProjectAbort === 'function';
+}
+
+// ------------------------------------------------------------------
+// Main -> renderer on open
+// ------------------------------------------------------------------
 
 /** A collection of the project sent as its own piece(s); everything else travels in `head`. */
 type WireCollection = 'media' | 'sequences' | 'scenes' | 'subtitleTracks';

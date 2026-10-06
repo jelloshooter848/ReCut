@@ -52,59 +52,108 @@ async function resolveLinkTarget(p: string): Promise<string> {
   try { return await fsp.realpath(p); } catch { return p; } // dangling: replace the link, never create its target
 }
 
+/** A temp file opened beside the file it will replace (openAtomic, then writeAll*, finishAtomic). */
+interface AtomicFile {
+  /** What the temp file replaces: `target`, or the file a symlink at `target` points to (followSymlink). */
+  dest: string;
+  tmp: string;
+  fh: fsp.FileHandle;
+}
+
+/** Open the temp file for an atomic write of `target`. Creates the parent folder only where that is safe (BUG-1). */
+async function openAtomic(target: string, followSymlink: boolean | undefined): Promise<AtomicFile> {
+  await ensureDirSafe(path.dirname(target)); // never recursive mkdir on a user path (BUG-1)
+  const dest = followSymlink ? await resolveLinkTarget(target) : target;
+  const tmp = tempPathFor(dest);
+  return { dest, tmp, fh: await fsp.open(tmp, 'w') };
+}
+
+/** Append all of `buf` to the temp file with as few syscalls as the OS allows. */
+async function writeAll(fh: fsp.FileHandle, buf: Uint8Array): Promise<void> {
+  let off = 0;
+  while (off < buf.byteLength) {
+    const { bytesWritten } = await fh.write(buf, off, buf.byteLength - off);
+    if (bytesWritten <= 0) throw new Error('short write');
+    off += bytesWritten;
+  }
+}
+
+/**
+ * Finish an atomic write whose bytes are all written: fsync, close, keep the previous file as `<target>.bak`
+ * (unless `backup` is false), rename the temp file over its destination. On failure the temp file is removed
+ * (the destination is untouched) and the error thrown.
+ */
+async function finishAtomic(f: AtomicFile, target: string, backup: boolean | undefined): Promise<void> {
+  try {
+    try {
+      try { await f.fh.sync(); } catch { /* fsync unsupported on some filesystems */ }
+    } finally {
+      await f.fh.close();
+    }
+    if (backup !== false) await writeBackup(f.dest, target + BACKUP_EXT);
+    await fsp.rename(f.tmp, f.dest);
+  } catch (e) {
+    await fsp.rm(f.tmp, { force: true }).catch(() => undefined);
+    throw e;
+  }
+}
+
+/** Drop an atomic write: close and remove the temp file (best effort; the destination is never touched). */
+async function discardAtomic(f: AtomicFile): Promise<void> {
+  await f.fh.close().catch(() => undefined);
+  await fsp.rm(f.tmp, { force: true }).catch(() => undefined);
+}
+
 /**
  * Write `data` to `target` atomically: write to a temp file in the same directory, fsync,
- * copy the previous file (if any) to `<target>.bak`, then rename the temp file over the target.
+ * keep the previous file (if any) as `<target>.bak`, then rename the temp file over the target.
  *
- * Symlinks: a symlink at `<target>.bak` is replaced (the backup is written to a temp file and renamed onto
+ * Symlinks: a symlink at `<target>.bak` is replaced (the backup is made under a temp name and renamed onto
  * that name), never written through. A symlink at `target` is replaced too, unless `followSymlink` is set
  * (project saves: the user opened the link, so the file it points to is updated and the link kept; the
  * `.bak` still sits next to `target`, where the loader looks for it).
  */
 export async function atomicWriteFile(target: string, data: string | Uint8Array, opts: { backup?: boolean; followSymlink?: boolean } = {}): Promise<void> {
-  await ensureDirSafe(path.dirname(target)); // never recursive mkdir on a user path (BUG-1)
-  const dest = opts.followSymlink ? await resolveLinkTarget(target) : target;
-  const tmp = tempPathFor(dest);
   // One buffer, written with as few syscalls as possible (FileHandle.writeFile goes through the thread
   // pool in 512 KiB pieces, about 130 round trips for a 67 MB project).
   const buf = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;
-  const fh = await fsp.open(tmp, 'w');
+  const f = await openAtomic(target, opts.followSymlink);
   try {
-    try {
-      let off = 0;
-      while (off < buf.byteLength) {
-        const { bytesWritten } = await fh.write(buf, off, buf.byteLength - off);
-        if (bytesWritten <= 0) throw new Error('short write');
-        off += bytesWritten;
-      }
-      try { await fh.sync(); } catch { /* fsync unsupported on some filesystems */ }
-    } finally {
-      await fh.close();
-    }
+    await writeAll(f.fh, buf);
   } catch (e) {
-    // A failed write / close must not leave the hidden partial temp file beside the target.
-    await fsp.rm(tmp, { force: true }).catch(() => undefined);
+    // A failed write must not leave the hidden partial temp file beside the target.
+    await discardAtomic(f);
     throw e;
   }
-  try {
-    if (opts.backup !== false) await writeBackup(dest, target + BACKUP_EXT);
-    await fsp.rename(tmp, dest);
-  } catch (e) {
-    await fsp.rm(tmp, { force: true }).catch(() => undefined);
-    throw e;
-  }
+  await finishAtomic(f, target, opts.backup);
 }
 
 /**
- * Copy `from` (the previous version) to `bak` via a temp file renamed onto `bak`, so a symlink planted at
- * `bak` is replaced rather than followed. A missing `from` (first save) or a failing copy is ignored, as
- * before: the backup is best effort and never blocks the save.
+ * Make `bak` hold the previous version `from`, under a temp name renamed onto `bak`, so a symlink planted at
+ * `bak` is replaced rather than followed. The temp name is a hard link to `from` where the filesystem allows
+ * it: that version is complete and was synced when it was saved, and the rename that follows only points
+ * `from`'s name at the new file (nothing ReCut writes is ever modified in place), so the link keeps exactly
+ * the old bytes without copying them; a 30 MB copy cost about as much as writing the new file. Where hard
+ * links are refused (FAT / exFAT, some network shares, a symlinked project on another volume) it is a copy, as
+ * before. A missing `from` (first save) or a failure is ignored: the backup is best effort and never blocks
+ * the save.
  */
 async function writeBackup(from: string, bak: string): Promise<void> {
   const tmp = tempPathFor(bak);
   try {
-    await fsp.copyFile(from, tmp);
+    let linked = true;
+    try {
+      await fsp.link(from, tmp);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw e;
+      linked = false;
+      await fsp.rm(tmp, { force: true }).catch(() => undefined);
+      await fsp.copyFile(from, tmp);
+    }
     await fsp.rename(tmp, bak);
+    // POSIX rename does nothing when both names are links to one file (`bak` already was the previous version,
+    // e.g. after a save interrupted between these steps): the temp name would stay behind.
+    if (linked) await fsp.rm(tmp, { force: true });
   } catch (e) {
     await fsp.rm(tmp, { force: true }).catch(() => undefined);
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`could not update the backup ${bak}: ${errMsg(e)}`);
@@ -173,6 +222,118 @@ async function writeProjectText(filePath: string, text: string): Promise<SaveRes
   const target = ensureProjectExt(path.resolve(filePath));
   await atomicWriteFile(target, text, { followSymlink: true });
   return { ok: true, path: target };
+}
+
+/** What the renderer says it sent (ProjectFileWriter.commit checks it against what arrived). */
+export interface SaveStreamTotals { chunks: number; chars: number }
+
+/** How long a commit waits for chunks still in flight (normally none: they are sent before the commit). */
+const STRAGGLER_WAIT_MS = 10_000;
+
+/**
+ * A project save streamed by the renderer while it serializes (shared/projectWire.ts ProjectSaveStreamApi), so
+ * the IPC copies, UTF-8 encoding and disk writes of one slice overlap the serialization of the next instead of
+ * all following it. Same file semantics as saveProjectJson: the text is written as-is (never parsed) to a temp
+ * file beside the target, and only commit, once every chunk is written and the whole text passed the same
+ * shape check, syncs it, keeps the `.bak` and renames it over the target (through a symlinked `.recut`). Until
+ * then the target is untouched; a failed or aborted save removes the temp file.
+ */
+export class ProjectFileWriter {
+  private chunks = 0;
+  private chars = 0;
+  private first = '';
+  private last = '';
+  /** The start of the text, for the top-level project id (projectId). */
+  private head = '';
+  /** Writes run one at a time, in arrival order. */
+  private writing: Promise<void> = Promise.resolve();
+  private error: unknown = null;
+  /** commit was called (it may still be waiting for pieces). */
+  private committing = false;
+  /** No more pieces are taken: the commit is writing the file, or the save is finished or aborted. */
+  private closed = false;
+  private arrived: (() => void) | null = null;
+
+  private constructor(readonly path: string, private readonly file: AtomicFile) {}
+
+  /** Open a save of the project file at `filePath` (`.recut` appended when missing). Throws when the temp file cannot be created. */
+  static async open(filePath: string): Promise<ProjectFileWriter> {
+    const target = ensureProjectExt(path.resolve(filePath));
+    return new ProjectFileWriter(target, await openAtomic(target, true));
+  }
+
+  /**
+   * Chunk number `seq` (0, 1, 2, ...) of the text: written behind the earlier chunks. A chunk out of order or not
+   * a string fails the save (commit reports it); after a failure, commit or abort, chunks are ignored.
+   */
+  append(seq: number, text: string): void {
+    if (this.closed || this.error) return;
+    if (typeof text !== 'string' || seq !== this.chunks) {
+      this.fail(new Error(`save data chunk ${String(seq)} arrived out of order or malformed (expected chunk ${this.chunks})`));
+      return;
+    }
+    this.chunks++;
+    if (text.length) {
+      if (this.chars === 0) this.first = text[0];
+      this.last = text[text.length - 1];
+      this.chars += text.length;
+    }
+    if (this.head.length < ID_PROBE_BYTES) this.head += text.slice(0, ID_PROBE_BYTES - this.head.length);
+    const buf = Buffer.from(text, 'utf8');
+    this.writing = this.writing.then(() => (this.error ? undefined : writeAll(this.file.fh, buf))).catch((e: unknown) => { this.fail(e); });
+    this.arrived?.();
+  }
+
+  private fail(e: unknown): void {
+    this.error ??= e;
+    this.arrived?.();
+  }
+
+  /** The top-level project id in the text so far (null: none; undefined: not settled by its first 64 KB). */
+  projectId(): string | null | undefined {
+    return topLevelProjectId(this.head);
+  }
+
+  /** Finish the save: `totals` is what the renderer sent. Never throws; an error leaves the target untouched. */
+  async commit(totals: SaveStreamTotals): Promise<SaveResult> {
+    if (this.closed || this.committing) return { ok: false, error: 'Could not save project: this save is already finished' };
+    this.committing = true;
+    const want = { chunks: Number(totals?.chunks), chars: Number(totals?.chars) };
+    const deadline = Date.now() + STRAGGLER_WAIT_MS;
+    while (!this.error && !this.closed && this.chunks < want.chunks && Date.now() < deadline) {
+      await new Promise<void>((r) => {
+        const t = setTimeout(r, Math.max(0, deadline - Date.now()));
+        this.arrived = () => { clearTimeout(t); r(); };
+      });
+      this.arrived = null;
+    }
+    if (this.closed) return { ok: false, error: 'Could not save project: the save was cancelled' }; // aborted meanwhile
+    this.closed = true;
+    await this.writing;
+    const problem = this.error ? errMsg(this.error)
+      : this.chunks !== want.chunks || this.chars !== want.chars
+        ? `the project data arrived incomplete (${this.chunks} of ${String(want.chunks)} chunks, ${this.chars} of ${String(want.chars)} characters)`
+        : this.chars < 2 || this.first !== '{' || this.last !== '}' ? 'not a serialized project (expected a JSON object string)' : null;
+    if (problem !== null) {
+      await discardAtomic(this.file);
+      return { ok: false, error: `Could not save project: ${problem}` };
+    }
+    try {
+      await finishAtomic(this.file, this.path, true);
+      return { ok: true, path: this.path };
+    } catch (e) {
+      return { ok: false, error: `Could not save project: ${errMsg(e)}` };
+    }
+  }
+
+  /** Drop the save: the temp file is removed and the target left as it was. */
+  async abort(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.arrived?.(); // a commit waiting for pieces gives up
+    await this.writing;
+    await discardAtomic(this.file);
+  }
 }
 
 export async function readProjectJson(filePath: string): Promise<Project> {

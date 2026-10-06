@@ -3,13 +3,13 @@
  * Every access to `window.recut` is guarded so this module is importable under vitest/node.
  */
 import type { ID, JobInfo, MediaItem, MediaProbe, Project, SubtitleTrack } from '../../shared/model';
-import type { RecutApi } from '../../shared/ipc';
+import type { RecutApi, SaveResult } from '../../shared/ipc';
 import { createMediaItem, normalizeProject } from '../../shared/project';
 import { projectJsonChunks } from '../../shared/projectJson';
-import { decodeProjectWire, isProjectWire } from '../../shared/projectWire';
+import { canStreamSave, decodeProjectWire, isProjectWire, type ProjectSaveStreamApi } from '../../shared/projectWire';
 import { parseSubtitles } from '../../shared/subtitles';
 import { uid } from '../../shared/ids';
-import { useStore, serializeForSave } from './store';
+import { useStore } from './store';
 import { fileNameOf } from './selectors';
 import { classifyPath, importIdentity, sidecarLanguage, LONG_FORM_MOVIE_SEC, type ImportBinKind } from './parseIdentity';
 import { mediaNeedsProxyForPreview, proxyStreamStale } from '../playback/mediaSource';
@@ -345,27 +345,82 @@ function slicer(): () => Promise<void> | void {
   };
 }
 
+/** UTF-16 code units of file text gathered before they are handed on as one piece (a streamed save sends each). */
+const PIECE_CHARS = 1 << 20;
+
 /**
  * Serialize `project` in slices of about SLICE_MS, yielding between them, so saving a large project never blocks
- * the window for the whole serialization. `compact`: the same text as JSON.stringify (autosaves); otherwise the
- * project file layout (serializeProject).
+ * the window for the whole serialization. The text is handed to `emit` in order, in pieces of about PIECE_CHARS
+ * cut between records (never inside a JSON string, so each piece is well-formed UTF-16 on its own); the pieces
+ * concatenated are the whole text. `emit` may return a promise, which is awaited before serialization goes on.
  */
-export async function serializeProjectSliced(project: Project, compact = false): Promise<string> {
+async function serializeInPieces(project: Project, compact: boolean, emit: (text: string) => void | Promise<void>): Promise<void> {
   const out: string[] = [];
-  const chunks: string[] = [];
   const it = projectJsonChunks(project, out, { compact });
   const pause = slicer();
-  while (!it.next().done) {
-    const p = pause();
-    if (p) {
-      // Join this slice's pieces now (in this task), so the final join only concatenates a few dozen chunks.
-      chunks.push(out.join(''));
-      out.length = 0;
-      await p;
+  let counted = 0;
+  let chars = 0;
+  for (;;) {
+    const done = it.next().done;
+    for (; counted < out.length; counted++) chars += out[counted].length;
+    if (done || chars >= PIECE_CHARS) {
+      const text = out.join('');
+      out.length = 0; counted = 0; chars = 0;
+      const p = emit(text);
+      if (p) await p;
+      if (done) return;
     }
+    const p = pause();
+    if (p) await p;
   }
-  chunks.push(out.join(''));
-  return chunks.join('');
+}
+
+/**
+ * The project text, serialized in slices (serializeInPieces). `compact`: the same text as JSON.stringify
+ * (autosaves); otherwise the project file layout (serializeProject).
+ */
+export async function serializeProjectSliced(project: Project, compact = false): Promise<string> {
+  const pieces: string[] = [];
+  await serializeInPieces(project, compact, (text) => { pieces.push(text); });
+  return pieces.join('');
+}
+
+/**
+ * Save by streaming the file text to main while it is serialized (shared/projectWire.ts ProjectSaveStreamApi).
+ * Measured on a 31 MB project (2,500-clip project plus a 3 h, 6,700-clip sequence), sending the text as one
+ * string spent about 50 ms in the renderer on the IPC send (one long task), 70 ms in main receiving it and 60 ms
+ * encoding it, all after the 180 ms serialization; streamed, those costs overlap the serialization of the next
+ * piece, and only the last piece, the fsync and the rename follow it.
+ */
+async function saveStreamed(api: ProjectSaveStreamApi, target: string, project: Project): Promise<SaveResult> {
+  const begun = api.saveProjectBegin(target); // main opens the temp file while the first slice is serialized
+  begun.catch(() => undefined); // a rejection is handled where it is awaited (first piece / failure below)
+  let id: string | null = null;
+  let chunks = 0;
+  let chars = 0;
+  try {
+    await serializeInPieces(project, false, async (text) => {
+      if (id === null) {
+        const b = await begun;
+        if (!b.ok) throw new SaveRefused(b);
+        id = b.id;
+      }
+      api.saveProjectChunk(id, chunks++, text);
+      chars += text.length;
+    });
+  } catch (e) {
+    if (e instanceof SaveRefused) return e.result;
+    // Drop the temp file in main, also when the failure came before the first piece was sent.
+    const opened = id ?? (await begun.then((b) => (b.ok ? b.id : null), () => null));
+    if (opened !== null) await Promise.resolve(api.saveProjectAbort(opened)).catch(() => undefined);
+    throw e;
+  }
+  return api.saveProjectCommit(id!, { chunks, chars });
+}
+
+/** Main refused to start a streamed save (bad path, no permission): stops the serialization, reported as is. */
+class SaveRefused {
+  constructor(readonly result: SaveResult & { ok: false }) {}
 }
 
 /** The save in progress (or a settled promise): saves run one at a time, so their writes land in order. */
@@ -382,6 +437,16 @@ export function saveProject(path?: string): Promise<{ ok: true; path: string } |
   return run;
 }
 
+/**
+ * The project as written, stamped with modifiedAt: what serializeForSave returns (same keys, same order), as a
+ * shallow copy. serializeForSave runs immer's produce, which deep-freezes a project that is not frozen yet: right
+ * after an open (loadProjectData stores the decoded project as is) that froze a 31 MB project in one ~370 ms task
+ * before the save could start.
+ */
+function projectToSave(project: Project): Project {
+  return { ...project, modifiedAt: Date.now() };
+}
+
 async function saveNow(path?: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
   const api = recutApi();
   if (!api) return { ok: false, error: 'IPC unavailable' };
@@ -389,12 +454,13 @@ async function saveNow(path?: string): Promise<{ ok: true; path: string } | { ok
   const target = path ?? st.projectPath;
   if (!target) return { ok: false, error: 'No project path' };
   const revision = st.revision;
-  const project = serializeForSave(st);
-  // Serialize here, in slices, and send one string (P-06): a structured clone of the whole project across IPC
-  // cost more than the serialization, and main then pretty-printed it again on its own thread.
-  const res = typeof api.saveProjectJson === 'function'
-    ? await api.saveProjectJson(target, await serializeProjectSliced(project))
-    : await api.saveProject(target, project);
+  const project = projectToSave(st.project);
+  // Serialize here, in slices, and send text (P-06): a structured clone of the whole project across IPC cost more
+  // than the serialization, and main then pretty-printed it again on its own thread. Streamed when the bridge
+  // can (saveStreamed); else one string.
+  const res = canStreamSave(api) ? await saveStreamed(api, target, project)
+    : typeof api.saveProjectJson === 'function' ? await api.saveProjectJson(target, await serializeProjectSliced(project))
+      : await api.saveProject(target, project);
   if (res.ok) useStore.getState().markSaved(res.path, revision);
   return res;
 }
@@ -476,7 +542,7 @@ export async function autosaveProject(): Promise<void> {
   const api = recutApi();
   const st = useStore.getState();
   if (!api || !st.dirty) return;
-  const project = serializeForSave(st);
+  const project = projectToSave(st.project);
   const res = typeof api.autosaveProjectJson === 'function'
     ? await api.autosaveProjectJson(st.projectPath, JSON.stringify(project))
     : await api.autosaveProject(st.projectPath, project);
