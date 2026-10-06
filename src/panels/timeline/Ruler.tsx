@@ -13,6 +13,7 @@ import { formatSequenceTimecode } from '@shared/time';
 import { useStore } from '@/state';
 import { frameToX, rulerTicks, snapFrame, snapThresholdFrames, splitScroll, xToFrameInt } from './viewMath';
 import { RULER_H } from './types';
+import { useViewScrollLeft } from './scrollSync';
 
 export interface RulerProps {
   seqId: string;
@@ -57,9 +58,9 @@ export function Ruler(p: RulerProps) {
   const { base, baseDev } = splitScroll(p.scroll * p.zoom, dpr);
   const baseRef = useRef(base);
   baseRef.current = base;
-  useLayoutEffect(() => { const el = scrollerRef.current; if (el) el.scrollLeft = base; }, [base, p.contentPx, p.width]);
+  const syncScrollLeft = useViewScrollLeft(scrollerRef, p.seqId, base, p.contentPx, Math.round(p.width));
   /** The offset belongs to the view: undo any other scroll of the (hidden-bar) scroller. */
-  const onScrollerScroll = () => { const el = scrollerRef.current; if (el && Math.abs(el.scrollLeft - baseRef.current) > 1) el.scrollLeft = baseRef.current; };
+  const onScrollerScroll = () => { const el = scrollerRef.current; if (el && Math.abs(el.scrollLeft - baseRef.current) > 1) syncScrollLeft(); };
   // Canvas placement: the mounted range on the device pixel grid.
   const cvDev0 = Math.floor(Math.max(0, Math.min(p.mountX0, base)) * dpr);
   const cvDevW = Math.max(1, Math.ceil(Math.max(p.mountX1, base + p.width) * dpr) - cvDev0);

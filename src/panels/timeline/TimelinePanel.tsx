@@ -26,6 +26,7 @@ import { TimelineHeader } from './TimelineHeader';
 import { MarkerEditor, PropertiesPopover, RenameDialog, SpeedDialog, TagsDialog } from './dialogs';
 import { useTimelineDrag, snapTargets, type InteractionCtx } from './interactions';
 import { useTimelineUi } from './timelineStore';
+import { useViewScrollLeft } from './scrollSync';
 import { clipboardHasClips, copyClipsToClipboard, pasteClipboardAt } from '@/app/clipboard';
 import { setTimelineViewportWidth } from '@/app/commands';
 import { setActiveTransport } from '@/app/transport';
@@ -173,22 +174,11 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   // repaint, re-layout or re-layerization of the page, which a transform on the clip layer costs on every step. A
   // scroll offset holds whole device pixels: the clip layer's translateX supplies the rest (constant, usually 0, while
   // wheel steps move by whole pixels), so content sits exactly where translateX(-scrollPx) put it.
-  // Written only when the value changes (reading or writing scrollLeft forces a layout).
+  // See useViewScrollLeft for when it is written.
   const split = splitScroll(scrollPx, window.devicePixelRatio || 1);
+  const syncScrollLeft = useViewScrollLeft(areaRef, seqId, split.base, contentPx, viewW);
   const scrollBaseRef = useRef(split.base);
   scrollBaseRef.current = split.base;
-  const leftSet = useRef(NaN);
-  useLayoutEffect(() => {
-    const el = areaRef.current; if (!el || leftSet.current === split.base) return;
-    el.scrollLeft = split.base; leftSet.current = split.base;
-  }, [split.base, contentPx]);
-  /** Re-applies view.scroll after the scroller was resized, shown again or scrolled by something else. */
-  const syncScrollLeft = () => {
-    const el = areaRef.current; if (!el) return;
-    const want = scrollBaseRef.current;
-    if (Math.abs(el.scrollLeft - want) > 1) el.scrollLeft = want;
-    leftSet.current = want;
-  };
   const onHScroll = () => {
     const el = hscrollRef.current; if (!el) return;
     // A sync to the store's scroll is pending: this event reports an older (programmatic) scrollbar position, and
