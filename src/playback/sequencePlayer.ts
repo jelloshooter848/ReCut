@@ -160,7 +160,7 @@ export class SequencePlayer {
   private rafId: number | null = null;
   private lastFrame = -1;
   private lastPlan: FramePlan | null = null;
-  /** drawKey of the last draw while playing ('' = the last draw was not a playing draw). */
+  /** playingKey of the last draw while playing ('' = the last draw was not a playing draw). */
   private lastDrawKey = '';
   /** compositeKey of the last draw while paused ('' = none, or a playing draw since). */
   private pausedKey = '';
@@ -194,6 +194,8 @@ export class SequencePlayer {
   /** Removes this player's listeners from an element (elements outlive a player with a reusable id). */
   private listenerOffs = new Map<HTMLMediaElement, () => void>();
   private subtitleCache = new WeakMap<Sequence, ResolvedCue[]>();
+  /** playingKey's subtitle part for (sequence, frame). */
+  private subtitleKey: { seq: Sequence | null; frame: number; key: string } = { seq: null, frame: -1, key: '' };
   private frameCbs = new Set<(frame: number) => void>();
   private stateCbs = new Set<(s: SequencePlayerState) => void>();
   private drawSubtitles: boolean;
@@ -508,10 +510,12 @@ export class SequencePlayer {
       this.plannedFrame = frame;
       this.updateVideoElements(plan);
       this.updateAudio(plan);
-      // While playing, rAF runs at the display rate (60 Hz) but the picture only changes when the timeline frame or
-      // the frame an element shows changes (24–30 Hz): skip the redundant redraws, each of which re-uploads the canvas.
-      const key = this.drawKey(plan, frame);
-      if (invalidated || key !== this.lastDrawKey) { this.draw(plan, frame); this.pausedKey = ''; }
+      // While playing, rAF runs at the display rate (60 Hz) but the picture only changes when a painted layer's
+      // element presents its next frame (24–30 Hz): skip the redundant redraws, each of which is a drawImage plus the
+      // canvas paint, layerization and raster of a frame (see playingKey).
+      const comp = this.composite(plan);
+      const key = this.playingKey(comp, frame);
+      if (invalidated || key !== this.lastDrawKey) { this.paint(comp, frame); this.pausedKey = ''; }
       this.lastDrawKey = key;
     } else {
       this.lastDrawKey = '';
@@ -651,15 +655,24 @@ export class SequencePlayer {
     return key;
   }
 
-  /** What the canvas would show for `plan` at `frame`: the timeline frame plus each video layer's media frame. */
-  private drawKey(plan: FramePlan, frame: number): string {
-    let key = String(frame);
-    for (const layer of plan.layers) {
-      if (layer.isImage) { key += `|i${getStillImage(layer.path).img.complete ? 1 : 0}`; continue; }
-      const slot = this.activeVideo.get(layer.clipId);
-      if (!slot) { key += '|-'; continue; }
-      const el = slot.el;
-      key += `|${slot.settled && el.readyState >= 2 ? Math.floor(el.currentTime * fpsValue(layer.mediaFps) + 1e-6) : 'x'}`;
+  /**
+   * What a playing draw of `comp` shows: each painted layer (from the top opaque one up) with the media frame its
+   * element is on and its alpha, plus the subtitle cues at `frame`. Neither the timeline frame itself nor occluded
+   * layers: their frame counters tick out of phase with the painted layer's (the timeline at 24 Hz, every playing
+   * element at its own 24 Hz), so keying on them redrew the same picture two to three times (about 55 draws/s instead
+   * of 24 with three video tracks playing in the perf bench).
+   */
+  private playingKey(comp: Composite, frame: number): string {
+    let key = '';
+    for (let i = comp.first; i < comp.drawable.length; i++) {
+      const { layer, el, vw, vh } = comp.drawable[i];
+      key += layer.isImage ? `|${layer.clipId}:i` : `|${layer.clipId}:${Math.floor((el as HTMLVideoElement).currentTime * fpsValue(layer.mediaFps) + 1e-6)}:${vw}x${vh}`;
+      if (layer.alpha < 1) key += `@${Math.round(layer.alpha * 1024)}`;
+    }
+    if (this.drawSubtitles) {
+      const sk = this.subtitleKey; // the cue scan runs once per timeline frame, not on every rAF tick
+      if (sk.seq !== this.seq || sk.frame !== frame) { sk.seq = this.seq; sk.frame = frame; sk.key = this.getSubtitleAt(frame).map((c) => `|s${c.id}`).join(''); }
+      key += sk.key;
     }
     return key;
   }
@@ -837,10 +850,6 @@ export class SequencePlayer {
     h = Math.max(2, Math.round(h));
     if (this.canvas.width !== w) this.canvas.width = w;
     if (this.canvas.height !== h) this.canvas.height = h;
-  }
-
-  private draw(plan: FramePlan, frame: number): void {
-    this.paint(this.composite(plan), frame);
   }
 
   /**
