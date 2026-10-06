@@ -17,11 +17,11 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { produce, freeze } from 'immer';
-import { createProject, LiveView, serializeProject } from '../../shared/project';
+import { createProject, LiveView, normalizeProject, serializeProject } from '../../shared/project';
 import { makeClip } from '../../shared/timeline';
 import type { Project } from '../../shared/model';
 import type { SaveResult } from '../../shared/ipc';
-import { canStreamAutosave, type ProjectAutosaveStreamApi, type ProjectSaveStreamApi } from '../../shared/projectWire';
+import { canStreamAutosave, decodeProjectWire, encodeProjectWire, type ProjectAutosaveStreamApi, type ProjectSaveStreamApi } from '../../shared/projectWire';
 import { autosavePathFor, checkRecovery, ProjectFileWriter, untitledAutosavePath, writeAutosaveJson } from '../../electron/project/io';
 import { useStore, resetStore } from '../../src/state/store';
 import { AUTOSAVE_AFTER_SAVE_MS, autosaveProject, saveProject, serializeProjectSliced } from '../../src/state/mediaActions';
@@ -113,7 +113,7 @@ describe('sliced compact serialization', () => {
     const base = bigProject() as Any;
     const id = base.activeSequenceId;
     const seq = base.sequences[id];
-    seq.videoTracks[0].clips = Array.from({ length: 50 }, (_, i) => makeClip({ mediaId: 'm', name: `c${i}`, sourceIn: 0, duration: 10, kind: 'video' }, i * 10));
+    seq.videoTracks[0].clips = Array.from({ length: 200 }, (_, i) => makeClip({ mediaId: 'm', name: `c${i}`, sourceIn: 0, duration: 10, kind: 'video' }, i * 10));
     const { snapshots: _s, ...data } = seq;
     seq.snapshots = [{ id: 'snap', name: 'v1', createdAt: 1, data: { ...data, view: new LiveView({ playhead: 3 }) } }];
     const p1 = freeze(base, true) as Project; // as the store holds it: frozen, sequence views stay live
@@ -131,6 +131,45 @@ describe('sliced compact serialization', () => {
     expect(await serializeProjectSliced(loose, true)).toBe(JSON.stringify(loose));
     loose.sequences[id].videoTracks[0].clips[0].name = 'changed in place';
     expect(await serializeProjectSliced(loose, true)).toBe(JSON.stringify(loose));
+  });
+});
+
+describe('slices stay short: open pieces and autosave parts are small', () => {
+  /** A project with long tracks (in the sequence and in a snapshot), a short track, many media items. */
+  function longTracksProject(): Project {
+    const p = createProject('long tracks') as Any;
+    const seq = p.sequences[p.activeSequenceId];
+    const clips = (n: number, kind: 'video' | 'audio') => Array.from({ length: n }, (_, i) => makeClip({ mediaId: `m${i % 7}`, name: `c ${i} é`, sourceIn: i, duration: 10, kind, tags: ['a', 'b'] }, i * 10));
+    seq.videoTracks[0].clips = clips(1000, 'video');
+    seq.videoTracks[1].clips = clips(30, 'video');
+    seq.audioTracks[0].clips = clips(1000, 'audio');
+    const { snapshots: _s, ...data } = seq;
+    seq.snapshots = [{ id: 'snap', name: 'v1', createdAt: 1, data: JSON.parse(JSON.stringify({ ...data, videoTracks: [{ ...seq.videoTracks[0], clips: clips(400, 'video') }] })) }];
+    for (let i = 0; i < 500; i++) p.media[`med${i}`] = { ...createProject('m').bins['bin-movies'], id: `med${i}`, notes: 'x'.repeat(300) };
+    return p as Project;
+  }
+
+  it('open: the wire cuts long tracks and big collections into small pieces that decode to exactly the project', async () => {
+    const norm = normalizeProject(JSON.parse(JSON.stringify(longTracksProject())));
+    const wire = encodeProjectWire(norm);
+    expect(Math.max(...wire.parts.map((x) => x[2].length))).toBeLessThan(200 * 1024);
+    expect(wire.parts.filter((x) => x[3] === 'append').length).toBeGreaterThanOrEqual(8);
+    expect(wire.parts.filter((x) => x[3] === 'merge').length).toBeGreaterThanOrEqual(2);
+    let pauses = 0;
+    const back = await decodeProjectWire(JSON.parse(JSON.stringify(wire)), () => { pauses++; });
+    expect(pauses).toBe(wire.parts.length);
+    expect(back).toEqual(norm);
+    expect(JSON.stringify(back)).toBe(JSON.stringify(norm)); // key order kept
+    const seq = back.sequences[back.activeSequenceId!];
+    expect(seq.view).toBeInstanceOf(LiveView);
+    expect(seq.snapshots[0].data.view).toBeInstanceOf(LiveView);
+  });
+
+  it('autosave: long arrays are written item by item, also inside cached values, and the text is exactly JSON.stringify', async () => {
+    const p = freeze(longTracksProject(), true) as Project;
+    expect(await serializeProjectSliced(p, true)).toBe(JSON.stringify(p));
+    // Second autosave of the same (frozen) project: cached values, same text.
+    expect(await serializeProjectSliced(p, true)).toBe(JSON.stringify(p));
   });
 });
 

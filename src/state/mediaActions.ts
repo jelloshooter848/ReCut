@@ -422,13 +422,17 @@ export async function serializeProjectSliced(project: Project, compact = false):
 
 /**
  * Where the compact serializer may yield: these containers are written part by part (the entries of a record,
- * the items of an array, the fields of an object, each laid out by the nested split); every other value in one
- * native JSON.stringify. A sequence is split down to its tracks, so the longest stretch without a yield is one
- * track or one small record. `cached`: a value written whole whose text is kept for the next autosave when it is
- * frozen (compactJsonCache).
+ * the items of an array, the fields of an object, each laid out by the nested split); other values in one native
+ * JSON.stringify, except arrays longer than LONG_ARRAY (clips, cues, markers, ...), written item by item. The
+ * clock is checked after every part, so the longest stretch without a yield is one record (a clip, a cue) or one
+ * short array. `cached`: a value whose text is kept for the next autosave when it is frozen (compactJsonCache),
+ * laid out by the inner split when it has to be written.
  */
-type CompactSplit = { entries: CompactSplit | null } | { fields: Record<string, CompactSplit> } | { items: CompactSplit | null } | { cached: true };
-const CACHED: CompactSplit = { cached: true };
+type CompactSplit = { entries: CompactSplit | null } | { fields: Record<string, CompactSplit> } | { items: CompactSplit | null } | { cached: CompactSplit };
+/** Arrays longer than this are written item by item (yielding between items) instead of in one JSON.stringify. */
+const LONG_ARRAY = 64;
+const RECORD: CompactSplit = { fields: {} };
+const CACHED: CompactSplit = { cached: RECORD };
 const TRACKS: CompactSplit = { items: CACHED };
 const SNAPSHOT_SPLIT: CompactSplit = { fields: { data: { fields: { videoTracks: TRACKS, audioTracks: TRACKS } } } };
 const SEQUENCE_SPLIT: CompactSplit = { fields: { videoTracks: TRACKS, audioTracks: TRACKS, snapshots: { items: SNAPSHOT_SPLIT } } };
@@ -479,65 +483,77 @@ function compactValue(key: string, v: unknown): string | undefined {
  * an earlier autosave (compactJsonCache). `pause` yields between parts (slicer, or idleSlicer for autosaves).
  */
 async function serializeCompactInPieces(project: Project, emit: (text: string) => void | Promise<void>, pause = slicer()): Promise<void> {
+  /** Where text goes: the pieces handed to `emit`, or a value's own text being built for the cache. */
+  interface Sink { push(s: string): void; step(): Promise<void> }
   let out: string[] = [];
   let chars = 0;
-  const push = (s: string) => { out.push(s); chars += s.length; };
-  const step = async () => {
-    if (chars >= PIECE_CHARS) {
-      const text = out.join('');
-      out = []; chars = 0;
-      const p = emit(text);
+  const main: Sink = {
+    push: (s) => { out.push(s); chars += s.length; },
+    step: async () => {
+      if (chars >= PIECE_CHARS) {
+        const text = out.join('');
+        out = []; chars = 0;
+        const p = emit(text);
+        if (p) await p;
+      }
+      const p = pause();
       if (p) await p;
-    }
-    const p = pause();
-    if (p) await p;
+    },
   };
-  /** JSON of `v` (the value of `key`) laid out by `split`, pushed; false (nothing pushed) when JSON omits it. */
-  const write = async (key: string, v: unknown, split: CompactSplit | null): Promise<boolean> => {
-    if (split !== null && 'cached' in split && isPlainContainer(v) && Object.isFrozen(v)) {
-      let s = compactJsonCache.get(v);
-      if (s === undefined) { s = JSON.stringify(v); compactJsonCache.set(v, s); }
-      push(s);
+  const longArray = (v: unknown): boolean => Array.isArray(v) && v.length > LONG_ARRAY && isPlainContainer(v);
+  /** JSON of `v` (the value of `key`) laid out by `split`, pushed to `to`; false (nothing pushed) when JSON omits it. */
+  const write = async (to: Sink, key: string, v: unknown, split: CompactSplit | null): Promise<boolean> => {
+    if (split !== null && 'cached' in split && isPlainContainer(v)) {
+      let s = Object.isFrozen(v) ? compactJsonCache.get(v) : undefined;
+      if (s === undefined) {
+        const own: string[] = [];
+        await write({ push: (x) => { own.push(x); }, step: async () => { const p = pause(); if (p) await p; } }, key, v, split.cached);
+        s = own.join('');
+        if (Object.isFrozen(v)) compactJsonCache.set(v, s);
+      }
+      to.push(s);
       return true;
     }
-    if (split === null || 'cached' in split || !isPlainContainer(v) || ('items' in split) !== Array.isArray(v)) {
+    const asItems = split !== null && 'items' in split;
+    if (!isPlainContainer(v) || (split === null || 'cached' in split || asItems !== Array.isArray(v) ? !longArray(v) : false)) {
       const s = compactValue(key, v);
       if (s === undefined) return false;
-      push(s);
+      to.push(s);
       return true;
     }
-    if ('items' in split) {
-      const arr = v as unknown[];
-      push('[');
-      for (let i = 0; i < arr.length; i++) {
-        if (i) push(',');
-        if (!(await write(String(i), arr[i], split.items))) push('null'); // JSON writes an omitted item as null
-        await step();
+    if (Array.isArray(v)) {
+      const itemSplit = asItems ? (split as { items: CompactSplit | null }).items : null;
+      to.push('[');
+      for (let i = 0; i < v.length; i++) {
+        if (i) to.push(',');
+        if (!(await write(to, String(i), v[i], itemSplit))) to.push('null'); // JSON writes an omitted item as null
+        await to.step();
       }
-      push(']');
+      to.push(']');
       return true;
     }
     const rec = v as Record<string, unknown>;
+    const sp = split as { entries: CompactSplit | null } | { fields: Record<string, CompactSplit> };
     let sep = '{';
     for (const k of Object.keys(rec)) {
-      const sub = 'entries' in split ? split.entries : (Object.hasOwn(split.fields, k) ? split.fields[k] : null);
+      const sub = 'entries' in sp ? sp.entries : (Object.hasOwn(sp.fields, k) ? sp.fields[k] : null);
       const x = rec[k];
       // Only a value written by compactValue can be omitted: decide that before the key is pushed.
-      if (sub === null || !isPlainContainer(x)) {
+      if (!isPlainContainer(x) || (sub === null && !longArray(x))) {
         const s = compactValue(k, x);
         if (s === undefined) continue;
-        push(sep + JSON.stringify(k) + ':' + s);
+        to.push(sep + JSON.stringify(k) + ':' + s);
       } else {
-        push(sep + JSON.stringify(k) + ':');
-        await write(k, x, sub);
+        to.push(sep + JSON.stringify(k) + ':');
+        await write(to, k, x, sub);
       }
       sep = ',';
-      await step();
+      await to.step();
     }
-    push(sep === '{' ? '{}' : '}');
+    to.push(sep === '{' ? '{}' : '}');
     return true;
   };
-  const whole = await write('', project, PROJECT_SPLIT);
+  const whole = await write(main, '', project, PROJECT_SPLIT);
   if (!whole) throw new TypeError('the project is not serializable');
   const text = out.join('');
   if (text) { const p = emit(text); if (p) await p; }
@@ -745,6 +761,8 @@ export async function openProject(path: string, opts: { notify?: OpenNotify } = 
       const name = projectNameFromPath(res.path);
       if (name) project = { ...project, name };
     }
+    // The store load and the render it causes run in a task of their own, not behind the last decode slice.
+    await nextTask();
     useStore.getState().loadProjectData(project, res.path);
     let warned = false;
     // BUG-5: tell the user the newest edits were lost.
