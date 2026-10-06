@@ -16,9 +16,9 @@ import { toast } from '@/components/ui/toastStore';
 import { useLayoutStore } from '@/components/layout/layoutStore';
 import { isEditableTarget } from '@/keyboard/useShortcuts';
 import type { PanelProps } from '../registry';
-import { ClipView, type FilterLook } from './ClipView';
-import { TransitionView, transitionSpan, TRANSITION_LABEL } from './TransitionView';
-import { LodLane } from './LodLane';
+import type { FilterLook } from './ClipView';
+import { transitionSpan, TRANSITION_LABEL } from './TransitionView';
+import { ClipLane } from './ClipLane';
 import { Ruler } from './Ruler';
 import { Playhead } from './Playhead';
 import { TrackHeader, SubtitleLaneHeader } from './TrackHeader';
@@ -32,23 +32,20 @@ import { setActiveTransport } from '@/app/transport';
 import { getShortcutLabel, runCommand } from '@/keyboard/shortcuts';
 import { COMMAND_IDS } from '@/keyboard/commandIds';
 import { maybeConformSequence, performSourceEdit } from '@/panels/source/insert';
-import { linkedSyncOffsets } from './clipBadges';
+import { linkedSyncOffsets, syncOffsetsByTrack } from './clipBadges';
 import type { DialogState, DragPreview } from './types';
 import { RULER_H } from './types';
 import {
-  LOD_MIN_CLIP_PX, clipOverlaps, clipVisiblePx, frameToX, layoutTracks, lodHit, minZoomFor, rowAtY, scrollContentFrames, snapFrame, snapThresholdFrames, visibleRange,
+  frameToX, itemsInRange, layoutTracks, lodHit, minZoomFor, rowAtY, scrollContentFrames, snapFrame, snapThresholdFrames, visibleRange,
   xToFrame, xToFrameInt, zoomAround, zoomToFit, type TrackLayout,
 } from './viewMath';
 
 const DROP_GHOST_FRAMES = 48;
+/** Clips within this many px outside the viewport are mounted too (rounding slack only). */
+const MOUNT_SLACK_PX = 16;
 
-const clipsByIdCache = new WeakMap<Clip[], Map<ID, Clip>>();
-/** id -> clip of a track, cached per (structurally shared) clips array. */
-function clipsByIdOf(track: Track): Map<ID, Clip> {
-  let m = clipsByIdCache.get(track.clips);
-  if (!m) { m = new Map(track.clips.map((c) => [c.id, c])); clipsByIdCache.set(track.clips, m); }
-  return m;
-}
+const cueStart = (c: { start: number }) => c.start;
+const cueEnd = (c: { end: number }) => c.end;
 const CUT_MENU_PX = 10;
 
 export function TimelinePanel(props: PanelProps) {
@@ -72,7 +69,6 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const filters = useStore((s) => s.ui.filters);
   const snapping = useStore((s) => s.project.settings.snapping);
   const showSourceTc = useStore((s) => s.project.settings.showSourceTimecodeOnClips);
-  const media = useStore((s) => s.project.media);
   const linkedSelection = useTimelineUi((s) => s.linkedSelection);
   const headerWidth = useTimelineUi((s) => s.headerWidth);
   const liveHeights = useTimelineUi((s) => s.liveHeights);
@@ -119,7 +115,16 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const cues = useMemo(() => (seq && hasSubs ? resolveSubtitleCues(seq as unknown as Sequence) : []), [seq?.videoTracks, seq?.audioTracks, seq?.subtitleTracks, seq?.fps, hasSubs]); // eslint-disable-line react-hooks/exhaustive-deps
   const filterOn = filtersActive(filters);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const syncOffsets = useMemo(() => linkedSyncOffsets([...(seq?.videoTracks ?? []), ...(seq?.audioTracks ?? [])], fps), [seq?.videoTracks, seq?.audioTracks, fps]);
+  const syncPrev = useRef<Map<ID, ReadonlyMap<ID, number>> | null>(null);
+  const syncOffsets = useMemo(() => {
+    const tracks = [...(seq?.videoTracks ?? []), ...(seq?.audioTracks ?? [])];
+    return (syncPrev.current = syncOffsetsByTrack(tracks, linkedSyncOffsets(tracks, fps), syncPrev.current));
+  }, [seq?.videoTracks, seq?.audioTracks, fps]); // eslint-disable-line react-hooks/exhaustive-deps
+  const media = useStore((s) => s.project.media);
+  const isOffline = useCallback((clip: Clip) => { const m = media[clip.mediaId]; return !m || !!m.offline; }, [media]);
+  const lookFor = useCallback((clip: Clip): FilterLook => (!filterOn ? 'none' : filterMatches(clip, filters) ? 'none' : filters.mode === 'solo' ? 'hide' : 'dim'), [filterOn, filters]);
+  const selectedLoc = useMemo(() => (seq && selectedIds.length ? findClip(seq as unknown as Sequence, selectedIds[0]) : undefined), [seq?.videoTracks, seq?.audioTracks, selectedIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  const onRenameTrack = useCallback((trackId: ID) => setDialog({ kind: 'renameTrack', trackId }), []);
   const minZoom = minZoomFor(duration, width);
   const minZoomRef = useRef(minZoom);
   minZoomRef.current = minZoom;
@@ -136,14 +141,26 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const focusPanel = (id: string) => { useStore.getState().setActivePanel(id); useLayoutStore.getState().focusPanel(id); };
   const doZoomToFit = useCallback(() => { const s = fullSeq(); if (!s || width <= 0) return; setView({ zoom: zoomToFit(Math.max(1, sequenceDuration(s)), width), scroll: 0 }); }, [width, setView]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Horizontal scrollbar <-> view.scroll
+  // Horizontal scrollbar <-> view.scroll. Reading / writing scrollLeft forces a synchronous layout of everything
+  // the commit just changed (a wheel step or page flip re-lays out every mounted clip inside the event handler), so
+  // the scrollbar is synced in the next animation frame instead, right before that frame's own layout and paint.
+  const hscrollWant = useRef<{ px: number; raf: number }>({ px: 0, raf: 0 });
   useLayoutEffect(() => {
-    const el = hscrollRef.current; if (!el) return;
-    const want = Math.round(scrollPx);
-    if (Math.abs(el.scrollLeft - want) > 1) el.scrollLeft = want;
+    const w = hscrollWant.current;
+    w.px = Math.round(scrollPx);
+    if (w.raf) return;
+    w.raf = requestAnimationFrame(() => {
+      w.raf = 0;
+      const el = hscrollRef.current; if (!el) return;
+      if (Math.abs(el.scrollLeft - w.px) > 1) el.scrollLeft = w.px;
+    });
   }, [scrollPx, contentPx]);
+  useEffect(() => () => { const w = hscrollWant.current; if (w.raf) cancelAnimationFrame(w.raf); w.raf = 0; }, []);
   const onHScroll = () => {
     const el = hscrollRef.current; if (!el) return;
+    // A sync to the store's scroll is pending: this event reports an older (programmatic) scrollbar position, and
+    // feeding it back would undo the store change. The store stays the source of truth until the sync lands.
+    if (hscrollWant.current.raf) return;
     const st = useStore.getState(); const s = st.project.sequences[seqId]; if (!s) return;
     const current = s.view.scroll * s.view.zoom;
     if (Math.abs(el.scrollLeft - current) <= 1) return;
@@ -478,9 +495,10 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   if (!seq) return <div className="panel"><div className="panel-placeholder">Sequence not found</div></div>;
 
   // ---- render helpers --------------------------------------------------------------------------
+  // Clips are mounted for the viewport only (anything in a margin is invisible, and a page flip would mount and
+  // paint the margins too); their filmstrip / waveform ranges still extend 200 px past it (prefetch for scrolling).
   const viewX0 = scrollPx - 200, viewX1 = scrollPx + width + 200;
-  const isOffline = (clip: Clip) => { const m = media[clip.mediaId]; return !m || !!m.offline; };
-  const lookFor = (clip: Clip): FilterLook => (!filterOn ? 'none' : filterMatches(clip, filters) ? 'none' : filters.mode === 'solo' ? 'hide' : 'dim');
+  const mountX0 = scrollPx - MOUNT_SLACK_PX, mountX1 = scrollPx + width + MOUNT_SLACK_PX;
   const previewTransition = preview?.kind === 'transition' ? preview : null;
   const dropRow = drop?.trackId ? rowById.get(drop.trackId) : undefined;
   const totalH = layout.total + 24;
@@ -506,7 +524,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   if (drop && dropRow) pushGhost('drop', `drop${drop.insert ? ' insert' : ''}`, dropRow.id, drop.frame, DROP_GHOST_FRAMES, drop.insert ? 'Insert' : 'Overwrite');
   if (tip) { const t = tip as { x: number; y: number; text: string }; t.x = Math.max(4, Math.min(width - 160, t.x)); if (t.y < 2) t.y = 4; if (!t.text) tip = null; }
 
-  const selectedClip = selectedIds.length ? findClip(seq as unknown as Sequence, selectedIds[0]) : undefined;
+  const selectedClip = selectedLoc;
   const dialogClip = dialog && 'clipId' in dialog ? findClip(seq as unknown as Sequence, dialog.clipId) : undefined;
   const dialogMarker = dialog?.kind === 'marker' ? seq.markers.find((m) => m.id === dialog.markerId) : undefined;
   const videoCount = seq.videoTracks.length, audioCount = seq.audioTracks.length;
@@ -517,7 +535,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
       data-tool={tool} data-timeline tabIndex={0}
       onKeyDown={onKeyDown} onFocus={onFocus} onBlur={onBlur} onPointerDownCapture={focusSelf}
     >
-      <TimelineHeader seqId={seqId} fps={fps} zoom={zoom} scroll={scroll} viewWidth={width} minZoom={minZoom} />
+      <TimelineHeader seqId={seqId} fps={fps} zoom={zoom} viewWidth={width} minZoom={minZoom} />
 
       <div className="tl-body">
         {/* ---- track headers ---- */}
@@ -529,7 +547,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
               {layout.rows.map((row) => {
                 const track = trackById.get(row.id)!;
                 return <TrackHeader key={row.id} seqId={seqId} track={track} top={row.top} height={row.height} number={row.index + 1}
-                  canRemove={(row.kind === 'video' ? videoCount : audioCount) > 1} onRename={() => setDialog({ kind: 'renameTrack', trackId: row.id })} />;
+                  canRemove={(row.kind === 'video' ? videoCount : audioCount) > 1} onRename={onRenameTrack} />;
               })}
               <div className="tl-th-divider" style={{ top: layout.dividerTop, height: layout.rows.length ? layout.total - layout.dividerTop - layout.rows.filter((r) => r.kind === 'audio').reduce((a, r) => a + r.height, 0) : 0 }} />
             </div>
@@ -587,8 +605,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
 
               {/* scrolling layer (frame coordinates) */}
               <div className="tl-layer" style={{ transform: `translateX(${-scrollPx}px)`, width: contentPx }}>
-                {hasSubs ? cues.map((c) => {
-                  if (!clipOverlaps(c.start, c.end - c.start, range.from, range.to)) return null;
+                {hasSubs ? itemsInRange(cues, range.from, range.to, cueStart, cueEnd).map((c) => {
                   return (
                     <div key={c.id} className={['tl-cue', c.orphan ? 'orphan' : ''].filter(Boolean).join(' ')} style={{ left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={c.text}
                       onPointerDown={(e) => { e.stopPropagation(); if (e.button !== 0) return; const r = contentRef.current!.getBoundingClientRect(); setView({ playhead: xToFrameInt(e.clientX - r.left, zoom, scroll) }); }}
@@ -599,35 +616,11 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
                 }) : null}
                 {layout.rows.map((row) => {
                   const track = trackById.get(row.id)!;
-                  const nodes: React.ReactNode[] = [];
-                  const narrow: Clip[] = [];
-                  track.clips.forEach((clip, i) => {
-                    if (!clipOverlaps(clip.start, clip.duration, range.from, range.to)) return;
-                    // Level of detail (P-05): narrow clips are canvas-drawn by the lane, not mounted.
-                    if (clip.duration * zoom < LOD_MIN_CLIP_PX) { narrow.push(clip); return; }
-                    const vis = clipVisiblePx(clip.start * zoom, clip.duration * zoom, viewX0, viewX1);
-                    if (!vis) return;
-                    const prev = track.clips[i - 1], next = track.clips[i + 1];
-                    nodes.push(
-                      <ClipView key={clip.id} clip={clip} trackId={track.id} trackKind={track.kind} trackLocked={track.locked} height={row.height} zoom={zoom}
-                        selected={selectedSet.has(clip.id)} filter={lookFor(clip)} media={media[clip.mediaId]} fps={fps} showSourceTc={showSourceTc}
-                        visFrom={vis.visFrom} visTo={vis.visTo} cutAtStart={!!prev && clipEnd(prev) === clip.start} cutAtEnd={!!next && next.start === clipEnd(clip)}
-                        syncOffset={syncOffsets.get(clip.id)} />,
-                    );
-                  });
-                  const clipsById = track.transitions.length ? clipsByIdOf(track) : null;
-                  for (const tr of track.transitions) {
-                    const dur = previewTransition && previewTransition.id === tr.id ? previewTransition.duration : tr.duration;
-                    const span = transitionSpan(tr, clipsById!, zoom, dur);
-                    if (!span || span.x + span.w < viewX0 || span.x > viewX1) continue;
-                    if (span.w < LOD_MIN_CLIP_PX && !(previewTransition && previewTransition.id === tr.id) && tr.id !== selectedTransitionId) continue;
-                    nodes.push(<TransitionView key={tr.id} transition={tr} trackId={track.id} x={span.x} w={span.w} height={row.height} selected={tr.id === selectedTransitionId} />);
-                  }
                   return (
-                    <div key={row.id} className="tl-track-clips" data-track-id={row.id} style={{ top: row.top, height: row.height, width: contentPx }}>
-                      {narrow.length ? <LodLane kind={track.kind} clips={narrow} zoom={zoom} originPx={Math.floor(scrollPx)} widthPx={width + 1} height={row.height} selected={selectedSet} look={lookFor} offline={isOffline} /> : null}
-                      {nodes}
-                    </div>
+                    <ClipLane key={row.id} track={track} top={row.top} height={row.height} contentPx={contentPx} zoom={zoom} mountX0={mountX0} mountX1={mountX1} viewX0={viewX0} viewX1={viewX1}
+                      selected={selectedSet} look={lookFor} offline={isOffline} media={media} fps={fps} showSourceTc={showSourceTc}
+                      syncOffsets={syncOffsets.get(track.id)} previewTransition={previewTransition && previewTransition.trackId === track.id ? previewTransition : null}
+                      selectedTransitionId={selectedTransitionId} lodOriginPx={Math.floor(scrollPx)} lodWidthPx={width + 1} />
                   );
                 })}
                 {ghosts}
@@ -648,7 +641,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
         </div>
       </div>
 
-      <StatusStrip seq={seq} selectedClip={selectedClip?.clip} selectedCount={selectedIds.length} media={selectedClip ? media[selectedClip.clip.mediaId] : undefined} duration={duration} zoom={zoom} />
+      <StatusStrip name={seq.name} fps={fps} selectedClip={selectedClip?.clip} selectedCount={selectedIds.length} media={selectedClip ? media[selectedClip.clip.mediaId] : undefined} duration={duration} zoom={zoom} />
 
       {dialog?.kind === 'speed' && dialogClip ? <SpeedDialog seqId={seqId} clip={dialogClip.clip} fps={fps} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'rename' && dialogClip ? <RenameDialog title="Rename Clip" value={dialogClip.clip.name} onClose={() => setDialog(null)} onCommit={(v) => useStore.getState().setClipTags(seqId, dialogClip.clip.id, { name: v })} /> : null}
@@ -672,10 +665,9 @@ function HoverTimecode({ fps }: { fps: { num: number; den: number } }) {
   return <span title="Timecode under the pointer">{hover === null ? '--:--:--:--' : formatSequenceTimecode(hover, fps)}</span>;
 }
 
-function StatusStrip({ seq, selectedClip, selectedCount, media, duration, zoom }: {
-  seq: { name: string; fps: { num: number; den: number } }; selectedClip: Clip | undefined; selectedCount: number; media: ReturnType<typeof useStore.getState>['project']['media'][string] | undefined; duration: number; zoom: number;
+const StatusStrip = React.memo(function StatusStrip({ name, fps, selectedClip, selectedCount, media, duration, zoom }: {
+  name: string; fps: { num: number; den: number }; selectedClip: Clip | undefined; selectedCount: number; media: ReturnType<typeof useStore.getState>['project']['media'][string] | undefined; duration: number; zoom: number;
 }) {
-  const fps = seq.fps;
   const mediaFps = validFpsOr(media?.probe?.video?.fps, fps);
   return (
     <div className="toolbar toolbar-bottom tl-status" data-status>
@@ -688,13 +680,13 @@ function StatusStrip({ seq, selectedClip, selectedCount, media, duration, zoom }
           {selectedCount > 1 ? <span className="badge dim">+{selectedCount - 1}</span> : null}
         </>
       ) : (
-        <><span className="tl-status-name">{seq.name}</span><span>{formatSequenceTimecode(duration, fps)}</span></>
+        <><span className="tl-status-name">{name}</span><span>{formatSequenceTimecode(duration, fps)}</span></>
       )}
       <div className="grow" />
       <HoverTimecode fps={fps} />
       <span className="text-faint">{zoom >= 1 ? zoom.toFixed(1) : zoom.toFixed(2)} px/f</span>
     </div>
   );
-}
+});
 
 export { frameToX, xToFrame };

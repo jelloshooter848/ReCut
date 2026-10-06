@@ -15,7 +15,8 @@ export interface TrackHeaderProps {
   /** 1-based display number (V1 / A3). */
   number: number;
   canRemove: boolean;
-  onRename: () => void;
+  /** Stable callback (keeps the memo effective): called with this track's id. */
+  onRename: (trackId: string) => void;
 }
 
 export const TrackHeader = memo(function TrackHeader({ seqId, track, top, height, number, canRemove, onRename }: TrackHeaderProps) {
@@ -44,7 +45,7 @@ export const TrackHeader = memo(function TrackHeader({ seqId, track, top, height
   const kindLabel = isAudio ? 'Audio' : 'Video';
   const menu = (): MenuItem[] => [
     { heading: `${label} · ${track.name}` },
-    { label: 'Rename…', onSelect: onRename },
+    { label: 'Rename…', onSelect: () => onRename(track.id) },
     { separator: true },
     { label: `Add ${kindLabel} Track Above`, onSelect: () => useStore.getState().addTrack(seqId, track.kind, aboveIndex) },
     { label: `Add ${kindLabel} Track Below`, onSelect: () => useStore.getState().addTrack(seqId, track.kind, belowIndex) },

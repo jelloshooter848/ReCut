@@ -29,6 +29,7 @@ export interface RulerProps {
 }
 
 const COLORS = { bg: '#232323', major: '#8c8c8c', minor: '#4a4a4a', label: '#a8a8a8', edge: '#3a3a3a' };
+const RULER_FONT = '10px "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace';
 
 export function Ruler(p: RulerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -36,6 +37,8 @@ export function Ruler(p: RulerProps) {
   const drag = useRef<{ kind: 'scrub' | 'marker'; markerId?: string; startX: number; startTime?: number; moved: boolean; pointerId: number } | null>(null);
   const [markerLive, setMarkerLive] = useState<{ id: string; time: number } | null>(null);
   const lastClick = useRef<{ id: string; at: number }>({ id: '', at: 0 });
+
+  const offRef = useRef<OffscreenCanvas | null>(null);
 
   useLayoutEffect(() => {
     const cv = canvasRef.current; if (!cv || p.width <= 0) return;
@@ -45,21 +48,41 @@ export function Ruler(p: RulerProps) {
     if (cv.height !== Math.round(H * dpr)) cv.height = Math.round(H * dpr);
     cv.style.width = `${W}px`; cv.style.height = `${H}px`;
     const ctx = cv.getContext('2d'); if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = COLORS.bg; ctx.fillRect(0, 0, W, H);
-    const ticks = rulerTicks(p.fps, p.zoom, p.scroll, W);
-    ctx.font = '10px "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace';
-    ctx.textBaseline = 'alphabetic';
-    for (const t of ticks) {
-      const x = Math.round(t.x) + 0.5;
-      if (t.major) {
-        ctx.strokeStyle = COLORS.major; ctx.beginPath(); ctx.moveTo(x, H - 12); ctx.lineTo(x, H); ctx.stroke();
-        if (t.label) { ctx.fillStyle = COLORS.label; ctx.fillText(t.label, x + 3, 11); }
-      } else {
-        ctx.strokeStyle = COLORS.minor; ctx.beginPath(); ctx.moveTo(x, H - 5); ctx.lineTo(x, H); ctx.stroke();
-      }
+    // Draw into an OffscreenCanvas and copy it over: fillText on a canvas that is in the document first brings the
+    // document's style up to date (the canvas' computed font / direction), which in the middle of a commit means a
+    // forced style recalc of everything React just changed (a page flip mounts a page of clips). An offscreen canvas
+    // has no element, so its text needs no style; the copied pixels are the same.
+    let off: OffscreenCanvas | null = null;
+    let octx: OffscreenCanvasRenderingContext2D | null = null;
+    if (typeof OffscreenCanvas !== 'undefined') {
+      off = offRef.current ?? (offRef.current = new OffscreenCanvas(cv.width, cv.height));
+      if (off.width !== cv.width) off.width = cv.width;
+      if (off.height !== cv.height) off.height = cv.height;
+      octx = off.getContext('2d');
     }
-    ctx.strokeStyle = COLORS.edge; ctx.beginPath(); ctx.moveTo(0, H - 0.5); ctx.lineTo(W, H - 0.5); ctx.stroke();
+    const g = octx ?? ctx;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = COLORS.bg; g.fillRect(0, 0, W, H);
+    const ticks = rulerTicks(p.fps, p.zoom, p.scroll, W);
+    g.font = RULER_FONT;
+    g.textBaseline = 'alphabetic';
+    // One path (and one stroke) per tick kind instead of one per tick: this runs on every scroll / page flip.
+    // Ticks never overlap, so the pixels are the same as stroking them one by one.
+    g.lineWidth = 1;
+    g.strokeStyle = COLORS.minor; g.beginPath();
+    for (const t of ticks) if (!t.major) { const x = Math.round(t.x) + 0.5; g.moveTo(x, H - 5); g.lineTo(x, H); }
+    g.stroke();
+    g.strokeStyle = COLORS.major; g.beginPath();
+    for (const t of ticks) if (t.major) { const x = Math.round(t.x) + 0.5; g.moveTo(x, H - 12); g.lineTo(x, H); }
+    g.stroke();
+    g.fillStyle = COLORS.label;
+    for (const t of ticks) if (t.major && t.label) g.fillText(t.label, Math.round(t.x) + 0.5 + 3, 11);
+    g.strokeStyle = COLORS.edge; g.beginPath(); g.moveTo(0, H - 0.5); g.lineTo(W, H - 0.5); g.stroke();
+    if (off && octx) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(off, 0, 0);
+    }
   }, [p.fps, p.zoom, p.scroll, p.width]);
 
   const frameAt = (clientX: number, e?: { altKey: boolean }) => {

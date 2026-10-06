@@ -4,13 +4,11 @@
  * values display as '—'. Scrubs are routed through the store transaction API so a drag is a single undo step.
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { useShallow } from 'zustand/react/shallow';
 import { FolderOpen, Link2, Plus, RotateCcw, Unlink2, X } from 'lucide-react';
 import type { Clip, ClipAudio, ClipTransform, ID, MediaItem, Rational, TagVocabulary, Track, Transition, TransitionType } from '@shared/model';
 import { clampSpeedPercent, clipEnd, clipSourceOut, defaultAudio, defaultTransform, findClip, linkedClips, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN, transitionsForClip } from '@shared/timeline';
 import { formatSequenceSecondsTimecode, fpsEquals, fpsLabel, validFpsOr } from '@shared/time';
-import { activeSequence, identityLabel, originalTimecode, selectedClips, useStore } from '@/state';
-import type { StoreState } from '@/state';
+import { activeSequence, identityLabel, originalTimecode, selectedAudioTargets, selectedClips, selectedClipTracks, selectedLinkedCount, useStore } from '@/state';
 import { Button, ColorSwatchPicker, IconButton, NumberField, Slider, TagInput, TextField, Toggle, labelColorHex } from '@/components/ui';
 import { MIXED, Range, Row, Section, Value, allSame, copyText, finish, framesLabel, openInFolder, secondsLabel, tc, transient } from './primitives';
 
@@ -45,25 +43,13 @@ function NF({ value, mixed, onChange, onCommit, min, max, step = 1, precision = 
 
 // ------------------------------------------------------------------ root
 export function ClipInspector({ seqId, fps }: { seqId: ID; fps: Rational }) {
-  const clips = useStore(useShallow(selectedClips));
-  const tracks = useStore(useShallow((s: StoreState) => {
-    const seq = activeSequence(s);
-    return clips.map((c) => (seq ? findClip(seq, c.id)?.track ?? null : null));
-  }));
+  // Cached selectors (src/state/selectors.ts): these run on every store update, including each playhead step.
+  const clips = useStore(selectedClips);
+  const tracks = useStore(selectedClipTracks);
   // audio clips to edit: selected audio clips + the linked audio of selected video clips
-  const audioTargets = useStore(useShallow((s: StoreState) => {
-    const seq = activeSequence(s);
-    if (!seq) return [] as Clip[];
-    const out: Clip[] = []; const seen = new Set<ID>();
-    for (const c of clips) {
-      if (c.kind === 'audio') { if (!seen.has(c.id)) { seen.add(c.id); out.push(c); } continue; }
-      if (!c.linkId) continue;
-      for (const t of seq.audioTracks) for (const a of t.clips) if (a.linkId === c.linkId && !seen.has(a.id)) { seen.add(a.id); out.push(a); }
-    }
-    return out;
-  }));
+  const audioTargets = useStore(selectedAudioTargets);
   const media = useStore((s) => (clips.length ? s.project.media[clips[0].mediaId] : undefined));
-  const linkedCount = useStore((s) => { const seq = activeSequence(s); return seq && clips.length === 1 ? linkedClips(seq, clips[0]).length : 0; });
+  const linkedCount = useStore(selectedLinkedCount);
 
   if (clips.length === 0) return <div className="insp-empty p-8">Selected clips are not in the active sequence.</div>;
   const single = clips.length === 1 ? clips[0] : null;
