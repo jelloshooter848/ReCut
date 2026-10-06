@@ -392,13 +392,27 @@ export async function serializeProjectSliced(project: Project, compact = false):
  * Where the compact serializer may yield: these containers are written part by part (the entries of a record,
  * the items of an array, the fields of an object, each laid out by the nested split); every other value in one
  * native JSON.stringify. A sequence is split down to its tracks, so the longest stretch without a yield is one
- * track or one small record.
+ * track or one small record. `cached`: a value written whole whose text is kept for the next autosave when it is
+ * frozen (compactJsonCache).
  */
-type CompactSplit = { entries: CompactSplit | null } | { fields: Record<string, CompactSplit> } | { items: CompactSplit | null };
-const SEQUENCE_SPLIT: CompactSplit = { fields: { videoTracks: { items: null }, audioTracks: { items: null }, snapshots: { items: null } } };
+type CompactSplit = { entries: CompactSplit | null } | { fields: Record<string, CompactSplit> } | { items: CompactSplit | null } | { cached: true };
+const CACHED: CompactSplit = { cached: true };
+const TRACKS: CompactSplit = { items: CACHED };
+const SNAPSHOT_SPLIT: CompactSplit = { fields: { data: { fields: { videoTracks: TRACKS, audioTracks: TRACKS } } } };
+const SEQUENCE_SPLIT: CompactSplit = { fields: { videoTracks: TRACKS, audioTracks: TRACKS, snapshots: { items: SNAPSHOT_SPLIT } } };
 const PROJECT_SPLIT: CompactSplit = {
-  fields: { media: { entries: null }, sequences: { entries: SEQUENCE_SPLIT }, scenes: { entries: null }, subtitleTracks: { entries: null } },
+  fields: { media: { entries: CACHED }, sequences: { entries: SEQUENCE_SPLIT }, scenes: { entries: CACHED }, subtitleTracks: { entries: CACHED } },
 };
+
+/**
+ * JSON text of frozen tracks / media items / scenes / subtitle tracks from earlier autosaves, by identity. The
+ * store's project is immutable and frozen all the way down once committed (src/state/store.ts), so a frozen
+ * value's text never changes, and an edit replaces the objects it changes: an autosave serializes only what
+ * changed since the last one (typically one sequence's tracks of a 25 MB project) and copies the rest. Values
+ * that are not frozen (a project just opened, before its idle freeze) are serialized every time. A sequence's
+ * view (a mutable LiveView) is never part of a cached value. Entries go away with their objects.
+ */
+const compactJsonCache = new WeakMap<object, string>();
 
 /** A plain object or array without toJSON: JSON.stringify writes it from its own enumerable properties. */
 function isPlainContainer(v: unknown): v is object {
@@ -429,7 +443,8 @@ function compactValue(key: string, v: unknown): string | undefined {
  * pieces of about PIECE_CHARS cut between values (never inside a JSON string, so each piece is well-formed
  * UTF-16), yielding once SLICE_MS have passed. Values are serialized by the native JSON.stringify, several times
  * faster than the record-by-record file layout of projectJsonChunks; PROJECT_SPLIT says which containers are
- * written part by part, so no single task holds the whole project.
+ * written part by part, so no single task holds the whole project, and which frozen values reuse their text from
+ * an earlier autosave (compactJsonCache).
  */
 async function serializeCompactInPieces(project: Project, emit: (text: string) => void | Promise<void>): Promise<void> {
   const pause = slicer();
@@ -448,7 +463,13 @@ async function serializeCompactInPieces(project: Project, emit: (text: string) =
   };
   /** JSON of `v` (the value of `key`) laid out by `split`, pushed; false (nothing pushed) when JSON omits it. */
   const write = async (key: string, v: unknown, split: CompactSplit | null): Promise<boolean> => {
-    if (split === null || !isPlainContainer(v) || ('items' in split) !== Array.isArray(v)) {
+    if (split !== null && 'cached' in split && isPlainContainer(v) && Object.isFrozen(v)) {
+      let s = compactJsonCache.get(v);
+      if (s === undefined) { s = JSON.stringify(v); compactJsonCache.set(v, s); }
+      push(s);
+      return true;
+    }
+    if (split === null || 'cached' in split || !isPlainContainer(v) || ('items' in split) !== Array.isArray(v)) {
       const s = compactValue(key, v);
       if (s === undefined) return false;
       push(s);

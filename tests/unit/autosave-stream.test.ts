@@ -16,7 +16,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { produce, freeze } from 'immer';
 import { createProject, LiveView, serializeProject } from '../../shared/project';
+import { makeClip } from '../../shared/timeline';
 import type { Project } from '../../shared/model';
 import type { SaveResult } from '../../shared/ipc';
 import { canStreamAutosave, type ProjectAutosaveStreamApi, type ProjectSaveStreamApi } from '../../shared/projectWire';
@@ -105,6 +107,30 @@ describe('sliced compact serialization', () => {
     const q = createProject('array-collection') as Any;
     q.sequences = [1, 2];
     expect(await serializeProjectSliced(q, true)).toBe(JSON.stringify(q));
+  });
+
+  it('reuses the text of unchanged frozen values across autosaves and still writes every change (edits, views, snapshots)', async () => {
+    const base = bigProject() as Any;
+    const id = base.activeSequenceId;
+    const seq = base.sequences[id];
+    seq.videoTracks[0].clips = Array.from({ length: 50 }, (_, i) => makeClip({ mediaId: 'm', name: `c${i}`, sourceIn: 0, duration: 10, kind: 'video' }, i * 10));
+    const { snapshots: _s, ...data } = seq;
+    seq.snapshots = [{ id: 'snap', name: 'v1', createdAt: 1, data: { ...data, view: new LiveView({ playhead: 3 }) } }];
+    const p1 = freeze(base, true) as Project; // as the store holds it: frozen, sequence views stay live
+    expect(Object.isFrozen(p1.sequences[id].videoTracks[0])).toBe(true);
+    expect(await serializeProjectSliced(p1, true)).toBe(JSON.stringify(p1));
+    // A playhead move mutates the live view in place: the next autosave has it.
+    p1.sequences[id].view.playhead = 77;
+    expect(await serializeProjectSliced(p1, true)).toBe(JSON.stringify(p1));
+    // An edit replaces what it changes; the rest is reused.
+    const p2 = produce(p1, (d) => { d.sequences[id].videoTracks[0].clips[3].duration = 4; d.name = 'renamed'; d.media.x = { id: 'x' } as Any; });
+    expect(await serializeProjectSliced(p2, true)).toBe(JSON.stringify(p2));
+    expect(await serializeProjectSliced(p1, true)).toBe(JSON.stringify(p1)); // the older project is unchanged
+    // Values that are not frozen are never reused (a project just opened).
+    const loose = JSON.parse(JSON.stringify(p2)) as Any;
+    expect(await serializeProjectSliced(loose, true)).toBe(JSON.stringify(loose));
+    loose.sequences[id].videoTracks[0].clips[0].name = 'changed in place';
+    expect(await serializeProjectSliced(loose, true)).toBe(JSON.stringify(loose));
   });
 });
 
