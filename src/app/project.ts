@@ -24,8 +24,9 @@ export const AUTOSAVE_DEBOUNCE_MS = 5000;
 const DEFAULT_AUTOSAVE_INTERVAL_SEC = 60;
 /**
  * An autosave waits for a pause in the user's work (autosaveGate.ts): no store update and no input for
- * AUTOSAVE_QUIET_MS; after AUTOSAVE_PATIENCE_MS of waiting, any AUTOSAVE_SHORT_QUIET_MS pause; after
- * AUTOSAVE_MAX_DEFER_MS, regardless.
+ * AUTOSAVE_QUIET_MS (2 s: the user has stopped acting, not just paused between strokes of a gesture); after
+ * AUTOSAVE_PATIENCE_MS of continuous work, any AUTOSAVE_SHORT_QUIET_MS pause (the end of a drag); after
+ * AUTOSAVE_MAX_DEFER_MS, regardless (at most a minute more of work at risk).
  */
 export const AUTOSAVE_QUIET_MS = 2000;
 export const AUTOSAVE_SHORT_QUIET_MS = 250;

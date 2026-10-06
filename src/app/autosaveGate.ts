@@ -1,13 +1,15 @@
 /**
  * When an autosave may run: only in a pause of the user's work.
  *
- * An autosave serializes the whole project in one task (JSON.stringify + the IPC send: 160-430 ms on the bench's
- * 2,500-clip project with its 3 h sequence). Run from an idle callback alone, it still landed between the frames of a
- * scrub, a drag or a wheel scroll, which leave idle time after every frame: a long freeze in the middle of the
- * interaction (the perf bench's "long tasks during scrub" rows). The gate defers it:
- * - until the user has been quiet (no store update, no pointer / key / wheel input) for `quietMs`;
+ * An autosave that serializes the project in one task freezes the UI for as long as that takes (on a 2,500-clip
+ * project with a 3 h sequence, 160-430 ms). Run from an idle callback alone, it can still land between the frames of a
+ * scrub, a drag or a wheel scroll, which leave idle time after every frame: a freeze in the middle of a gesture, where
+ * it is felt most. The gate defers it:
+ * - until the user has been quiet (no store update, no pointer / key / wheel input) for `quietMs`: a pause long enough
+ *   that the user has stopped acting (the gaps inside a gesture or between consecutive strokes are well under a
+ *   second), short enough that a save still follows almost every edit;
  * - once it has waited `patienceMs`, any pause of `shortQuietMs` will do (the end of a drag, between scrub strokes),
- *   so a busy session still saves soon, just never mid-stroke;
+ *   so a session of continuous work still saves soon, just never mid-stroke;
  * - after `maxDeferMs` it runs anyway, so a session is never left unsaved for long.
  *
  * Pure (an injected clock), so the policy is unit tested without timers.
