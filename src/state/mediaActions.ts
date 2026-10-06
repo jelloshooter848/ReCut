@@ -595,14 +595,19 @@ function saveStreamed(api: ProjectSaveStreamApi, target: string, project: Projec
   }, (emit) => serializeInPieces(project, emit));
 }
 
-/** Autosave by streaming the compact text (serializeCompactInPieces) to main while it is serialized. */
-function autosaveStreamed(api: ProjectAutosaveStreamApi, projectPath: string | null, project: Project): Promise<SaveResult> {
+/**
+ * Autosave by streaming the compact text (serializeCompactInPieces) to main while it is serialized. Background
+ * work: in idle slices (idleSlicer), so edits never queue behind it; while playing (the window renders every
+ * frame and is rarely idle; the lifecycle defers autosaves then, a forced one still runs) in task slices between
+ * the frames (slicer).
+ */
+function autosaveStreamed(api: ProjectAutosaveStreamApi, projectPath: string | null, project: Project, playing: boolean): Promise<SaveResult> {
   return writeStreamed({
     begin: () => api.autosaveProjectBegin(projectPath),
     chunk: (id, seq, text) => api.saveProjectChunk(id, seq, text),
     commit: (id, totals) => api.autosaveProjectCommit(projectPath, id, totals),
     abort: (id) => api.saveProjectAbort(id),
-  }, (emit) => serializeCompactInPieces(project, emit, idleSlicer())); // background work: only in idle time
+  }, (emit) => serializeCompactInPieces(project, emit, playing ? slicer() : idleSlicer()));
 }
 
 /** Main refused to start a streamed save (bad path, no permission): stops the serialization, reported as is. */
@@ -779,7 +784,7 @@ async function autosaveNow(): Promise<void> {
   const st = useStore.getState();
   if (!api || !st.dirty) return;
   const project = projectToSave(st.project);
-  const res = canStreamAutosave(api) ? await autosaveStreamed(api, st.projectPath, project)
+  const res = canStreamAutosave(api) ? await autosaveStreamed(api, st.projectPath, project, st.playback.playing)
     : typeof api.autosaveProjectJson === 'function' ? await api.autosaveProjectJson(st.projectPath, JSON.stringify(project))
       : await api.autosaveProject(st.projectPath, project);
   if (res && res.ok === false) throw new Error(res.error);
