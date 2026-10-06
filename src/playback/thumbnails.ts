@@ -13,7 +13,7 @@ function api(): Window['recut'] | null {
 
 class LRU<V> {
   private map = new Map<string, V>();
-  constructor(private capacity: number) {}
+  constructor(private capacity: number, private onEvict?: (key: string, v: V) => void) {}
   get(key: string): V | undefined {
     const v = this.map.get(key);
     if (v !== undefined) { this.map.delete(key); this.map.set(key, v); }
@@ -25,12 +25,14 @@ class LRU<V> {
     while (this.map.size > this.capacity) {
       const oldest = this.map.keys().next().value as string | undefined;
       if (oldest === undefined) break;
+      const v = this.map.get(oldest) as V;
       this.map.delete(oldest);
+      this.onEvict?.(oldest, v);
     }
   }
   has(key: string): boolean { return this.map.has(key); }
-  delete(key: string): void { this.map.delete(key); }
-  clear(): void { this.map.clear(); }
+  delete(key: string): void { const v = this.map.get(key); if (this.map.delete(key)) this.onEvict?.(key, v as V); }
+  clear(): void { if (this.onEvict) for (const [k, v] of this.map) this.onEvict(k, v); this.map.clear(); }
   get size(): number { return this.map.size; }
   keys(): IterableIterator<string> { return this.map.keys(); }
 }
@@ -68,12 +70,39 @@ function cancelStripRequest(id: string): void {
   });
 }
 
+/**
+ * Keeps the renderer's copy of each cached thumbnail alive: one detached, loaded <img> per LRU entry. Blink's memory
+ * cache only holds images weakly, so a tile whose <img> unmounted (a timeline page scrolled away) was otherwise dropped
+ * and loaded again through the browser process and the recut-media:// handler the next time it mounted. While an entry
+ * holds it, a newly mounted <img> with the same URL is served from the memory cache (the handler marks thumbnail files
+ * immutable, electron/media/protocol.ts). The encoded JPEGs are a few KB each; decoded pixels stay discardable.
+ */
+function holdImage(url: string): HTMLImageElement | null {
+  if (typeof Image === 'undefined' || !url.startsWith('recut-media:')) return null;
+  const img = new Image();
+  img.decoding = 'async';
+  img.src = url;
+  return img;
+}
+
 export class ThumbnailCache {
   private cache: LRU<string>;
   private inflight = new Map<string, Promise<string>>();
   private inflightStrips = new Map<string, StripEntry>();
+  private held = new Map<string, HTMLImageElement>();
 
-  constructor(capacity = 2000) { this.cache = new LRU<string>(capacity); }
+  constructor(capacity = 2000) {
+    this.cache = new LRU<string>(capacity, (key) => { const img = this.held.get(key); if (img) { img.removeAttribute('src'); this.held.delete(key); } });
+  }
+
+  /** Cache a URL and hold its image (see holdImage). */
+  private store(key: string, url: string): void {
+    this.cache.set(key, url);
+    const prev = this.held.get(key);
+    if (prev?.src === url) return;
+    const img = holdImage(url);
+    if (img) this.held.set(key, img); else this.held.delete(key);
+  }
 
   private key(mediaPath: string, timeSec: number, width: number): string {
     return `${mediaPath}|${Math.round(timeSec * 1000)}|${width}`;
@@ -94,7 +123,7 @@ export class ThumbnailCache {
     const recut = api();
     if (!recut) return Promise.resolve('');
     const p = recut.thumbnail({ path: mediaPath, time: timeSec, width, mediaId })
-      .then((url) => { const u = cleanUrl(url); if (u) this.cache.set(key, u); return u; })
+      .then((url) => { const u = cleanUrl(url); if (u) this.store(key, u); return u; })
       .catch(() => '')
       .finally(() => { this.inflight.delete(key); });
     this.inflight.set(key, p);
@@ -129,7 +158,7 @@ export class ThumbnailCache {
       e.promise = recut.filmstrip(req)
         .then((urls) => {
           const clean = urls.map(cleanUrl);
-          if (!e.canceled) clean.forEach((u, j) => { if (u) this.cache.set(this.key(mediaPath, times[missing[j]], width), u); });
+          if (!e.canceled) clean.forEach((u, j) => { if (u) this.store(this.key(mediaPath, times[missing[j]], width), u); });
           return clean;
         })
         .catch(() => [] as string[])

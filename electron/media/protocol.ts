@@ -16,10 +16,10 @@ import { isThumbnailCacheFile } from './thumbs';
 export { parseRange, contentTypeFor, mediaUrlPath } from './range';
 
 /**
- * Thumbnail / filmstrip JPEGs in the cache are content-keyed (isThumbnailCacheFile): the renderer may keep and reuse
- * them without asking again. Without this, every <img> that re-mounts a tile the renderer had already shown (a
- * timeline page visited again while scrubbing) revalidated it through the browser process and this handler, about
- * 1.2-1.8 ms of resource loading per frame on a page flip. Everything else (source media, proxies, stills) can change
+ * Thumbnail / filmstrip JPEGs in the cache are content-keyed (isThumbnailCacheFile), so the renderer may reuse its
+ * copy without ever asking again. What actually stops the reloads of re-mounted timeline tiles is the renderer
+ * holding its copies (src/playback/thumbnails.ts holdImage); measured alone, this header changed nothing. It is set so
+ * that no cache policy ever revalidates a held copy. Everything else (source media, proxies, stills) can change
  * under the same path and stays `no-cache`.
  */
 export function cacheControlFor(filePath: string): string {
