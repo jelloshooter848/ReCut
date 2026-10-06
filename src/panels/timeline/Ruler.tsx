@@ -71,26 +71,20 @@ export function Ruler(p: RulerProps) {
     if (cv.style.left !== left) cv.style.left = left;
     if (cv.style.width !== width) cv.style.width = width;
     if (cv.style.height !== height) cv.style.height = height;
-    // Draw into an OffscreenCanvas and hand its bitmap to the canvas: fillText on a canvas that is in the document
-    // first brings the document's style up to date (the canvas' computed font / direction), which in the middle of a
-    // commit means a forced style recalc of everything React just changed (a page flip mounts a page of clips). An
-    // offscreen canvas has no element, so its text needs no style. The bitmap is transferred (no copy: a drawImage of
-    // the whole ruler plus a clear cost about 1.5 ms per page flip); the pixels are the same. Without OffscreenCanvas
-    // the canvas is drawn directly.
+    const ctx = cv.getContext('2d'); if (!ctx) return;
+    // Draw into an OffscreenCanvas and copy it over: fillText on a canvas that is in the document first brings the
+    // document's style up to date (the canvas' computed font / direction), which in the middle of a commit means a
+    // forced style recalc of everything React just changed (a page flip mounts a page of clips). An offscreen canvas
+    // has no element, so its text needs no style; the copied pixels are the same.
     let off: OffscreenCanvas | null = null;
     let octx: OffscreenCanvasRenderingContext2D | null = null;
-    let shown: ImageBitmapRenderingContext | null = null;
-    let ctx: CanvasRenderingContext2D | null = null;
-    if (typeof OffscreenCanvas !== 'undefined') shown = cv.getContext('bitmaprenderer');
-    if (shown) {
+    if (typeof OffscreenCanvas !== 'undefined') {
       off = offRef.current ?? (offRef.current = new OffscreenCanvas(cv.width, cv.height));
       if (off.width !== cv.width) off.width = cv.width;
       if (off.height !== cv.height) off.height = cv.height;
       octx = off.getContext('2d');
     }
-    if (!octx) ctx = cv.getContext('2d');
     const g = octx ?? ctx;
-    if (!g) return;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.fillStyle = COLORS.bg; g.fillRect(0, 0, cvDevW, cv.height);
     // The view's drawing, in view coordinates, moved by whole device pixels to where the viewport is on the canvas.
@@ -111,7 +105,11 @@ export function Ruler(p: RulerProps) {
     g.fillStyle = COLORS.label;
     for (const t of ticks) if (t.major && t.label) g.fillText(t.label, Math.round(t.x) + 0.5 + 3, 11);
     g.strokeStyle = COLORS.edge; g.beginPath(); g.moveTo(0, H - 0.5); g.lineTo(W, H - 0.5); g.stroke();
-    if (off && octx && shown) shown.transferFromImageBitmap(off.transferToImageBitmap());
+    if (off && octx) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(off, 0, 0);
+    }
   }, [p.fps, p.zoom, p.scroll, p.width, dpr, baseDev, cvDev0, cvDevW]);
 
   const frameAt = (clientX: number, e?: { altKey: boolean }) => {

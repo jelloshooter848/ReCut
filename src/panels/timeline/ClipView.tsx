@@ -44,6 +44,15 @@ const MAX_WAVE_CANVAS_PX = 4096;
 
 function quantizeTime(t: number): number { return Math.round(t * 10) / 10; }
 
+// Constant parts of a clip, created once: React skips an element it already rendered (same object), so a clip slot
+// handed to another clip (a page flip) does not re-render the link icon or diff the edges.
+const LINK_ICON = <Link2 />;
+const WAVE_LINE = <div className="tl-wave-line" />;
+const EDGE_START = <div className="tl-clip-edge left " data-edge="start" />;
+const EDGE_START_CUT = <div className="tl-clip-edge left cut" data-edge="start" />;
+const EDGE_END = <div className="tl-clip-edge right " data-edge="end" />;
+const EDGE_END_CUT = <div className="tl-clip-edge right cut" data-edge="end" />;
+
 const waveMaxCache = new WeakMap<WaveformData, number>();
 /** Loudest peak of a waveform (cached per data object) used to normalise the drawing. */
 function waveMax(w: WaveformData): number {
@@ -205,7 +214,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
         {syncOffset !== 0 ? (
           <span className="tl-badge sync" data-sync-offset={syncOffset} title={`Out of sync with its linked ${isVideo ? 'audio' : 'video'} by ${formatSyncOffset(syncOffset)} frames`}>{formatSyncOffset(syncOffset)}</span>
         ) : null}
-        {clip.linkId ? <Link2 /> : null}
+        {clip.linkId ? LINK_ICON : null}
         <span className="tl-clip-name">{clip.name}</span>
         {srcTc ? <span className="tl-clip-tc">{srcTc}</span> : null}
         {clip.speed !== 1 ? <span className="tl-badge speed">{Math.round(clip.speed * 100)}%</span> : null}
@@ -216,7 +225,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
       <div className="tl-clip-body" style={{ top: bodyTop }}>
         {isVideo ? tileEls : (
           <>
-            <div className="tl-wave-line" />
+            {WAVE_LINE}
             {waveW > 0 ? <canvas ref={canvasRef} className="tl-wave" style={{ left: waveX, width: waveW, height: bodyH }} /> : null}
           </>
         )}
@@ -233,8 +242,8 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
           <line x1={0} y1={0} x2={fadeOutW} y2={bodyH} stroke="rgba(255,255,255,0.8)" strokeWidth={1} />
         </svg>
       ) : null}
-      <div className={['tl-clip-edge', 'left', p.cutAtStart ? 'cut' : ''].join(' ')} data-edge="start" />
-      <div className={['tl-clip-edge', 'right', p.cutAtEnd ? 'cut' : ''].join(' ')} data-edge="end" />
+      {p.cutAtStart ? EDGE_START_CUT : EDGE_START}
+      {p.cutAtEnd ? EDGE_END_CUT : EDGE_END}
     </div>
   );
 });
