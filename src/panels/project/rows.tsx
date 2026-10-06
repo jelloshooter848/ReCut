@@ -3,12 +3,14 @@ import {
   ChevronDown, ChevronRight, Clapperboard, FileQuestion, FileText, Film, Folder, FolderOpen, Image as ImageIcon, Layers, Library, ListVideo, Music, Tv, Unlink,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import type { ID, MediaItem } from '@shared/model';
-import { formatClock } from '@shared/time';
+import type { ID, MediaItem, Rational } from '@shared/model';
+import { formatClock, formatSequenceTimecode } from '@shared/time';
+import { useStore } from '@/state/store';
+import { sequenceDurationOf } from '@/state/selectors';
 import { ProgressBar, TextField } from '@/components/ui';
 import { useThumb } from './useThumb';
 import { useMediaJob } from '@/app/jobsStore';
-import { audioSummary, canThumb, dateLabel, mediaDurationLabel, mediaFpsLabel, posterTime, rationalLabel, resolutionLabel, sceneRangeLabel, sequenceDurationLabel, shortIdentity } from './format';
+import { audioSummary, canThumb, dateLabel, mediaDurationLabel, mediaFpsLabel, posterTime, rationalLabel, resolutionLabel, sceneRangeLabel, shortIdentity } from './format';
 import type { BinRow, CardsRow, GroupRow, ItemRow, MediaRow, Row, SceneRow, SequenceRow, SortKey } from './tree';
 import { expandKey } from './tree';
 
@@ -123,6 +125,16 @@ function metaLine(m: MediaItem, sort: SortKey): React.ReactNode {
 
 // ---------------------------------------------------------------- rows
 
+/**
+ * A sequence's duration, read live from the store: the tree's sequence rows are rebuilt only when what else they show
+ * changes (name, format, bin, lineage), so a timeline edit re-renders this cell alone. The selector returns a number
+ * (cached on the track arrays), so playhead moves and other sequences' edits do not render it.
+ */
+const SequenceDuration = memo(function SequenceDuration({ id, fps }: { id: ID; fps: Rational }) {
+  const frames = useStore((s) => sequenceDurationOf(s.project.sequences[id]));
+  return <span className="pp-dur">{formatSequenceTimecode(frames, fps)}</span>;
+});
+
 const MediaRowView = memo(function MediaRowView({ row, selected, renaming, cb, sort }: { row: MediaRow; selected: boolean; renaming: boolean; cb: RowCallbacks; sort: SortKey }) {
   const m = row.media;
   const cat = m.category !== 'Other' ? <span className="pp-badge cat" title="Category">{m.category}</span> : null;
@@ -186,7 +198,7 @@ const SequenceRowView = memo(function SequenceRowView({ row, selected, renaming,
       {renaming ? <RenameField value={s.name} onCommit={(v) => cb.onRenameCommit(row, v)} onCancel={cb.onRenameCancel} /> : <span className="pp-name">{s.name}</span>}
       {lineage ? <span className="pp-badge accent" title="Alternate cut lineage">{lineage}</span> : null}
       <span className="pp-meta" style={{ flex: '0 4 auto', marginLeft: 6 }} title={`${s.width}×${s.height} @ ${rationalLabel(s.fps)} fps`}>{rationalLabel(s.fps)} fps</span>
-      <div className="pp-right"><span className="pp-dur">{sequenceDurationLabel(s)}</span></div>
+      <div className="pp-right"><SequenceDuration id={s.id} fps={s.fps} /></div>
     </div>
   );
 });
@@ -279,12 +291,12 @@ const Card = memo(function Card({ row, selected, renaming, cb }: { row: ItemRow;
     <div className={['pp-card', selected ? 'selected' : ''].filter(Boolean).join(' ')} data-row-kind="sequence" data-sequence-id={s.id} data-row-key={row.key} {...common}>
       <div className="pp-thumb"><Layers /></div>
       {renaming ? <RenameField value={s.name} onCommit={(v) => cb.onRenameCommit(row, v)} onCancel={cb.onRenameCancel} /> : <div className="pp-card-name">{s.name}</div>}
-      <div className="pp-card-meta"><span className="ellipsis">{rationalLabel(s.fps)} fps</span><span className="pp-dur">{sequenceDurationLabel(s)}</span></div>
+      <div className="pp-card-meta"><span className="ellipsis">{rationalLabel(s.fps)} fps</span><SequenceDuration id={s.id} fps={s.fps} /></div>
     </div>
   );
 });
 
-function CardsRowView({ row, selected, renamingKey, cb }: { row: CardsRow; selected: Set<string>; renamingKey: string | null; cb: RowCallbacks }) {
+const CardsRowView = memo(function CardsRowView({ row, selected, renamingKey, cb }: { row: CardsRow; selected: Set<string>; renamingKey: string | null; cb: RowCallbacks }) {
   return (
     <div className="pp-cards" style={{ paddingLeft: 6 + row.depth * INDENT }}>
       {row.items.map((it) => {
@@ -293,11 +305,12 @@ function CardsRowView({ row, selected, renamingKey, cb }: { row: CardsRow; selec
       })}
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------- dispatcher
 
-export function RowView({ row, selected, renamingKey, dropKey, sort, cb }: RowViewProps) {
+/** Memoised: the rows keep their identity across tree rebuilds (tree.ts reuseRows), so unchanged rows skip. */
+export const RowView = memo(function RowView({ row, selected, renamingKey, dropKey, sort, cb }: RowViewProps) {
   switch (row.kind) {
     case 'media': return <MediaRowView row={row} selected={selected.has(row.media.id)} renaming={renamingKey === row.key} cb={cb} sort={sort} />;
     case 'scene': return <SceneRowView row={row} selected={selected.has(row.scene.id)} renaming={renamingKey === row.key} cb={cb} />;
@@ -306,4 +319,4 @@ export function RowView({ row, selected, renamingKey, dropKey, sort, cb }: RowVi
     case 'group': return <GroupRowView row={row} dropOver={dropKey === row.key} cb={cb} />;
     case 'cards': return <CardsRowView row={row} selected={selected} renamingKey={renamingKey} cb={cb} />;
   }
-}
+});

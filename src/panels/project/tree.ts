@@ -77,15 +77,23 @@ export function textMatches(text: string, terms: string[]): boolean {
 
 // ---------------------------------------------------------------- sorting
 
+/**
+ * Name order: exactly `a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })`. localeCompare with
+ * options builds a collator on every call (ECMA-402: `new Intl.Collator(locales, options).compare(a, b)`), which made
+ * the sort of a 2,500-item project the panel's top cost; one module-level collator gives the same order.
+ */
+export const compareNames: (a: string, b: string) => number = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare;
+/** Exactly `a.localeCompare(b)` (default locale and options). */
+const compareText: (a: string, b: string) => number = new Intl.Collator().compare;
+
 export function compareMedia(a: MediaItem, b: MediaItem, sort: SortKey): number {
-  const byName = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
   switch (sort) {
-    case 'duration': return ((b.probe?.duration ?? -1) - (a.probe?.duration ?? -1)) || byName;
-    case 'added': return (b.addedAt - a.addedAt) || byName;
-    case 'category': return a.category.localeCompare(b.category) || byName;
+    case 'duration': return ((b.probe?.duration ?? -1) - (a.probe?.duration ?? -1)) || compareNames(a.name, b.name);
+    case 'added': return (b.addedAt - a.addedAt) || compareNames(a.name, b.name);
+    case 'category': return compareText(a.category, b.category) || compareNames(a.name, b.name);
     case 'resolution': {
       const px = (m: MediaItem) => (m.probe?.video ? m.probe.video.width * m.probe.video.height : -1);
-      return (px(b) - px(a)) || byName;
+      return (px(b) - px(a)) || compareNames(a.name, b.name);
     }
     default: {
       // Episodes in order when they share a series
@@ -93,16 +101,47 @@ export function compareMedia(a: MediaItem, b: MediaItem, sort: SortKey): number 
         const d = ((a.identity.season ?? 0) - (b.identity.season ?? 0)) || ((a.identity.episode ?? 0) - (b.identity.episode ?? 0));
         if (d) return d;
       }
-      return byName;
+      return compareNames(a.name, b.name);
     }
   }
 }
 export function compareSequences(a: Sequence, b: Sequence, sort: SortKey): number {
-  const byName = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-  if (sort === 'added') return (b.createdAt - a.createdAt) || byName;
-  return byName;
+  if (sort === 'added') return (b.createdAt - a.createdAt) || compareNames(a.name, b.name);
+  return compareNames(a.name, b.name);
 }
-const byBinName = (a: Bin, b: Bin) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+const byBinName = (a: Bin, b: Bin) => compareNames(a.name, b.name);
+
+/**
+ * Media per bin, filtered by the search and sorted: what the bins tree lists of the media. It depends only on the
+ * media, the query and the sort, so the panel memoises it apart from the sequences: a timeline edit (a new sequence
+ * object) never re-sorts the media.
+ */
+export type MediaByBin = Map<ID | null, MediaItem[]>;
+export function groupMediaByBin(media: Record<ID, MediaItem>, query: string, sort: SortKey): MediaByBin {
+  const terms = searchTerms(query);
+  const out: MediaByBin = new Map();
+  for (const m of Object.values(media)) {
+    if (terms.length && !mediaMatches(m, terms)) continue;
+    const l = out.get(m.binId) ?? [];
+    l.push(m);
+    out.set(m.binId, l);
+  }
+  for (const l of out.values()) l.sort((a, b) => compareMedia(a, b, sort));
+  return out;
+}
+
+/** The series tree with each list filtered by the search and sorted (memoised like groupMediaByBin). */
+export function filterSortSeriesTree(tree: SeriesTree, query: string, sort: SortKey): SeriesTree {
+  const terms = searchTerms(query);
+  const visible = (list: MediaItem[]) => (terms.length ? list.filter((m) => mediaMatches(m, terms)) : list);
+  // Name order is the tree's own (episode, then year); other sorts reorder each list.
+  const sorted = (list: MediaItem[]) => (sort === 'name' ? list : [...list].sort((a, b) => compareMedia(a, b, sort)));
+  return {
+    series: tree.series.map((s) => ({ name: s.name, seasons: s.seasons.map((se) => ({ number: se.number, episodes: sorted(visible(se.episodes)) })) })),
+    collections: tree.collections.map((c) => ({ name: c.name, items: sorted(visible(c.items)) })),
+    loose: sorted(visible(tree.loose)),
+  };
+}
 
 // ---------------------------------------------------------------- building
 
@@ -160,18 +199,14 @@ export function chunkCards(rows: Row[], cols: number): Row[] {
 }
 
 /** Bins mode: Project root → bins (nested) → sequences + media, scenes under media. */
-export function buildBinRows(input: BuildInput): Row[] {
+export function buildBinRows(input: BuildInput, mediaIn: MediaByBin = groupMediaByBin(input.media, input.query, input.sort)): Row[] {
   const terms = searchTerms(input.query);
   const filtering = terms.length > 0;
-  const allMedia = Object.values(input.media);
   const allSeqs = input.sequenceOrder.map((id) => input.sequences[id]).filter((s): s is Sequence => !!s);
   const binList = Object.values(input.bins);
   const childBins = new Map<ID | null, Bin[]>();
   for (const b of binList) { const l = childBins.get(b.parentId) ?? []; l.push(b); childBins.set(b.parentId, l); }
   for (const l of childBins.values()) l.sort(byBinName);
-  const mediaIn = new Map<ID | null, MediaItem[]>();
-  for (const m of allMedia) { if (filtering && !mediaMatches(m, terms)) continue; const l = mediaIn.get(m.binId) ?? []; l.push(m); mediaIn.set(m.binId, l); }
-  for (const l of mediaIn.values()) l.sort((a, b) => compareMedia(a, b, input.sort));
   const seqIn = new Map<ID | null, Sequence[]>();
   for (const s of allSeqs) { if (filtering && !textMatches(s.name, terms)) continue; const l = seqIn.get(s.binId) ?? []; l.push(s); seqIn.set(s.binId, l); }
   for (const l of seqIn.values()) l.sort((a, b) => compareSequences(a, b, input.sort));
@@ -213,7 +248,7 @@ export function buildBinRows(input: BuildInput): Row[] {
 }
 
 /** Series mode: Series → Season → Episodes; Collections → items; Loose; Sequences. */
-export function buildSeriesRows(tree: SeriesTree, input: BuildInput): Row[] {
+export function buildSeriesRows(tree: SeriesTree, input: BuildInput, lists: SeriesTree = filterSortSeriesTree(tree, input.query, input.sort)): Row[] {
   const terms = searchTerms(input.query);
   const filtering = terms.length > 0;
   const out: Row[] = [];
@@ -223,30 +258,67 @@ export function buildSeriesRows(tree: SeriesTree, input: BuildInput): Row[] {
     out.push({ kind: 'group', key: `grp:${id}`, depth, id, label, groupKind, expanded, count });
     if (expanded) items();
   };
-  const visible = (list: MediaItem[]) => (filtering ? list.filter((m) => mediaMatches(m, terms)) : list);
-  const sorted = (list: MediaItem[]) => (input.sort === 'name' ? list : [...list].sort((a, b) => compareMedia(a, b, input.sort)));
 
-  for (const s of tree.series) {
-    const eps = s.seasons.reduce((n, se) => n + visible(se.episodes).length, 0);
+  for (const s of lists.series) {
+    const eps = s.seasons.reduce((n, se) => n + se.episodes.length, 0);
     group(`series:${s.name}`, s.name, 'series', 0, () => {
       for (const se of s.seasons) {
-        const list = sorted(visible(se.episodes));
+        const list = se.episodes;
         group(`season:${s.name}:${se.number}`, se.number === 0 ? 'Specials' : `Season ${se.number}`, 'season', 1, () => {
           for (const m of list) pushMedia(out, m, 2, input, terms);
         }, list.length);
       }
     }, eps);
   }
-  for (const c of tree.collections) {
-    const list = sorted(visible(c.items));
+  for (const c of lists.collections) {
+    const list = c.items;
     group(`collection:${c.name}`, c.name, 'collection', 0, () => { for (const m of list) pushMedia(out, m, 1, input, terms); }, list.length);
   }
-  const loose = sorted(visible(tree.loose));
+  const loose = lists.loose;
   if (loose.length) group('loose', 'Other media', 'loose', 0, () => { for (const m of loose) pushMedia(out, m, 1, input, terms); }, loose.length);
   const seqs = input.sequenceOrder.map((id) => input.sequences[id]).filter((s): s is Sequence => !!s && (!filtering || textMatches(s.name, terms)))
     .sort((a, b) => compareSequences(a, b, input.sort));
   if (seqs.length) group('sequences', 'Sequences', 'sequences', 0, () => { for (const s of seqs) pushSequence(out, s, 1, input); }, seqs.length);
   return input.view === 'grid' ? chunkCards(out, input.cols) : out;
+}
+
+// ---------------------------------------------------------------- row identity
+
+function sameFields(a: object, b: object): boolean {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) if ((a as Record<string, unknown>)[k] !== (b as Record<string, unknown>)[k]) return false;
+  return true;
+}
+
+/**
+ * Keep the previous row object for every row whose content is unchanged (the same fields by identity; for a cards
+ * row, the same items), so the memoised row views skip re-rendering when the tree is rebuilt: a change re-renders
+ * only the rows that show something that changed. Returns `prev` itself when nothing changed.
+ */
+export function reuseRows(prev: readonly Row[] | null, next: Row[]): Row[] {
+  if (!prev || prev.length === 0) return next;
+  const old = new Map<string, Row>();
+  for (const r of prev) {
+    old.set(r.key, r);
+    if (r.kind === 'cards') for (const it of r.items) old.set(it.key, it);
+  }
+  const keep = <T extends Row>(r: T): T => {
+    const o = old.get(r.key);
+    return o && o.kind === r.kind && sameFields(o, r) ? (o as T) : r;
+  };
+  let same = prev.length === next.length;
+  const out = next.map((r, i) => {
+    let k: Row;
+    if (r.kind === 'cards') {
+      const items = r.items.map(keep);
+      const o = old.get(r.key);
+      k = o && o.kind === 'cards' && o.depth === r.depth && o.items.length === items.length && o.items.every((it, j) => it === items[j]) ? o : { ...r, items };
+    } else k = keep(r);
+    if (k !== prev[i]) same = false;
+    return k;
+  });
+  return same ? (prev as Row[]) : out;
 }
 
 /** Ids of selectable things in a row (for keyboard navigation / shift ranges). */

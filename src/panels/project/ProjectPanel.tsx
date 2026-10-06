@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, FolderPlus, Import, Layers as LayersIcon, LayoutGrid, List } from 'lucide-react';
 import type { ID, Project, Sequence } from '@shared/model';
-import { sequenceDuration } from '@shared/timeline';
 import { Button, EmptyState, IconButton, SearchField, Select, Toggle, useContextMenu } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
 import { pathOfDroppedFile, setClipDrag, type ClipDragPayload } from '@/app/dnd';
@@ -11,7 +10,7 @@ import type { PanelProps } from '../registry';
 import { VirtualList, type VirtualListHandle } from './VirtualList';
 import { ITEMS_DND_TYPE, RowView, type ItemsDragPayload, type RowCallbacks } from './rows';
 import {
-  CARD_W, SORT_OPTIONS, buildBinRows, buildSeriesRows, expandKey, rowHeight, rowId,
+  CARD_W, SORT_OPTIONS, buildBinRows, buildSeriesRows, expandKey, filterSortSeriesTree, groupMediaByBin, reuseRows, rowHeight, rowId,
   type BinRow, type ExpandedMap, type GroupRow, type ItemRow, type Row, type SceneRow, type SortKey, type TreeMode, type ViewMode,
 } from './tree';
 import { PanelDialogs, type PanelDialog } from './dialogs';
@@ -31,17 +30,20 @@ function filePaths(dt: DataTransfer): string[] {
   return out;
 }
 
-/** What the tree shows of a sequence; cached per sequence object (clip edits re-sum the duration once). */
+/**
+ * What the tree shows and sorts by of a sequence, cached per sequence object. Not its duration: that cell reads the
+ * store itself (rows.tsx SequenceDuration), so a timeline edit neither rebuilds the tree nor re-renders the panel.
+ */
 const seqSigCache = new WeakMap<Sequence, string>();
 function sequenceSig(s: Sequence): string {
   let sig = seqSigCache.get(s);
   if (sig === undefined) {
-    sig = [s.id, s.name, s.fps.num, s.fps.den, sequenceDuration(s), s.parentSequenceId ?? '', s.binId ?? '', s.versionLabel ?? ''].join('\u0001');
+    sig = [s.id, s.name, s.fps.num, s.fps.den, s.width, s.height, s.createdAt, s.parentSequenceId ?? '', s.binId ?? '', s.versionLabel ?? ''].join('\u0001');
     seqSigCache.set(s, sig);
   }
   return sig;
 }
-/** Changes only when a sequence's tree-visible fields change, not on every clip edit (P-04). */
+/** Changes only when a sequence's tree-visible fields change, not on clip edits (P-04). */
 let lastSig: { sequences: Project['sequences']; order: Project['sequenceOrder']; sig: string } | null = null;
 function sequencesSignature(p: Project): string {
   // Runs on every store update (each playhead step): reuse the last result while the map and order are the same.
@@ -55,7 +57,7 @@ function sequencesSignature(p: Project): string {
 export function ProjectPanel(_props: PanelProps) {
   const media = useStore((s) => s.project.media);
   const bins = useStore((s) => s.project.bins);
-  // Rebuild the tree only when what it shows of the sequences changes (name / duration / bin / lineage).
+  // Rebuild the tree only when what it shows of the sequences changes (name / format / bin / lineage).
   const seqSig = useStore((s) => sequencesSignature(s.project));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const sequences = useMemo(() => useStore.getState().project.sequences, [seqSig]);
@@ -86,8 +88,17 @@ export function ProjectPanel(_props: PanelProps) {
 
   // ---- derived rows ----
   const tree = useMemo(() => (mode === 'series' ? seriesTree(useStore.getState()) : null), [mode, media]);
+  // The media lists (filtered + sorted) depend on the media, the search and the sort only: never re-sorted for a
+  // sequence change, bin expansion or resize.
+  const mediaByBin = useMemo(() => (mode === 'bins' ? groupMediaByBin(media, query, sort) : null), [mode, media, query, sort]);
+  const seriesLists = useMemo(() => (tree ? filterSortSeriesTree(tree, query, sort) : null), [tree, query, sort]);
   const input = useMemo(() => ({ media, bins, sequences, sequenceOrder, expanded, query, sort, view, cols }), [media, bins, sequences, sequenceOrder, expanded, query, sort, view, cols]);
-  const rows = useMemo(() => (mode === 'series' && tree ? buildSeriesRows(tree, input) : buildBinRows(input)), [mode, tree, input]);
+  // Rows keep their identity while unchanged (reuseRows), so the memoised row views re-render only what changed.
+  const prevRows = useRef<Row[] | null>(null);
+  const rows = useMemo(() => {
+    const next = mode === 'series' && tree && seriesLists ? buildSeriesRows(tree, input, seriesLists) : buildBinRows(input, mediaByBin ?? undefined);
+    return (prevRows.current = reuseRows(prevRows.current, next));
+  }, [mode, tree, seriesLists, mediaByBin, input]);
   const navRows = useMemo(() => rows.flatMap((r) => (r.kind === 'cards' ? r.items : [r])) as ClickableRow[], [rows]);
   const selected = useMemo(() => {
     const s = new Set<string>(selectedMediaIds);
@@ -114,6 +125,9 @@ export function ProjectPanel(_props: PanelProps) {
   }, []);
   // After an import: open the bins (or series groups) that received files and scroll the first new item into view.
   const revealRef = useRef<ID[] | null>(null);
+  // Bumped per import: the rows keep their identity when nothing they show changed (reuseRows, e.g. re-importing
+  // a file whose bins are already open), and the reveal must still run.
+  const [revealTick, setRevealTick] = useState(0);
   useEffect(() => onMediaImported((r) => {
     const ids = r.added.length ? r.added : r.existing;
     if (!ids.length) return;
@@ -131,6 +145,7 @@ export function ProjectPanel(_props: PanelProps) {
       return next;
     });
     revealRef.current = ids;
+    setRevealTick((n) => n + 1);
   }), []);
   useEffect(() => {
     const ids = revealRef.current;
@@ -141,7 +156,7 @@ export function ProjectPanel(_props: PanelProps) {
     revealRef.current = null;
     anchorRef.current = rows[i].kind === 'media' ? rows[i].key : anchorRef.current;
     requestAnimationFrame(() => listRef.current?.scrollToIndex(i, 'center'));
-  }, [rows]);
+  }, [rows, revealTick]);
 
   // Offline check once per mount (cheap stat per file).
   useEffect(() => { if (Object.keys(useStore.getState().project.media).length) void verifyMediaOnline(); }, []);
