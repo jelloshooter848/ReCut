@@ -368,19 +368,34 @@ export async function serializeProjectSliced(project: Project, compact = false):
   return chunks.join('');
 }
 
-export async function saveProject(path?: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+/** The save in progress (or a settled promise): saves run one at a time, so their writes land in order. */
+let saveQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Save the project to `path` (default: its current path). Saves are queued: each one snapshots the project when its
+ * turn comes, so a save pressed twice writes the newest content last. The project is marked saved only at the
+ * revision that was written: edits committed during the serialization slices / IPC write keep it dirty.
+ */
+export function saveProject(path?: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+  const run = saveQueue.then(() => saveNow(path));
+  saveQueue = run.catch(() => undefined);
+  return run;
+}
+
+async function saveNow(path?: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
   const api = recutApi();
   if (!api) return { ok: false, error: 'IPC unavailable' };
   const st = useStore.getState();
   const target = path ?? st.projectPath;
   if (!target) return { ok: false, error: 'No project path' };
+  const revision = st.revision;
   const project = serializeForSave(st);
   // Serialize here, in slices, and send one string (P-06): a structured clone of the whole project across IPC
   // cost more than the serialization, and main then pretty-printed it again on its own thread.
   const res = typeof api.saveProjectJson === 'function'
     ? await api.saveProjectJson(target, await serializeProjectSliced(project))
     : await api.saveProject(target, project);
-  if (res.ok) useStore.getState().markSaved(res.path);
+  if (res.ok) useStore.getState().markSaved(res.path, revision);
   return res;
 }
 
