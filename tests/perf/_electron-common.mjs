@@ -109,7 +109,7 @@ export async function launchAndBuild({ width = 1900, height = 1050, tag = 'elect
   const ipcWrapped = await app.evaluate(({ ipcMain }) => {
     const map = ipcMain._invokeHandlers; if (!(map instanceof Map)) return false;
     const S = (globalThis.__perfIpc = { counts: {}, times: {} });
-    for (const ch of ['media:thumbnail', 'media:filmstrip', 'media:waveform', 'project:autosave', 'project:save', 'project:load', 'export:previewCommand', 'media:probe']) {
+    for (const ch of ['media:thumbnail', 'media:filmstrip', 'media:waveform', 'project:autosave', 'project:autosaveJson', 'project:save', 'project:load', 'export:previewCommand', 'media:probe']) {
       const h = map.get(ch); if (!h) continue;
       map.set(ch, async (e, ...a) => { S.counts[ch] = (S.counts[ch] || 0) + 1; const t = performance.now(); try { return await h(e, ...a); } finally { (S.times[ch] ||= []).push(performance.now() - t); } });
     }
@@ -118,8 +118,8 @@ export async function launchAndBuild({ width = 1900, height = 1050, tag = 'elect
   const files = MEDIA_FILES.map((f) => path.join(MEDIA_DIR, f));
   const ids = await page.evaluate((p) => window.__recut.actions.importMediaFiles(p), files);
   await page.waitForFunction((ids) => { const m = window.__recut.store.getState().project.media; return ids.every((id) => m[id] && (m[id].probe || m[id].probeError)); }, ids, { timeout: 60_000 });
-  const builderSrc = fs.readFileSync(path.join(ROOT, 'tests/perf/bigProject.mjs'), 'utf8').replace(/^export /m, '');
-  await page.evaluate(`${builderSrc}\n;window.__perfBuild = buildBigProject;`);
+  const builderSrc = fs.readFileSync(path.join(ROOT, 'tests/perf/bigProject.mjs'), 'utf8').replace(/^export /gm, '');
+  await page.evaluate(`${builderSrc}\n;window.__perfBuild = buildBigProject; window.__perfBuildLong = buildLongSequence;`);
   const built = await page.evaluate(() => {
     const st = window.__recut.store.getState();
     const base = Object.values(st.project.media).filter((m) => m.probe && m.probe.video).map((m) => ({ name: m.name, path: m.path, probe: m.probe }));

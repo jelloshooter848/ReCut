@@ -21,6 +21,8 @@ it.runIf(process.env.RECUT_PERF_PROFILE === '1')('profile commits', async () => 
     deleteSelected: (i) => { const c = S().project.sequences[id].videoTracks[1].clips[100 + i * 3]; S().select([c.id], 'set'); S().deleteSelected(); },
     insertOverwrite: (i) => { S().insertFromSource(id, { mediaId: big.mediaIds[3], in: 1, out: 4, atFrame: 50 + i * 130, mode: 'overwrite' }); },
     razor: (i) => { S().razor(id, 60 + i * 360); },
+    insertRipple: (i) => { S().insertFromSource(id, { mediaId: big.mediaIds[3], in: 1, out: 3, atFrame: 10 + i * 500, mode: 'insert' }); },
+    moveInsert: (i) => { const t = S().project.sequences[id].videoTracks[1]; const c = t.clips[100 + i * 5]; S().moveClips(id, [{ clipId: c.id, toTrackId: t.id, toStart: c.start + 3 }], 'insert'); },
   };
   const session = new Session(); session.connect();
   await session.post('Profiler.enable'); await session.post('Profiler.setSamplingInterval', { interval: 100 });

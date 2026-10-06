@@ -2,6 +2,8 @@
  * Store benchmarks on the LARGE synthetic project (see bigProject.mjs): commit latency per edit kind on the
  * 2500-clip sequence, undo/redo, memory growth over 300 commits, history cap, serialize / parse / normalize,
  * and the per-frame work the UI derives from the store (planFrame, resolveSubtitleCues, sequenceDuration).
+ * The last test adds a 3 h multi-hour sequence (buildLongSequence) and measures the same per-frame work, commits
+ * and serialize sizes on it as new 'long' rows; it runs last so the earlier rows stay comparable.
  *
  * Run: NODE_OPTIONS=--expose-gc npx vitest run -c tests/perf/vitest.config.ts tests/perf/store.perf.test.ts
  */
@@ -12,7 +14,7 @@ import { allTracks, clipEnd, findClip, resolveSubtitleCues, sequenceDuration } f
 import { planFrame } from '../../src/playback/planner';
 import type { MediaProbe } from '../../shared/model';
 // @ts-expect-error plain JS module shared with the Electron harness
-import { buildBigProject } from './bigProject.mjs';
+import { buildBigProject, buildLongSequence } from './bigProject.mjs';
 import { bench, flush, heapMB, ms, now, record, round, rssMB, stats } from './_report';
 
 const FPS = { num: 24, den: 1 };
@@ -211,5 +213,60 @@ describe('store @ 2500 clips', () => {
     const pf2 = bench(100, (i) => { planFrame(seq2, media, Math.floor((dur * i) / 100), true); });
     ms('frame', 'planFrame with subtitle tracks (median)', pf2.median, 2);
     expect(resolveSubtitleCues(seq2).length).toBeGreaterThan(7000);
+  });
+
+  // Runs last so every row above is measured on the same project as before the multi-hour sequence existed.
+  it('multi-hour sequence (3 h @ 23.976): build, per-frame work, commits, serialize', () => {
+    const t = now();
+    const long = buildLongSequence(useStore, { hours: 3 });
+    ms('long', 'buildLongSequence total (data + addSequence commit)', now() - t);
+    ms('long', 'addSequence commit', long.timings.addSequenceCommit);
+    for (const [k, v] of Object.entries(long.counts)) record({ section: 'long', metric: `count ${k}`, value: v as number | string, unit: '' });
+    const lid = long.seqId;
+    const seq = S().project.sequences[lid];
+    const media = S().project.media;
+    const dur = sequenceDuration(seq);
+    expect(dur).toBeGreaterThanOrEqual(Math.round(3 * 3600 * 24000 / 1001) - 1);
+    expect(long.counts.clips).toBeGreaterThan(5000);
+    // Store-side cost of switching to it and back (the paint is measured in electron-perf.mjs).
+    const sw = bench(10, (i) => { S().setActiveSequence(i % 2 ? seqId : lid); });
+    ms('long', 'setActiveSequence big <-> multi-hour (store only, median)', sw.median);
+    S().setActiveSequence(seqId);
+    const pf = bench(240, (i) => { planFrame(seq, media, Math.floor((dur * i) / 240), true); });
+    ms('long', 'planFrame multi-hour (median over 240 frames)', pf.median, 2, 'runs every rAF while playing');
+    ms('long', 'planFrame multi-hour (max)', pf.max, 4);
+    const sd = bench(100, () => { sequenceDuration(seq); });
+    ms('long', 'sequenceDuration multi-hour (mean)', sd.mean, 0.2);
+    // Edits on the multi-hour sequence (same budgets as the 2,500-clip rows in 'commit').
+    const mediaId = big.mediaIds[3];
+    const ins = bench(10, (i) => { S().insertFromSource(lid, { mediaId, in: 1, out: 3, atFrame: 1000 + i * 20000, mode: 'insert' }); });
+    ms('long', 'multi-hour insertFromSource insert/ripple (median)', ins.median, 16);
+    const rz = bench(20, (i) => { S().razor(lid, 500 + i * 12000); });
+    ms('long', 'multi-hour razor all tracks (median)', rz.median, 16);
+    const mv = bench(20, (i) => {
+      const tr = S().project.sequences[lid].videoTracks[0]; const c = tr.clips[100 + i * 97];
+      S().moveClips(lid, [{ clipId: c.id, toTrackId: tr.id, toStart: c.start + 5 }], 'overwrite');
+    });
+    ms('long', 'multi-hour moveClips 1 clip overwrite (median)', mv.median, 16);
+    const rd = bench(10, (i) => {
+      const c = S().project.sequences[lid].videoTracks[0].clips[1500 + i * 3];
+      S().select([c.id], 'set'); S().rippleDeleteSelected(lid);
+    });
+    ms('long', 'multi-hour rippleDeleteSelected 1 clip (median)', rd.median, 16);
+    S().select([], 'clear');
+    const u = bench(20, () => { S().undo(); });
+    ms('long', 'multi-hour undo (median of 20)', u.median, 16);
+    // Serialize sizes / time of the whole project now that it also holds the multi-hour sequence.
+    const project = S().project;
+    let json = '';
+    const ser = bench(3, () => { json = serializeProject(project); });
+    ms('long', 'serializeProject incl. multi-hour (pretty JSON, median of 3)', ser.median, 100);
+    record({ section: 'long', metric: 'project JSON size incl. multi-hour (MB, pretty)', value: round(json.length / 1048576), unit: 'MB' });
+    record({ section: 'long', metric: 'project JSON size incl. multi-hour (MB, compact)', value: round(JSON.stringify(project).length / 1048576), unit: 'MB' });
+    record({ section: 'long', metric: 'bytes of multi-hour sequence alone (MB, compact)', value: round(JSON.stringify(project.sequences[lid]).length / 1048576), unit: 'MB' });
+    const parse = bench(3, () => { JSON.parse(json); });
+    ms('long', 'JSON.parse incl. multi-hour (median of 3)', parse.median, 100);
+    const clone = bench(3, () => { structuredClone(project); });
+    ms('long', 'structuredClone(project) incl. multi-hour (median of 3)', clone.median, 100);
   });
 });

@@ -56,6 +56,7 @@ Path aliases: `@shared/*` → `shared/`, `@/*` → `src/` (in `vite.config.ts` a
 | `npm test` | Vitest over `tests/unit/**/*.test.ts` (node environment). Some tests run real FFmpeg. |
 | `npm run test:watch` | Vitest in watch mode. |
 | `npm run test:e2e` | Build, then Playwright over `tests/e2e` (needs a display; use xvfb). |
+| `npm run perf:check` | Performance gate: node perf suite, build, Electron perf script, one PASS/FAIL table of every budgeted row (allow about 25 min; run it alone). See [Performance gate](#performance-gate-npm-run-perfcheck). |
 | `npm run package` | Build, then `electron-builder --dir` → `release/<platform>-unpacked`. Windows installers are built by `.github/workflows/windows.yml`. |
 | `npm run dist` | Build, then electron-builder installers (AppImage / dmg / nsis + portable exe). The Windows nsis installer and portable exe are built in CI by `.github/workflows/windows.yml`, which smoke-tests the unpacked app and a silent install (unsigned, FFmpeg bundled); the dmg and AppImage are untested. |
 
@@ -98,10 +99,37 @@ measurement set used by the media attack suite (frame counters, sync flashes and
 | Acceptance gauntlet | `tests/e2e/gauntlet.spec.ts` (+ `gauntlet-helpers.ts`) | `xvfb-run -a npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/gauntlet.spec.ts` | Four scenario tests (basic movie edit, TV fan edit, large-media workflow, failure recovery). Each takes about 6–8 min. Logs go to `test-results/gauntlet/*.json`. Results are in `docs/acceptance.md`. |
 | Media attack | `tests/attack` | `npx vitest run -c tests/attack/vitest.config.ts` and `xvfb-run -a npx playwright test -c tests/attack/e2e/playwright.config.ts` | Frame-exact and A/V-sync measurements on real FFmpeg output. Media goes to the scratch dir, or to `ATTACK_MEDIA_DIR` if set. Report: `docs/attack/media.md`. |
 | QA repro suite | `tests/attack-qa` | `npx vitest run -c tests/attack-qa/vitest.config.ts` and `xvfb-run -a npx playwright test -c tests/attack-qa/playwright.config.ts` | One test per finding in `docs/attack/qa.md`. A failing test reproduces a bug that is still open. |
-| Performance | `tests/perf` | `NODE_OPTIONS=--expose-gc npx vitest run -c tests/perf/vitest.config.ts` and `xvfb-run -a -s "-screen 0 1920x1080x24" node tests/perf/electron-perf.mjs` (also `electron-probe.mjs`, `electron-cpuprof.mjs`, `electron-attrib.mjs`) | Builds a 2,500-clip project (`bigProject.mjs`). Variables: `RECUT_PERF_SCRATCH`, `RECUT_PERF_OUT`, `RECUT_PERF_MEDIA`, `RECUT_PERF_LONG_FILE`, `RECUT_PERF_PROFILE`. Report: `docs/attack/performance.md`. |
+| Performance | `tests/perf` | `npm run perf:check` (the gate, see below), or each part: `NODE_OPTIONS=--expose-gc npx vitest run -c tests/perf/vitest.config.ts` and `xvfb-run -a -s "-screen 0 1920x1080x24" node tests/perf/electron-perf.mjs` (also `electron-probe.mjs`, `electron-cpuprof.mjs`, `electron-attrib.mjs`) | Builds a 2,500-clip project plus a 3 h multi-hour sequence (`bigProject.mjs`: `buildBigProject`, `buildLongSequence`). Variables: `RECUT_PERF_SCRATCH`, `RECUT_PERF_OUT`, `RECUT_PERF_MEDIA`, `RECUT_PERF_LONG_FILE`, `RECUT_PERF_PROFILE`. Report: `docs/attack/performance.md`. |
 
 The root Vitest config (`vite.config.ts` → `test.include`) only picks up `tests/unit`. Every other suite needs its
 own `-c` config.
+
+### Performance gate (`npm run perf:check`)
+
+`npm run perf:check` runs the node perf suite, builds the app, runs `electron-perf.mjs` under xvfb, then reads the
+JSON results (`test-results/perf/{store,panels,main,export,electron}.json`) and prints one table of every budgeted
+row: metric, value, budget, PASS/FAIL. It exits 1 if any budgeted row fails, if a suite exits non-zero, or if a
+result file is missing. Old result files are deleted before each run, so a crashed suite cannot pass on stale data.
+
+- **Budgets live in the benches only.** A budgeted row is any row a bench records with a threshold (`ms(…, budget)`
+  and `record({ threshold, pass })` in `tests/perf/*.perf.test.ts` via `_report.ts`, `ms` / `rec` in
+  `electron-perf.mjs`). `perf-check.mjs` never re-derives a threshold. Change a budget in the bench, never in the
+  gate, and do not loosen one without saying so in the PR.
+- **Allow about 25 minutes.** On the 4-core cloud container one run took 14 min (node suite ~9 min including the
+  chunked export of the whole 26-min sequence, build ~15 s, Electron ~4.5 min); budget more on a slower or busier
+  machine, or when the test media and the 20-min long file are generated on first use. Run it **alone**: no other
+  test suite, build or FFmpeg job on the machine at the same time. Before each step it waits (up to 90 s) for the
+  load average to drop below half the cores, prints `nproc` and the load average, and warns when the machine is busy.
+- **Treat ±30 % as noise.** On an idle 4-core container three runs agreed within about ±10 % for most rows, but with
+  other jobs on the machine a single row has doubled on identical code (`serializeProject` 344 → 704 ms; see the
+  baseline in `bugs/open/2026-10-05-perf-budgets-2500-clips.md`). A single run is not evidence of a regression or a
+  fix, and rows within a few percent of their budget flip between runs. Compare
+  medians of at least two runs: `npm run perf:check -- --runs 2` runs everything twice and reports the median per row
+  with its min–max spread; a row passes only when it passed in more than half of the runs.
+- Options: `--skip-build` (dist/ is current), `--node-only`, `--electron-only`, and `--from <dir> [<dir> …]` to
+  aggregate result folders from earlier runs without running anything (for example one run with
+  `RECUT_PERF_OUT=/tmp/run1`, a later one with `RECUT_PERF_OUT=/tmp/run2`, then
+  `npm run perf:check -- --from /tmp/run1 /tmp/run2`).
 
 ## Automation hook
 
