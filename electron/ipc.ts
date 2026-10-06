@@ -7,6 +7,7 @@
  */
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ensureDirSafe } from './safeMkdir';
@@ -15,9 +16,9 @@ import type { AppPreferences, ID, JobInfo, MediaProbe, Project } from '../shared
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import type {
   AppInfo, ExportRequest, ExportStartResult, FilmstripRequest, LoadReply, MessageOptions, OpenFilesOptions,
-  ProxyRequest, RecoveryReply, RecutApi, RelinkScanRequest, SaveFileOptions, SceneDetectRequest, ThumbnailRequest, WaveformData,
+  ProxyRequest, RecoveryReply, RecutApi, RelinkScanRequest, SaveFileOptions, SaveResult, SceneDetectRequest, ThumbnailRequest, WaveformData,
 } from '../shared/ipc';
-import { encodeProjectWire } from '../shared/projectWire';
+import { encodeProjectWire, SAVE_STREAM_IPC as IPC_SAVE, type SaveBeginResult } from '../shared/projectWire';
 import * as io from './project/io';
 import * as fsApi from './fs';
 
@@ -230,20 +231,67 @@ export function registerIpc(deps: IpcDeps): void {
   });
 
   // --- project ---
+  /** After a successful save: recent list, and the untitled autosave of the same project is dropped. */
+  const afterSave = async (savedPath: string, projectId: unknown) => {
+    await Promise.all([io.addRecentProject(userData, savedPath), io.clearUntitledAutosaveForId(projectId, userData)]);
+    deps.onRecentChanged?.();
+  };
   // A string is the project already serialized by the renderer (saveProjectJson): written as-is. An object
   // (saveProject, older renderers) is serialized here.
   ipcMain.handle(IPC.projectSave, async (_e, p: string, data: Project | string) => {
     const file = assertString(p, 'path');
     const isJson = typeof data === 'string';
     const res = isJson ? await io.saveProjectJson(file, data) : await io.saveProjectFile(file, data);
-    if (res.ok) {
-      await Promise.all([
-        io.addRecentProject(userData, res.path),
-        io.clearUntitledAutosaveForId(isJson ? io.topLevelProjectId(data) : data?.id, userData),
-      ]);
-      deps.onRecentChanged?.();
-    }
+    if (res.ok) await afterSave(res.path, isJson ? io.topLevelProjectId(data) : data?.id);
     return res;
+  });
+  // Streamed manual save (shared/projectWire.ts ProjectSaveStreamApi): the renderer sends the file text in pieces
+  // while it serializes; each open save belongs to the window that began it and is dropped if that window goes away.
+  const saveStreams = new Map<string, { writer: io.ProjectFileWriter; sender: number }>();
+  const watchedSenders = new Set<number>();
+  const MAX_SAVE_STREAMS_PER_WINDOW = 4;
+  const saveStream = (id: unknown, sender: number) => {
+    const s = typeof id === 'string' ? saveStreams.get(id) : undefined;
+    return s && s.sender === sender ? s.writer : undefined;
+  };
+  ipcMain.handle(IPC_SAVE.begin, async (e, p: string): Promise<SaveBeginResult> => {
+    const file = assertString(p, 'path');
+    const sender = e.sender.id;
+    if ([...saveStreams.values()].filter((s) => s.sender === sender).length >= MAX_SAVE_STREAMS_PER_WINDOW) {
+      return { ok: false, error: 'Could not save project: too many saves in progress' };
+    }
+    let writer: io.ProjectFileWriter;
+    try { writer = await io.ProjectFileWriter.open(file); } catch (err) {
+      return { ok: false, error: `Could not save project: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    const id = randomUUID();
+    saveStreams.set(id, { writer, sender });
+    if (!watchedSenders.has(sender)) {
+      // A renderer that crashes or closes mid-save never commits: drop its temp files.
+      watchedSenders.add(sender);
+      const drop = () => { for (const [k, s] of saveStreams) if (s.sender === sender) { saveStreams.delete(k); void s.writer.abort(); } };
+      e.sender.on('render-process-gone', drop);
+      e.sender.once('destroyed', () => { watchedSenders.delete(sender); drop(); });
+    }
+    return { ok: true, id };
+  });
+  ipcMain.on(IPC_SAVE.chunk, (e, id: unknown, seq: unknown, text: unknown) => {
+    saveStream(id, e.sender.id)?.append(seq as number, text as string);
+  });
+  ipcMain.handle(IPC_SAVE.commit, async (e, id: unknown, totals: io.SaveStreamTotals): Promise<SaveResult> => {
+    const writer = saveStream(id, e.sender.id);
+    if (!writer) return { ok: false, error: 'Could not save project: no such save in progress' };
+    // Registered until the commit is done: pieces the commit message overtook still reach the writer.
+    const res = await writer.commit(totals);
+    saveStreams.delete(id as string);
+    if (res.ok) await afterSave(res.path, writer.projectId());
+    return res;
+  });
+  ipcMain.handle(IPC_SAVE.abort, async (e, id: unknown) => {
+    const writer = saveStream(id, e.sender.id);
+    if (!writer) return;
+    saveStreams.delete(id as string);
+    await writer.abort();
   });
   // The project is read, parsed and normalized once here and sent as JSON pieces (shared/projectWire.ts): no
   // structured clone of the whole project, and the renderer does not normalize it again.
