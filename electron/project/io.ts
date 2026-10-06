@@ -237,6 +237,9 @@ const STRAGGLER_WAIT_MS = 10_000;
  * file beside the target, and only commit, once every chunk is written and the whole text passed the same
  * shape check, syncs it, keeps the `.bak` and renames it over the target (through a symlinked `.recut`). Until
  * then the target is untouched; a failed or aborted save removes the temp file.
+ *
+ * A streamed autosave (openAutosave, shared/projectWire.ts ProjectAutosaveStreamApi) is the same writer with the
+ * file semantics of writeAutosaveJson: its target is the autosave file, without a `.bak`.
  */
 export class ProjectFileWriter {
   private chunks = 0;
@@ -254,12 +257,33 @@ export class ProjectFileWriter {
   private closed = false;
   private arrived: (() => void) | null = null;
 
-  private constructor(readonly path: string, private readonly file: AtomicFile) {}
+  /**
+   * `kind` 'autosave': the file is an autosave (no `.bak`, a symlink at the autosave path is replaced, errors say
+   * "Autosave failed"); 'project': a project file (`.bak` kept, a symlinked `.recut` updated through the link).
+   */
+  private constructor(readonly path: string, private readonly file: AtomicFile, readonly kind: 'project' | 'autosave' = 'project') {}
 
   /** Open a save of the project file at `filePath` (`.recut` appended when missing). Throws when the temp file cannot be created. */
   static async open(filePath: string): Promise<ProjectFileWriter> {
     const target = ensureProjectExt(path.resolve(filePath));
     return new ProjectFileWriter(target, await openAtomic(target, true));
+  }
+
+  /**
+   * Open a streamed autosave of the project at `projectPath` (null: the untitled autosave in `userData`), with the
+   * file semantics of writeAutosaveJson: the temp file sits beside the autosave file (never beside the project
+   * file), and the commit renames it over the autosave file, without a `.bak`. Throws when the path is refused
+   * or the temp file cannot be created.
+   */
+  static async openAutosave(projectPath: string | null, userData: string): Promise<ProjectFileWriter> {
+    const refused = autosaveTargetError(projectPath);
+    if (refused && !refused.ok) throw new Error(refused.error.replace(/^Autosave failed: /, ''));
+    const target = autosavePathFor(projectPath, userData);
+    return new ProjectFileWriter(target, await openAtomic(target, false), 'autosave');
+  }
+
+  private failure(problem: string): SaveResult {
+    return { ok: false, error: `${this.kind === 'autosave' ? 'Autosave failed' : 'Could not save project'}: ${problem}` };
   }
 
   /**
@@ -296,7 +320,7 @@ export class ProjectFileWriter {
 
   /** Finish the save: `totals` is what the renderer sent. Never throws; an error leaves the target untouched. */
   async commit(totals: SaveStreamTotals): Promise<SaveResult> {
-    if (this.closed || this.committing) return { ok: false, error: 'Could not save project: this save is already finished' };
+    if (this.closed || this.committing) return this.failure('this save is already finished');
     this.committing = true;
     const want = { chunks: Number(totals?.chunks), chars: Number(totals?.chars) };
     const deadline = Date.now() + STRAGGLER_WAIT_MS;
@@ -307,7 +331,7 @@ export class ProjectFileWriter {
       });
       this.arrived = null;
     }
-    if (this.closed) return { ok: false, error: 'Could not save project: the save was cancelled' }; // aborted meanwhile
+    if (this.closed) return this.failure('the save was cancelled'); // aborted meanwhile
     this.closed = true;
     await this.writing;
     const problem = this.error ? errMsg(this.error)
@@ -316,13 +340,13 @@ export class ProjectFileWriter {
         : this.chars < 2 || this.first !== '{' || this.last !== '}' ? 'not a serialized project (expected a JSON object string)' : null;
     if (problem !== null) {
       await discardAtomic(this.file);
-      return { ok: false, error: `Could not save project: ${problem}` };
+      return this.failure(problem);
     }
     try {
-      await finishAtomic(this.file, this.path, true);
+      await finishAtomic(this.file, this.path, this.kind === 'project');
       return { ok: true, path: this.path };
     } catch (e) {
-      return { ok: false, error: `Could not save project: ${errMsg(e)}` };
+      return this.failure(errMsg(e));
     }
   }
 

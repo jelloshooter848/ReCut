@@ -5,7 +5,7 @@
 import { contextBridge, ipcRenderer, webUtils, IpcRendererEvent } from 'electron';
 import type { AppPreferences, ID, JobInfo, Project } from '../shared/model';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
-import { SAVE_STREAM_IPC, type ProjectSaveStreamApi } from '../shared/projectWire';
+import { SAVE_STREAM_IPC, type ProjectAutosaveStreamApi, type ProjectSaveStreamApi } from '../shared/projectWire';
 import type {
   DroppedFile, ExportRequest, FilmstripRequest, MenuCommand, MessageOptions, OpenFilesOptions, ProxyRequest, RecutApi,
   RelinkScanRequest, SaveFileOptions, SceneDetectRequest, ThumbnailRequest,
@@ -25,7 +25,7 @@ ipcRenderer.on(IPC.evOpenProjectPath, (_e, p: string) => {
   if (openPathSubscribers === 0 && typeof p === 'string') pendingOpenPaths.push(p);
 });
 
-const api: RecutApi & ProjectSaveStreamApi = {
+const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
   appInfo: () => ipcRenderer.invoke(IPC.appInfo),
   quit: (force?: boolean) => ipcRenderer.invoke(IPC.appQuit, Boolean(force)),
   quitAck: () => ipcRenderer.invoke(IPC.appQuitAck),
@@ -50,6 +50,10 @@ const api: RecutApi & ProjectSaveStreamApi = {
   saveProjectChunk: (id: string, seq: number, text: string) => { ipcRenderer.send(SAVE_STREAM_IPC.chunk, id, seq, text); },
   saveProjectCommit: (id: string, totals: { chunks: number; chars: number }) => ipcRenderer.invoke(SAVE_STREAM_IPC.commit, id, totals),
   saveProjectAbort: (id: string) => ipcRenderer.invoke(SAVE_STREAM_IPC.abort, id),
+  // Streamed autosave: pieces / abort as above; the commit goes over the autosave channel with a stream reference.
+  autosaveProjectBegin: (path: string | null) => ipcRenderer.invoke(SAVE_STREAM_IPC.autosaveBegin, path),
+  autosaveProjectCommit: (path: string | null, id: string, totals: { chunks: number; chars: number }) =>
+    ipcRenderer.invoke(IPC.projectAutosaveJson, path, { stream: id, chunks: totals.chunks, chars: totals.chars }),
   loadProject: (path: string) => ipcRenderer.invoke(IPC.projectLoad, path),
   autosaveProject: (path: string | null, project: Project) => ipcRenderer.invoke(IPC.projectAutosave, path, project),
   autosaveProjectJson: (path: string | null, json: string) => ipcRenderer.invoke(IPC.projectAutosaveJson, path, json),
