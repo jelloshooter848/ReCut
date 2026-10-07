@@ -127,3 +127,16 @@ None for files: prefs.json keeps its format. Prefs reads may wait for a write in
   a queued prefs operation still in flight at close could collide with it (its failure is caught and logged; only
   the window bounds are lost). A rename refused by another process (an antivirus scan) is still
   possible for every atomic write on Windows; no retry was added here.
+  - **Done** (branch `claude/perf-calibration`, 2026-10-07): the window bounds are kept in memory and written
+    through the prefs queue (`io.LayoutPrefsWriter`, one queued read-modify-write of `layout` via
+    `io.updateLayoutPrefs`): debounced 500 ms while the window moves, at once when it closes; `will-quit` waits for
+    that last write (1 s at most) before the process exits. The close path no longer writes synchronously, so every
+    prefs.json write of the process goes through the queue (`atomicWriteFileSync` stays, with the retry below, for
+    a future synchronous caller).
+  - **Done** (same branch): on Windows an atomic rename (`finishAtomic`, the `.bak` rename in `writeBackup`,
+    `atomicWriteFileSync`) refused with EPERM, EACCES or EBUSY is retried after 50, 100, 200 and 400 ms
+    (5 attempts, 750 ms at most); other errors and the last failure are thrown as before. Off on other platforms,
+    where those errors are permanent.
+  - Tests: `tests/unit/prefs-concurrency.test.ts` → "window bounds go through the prefs queue" (4 tests, with the
+    emulated Windows rename rule) and "atomic rename retry" (8 tests: fake EPERM / EACCES / EBUSY / ENOSPC renames,
+    async and sync).

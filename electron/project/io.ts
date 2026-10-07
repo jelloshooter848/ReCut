@@ -52,6 +52,29 @@ async function resolveLinkTarget(p: string): Promise<string> {
   try { return await fsp.realpath(p); } catch { return p; } // dangling: replace the link, never create its target
 }
 
+/**
+ * Renames over an existing file that Windows refuses for a moment: another process (an antivirus or indexer scan, a
+ * backup tool) has the destination open, and the rename fails with EPERM, EACCES or EBUSY although it would succeed
+ * a little later. Such a rename is retried after each delay in `delaysMs` (5 attempts over 750 ms at most); any other
+ * error, or the last failure, is thrown. POSIX renames do not fail that way (an EACCES there is a real permission
+ * error), so the retry is Windows-only; tests switch it on to exercise it.
+ */
+export const RENAME_RETRY = { enabled: process.platform === 'win32', delaysMs: [50, 100, 200, 400] };
+const RENAME_RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+async function renameRetrying(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fsp.rename(from, to);
+      return;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (!RENAME_RETRY.enabled || !code || !RENAME_RETRY_CODES.has(code) || attempt >= RENAME_RETRY.delaysMs.length) throw e;
+      await new Promise((r) => setTimeout(r, RENAME_RETRY.delaysMs[attempt]));
+    }
+  }
+}
+
 /** A temp file opened beside the file it will replace (openAtomic, then writeAll*, finishAtomic). */
 interface AtomicFile {
   /** What the temp file replaces: `target`, or the file a symlink at `target` points to (followSymlink). */
@@ -91,7 +114,7 @@ async function finishAtomic(f: AtomicFile, target: string, backup: boolean | und
       await f.fh.close();
     }
     if (backup !== false) await writeBackup(f.dest, target + BACKUP_EXT);
-    await fsp.rename(f.tmp, f.dest);
+    await renameRetrying(f.tmp, f.dest);
   } catch (e) {
     await fsp.rm(f.tmp, { force: true }).catch(() => undefined);
     throw e;
@@ -150,7 +173,7 @@ async function writeBackup(from: string, bak: string): Promise<void> {
       await fsp.rm(tmp, { force: true }).catch(() => undefined);
       await fsp.copyFile(from, tmp);
     }
-    await fsp.rename(tmp, bak);
+    await renameRetrying(tmp, bak);
     // POSIX rename does nothing when both names are links to one file (`bak` already was the previous version,
     // e.g. after a save interrupted between these steps): the temp name would stay behind.
     if (linked) await fsp.rm(tmp, { force: true });
@@ -160,16 +183,31 @@ async function writeBackup(from: string, bak: string): Promise<void> {
   }
 }
 
+/** renameRetrying for synchronous code: the same retry rule, waiting with Atomics.wait. */
+function renameRetryingSync(from: string, to: string): void {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(from, to);
+      return;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (!RENAME_RETRY.enabled || !code || !RENAME_RETRY_CODES.has(code) || attempt >= RENAME_RETRY.delaysMs.length) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, RENAME_RETRY.delaysMs[attempt]);
+    }
+  }
+}
+
 /**
- * Synchronous atomic write (temp file + rename, no backup) for the window-close path, where an async write
- * would not finish before quit. Creates the parent folder (app-data paths only). A symlink at `target` is replaced.
+ * Synchronous atomic write (temp file + rename, no backup), for a path where an async write could not finish (no
+ * caller in the app today: the window-close path now writes prefs.json through the prefs queue, see
+ * LayoutPrefsWriter). Creates the parent folder (app-data paths only). A symlink at `target` is replaced.
  */
 export function atomicWriteFileSync(target: string, data: string): void {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const tmp = tempPathFor(target);
   try {
     fs.writeFileSync(tmp, data);
-    fs.renameSync(tmp, target);
+    renameRetryingSync(tmp, target);
   } catch (e) {
     try { fs.rmSync(tmp, { force: true }); } catch { /* best effort */ }
     throw e;
@@ -781,6 +819,59 @@ export function pushRecent(list: string[], p: string): string[] {
   const resolved = path.resolve(p);
   const rest = list.filter((x) => path.resolve(x) !== resolved);
   return [resolved, ...rest].slice(0, MAX_RECENT);
+}
+
+/** Merge `patch` into prefs.json's `layout` (window bounds and similar numbers), as one prefs operation. */
+export function updateLayoutPrefs(userData: string, patch: Record<string, number>): Promise<AppPreferences> {
+  return changePrefs(userData, (cur) => ({ layout: { ...(cur.layout ?? {}), ...patch } }));
+}
+
+/**
+ * The window bounds: the latest kept in memory and written to prefs.json through the prefs queue, debounced while the
+ * window moves (`set`), and at once when it closes (`flush`). Quitting waits for that last write (`pending`, `flush`;
+ * electron/main.ts, will-quit). Every prefs.json write of the process goes through the queue: the close path used to
+ * read and replace prefs.json synchronously outside it, which could collide with a queued operation in flight
+ * (bugs/closed/2026-10-07-startup-open-fails-prefs-rename-windows.md, follow-ups).
+ */
+export class LayoutPrefsWriter {
+  private latest: Record<string, number> | null = null;
+  private dirty = false;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private writing: Promise<void> | null = null;
+
+  constructor(
+    private readonly userData: string,
+    private readonly debounceMs = 500,
+    private readonly onError: (e: unknown) => void = (e) => console.error('could not save window bounds:', e),
+  ) {}
+
+  /** Remember `patch` (it replaces the previous one) and write it once no newer one came for `debounceMs`. */
+  set(patch: Record<string, number>): void {
+    this.latest = { ...patch };
+    this.dirty = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, this.debounceMs);
+  }
+
+  /** A change that is not on disk yet: waiting for its debounce, or queued / being written. */
+  get pending(): boolean {
+    return this.dirty || this.writing !== null;
+  }
+
+  /**
+   * Write the latest change now; resolves when everything set so far is written (or failed: logged, never thrown).
+   * Writes are prefs operations, so they run in call order and the last one settles last.
+   */
+  flush(): Promise<void> {
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    if (this.dirty && this.latest) {
+      this.dirty = false;
+      const p: Promise<void> = updateLayoutPrefs(this.userData, this.latest).then(() => undefined, (e) => this.onError(e));
+      this.writing = p;
+      void p.then(() => { if (this.writing === p) this.writing = null; });
+    }
+    return this.writing ?? Promise.resolve();
+  }
 }
 
 export async function addRecentProject(userData: string, p: string): Promise<string[]> {

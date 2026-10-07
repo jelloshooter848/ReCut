@@ -11,10 +11,10 @@ recorded under [Ordering decisions](#ordering-decisions) at the end.
 ## 1. Performance at franchise scale
 
 **Why:** ReCut is for franchise-scale work: thousands of timeline clips, thousands of scenes, multi-hour
-sequences. Re-measured on 5 October 2026 with the 2,500-clip, 60-media project from the performance attack,
-playback, search and autosave now meet their budgets, but every edit still takes 80–120 ms from commit to paint
-(budget 32 ms), scrubbing at working zoom runs at 32–35 fps (budget 50), and opening the project freezes the window
-for about 3 s. Every new feature adds work to the same commit and render path, so this comes first.
+sequences. Before this work, re-measured on 5 October 2026 with the 2,500-clip, 60-media project from the
+performance attack, playback, search and autosave met their budgets, but every edit took 80–120 ms from commit to
+paint (budget 32 ms), scrubbing at working zoom ran at 32–35 fps (budget 50), and opening the project froze the window
+for about 3 s. Every new feature adds work to the same commit and render path, so this came first.
 **Why deferred:** the first round of fixes (in-place playhead, unmounted hidden panels, level-of-detail lane,
 virtualized lists, idle autosave, chunked export) went in on 4 October 2026, and the benchmarks had not been re-run
 until now.
