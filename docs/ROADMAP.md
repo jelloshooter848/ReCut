@@ -103,10 +103,19 @@ cannot read them today. OCR produces the same thing as speech-to-text, a searcha
 sources it is cheaper than speech recognition and keeps the authored timing. It can ship before Whisper (§5).
 **Why deferred:** OCR needs an engine and per-language trained data, and ReCut must stay offline and cloud-free.
 Bitmap streams are refused by the subtitle import today.
-**Plan:** a `TranscriptProvider` backed by a user-installed OCR engine (for example Tesseract), running as a
-main-process job. FFmpeg decodes the bitmap stream to images with their display times, the engine reads each event,
-and cues attach as a `SubtitleTrack` with `origin: 'ocr'`. Results are cached with the existing path + size + mtime
-key plus stream index, engine and language.
+**Plan:** an OCR engine built into ReCut, with languages installed from inside the app, running as a main-process
+job. FFmpeg decodes the bitmap stream to images with their display times, the engine reads each event, and cues
+attach as a `SubtitleTrack` with `origin: 'ocr'`. Results are cached with the existing path + size + mtime key plus
+stream index, engine and language.
+**Status: done (7 October 2026, release 0.6.0).** **Read with OCR…** (Transcript › Import › Embedded…, the Project
+panel's Embedded Subtitles, Transcript › Import › Transcribe… › Read bitmap subtitles (OCR)…) turns a PGS, VobSub, DVB
+or XSUB stream into a subtitle track named "English (OCR #3)" that Transcript search finds. The engine is Tesseract
+compiled to WebAssembly (tesseract.js 7.0.0, about 5.9 MB in the app, no native program); languages (57, pinned
+`tessdata_fast` files with SHA-256) are installed in the app from **File › OCR Languages…** or from the OCR dialog,
+and OCR then runs offline. Reading runs as an `ocr` job on the background lane (a pool of up to 3 worker threads);
+results are cached per file, stream, language file and engine core, so a re-run is instant and replaces the earlier
+track. On generated fixtures character accuracy is 100 % (PGS, VobSub, DVB, XSUB, 17 lines each) and a 1,500-event
+PGS stream reads in about 28 s on 4 cores (99.96 %). Teletext and ARIB captions are not supported.
 
 ## 5. Local speech-to-text (Whisper)
 

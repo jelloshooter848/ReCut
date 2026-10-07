@@ -142,9 +142,12 @@ never write over these files.
 
 ## SubtitleTrack (media)
 
-`{ id, name, language, path?, mediaId, origin: 'srt'|'vtt'|'whisper'|'manual', cues: [{ id, start, end, text }] }`.
+`{ id, name, language, path?, mediaId, origin: 'srt'|'vtt'|'ocr'|'whisper'|'manual', streamIndex?, cues: [{ id, start, end, text }] }`.
 `path` is the file the cues came from, including a sidecar read by the Transcript's subtitle-file provider. Exports
-never write over it.
+never write over it. `origin: 'ocr'` marks a track read from a bitmap subtitle stream with OCR; `streamIndex` is that
+stream's absolute ffprobe index in the media file (a non-negative integer; the loader drops any other value). Reading
+the same stream again replaces the track with the same `origin` and `streamIndex`. Both fields are optional additions:
+`formatVersion` is unchanged.
 
 ## Autosave and recovery
 

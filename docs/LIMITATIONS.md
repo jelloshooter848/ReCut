@@ -78,8 +78,13 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 ## Subtitles and transcripts
 
 - **No speech-to-text yet.** Transcribe… › **Local Whisper** is a disabled placeholder. Transcript search needs SRT
-  / VTT files or embedded text subtitles.
-- Bitmap subtitle streams (PGS, VobSub, DVB) cannot be imported. ASS/SSA styling is dropped (converted to SRT).
+  / VTT files, embedded text subtitles, or bitmap subtitles read with OCR.
+- Bitmap subtitle streams (PGS, VobSub, DVB, XSUB) are read with **OCR** (Read with OCR…), which needs the
+  stream's language installed once (File › OCR Languages…). OCR is an approximation: italics, coloured or
+  low-contrast text, signs and songs drawn into the subtitle, unusual fonts and heavy styling can come out with wrong
+  characters or not at all. The result is an ordinary track; check the lines you rely on. Teletext (`dvb_teletext`)
+  and ARIB captions are not supported.
+- ASS/SSA styling is dropped (converted to SRT).
 - Sidecar auto-pickup looks only in the video's own folder (`name.srt`, `name.<lang>.srt`, and `.vtt`). Subtitles in
   a separate `subs/` folder must be imported with **Import Subtitles…**.
 - No dedicated multi-language subtitle authoring view. Tracks are edited one at a time in the Subtitles panel.

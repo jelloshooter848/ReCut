@@ -187,7 +187,7 @@ Test and benchmark scripts use their own variables (`ATTACK_MEDIA_DIR`, `RECUT_P
 | Project | Wherever you save it: `*.recut` (JSON). Saves are atomic, and the previous version is kept as `*.recut.bak`. A project that had to be repaired on open is copied to `*.recut.pre-repair-<time>` first; a damaged one opened from its `.bak` is kept as `*.recut.corrupt-<time>`. |
 | Autosave of a saved project | Next to it: `<project>.recut.autosave` |
 | Autosave of a never-saved project | `<userData>/autosave/untitled.recut.autosave` |
-| Cache (`thumbs/`, `waves/`, `proxies/`, `scenes/`) | `$RECUT_CACHE_DIR`, else `cacheDir` in `prefs.json`, else `<userData>/cache` |
+| Cache (`thumbs/`, `waves/`, `proxies/`, `scenes/`, `ocr/` for OCR results) | `$RECUT_CACHE_DIR`, else `cacheDir` in `prefs.json`, else `<userData>/cache` |
 | OCR language data (`<code>.traineddata`, one file per installed language; `*.part` while a download runs) | `<userData>/ocr/tessdata` |
 | Panel layouts, the Jobs tab, Inspector collapsed sections, last export settings per project | Renderer `localStorage` (inside `userData`) |
 | Export temp files | `<os tmpdir>/recut-export-<id>/` (filter script, burn-in subtitles, chunks), deleted after each export. The render itself is written next to the output as `<name>.recut-part-<random>.mp4` and renamed at the end; if that rename fails it is kept as `<name>.recut-unsaved-<time>.mp4`. |
@@ -200,9 +200,11 @@ location cannot be changed from the UI: edit `cacheDir` in `prefs.json` or set `
 
 ### Network access
 
-ReCut works offline. The only network access it makes is an OCR language install you start yourself (OCR
-Languages… › **Install**, or Preferences › Application › OCR languages › **Manage…**): it downloads that one
+ReCut works offline. The only network access it makes is an OCR language install you start yourself (**File › OCR
+Languages…** › **Install**, the Read with OCR dialog's **Install <Language>** button, or Preferences › Application ›
+OCR languages › **Manage…**): it downloads that one
 language file from `raw.githubusercontent.com` (Tesseract `tessdata_fast`, pinned to one commit), checks its size
 and SHA-256 against the list built into ReCut and only then saves it in `<userData>/ocr/tessdata`. Downloads use the
 system proxy settings. Where the network is blocked, **Install from file…** accepts the same file downloaded
 elsewhere, with the same SHA-256 check. Removing a language deletes its file; **Open folder** shows the folder.
+Reading subtitles with OCR itself never uses the network.

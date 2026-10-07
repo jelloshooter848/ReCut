@@ -135,7 +135,7 @@ not supported by Chromium"). Typical cases:
 | SRT, WebVTT files | **Import Subtitles…** (Project right-click, File menu, or Transcript › Import), or in a sequence's Subtitles panel with **Import to track…**. The parser accepts BOMs, CRLF, 3-digit hours and VTT cue identifiers. |
 | Sidecar files | When a video is imported, `<video name>.srt|.vtt` and `<video name>.<lang>.srt|.vtt` **in the same folder** are attached automatically, with the language taken from the file name. |
 | Embedded text streams | Right-click › **Embedded Subtitles** or Transcript › Import › **Embedded…**. Text codecs (SubRip, ASS/SSA, mov_text, WebVTT, TTML, SAMI, MicroDVD, ...) are converted to SRT. ASS styling is dropped. |
-| Bitmap streams (PGS, VobSub, DVB) | Not supported. Convert them with an OCR tool first. |
+| Bitmap streams (PGS, VobSub, DVB, XSUB) | Right-click › **Embedded Subtitles** or Transcript › Import › **Embedded…** › "#3 eng (PGS) — **Read with OCR…**". ReCut reads the images with its built-in OCR engine (Tesseract) in the language you choose; install languages once in **File › OCR Languages…**. The track is named "English (OCR #3)". Teletext and ARIB captions are not supported. |
 | Speech-to-text | Not available yet. The Local Whisper entry under Transcribe… is a disabled placeholder. |
 
 Media subtitle tracks feed the Transcript search. When **Carry subtitles into sequence** is on (the default),

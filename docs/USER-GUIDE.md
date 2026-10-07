@@ -83,6 +83,28 @@ Skip this step for anything that already has sidecar subtitles.
 - Embedded text subtitles: right-click › **Embedded Subtitles › #n …**, or **Transcript › Import › Embedded…**.
 - Malformed lines are reported as warnings. A file with no cues is rejected with a message.
 
+### Reading image subtitles (OCR)
+
+Blu-ray and DVD rips usually carry subtitles as pictures (PGS, VobSub, DVB, XSUB), which cannot be imported as text.
+ReCut reads them with its built-in OCR engine (Tesseract) and adds the result as an ordinary subtitle track.
+
+1. Select the media. Open **Transcript › Import › Embedded…** (or right-click › **Embedded Subtitles**): picture
+   streams are listed as "#3 eng (PGS) — **Read with OCR…**". **Transcript › Import › Transcribe… › Read bitmap
+   subtitles (OCR)…** opens the first one.
+2. The dialog shows the stream and a **Language** choice. ReCut picks the stream's language when it is installed,
+   otherwise the language you used last. If the stream's language is not installed yet, click **Install English
+   (4.1 MB)** (or the language shown); **Manage languages…** opens the full list. Each language is downloaded once,
+   only when you click Install; after that OCR works offline. **File › OCR Languages…** also manages them, including
+   **Install from file…** for computers without internet access.
+3. Click **Start**. The work runs in the **Jobs** list (cancel it there). A film takes from a few seconds to about a
+   minute, depending on the number of lines and the computer.
+4. When it finishes, a toast says how many lines were read, and the media gets a track named "English (OCR #3)".
+   It shows in the Media Inspector and in Transcript search like any other track.
+
+Reading the same stream again replaces that track (undo restores the previous one) and is instant: results are
+cached. OCR is not perfect: italics, coloured text, signs drawn into the picture and unusual fonts can come out
+wrong, so check the lines you rely on. Teletext and ARIB captions are not supported.
+
 ## 5. Search dialogue across the franchise
 
 1. Open the **Transcript** panel (Shift+6) › **Search**. Type a phrase, e.g. `doctor`.
