@@ -117,16 +117,22 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 
 ## Scale and performance
 
-- The performance attack (`docs/attack/performance.md`, 4 October 2026) measured a 2,500-clip, 60-media project and
-  found slow playback, edits and autosave. Since then, the playhead moves in place, hidden panels unmount, the
-  timeline has a level-of-detail lane, the Scenes / Transcript / Project lists are virtualized, autosave is idle-time
-  and compact, export is chunked and job lanes are split. **Re-measured on 5 October 2026** (same project, the
-  sequence is 26 min long): Program playback holds 24 fps, scrubbing at zoom-to-fit runs at 59 fps, autosave takes
-  about 0.45 s without stalling playback, transcript / scene / project searches paint within 40 ms, and the chunked
-  export of the whole sequence completes with FFmpeg under 0.9 GB. Still slow at that size: each edit takes
-  80–120 ms from commit to paint, scrubbing at 1 px/frame runs at 32–35 fps, switching sequences takes 100–140 ms,
-  saving takes about 2 s, and opening takes about 4 s with the window frozen for about 3 s. Multi-hour sequences
-  have not been measured.
+- **Measured on 7 October 2026** (release 0.3.0, Roadmap §1): a 2,500-clip, 60-media project, plus a 3-hour,
+  6,700-clip sequence at 23.976 fps, on a 4-core Linux machine with software rendering. Edits paint in 17–28 ms,
+  scrubbing runs at 57–60 fps at every zoom (the 3 h sequence included), mouse-wheel scrolling responds in about 6 ms
+  per step, switching to the big sequence takes about 50 ms, Program playback holds 24 fps, saving takes 214 ms
+  (249 ms with the 3 h sequence), opening takes 714 ms (808 ms) without freezing the window, and autosave takes about
+  190 ms without stalling playback or scrubbing. `npm run perf:check` checks these numbers (see
+  [DEVELOPMENT](DEVELOPMENT.md) → Performance gate); the full record is
+  `bugs/closed/2026-10-05-perf-budgets-2500-clips.md`.
+- Saving, autosave and open still handle the whole project each time (streamed in small pieces, so the window stays
+  responsive). Saving only what changed is planned only if a much larger project needs it (see
+  [ROADMAP](ROADMAP.md) §1, future architecture trigger).
+- Two timeline elements are drawn for speed rather than pixel-perfect smoothness: waveforms are filled bars aligned
+  to screen pixels, and the playhead moves on its own GPU layer (positions and timing are exact). See
+  `docs/attack/performance.md` → Deliberate rendering trade-offs.
+- On a heavily loaded machine, the first visit to each page while scrubbing a multi-hour sequence at the closest zoom
+  can still stutter briefly; later passes over the same pages are smooth.
 - Snapshots store full copies of a sequence, so many snapshots of a large sequence make the project file grow
   quickly.
 
@@ -135,8 +141,8 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - `docs/acceptance.md` keeps BUG-1 to BUG-6 from the first gauntlet run for history; all six are fixed. The gauntlet
   was re-run on 5 October 2026: all four acceptance tests pass (17/17, 21/21, 22/22 and 11/11 steps, no
   workarounds), and the full end-to-end suite passes (51 tests).
-- `docs/attack/performance.md` is the 4 October 2026 measurement. For the 5 October re-measurement, see
-  [Scale and performance](#scale-and-performance) above.
+- `docs/attack/performance.md` is the 4 October 2026 measurement (plus the 7 October rendering trade-offs note).
+  For the current numbers, see [Scale and performance](#scale-and-performance) above.
 - The other `docs/attack/*.md` reports are snapshots from before the fix waves. On 5 October 2026 the `tests/attack-qa`
   unit repros (84 tests), the `tests/attack-qa` Playwright repros (22 tests) and the `tests/attack` media
   measurements (102 tests) all passed. Re-run a suite before you treat a finding as open.

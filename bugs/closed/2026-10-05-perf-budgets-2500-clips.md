@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | open |
+| Status | fixed |
 | Severity | medium (no wrong output; on a franchise-scale project every edit lags 80–120 ms, scrubbing at working zoom runs at 32–35 fps, and opening freezes the window for about 3 s) |
 | Area | performance (store / renderer / project I/O) |
 | Reported by / date | Claude (Claude Code session, working bugs/closed/2026-10-05-roadmap-revisions.md), 2026-10-05 |
@@ -312,38 +312,107 @@ passes and no guardrail shows an unexplained material regression.
 ---
 
 ## Verification
-<!-- Filled in by whoever works the bug. -->
 
 | Field | Value |
 |---|---|
-| Verified by / date | |
-| Verified on commit | |
-| Verdict | |
+| Verified by / date | Claude (Claude Code session, Roadmap §1 Phase 0), 2026-10-06 |
+| Verified on commit | 16f707a (baseline), re-measured through bd60227 |
+| Verdict | confirmed |
+
+Reproduced with `npm run perf:check` (both suites); see "Baseline (2026-10-06)" above. The hypotheses in "Suspected
+cause" were right in direction (per-commit store work, mounting every visible clip, whole-project serialize / clone
+on the renderer's main thread), but the profiles found more causes, listed under Root cause.
 
 ---
 
 ## Resolution
-<!-- Required before moving the file to bugs/closed/. -->
 
 | Field | Value |
 |---|---|
-| Closed by / date | |
-| Fix | |
-| Files changed | |
-| Regression test | |
+| Closed by / date | Claude (Claude Code session), 2026-10-07 |
+| Fix | PRs #16–#36 (merged into main through bd60227) |
+| Files changed | `src/state/*`, `src/panels/timeline/*`, `src/panels/project/*`, `src/panels/program/*`, `src/playback/*`, `src/app/project.ts`, `src/app/autosaveGate.ts`, `shared/timeline.ts`, `shared/projectWire.ts`, `electron/project/io.ts`, `electron/ipc.ts`, `electron/preload.ts`, `electron/media/{protocol,thumbs}.ts`, `tests/perf/*` (see each PR) |
+| Regression test | `npm run perf:check` (98 gates, 130 guardrails against `tests/perf/baseline.json`), plus the unit tests named in each PR (e.g. `tests/unit/save-stream.test.ts`, `autosave-stream.test.ts`, `open-freeze.test.ts`, `program-scrub.test.ts`, `timeline-render-perf.test.ts`, `timeline-waveBars.test.ts`, `timeline-playhead.test.ts`) |
 
 ### Root cause
 
+No single cause. Per area:
+- **Store:** every commit copied and re-froze large parts of the project; an opened project was deep-frozen in one
+  task by the first edit (~370 ms).
+- **Timeline:** every lane re-rendered on every playhead step, all clips in a 200 px margin were mounted, page flips
+  unmounted and remounted whole pages, the scrollbar sync forced synchronous layouts, and the playhead's per-frame move
+  re-layerized the whole page.
+- **Project I/O:** save, open and autosave serialized, sent and parsed the whole 28–31 MB project in single tasks; the
+  project was normalized twice on open.
+- **Program monitor:** seeked every pooled video element on every scrub step and redrew 42–55 times a second during
+  playback instead of about 24.
+- **Other panels:** the Project panel re-sorted all media and re-rendered every row on each edit.
+- **Media:** thumbnails were served `no-cache` and reloaded on every first visit to a page; cancelled filmstrip jobs
+  kept their ffmpeg running; edits started their own thumbnail ffmpeg jobs, which competed with the edit for CPU.
+- **Bench:** the Electron bench crashed partway (a Playwright / V8 weak-promise race), measured edits with a two-frame
+  floor above the 32 ms budget, and measured scrub fps with its own render counter on.
+
 ### Fix
+
+Phase 1 and Phase 2 of Roadmap §1, one PR per workstream: store commit cost (#17), playback element pooling (#18),
+project open/save (#19), the save race (#20), the three-tier gate (#21), timeline rendering (#22, #26, #30, #33,
+#36), bench crash and measurement fixes (#23, #28, #29), streamed save (#24) and autosave (#32), idle freeze after
+open (#25), Program monitor scrub and playback draws (#27, #31), Project panel re-renders (#34), thumbnail caching and
+ffmpeg cancellation (#35). The owner approved two deliberate rendering trade-offs (#36): waveforms as device-pixel
+bars and a composited playhead; see `docs/attack/performance.md` → Deliberate rendering trade-offs.
 
 ### Before / after
 
+Final gate: `npm run perf:check -- --runs 2` on bd60227, 2026-10-07, quiet machine (load 0.7–2.8, no other perf
+jobs). **98 of 98 gates and 130 of 130 guardrails pass in both runs.** Medians:
+
+| Metric | 2026-10-05 (this report) | Final | Budget |
+|---|---|---|---|
+| Edit commit → paint: overwrite / insert ripple / razor / move / ripple delete / undo / redo | 109 / 122 / 115 / 84 / 92 / 80 / 80 ms | 17.3 / 22.6 / 18.5 / 16.8 / 16.8 / 16.9 / 17.0 ms | ≤ 32 (ripple ≤ 50) |
+| Scrub fps @ 1 px/frame, no selection / 50 selected | 35.3 / 31.8 fps, 13 long tasks | 58.5 / 57.5 fps, 0 long tasks | ≥ 50, 0 |
+| 3 h scrub fps @ 1 px/frame, no selection / 50 selected | (not measured; 26 fps on 6 Oct) | 59.2 / 58.9 fps, 0 long tasks | ≥ 50, 0 |
+| Wheel scroll @ 1 px/frame, event → render | 10.6 ms | 5.9 ms | ≤ 8 |
+| Switch to big sequence → paint @ zoom-to-fit / 1 px/frame | 136.5 / 100.6 ms | 49.0 / 52.2 ms | ≤ 100 |
+| Switch sequence ×20 → paint | 115.9 ms | 70.7 ms | ≤ 100 |
+| saveProject round trip (2,500 clips / with 3 h) | 2,004 ms / — | 214 / 249 ms | ≤ 500 |
+| openProject round trip (2,500 clips / with 3 h) | 4,348 ms (3,012 ms long task) / — | 714 / 808 ms | ≤ 1,000 |
+| First edit after open → paint (2,500 clips / 3 h) | ~340 / ~370 ms (long task) | 21.1 / 21.1 ms, 0 long tasks | ≤ 50 |
+| autosaveProject round trip | 446 ms | 189 ms | ≤ 500 |
+
+`JSON.stringify` / `structuredClone(project)` and the node serialize / parse / clone rows remain above their old
+100 ms reference; they are diagnostics under the gate policy above, not user-facing.
+
 ### Regression test proof
+
+The gate itself: on 16f707a (2026-10-06) `perf:check` reported 31 failing gates; on bd60227 it reports 0 in both
+runs. Each PR records its own before/after runs and the unit tests that fail on the old code.
 
 ### Tests run
 
+`npm run perf:check -- --runs 2` (above); `npm test` on bd60227: 1150 / 1150; e2e timeline, inspector, program,
+project, lifecycle, source, compare and scenes specs in the PRs that touched them; gauntlet 4 / 4 (PR #22).
+
 ### Changed existing assertions
+
+- Edit → paint gate rows now measure to the next painted frame (owner's decision, 6 October; #23); the old two-frame
+  number is kept as a diagnostic.
+- Scrub fps is measured with the render counter off (owner's decision, 7 October; #28); the combined number is kept
+  as a diagnostic.
+- Page-flip ClipView-render / DOM-mutation rows are reference guardrails; in-page rows are the 0 gates (owner's
+  decision, 6–7 October; #28).
+- `tests/unit/playback-pool.test.ts` redraw counts (#31): the old assertion required redundant redraws.
+- No threshold was loosened and no row was removed.
 
 ### Compatibility risks
 
+- The project file format is unchanged (`formatVersion` 1); saved and autosaved bytes are identical to before
+  (tested).
+- `.bak` is now a hard link to the previous version where the filesystem allows it, else a copy (#24).
+- Waveforms and the playhead render slightly differently (approved trade-offs, #36).
+
 ### Follow-ups
+
+- `tests/perf/baseline.json` re-seeded from this final gate (bd60227).
+- Possible future work, not needed for the gate: an occasional 17–60 ms Program monitor `drawImage` spike (#31
+  report); first-visit page-flip cost on the 3 h sequence on a loaded machine; the node-side filmstrip-cold
+  guardrail sits close to its 3,000 ms budget.

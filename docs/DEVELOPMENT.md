@@ -170,7 +170,7 @@ container); on a different machine, write a local baseline and do not commit it.
   load average to drop below half the cores, prints `nproc` and the load average, and warns when the machine is busy.
 - **Treat ±30 % as noise on a single run.** On an idle 4-core container three runs agreed within about ±10 % for
   most rows, but with other jobs on the machine a single row has doubled on identical code (`serializeProject`
-  344 → 704 ms; see the baseline in `bugs/open/2026-10-05-perf-budgets-2500-clips.md`). A single run is not
+  344 → 704 ms; see the baseline in `bugs/closed/2026-10-05-perf-budgets-2500-clips.md`). A single run is not
   evidence of a regression or a fix, and rows within a few percent of their budget flip between runs. Compare
   medians of at least two runs: `npm run perf:check -- --runs 2` runs everything twice and reports the median per row
   with its min–max spread; a row passes its budget only when it passed in more than half of the runs.

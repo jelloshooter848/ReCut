@@ -22,13 +22,18 @@ until now.
 user-facing gates (pass/fail), architecture guardrails (fail on a material regression against
 `tests/perf/baseline.json`) and diagnostic microbenchmarks (reported with their trend, never blocking); see
 `docs/DEVELOPMENT.md` → Performance gate (measurements of 6 October 2026 in
-`bugs/open/2026-10-05-perf-budgets-2500-clips.md`; compare medians of two or more runs). Remove the remaining
+`bugs/closed/2026-10-05-perf-budgets-2500-clips.md`; compare medians of two or more runs). Remove the remaining
 per-frame clip re-renders when scrubbing, keep edit commit → paint under 32 ms, and move project open / save / clone
 off the renderer's main thread (compact JSON built off-thread, one `normalizeProject` pass). The benches also cover a 3 h, 6,700-clip sequence at 23.976 fps
 (`buildLongSequence` in `tests/perf/bigProject.mjs`). Re-run the perf, attack and acceptance suites before each large
 feature below.
 **Done when:** All franchise-scale user-facing performance gates pass, no architecture guardrail shows an
 unexplained material regression, and diagnostic microbenchmarks remain reported for trend analysis.
+**Status: done (7 October 2026, release 0.3.0).** The final gate (`npm run perf:check -- --runs 2` on bd60227)
+passes 98 of 98 gates and 130 of 130 guardrails in both runs; the 3 h sequence scrubs at about 59 fps at 1 px/frame,
+edits paint in 17–28 ms, save takes 214–249 ms and open 714–808 ms. Record and before/after table:
+`bugs/closed/2026-10-05-perf-budgets-2500-clips.md`. Two deliberate rendering trade-offs were approved for it (waveform
+bars, composited playhead; `docs/attack/performance.md`).
 **Future architecture trigger:** incremental persistence (saving only what changed) or a different project
 representation becomes worth doing when a measurable trigger is hit, for example the end-to-end save or open gate
 fails at the franchise-scale project size, or the project file grows past about 100 MB. That is a decision driven by
