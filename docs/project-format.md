@@ -151,7 +151,7 @@ trim, and still shapes the curve). `value` is in the property's unit (pixels, sc
 non-empty list ignores its static value; before the first keyframe the first value holds, after the last the last.
 On load, entries without a finite frame and value are dropped, frames are rounded, values clamped to the property's
 range, duplicates and unknown properties dropped, lists sorted and cut at 2,000 keyframes; any of this is reported
-as a repair. Added in 0.13.0 (planned); `formatVersion` stays 1, and older files (no keyframes) open unchanged.
+as a repair. Added in 0.8.0 (planned); `formatVersion` stays 1, and older files (no keyframes) open unchanged.
 
 ### Transition
 

@@ -195,7 +195,7 @@ async function build(outPath, version, features) {
   S().setClipTransform(mainId, ct[0], { x: 40, y: -20, scale: 0.8, rotation: 2.5, opacity: 0.9, crop: { left: 0.05, top: 0, right: 0.05, bottom: 0.1 } });
   S().setClipAudio(mainId, c1[1], { gain: -3, volume: 0.8, fadeIn: 12 });
   S().setClipAudio(mainId, cm[0], { fadeOut: 24, volume: 0.5 });
-  // Keyframes (Roadmap §11, from 0.13.0): an animated title card (position, scale, opacity) and a level dip on the music.
+  // Keyframes (Roadmap §11, from 0.8.0): an animated title card (position, scale, opacity) and a level dip on the music.
   // The store actions add keyframes holding the current value; their values and curves are then set on the clips
   // (writable through findClip, as the Inspector edits them).
   if (typeof S().addClipKeyframe === 'function') {

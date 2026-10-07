@@ -213,8 +213,8 @@ describe('saved-project fixtures', () => {
       expect(a2).toMatchObject({ name: 'Music', volume: 0.7 });
       expect(a2.clips.map(span)).toEqual([[0, 480]]);
       expect(a2.clips[0].audio).toMatchObject({ fadeOut: 24, volume: 0.5 });
-      // Keyframes (Roadmap §11) from 0.13.0: clip-relative frames, interpolation only where it is 'ease'.
-      if (atLeast(v, [0, 13, 0])) {
+      // Keyframes (Roadmap §11) from 0.8.0: clip-relative frames, interpolation only where it is 'ease'.
+      if (atLeast(v, [0, 8, 0])) {
         expect(plain(titleKeys)).toEqual({
           opacity: [{ frame: 0, value: 0, interp: 'ease' }, { frame: 24, value: 0.9 }],
           scale: [{ frame: 0, value: 0.8 }, { frame: 95, value: 1.1, interp: 'ease' }],
