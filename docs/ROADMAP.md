@@ -106,9 +106,26 @@ marked as a pre-release. Work for the candidates:
   release notes and install guide explain **More info › Run anyway**). The owner will not pay for a certificate for a
   free project. After 1.0, apply to a free open-source signing programme (for example SignPath Foundation) or accept
   a sponsor. macOS is different: an unsigned app is much harder to open there, and signing costs the project nothing.
-- After 1.0: the full surround mixer (§9), interchange (§10, after nesting), stem separation (§12), colour tools
-  (§13), GPU decode (§14), multi-language subtitle authoring (§15), collaboration (§17), advanced keyframe curves,
-  titles, and more Linux package formats.
+- Everything in [After 1.0](#after-10) below.
+
+## After 1.0
+
+Decided by the project owner on 7 October 2026. **Principle:** finish what 1.0 started before opening large new
+areas, and let the owner's real-media testing and the first outside users steer 1.1. **Cadence:** a release as soon
+as each milestone is done (as before 1.0), with PATCH releases for fixes in between. Version numbers are the plan,
+not a promise, as for the Road to 1.0.
+
+| Release | Milestone | Entries |
+|---|---|---|
+| 1.0.x | Fixes found by the release candidates and the first users, starting with the open bugs in `bugs/open/`. On the 1.0 release day, apply to a free open-source code signing programme (SignPath Foundation) for Windows | §18 (Windows signing) |
+| 1.1.0 | Polish what shipped | §18 smaller items (Move / Slip into Sync, Build alternate cut without matching clips, transcript hits on timeline in every scope, MP4 with more than one audio track and soft subtitles); keyframes v2 (rotation and crop keyframes, dragging keyframe diamonds on the timeline); the nested-sequence follow-ups (inner chapters and subtitles on export as an option, opacity applied to the composite, speed on nested clips) |
+| 1.2.0 | Subtitle authoring | §15: the next need once OCR (§4) and Whisper (§5) produce subtitles is fixing their text and timing |
+| 1.3.0 | Audio mixer | §9 (mixer panel, per-track meters, stereo / 5.1 panning, multichannel proxies; track volume automation built on keyframes) |
+| 1.4.0 | Interchange | §10 (export OTIO and CMX3600 EDL, nested sequences included; import afterwards) |
+| 1.5.0 | Dialogue / music / effects stems | §12 (after the mixer; starts with an engine and licence spike) |
+| 1.6.0 | GPU picture | §13 and the titles generator (§18) on one WebGL compositor; §14 (hardware encoders for proxies and export, WebCodecs decode) |
+| 2.0.0 | Cloud-free collaboration | §17. It needs the first change to the project format (`formatVersion` 2: relative media roots, sidecar files), which the compatibility promise ties to a MAJOR release |
+| any | Linux packages | More package formats (Flatpak, .deb) when asked for (§19) |
 
 ## 1. Performance at franchise scale
 
@@ -369,9 +386,11 @@ mixer (§9) and keyframes (§11), and after the preview gaps (§2). A separation
 dependency ReCut would take on.
 **Plan:** a main-process job that writes stems for a media file and caches them like proxies. The model needs no
 change: `linkId` groups any number of clips, so a picture clip plus its stems is one linked group. Constraints:
-- **No bundled Python by default.** Keep the engine behind an interface and run it as an isolated main-process job.
-  Prefer a user-installed or standalone engine, as for Whisper (§5); a bundled Python + PyTorch worker would be the
-  largest packaging cost in the app.
+- **Engine built in, models downloaded on request**, as for OCR (§4) and Whisper (§5) (project owner's decision,
+  7 October 2026): a native engine (no Python, no PyTorch) ships inside the app, adding roughly 20–50 MB, and
+  models are installed on request from pinned URLs checked against a fixed SHA-256. The engine stays behind an
+  interface and runs as an isolated main-process job. The release starts with a short spike to choose the engine
+  and check model licences.
 - **Do not hash whole source files.** Hashing a 40 GB remux is slow. Key the cache on the existing path + size +
   mtime key plus model, model version and settings.
 - **Check both licences before shipping a model:** the code licence and the pretrained-weights licence, which can
@@ -521,3 +540,7 @@ Recorded so they are not re-proposed without new information.
   sponsor. macOS builds are signed from 0.7.0.
 - **Interchange stays after nesting**, including export-only CMX3600 EDL (proposed for the delivery milestone in the
   1.0 review): it would have to be reworked for nested sequences.
+- **After 1.0 (7 October 2026).** The project owner adopted the [After 1.0](#after-10) plan: polish first (1.1),
+  then subtitle authoring (1.2) ahead of the mixer, because OCR and Whisper output needs fixing tools; the mixer
+  before stems, as decided before; interchange once nesting has shipped; one WebGL compositor for colour, titles and
+  speed; collaboration as 2.0 because it changes the project format. Releases go out as each milestone is done.
