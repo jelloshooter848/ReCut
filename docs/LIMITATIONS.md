@@ -77,8 +77,22 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 
 ## Subtitles and transcripts
 
-- **No speech-to-text yet.** Transcribe… › **Local Whisper** is a disabled placeholder. Transcript search needs SRT
-  / VTT files, embedded text subtitles, or bitmap subtitles read with OCR.
+- **Speech-to-text (Whisper) runs on the CPU only** (Metal on Apple Silicon), never on an NVIDIA / AMD GPU, and it
+  is slow with the big models. Measured on the development machine (4 shared cores of a 2.1 GHz Xeon, AVX-512,
+  3 threads), the engine's encoder needs 0.5 s (Tiny), 1.5 s (Base) and 4.3 s (Small) per 30 s of audio; decoding
+  the text adds about as much again. As a rough guide an hour of dialogue takes a few minutes with Tiny or Base and
+  about a quarter to half an hour with Small; Medium and Large v3 Turbo can take longer than the media plays. These
+  are encoder measurements with generated models of the real sizes: no real model could be downloaded on that
+  machine, so end-to-end times with real models are still to be measured.
+- Whisper's text is an approximation: names, songs, shouting, overlapping voices, heavy accents, music and effects
+  under the dialogue can be misheard or dropped, and it sometimes repeats a line or invents one in silence. It does
+  not tell speakers apart (no diarisation). Timing is per phrase, not per word. Auto-detect decides the language
+  from the start of the audio, so a film that opens with music may be detected wrongly: choose the language instead.
+- A long media is transcribed in parts of up to 30 minutes, cut at the quietest moment near each boundary; a line
+  spoken across a cut can still be split in two.
+- Models are downloaded from Hugging Face only when you click Install, and only from the pinned files; if Hugging
+  Face moves its downloads to another host, installs fail with "refusing redirect to …" until ReCut is updated: use
+  **Install from file…** meanwhile.
 - Bitmap subtitle streams (PGS, VobSub, DVB, XSUB) are read with **OCR** (Read with OCR…), which needs the
   stream's language installed once (File › OCR Languages…). OCR is an approximation: italics, coloured or
   low-contrast text, signs and songs drawn into the subtitle, unusual fonts and heavy styling can come out with wrong

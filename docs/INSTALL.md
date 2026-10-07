@@ -133,7 +133,9 @@ npm run dist       # build + electron-builder         → AppImage (Linux), dmg 
 - **Verified on Linux, in CI:** the x86-64 AppImage (`package.json` → `build.linux`, file name
   `ReCut-<version>-linux-x86_64.AppImage`). The `linux` job builds it on `ubuntu-22.04` with FFmpeg bundled and
   launches the AppImage itself (see [Linux in one step](#linux-in-one-step)). To build it yourself:
-  `./scripts/linux/get-ffmpeg.sh && npm run build && npx electron-builder --linux AppImage --x64 --publish never`.
+  `./scripts/linux/get-ffmpeg.sh && ./scripts/linux/get-whisper.sh && npm run build && npx electron-builder --linux AppImage --x64 --publish never`
+  (`get-whisper.sh` compiles the speech-to-text engine from its pinned source: it needs cmake and a C++ compiler and
+  takes a few minutes; without `resources/whisper/` the package has no transcription).
   `npm run package` produces `release/linux-unpacked/` with the `recut` executable.
 - **Not verified:** the macOS dmg. It is configured in `package.json` → `build` but has not been built or tested.
   Code signing (Windows) and notarisation (macOS) are not set up.

@@ -10,7 +10,7 @@ import fs from 'node:fs';
 
 const GGML_FILE_MAGIC = 0x67676d6c; // "ggml"
 
-export interface TestModelDims { state: number; audioCtx: number; textCtx: number; mels: number; vocab: number; textTokens: number }
+export interface TestModelDims { state: number; heads?: number; layers?: number; audioCtx: number; textCtx: number; mels: number; vocab: number; textTokens: number }
 
 // A short text context (whisper.cpp decodes at most half of it per 30 s window) keeps a nonsense decode fast.
 const DIMS: TestModelDims = { state: 64, audioCtx: 1500, textCtx: 32, mels: 80, vocab: 51865, textTokens: 50257 };
@@ -52,7 +52,9 @@ export function buildTestWhisperModel(dims: TestModelDims = DIMS): Buffer {
   w.u32(GGML_FILE_MAGIC);
   // hparams: n_vocab, n_audio_ctx, n_audio_state, n_audio_head, n_audio_layer, n_text_ctx, n_text_state, n_text_head,
   // n_text_layer, n_mels, ftype (1 = f16)
-  w.i32(dims.vocab, dims.audioCtx, n, 1, 1, dims.textCtx, n, 1, 1, dims.mels, 1);
+  const heads = dims.heads ?? 1;
+  const layers = dims.layers ?? 1;
+  w.i32(dims.vocab, dims.audioCtx, n, heads, layers, dims.textCtx, n, heads, layers, dims.mels, 1);
   // mel filters: n_mel, n_fft, n_mel * n_fft floats
   const nFft = 201;
   w.i32(dims.mels, nFft);
@@ -108,18 +110,18 @@ export function buildTestWhisperModel(dims: TestModelDims = DIMS): Buffer {
       tensor(`${p}.${a}.out.weight`, [n, n], true); tensor(`${p}.${a}.out.bias`, [n], false);
     }
   };
-  block('encoder.blocks.0', false);
+  for (let l = 0; l < layers; l++) block(`encoder.blocks.${l}`, false);
   tensor('decoder.positional_embedding', [n, dims.textCtx], false);
   tensor('decoder.token_embedding.weight', [n, dims.vocab], true, 0.5);
   ones('decoder.ln.weight', n);
   tensor('decoder.ln.bias', [n], false);
-  block('decoder.blocks.0', true);
+  for (let l = 0; l < layers; l++) block(`decoder.blocks.${l}`, true);
   return Buffer.concat(w.parts);
 }
 
-/** Write the test model to `file`; returns its size and SHA-256. */
-export function writeTestWhisperModel(file: string): { bytes: number; sha256: string } {
-  const buf = buildTestWhisperModel();
+/** Write the test model to `file` (optionally with other dimensions); returns its size and SHA-256. */
+export function writeTestWhisperModel(file: string, dims?: TestModelDims): { bytes: number; sha256: string } {
+  const buf = buildTestWhisperModel(dims);
   fs.writeFileSync(file, buf);
   return { bytes: buf.length, sha256: crypto.createHash('sha256').update(buf).digest('hex') };
 }
