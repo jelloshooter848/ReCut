@@ -7,8 +7,8 @@
  *     remux fails, passes 2-3 read the source directly.
  *  2. Timing: `ffprobe -show_frames` gives each subtitle's pts, start/end_display_time and num_rects. Timing comes
  *     from here, not from sub2video, whose frame timing changed between FFmpeg 6 and 8.
- *  3. Pixels: sub2video renders the stream to raw ya8 on stdout (`-canvas_size`, x2 below 720 lines, showinfo for
- *     the pts of every frame). Frames are paired with their showinfo pts, reduced to a cropped image + hash, and
+ *  3. Pixels: sub2video renders the stream to raw ya8 on stdout (`-canvas_size`, showinfo for the pts of every
+ *     frame; a `select` keeps only the start of each picture, so about one frame per event is converted and piped). Frames are paired with their showinfo pts, reduced to a cropped image + hash, and
  *     matched to the ffprobe windows by the time FFmpeg's decoder gives them (pts + start_display_time).
  *
  * `assembleEvents` (pure) turns windows + frames into events; `EventAssembler` is the same logic, streaming.
@@ -21,8 +21,12 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { FfmpegError, ffmpegFileArg, getFfprobePath, lineSplitter, runFfmpeg, type FfmpegRun } from '../media/ffmpeg';
+import {
+  adaptFfmpegArgs, FfmpegError, ffmpegFileArg, ffmpegMajorVersionSync, getFfmpegPath, getFfprobePath, lineSplitter, runFfmpeg,
+  type FfmpegRun,
+} from '../media/ffmpeg';
 import { ffmpegMissingMessage } from '../../shared/ipc';
+import { upscaleYa8 } from './preprocess';
 
 // ------------------------------------------------------------------
 // Constants
@@ -43,11 +47,11 @@ export const MIN_EVENT_DURATION = 0.04;
 /** Two events are back to back when the gap between them is at most this (seconds): covers the DVD end-time grid
  * (1024/90000 s, ~11.4 ms) while staying under one frame, so a line repeated after a real gap stays two events. */
 export const BACK_TO_BACK_GAP = 0.02;
-/** Alpha at or above this counts as ink (an x2 bicubic scale leaves faint ringing below it). */
+/** Alpha at or above this counts as ink (ignores faint noise from anti-aliased edges). */
 export const ALPHA_INK = 8;
 /** Transparent margin kept around the ink box of each image (pixels of the rendered canvas). */
 export const IMAGE_PAD = 12;
-/** Canvases with fewer lines than this are rendered at twice the size (OCR wants ~30 px text). */
+/** Event images from canvases with fewer lines than this are delivered at twice the size (OCR wants ~30 px text). */
 export const UPSCALE_BELOW_HEIGHT = 720;
 /** Rendered frames allowed to wait for their showinfo pts before extraction fails. */
 const MAX_FRAMES_WITHOUT_PTS = 256;
@@ -272,6 +276,9 @@ export class EventAssembler<P = unknown> {
     this.fallback = null;
     if (w.numRects <= 0 || !img) {
       this.prevWindowHash = null;
+      // Nothing that follows can merge into the held event if the next window starts after a real gap: emit it now.
+      const next = this.windows[k + 1];
+      if (this.pending && (!next || next.start > this.pending.end + BACK_TO_BACK_GAP)) this.flushPending();
       return;
     }
     this.prevWindowHash = img.hash;
@@ -323,7 +330,7 @@ export interface Ya8Image {
 }
 
 export interface CroppedImage extends Ya8Image {
-  /** Position of the crop in the rendered canvas (rendered pixels: canvas x scale). */
+  /** Position of the crop on the canvas, in image pixels (canvas pixels x `scale`). */
   x: number;
   y: number;
 }
@@ -430,7 +437,7 @@ export interface BitmapEvent {
   imageId: number;
   /** First event showing this image: OCR it; later events with the same imageId reuse the text. */
   isNewImage: boolean;
-  /** The image cropped to its ink (+IMAGE_PAD), ya8, in rendered pixels (canvas x `scale`). */
+  /** The image cropped to its ink (+IMAGE_PAD), ya8; upscaled x`canvas.scale` for small canvases. */
   image: CroppedImage;
 }
 
@@ -544,10 +551,53 @@ export function chooseCanvas(codec: string, streamSize: { width?: number; height
   return { width: Math.min(8192, w + (w % 2)), height: Math.min(8192, h + (h % 2)) };
 }
 
-/** Pass 3 filter graph for input stream `inputStream` of file 0. */
-export function sub2videoGraph(inputStream: number, scale: number): string {
-  const s = scale > 1 ? `scale=iw*${scale}:ih*${scale}:flags=bicubic,` : '';
-  return `[0:${inputStream}]${s}format=ya8,settb=AVTB,showinfo[o]`;
+/** Seconds of each event window that pass 3 renders (sub2video draws the picture at the window start). */
+export const SELECT_SPAN = 0.25;
+/** Margin (seconds) before a window start: below FFmpeg 6's 1-tick-early repeat of the old picture on a 1 ms grid. */
+const SELECT_LEAD = 0.0005;
+
+/**
+ * Time ranges [a, b] (seconds, file timeline) whose sub2video frames pass 3 keeps: the first SELECT_SPAN of every
+ * window that has pixels, stopping short of the next window. Clears and the repeats sub2video adds near the end of a
+ * subtitle are dropped before the (costly) pixel format conversion: about 1 frame per event instead of 3-4.
+ */
+export function selectRanges(windows: TimingWindow[]): [number, number][] {
+  const out: [number, number][] = [];
+  windows.forEach((w, k) => {
+    if (w.numRects <= 0) return;
+    const next = windows[k + 1];
+    const a = w.matchUs / 1e6 - SELECT_LEAD;
+    const b = Math.min(w.matchUs / 1e6 + SELECT_SPAN, next ? next.matchUs / 1e6 : Number.POSITIVE_INFINITY) - SELECT_LEAD;
+    if (!(b > a)) return;
+    const last = out[out.length - 1];
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
+  });
+  return out;
+}
+
+/**
+ * FFmpeg expression true when `t` is in one of the (sorted, disjoint) ranges: a balanced if(lt(t,…)) tree, so
+ * evaluation and parsing recurse only log2(n) deep (a flat sum of 10,000 terms could overflow a thread stack) and
+ * each frame costs log2(n) comparisons.
+ */
+export function selectExpression(ranges: [number, number][]): string {
+  const f = (x: number) => x.toFixed(6);
+  const build = (lo: number, hi: number): string => {
+    if (hi - lo === 1) return `between(t,${f(ranges[lo][0])},${f(ranges[lo][1])})`;
+    const mid = (lo + hi) >> 1;
+    return `if(lt(t,${f(ranges[mid][0])}),${build(lo, mid)},${build(mid, hi)})`;
+  };
+  return ranges.length ? build(0, ranges.length) : '0';
+}
+
+/**
+ * Pass 3 filter graph for input stream `inputStream` of file 0. With `ranges`, only frames in them are kept (the
+ * graph is then long: pass it with -filter_complex_script).
+ */
+export function sub2videoGraph(inputStream: number, ranges?: [number, number][]): string {
+  const sel = ranges ? `select='${selectExpression(ranges)}',` : '';
+  return `[0:${inputStream}]${sel}format=ya8,settb=AVTB,showinfo[o]`;
 }
 
 /**
@@ -613,7 +663,10 @@ export async function extractBitmapEvents(opts: ExtractBitmapEventsOptions): Pro
     }
 
     // ---- pass 3: pixels
-    const W = canvas.width * scale, H = canvas.height * scale;
+    // Rendered at the canvas size; small canvases are upscaled per event image in JS (upscaleYa8), which costs far less
+    // than scaling every full frame in FFmpeg.
+    const W = canvas.width, H = canvas.height;
+    const nativePad = Math.ceil(IMAGE_PAD / scale);
     const frameBytes = W * H * 2;
     let cur = Buffer.allocUnsafeSlow(frameBytes);
     let prev = Buffer.allocUnsafeSlow(frameBytes);
@@ -635,7 +688,9 @@ export async function extractBitmapEvents(opts: ExtractBitmapEventsOptions): Pro
     let index = 0;
 
     const assembler = new EventAssembler<CroppedImage>(windows, duration, (ev) => {
-      queue.push({ index: index++, start: ev.start, end: ev.end, imageId: ev.imageId, isNewImage: ev.isNewImage, image: ev.payload! });
+      const crop = ev.payload!;
+      const image: CroppedImage = scale > 1 ? { ...upscaleYa8(crop, scale), x: crop.x * scale, y: crop.y * scale } : crop;
+      queue.push({ index: index++, start: ev.start, end: ev.end, imageId: ev.imageId, isNewImage: ev.isNewImage, image });
       notify();
     });
 
@@ -661,7 +716,7 @@ export async function extractBitmapEvents(opts: ExtractBitmapEventsOptions): Pro
       pixelFrames++;
       let a: FrameAnalysis;
       if (prevAnalysis && cur.equals(prev)) a = prevAnalysis;
-      else a = analyzeYa8Frame(cur, W, H);
+      else a = analyzeYa8Frame(cur, W, H, nativePad);
       prevAnalysis = a;
       const t = prev; prev = cur; cur = t;
       pendingFrames.push(a);
@@ -713,8 +768,14 @@ export async function extractBitmapEvents(opts: ExtractBitmapEventsOptions): Pro
       render?.cancel();
     });
 
-    render = runFfmpeg(['-copyts', '-canvas_size', `${canvas.width}x${canvas.height}`, '-i', readArg,
-      '-filter_complex', sub2videoGraph(readStream, scale), '-map', '[o]', '-fps_mode', 'passthrough', '-f', 'rawvideo', '-pix_fmt', 'ya8', '-'], {
+    const graphFile = path.join(tmp, 'graph.txt');
+    await fsp.writeFile(graphFile, sub2videoGraph(readStream, selectRanges(windows)), 'utf8');
+    const ffBin = getFfmpegPath();
+    // -filter_complex_script is spelled -/filter_complex from FFmpeg 7 on.
+    const renderArgs = adaptFfmpegArgs(['-copyts', '-canvas_size', `${canvas.width}x${canvas.height}`, '-i', readArg,
+      '-filter_complex_script', graphFile, '-map', '[o]', '-fps_mode', 'passthrough', '-f', 'rawvideo', '-pix_fmt', 'ya8', '-'],
+    ffBin ? ffmpegMajorVersionSync(ffBin) : 0);
+    render = runFfmpeg(renderArgs, {
       stdout: 'data',
       loglevel: 'info',
       stderrLines: 60,
