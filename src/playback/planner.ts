@@ -17,6 +17,7 @@
  */
 import type { Clip, ClipTransform, ID, MediaItem, Rational, Sequence, Track, Transition } from '../../shared/model';
 import { clipEnd, sourceTimeAt } from '../../shared/timeline';
+import { envelopeAt } from '../../shared/nest';
 import { audioTrackOrdinal, channelProxyPendingReason, clipChannelProxy, mediaFps, mediaSize, mediaTimeOffset, previewUpmixGain, proxyAudioStreams, resolveAudioStream, resolvePlaybackPath } from './mediaSource';
 
 export interface LayerPlan {
@@ -227,6 +228,8 @@ function contribute(idx: TrackIndex, clip: Clip, frame: number, out: Contributio
     }
   }
   if (!inside) return;
+  // Ramps of a flattened nested sequence (shared/nest.ts): transitions at a nested clip's edges, moved fades.
+  weight *= envelopeAt(clip, frame);
   out.push({ clip, weight: clamp01(weight), handle });
 }
 

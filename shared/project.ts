@@ -11,6 +11,7 @@ import { isValidFps, parseFps } from './time';
 import { saneSar } from './media';
 import { CHANNEL_PROXY_KEY, normalizeChannelSelection } from './audioChannels';
 import { formatProjectJson } from './projectJson';
+import { nestingRepairs } from './nest';
 import {
   MAX_TIMELINE_FRAMES, MAX_SOURCE_SECONDS, MAX_PROJECT_DEPTH, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX, PROXY_HEIGHTS,
   AUTOSAVE_INTERVAL_MIN_SEC, AUTOSAVE_INTERVAL_MAX_SEC, DEFAULT_TRANSITION_FRAMES_MIN, DEFAULT_TRANSITION_FRAMES_MAX,
@@ -198,6 +199,7 @@ function normalizeInner(raw: unknown): Project {
   }
   repairBins(out);
   repairPrototypeRefs(out);
+  repairNesting(out);
   return out;
 }
 
@@ -567,6 +569,12 @@ function repairClip(c: Obj, trackKind: Track['kind']): Clip {
   if (c.kind !== 'video' && c.kind !== 'audio') { if (c.kind !== undefined) note(FIELD_RESET); c.kind = trackKind; }
   optional(c, 'audioStream', isNonNegInt);
   optional(c, 'color', isStr); optional(c, 'sceneRecordId', isStr); optional(c, 'originLabel', isStr);
+  // Nested sequence (Roadmap §8): the clip's media id is the sequence id and it plays at speed 1 (shared/nest.ts).
+  optional(c, 'sequenceId', (v) => isStr(v) && v !== '');
+  if (isStr(c.sequenceId)) {
+    if (c.mediaId !== c.sequenceId) { c.mediaId = c.sequenceId; note(FIELD_RESET); }
+    if (c.speed !== 1) { c.speed = 1; note(FIELD_RESET); }
+  }
   return c as unknown as Clip;
 }
 const SPEED_MIN = SPEED_PERCENT_MIN / 100;
@@ -754,6 +762,34 @@ function retargetTransitions(track: Track, renamedFrom: Map<Clip, ID>): void {
     }
     if (a) tr.outClipId = a.id;
     if (b) tr.inClipId = b.id;
+  }
+}
+
+/**
+ * Nested sequences (Roadmap §8): a reference that only resolves through Object.prototype is removed, and so is every
+ * reference that closes a cycle (A in B in A) or nests deeper than MAX_NEST_DEPTH (shared/nest.ts nestingRepairs):
+ * those clips stay where they are as clips of missing media. A reference to a sequence that is not in the project
+ * stays (the clip renders as offline, like missing media).
+ */
+function repairNesting(p: Project): void {
+  const seqs: Omit<Sequence, 'snapshots'>[] = [];
+  for (const s of Object.values(p.sequences)) { seqs.push(s); for (const sn of s.snapshots) seqs.push(sn.data); }
+  let any = false;
+  for (const s of seqs) {
+    for (const t of [...s.videoTracks, ...s.audioTracks]) for (const c of t.clips) {
+      if (c.sequenceId === undefined) continue;
+      if (inheritedOnly(p.sequences, c.sequenceId)) { delete c.sequenceId; note('nested sequence reference that is not a sequence id cleared'); continue; }
+      any = true;
+    }
+  }
+  if (!any) return;
+  for (const [host, child] of nestingRepairs(p.sequences, p.sequenceOrder)) {
+    const seq = p.sequences[host];
+    for (const t of [...seq.videoTracks, ...seq.audioTracks]) for (const c of t.clips) {
+      if (c.sequenceId === child) { delete c.sequenceId; note('nested sequence that contained itself or was nested too deep made offline'); }
+    }
+    // New track lists: shared/nest.ts caches the references per list.
+    seq.videoTracks = [...seq.videoTracks]; seq.audioTracks = [...seq.audioTracks];
   }
 }
 

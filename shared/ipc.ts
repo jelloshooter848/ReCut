@@ -194,6 +194,11 @@ export interface SceneDetectResult { boundaries: number[]; duration: number }
 
 export interface ExportRequest {
   sequence: Sequence;
+  /**
+   * The project sequences `sequence` nests (transitively, keyed by id; shared/nest.ts nestedSequencesFor), which the
+   * export flattens into the outer timeline. Absent or empty when it nests none.
+   */
+  sequences?: Record<ID, Sequence>;
   media: Record<ID, MediaItem>;
   settings: ExportSettings;
   /** Sequence subtitle cues, already resolved to seconds. */

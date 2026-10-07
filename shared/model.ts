@@ -230,6 +230,12 @@ export interface Clip {
   sceneRecordId?: ID;   // if created from library scene
   /** Marks when this clip was dragged in from a detected scene / transcript cue */
   originLabel?: string;
+  /**
+   * Nested sequence (Roadmap §8, shared/nest.ts): the clip plays this project sequence instead of a media file.
+   * `mediaId` then holds the same id (no media item has it), `sourceIn` is seconds of the inner sequence's
+   * timeline and `speed` is 1. Absent on every other clip (and in every project saved before 0.12).
+   */
+  sequenceId?: ID;
 }
 
 export interface Track {

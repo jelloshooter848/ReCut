@@ -15,6 +15,7 @@ import { clipEnd, sequenceDuration } from '@shared/timeline';
 import { activeTracks, planTrackSegments, widenRangeForTransitions, type ClipSeg, type TrackPlan } from '@shared/exportPlan';
 import { framesToSeconds, isValidFps } from '@shared/time';
 import { serializeSrt } from '@shared/subtitles';
+import { flatOrigin, flattenSequence, flattenWarnings, trackGroupId } from '@shared/nest';
 import { videoDisplaySize } from '@shared/media';
 import { audioStreamInfo, channelPanFilter, channelSelectionLabel, channelSelectionProblem } from '@shared/audioChannels';
 import {
@@ -493,9 +494,41 @@ function videoSegment(ctx: Ctx, seg: ClipSeg): string {
   f.push(`tpad=stop=${totalFrames}:stop_mode=clone`, `trim=end_frame=${totalFrames}`, 'setpts=PTS-STARTPTS');
   if (seg.fadeIn) f.push(`fade=t=in:st=0:d=${sec(seg.fadeIn * ctx.fd)}`);
   if (seg.fadeOut) f.push(`fade=t=out:st=${sec((totalFrames - seg.fadeOut) * ctx.fd)}:d=${sec(seg.fadeOut * ctx.fd)}`);
+  f.push(...envelopeFilters(ctx, seg, 'video', totalFrames));
   const label = newLabel(ctx, 'v');
   ctx.chains.push(`[${index}:v:0]${f.join(',')}${label}`);
   return label;
+}
+
+/**
+ * Ramps of a clip of a flattened nested sequence (shared/nest.ts Envelope): alpha fades for video, gain fades for
+ * audio, at absolute timeline frames (the preview planner multiplies the same ramps per frame). A ramp that starts
+ * before the segment's first frame is applied on a stream padded at the front, then the padding is cut off again.
+ */
+function envelopeFilters(ctx: Ctx, seg: ClipSeg, kind: 'video' | 'audio', totalFrames: number): string[] {
+  const o = flatOrigin(seg.clip);
+  if (!o || o.env.length === 0) return [];
+  const first = ctx.rangeStartF + seg.start - seg.extBefore; // absolute frame of the segment's first output frame
+  const f: string[] = [];
+  for (const e of o.env) {
+    const a = e.from - first, b = e.to - first;
+    if (!(b > a)) continue;
+    if (e.dir > 0 ? b <= 0 : a >= totalFrames) continue; // the ramp is over (or not started) for the whole segment
+    const t = e.dir > 0 ? 'in' : 'out';
+    if (kind === 'video') {
+      const pre = a < 0 ? Math.ceil(-a) : 0;
+      if (pre) f.push(`tpad=start=${pre}:start_mode=clone`);
+      f.push(`fade=t=${t}:st=${sec((a + pre) * ctx.fd)}:d=${sec((b - a) * ctx.fd)}:alpha=1`);
+      if (pre) f.push(`trim=start_frame=${pre}`, 'setpts=PTS-STARTPTS');
+    } else {
+      const aSec = a * ctx.fd;
+      const pre = aSec < 0 ? Math.ceil(-aSec * ctx.SR - 1e-9) : 0;
+      if (pre) f.push(`adelay=delays=${pre}S:all=1`);
+      f.push(`afade=t=${t}:st=${sec(aSec + pre / ctx.SR)}:d=${sec((b - a) * ctx.fd)}`);
+      if (pre) f.push(`atrim=start_sample=${pre}`, 'asetpts=PTS-STARTPTS');
+    }
+  }
+  return f;
 }
 
 function videoGap(ctx: Ctx, frames: number): string {
@@ -610,6 +643,7 @@ function audioSegment(ctx: Ctx, seg: ClipSeg): string {
   if (seg.fadeIn) f.push(`afade=t=in:st=0:d=${sec(seg.fadeIn * ctx.fd)}`);
   if (seg.fadeOut) f.push(`afade=t=out:st=${sec(lenSec - seg.fadeOut * ctx.fd)}:d=${sec(seg.fadeOut * ctx.fd)}`);
   f.push(`apad=whole_dur=${sec(lenSec)}`, `atrim=duration=${sec(lenSec)}`, 'asetpts=PTS-STARTPTS');
+  f.push(...envelopeFilters(ctx, seg, 'audio', totalFrames));
   const label = newLabel(ctx, 'a');
   ctx.chains.push(`${inLabel}${f.join(',')}${label}`);
   return label;
@@ -924,9 +958,21 @@ function buildBurnInSrt(req: ExportRequest, startF: number, endF: number): strin
   return out.length ? serializeSrt(out) : null;
 }
 
+/**
+ * The sequence an export renders: the request's sequence with its nested sequences (`req.sequences`) flattened into
+ * media clips (shared/nest.ts flattenSequence; memoized, so every chunk of an export shares it). Tracks made for
+ * nested content belong to their outer track (trackGroupId) for the audio mixes.
+ */
+export function renderSequence(req: ExportRequest): Sequence {
+  return flattenSequence(req.sequence, req.sequences ?? {}, req.media);
+}
+
 export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = {}): RenderGraph {
-  const { sequence: seq, media, settings } = req;
-  const warnings: string[] = [];
+  const { sequence: outer, media, settings } = req;
+  // Nested sequences are expanded into media clips (Roadmap §8): ranges, chapters, subtitles and the audio output
+  // plan read the outer sequence; segments, transitions and mixes the flattened one.
+  const seq = renderSequence(req);
+  const warnings: string[] = [...flattenWarnings(seq)];
   const container = exportContainer(settings);
   const audioOnly = CONTAINERS[container].audioOnly;
   // Output frame rate. Everything on the timeline (trims, transitions, fades, subtitles, audio) is computed at
@@ -962,12 +1008,12 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   // `-c:a ... -ac N`. Every sequence track is rendered once, at the widest output layout (`layout`), and each output
   // mixes its tracks from there into its own layout.
   const packaging = supportsPackaging(settings) && opts.audioTrackId === undefined;
-  const outPlans = audioOutputPlan(seq.audioTracks ? seq : { audioTracks: [] }, settings);
+  const outPlans = audioOutputPlan(outer.audioTracks ? outer : { audioTracks: [] }, settings);
   if (!packaging) outPlans.splice(1);
   const channels = packaging ? outPlans[0].channels : settings.audioChannels === 6 ? 6 : 2;
   const layout = packaging ? workingLayout(outPlans) : channels === 6 ? '5.1' : 'stereo';
 
-  let { startF, endF } = resolveRange(seq, settings, warnings);
+  let { startF, endF } = resolveRange(outer, settings, warnings);
   const exportStartF = startF, exportEndF = endF;
   if (opts.range) {
     const r = opts.range;
@@ -978,7 +1024,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   }
   const frameCount = endF - startF;
   if (frameCount <= 0) throw new Error('Nothing to export: the range is empty.');
-  if (!opts.range && !hasEnabledClipInRange(seq, startF, endF, audioOnly)) {
+  if (!opts.range && !hasEnabledClipInRange(outer, startF, endF, audioOnly)) {
     throw new Error(audioOnly ? 'Nothing to export: no enabled audio clips in the selected range.' : 'Nothing enabled to export in the selected range');
   }
   const wantVideo = opts.streams !== 'audio' && !audioOnly;
@@ -986,7 +1032,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   if (audioOnly && opts.streams === 'video') throw new Error('An audio-only export has no video to render.');
   if (audioOnly && settings.burnSubtitles && req.subtitles?.length) warnings.push('Subtitle burn-in does not apply to an audio-only export (there is no picture); subtitles were not burned in.');
   const trackFilter = opts.audioTrackId;
-  if (trackFilter !== undefined && !activeTracks(seq.audioTracks).some((t) => t.id === trackFilter)) {
+  if (trackFilter !== undefined && !activeTracks(outer.audioTracks).some((t) => t.id === trackFilter)) {
     throw new Error(`Audio track ${String(trackFilter)} is not rendered by this export (muted, not soloed or missing).`);
   }
   assertOutputNotASource(req, exportOutputPath(settings), opts);
@@ -1065,7 +1111,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
       : outPlans.map((p) => ({ ids: new Set(p.mixed), layout: packaging ? p.layout : layout }));
     const trackLabels = new Map<ID, string[]>();
     for (const track of activeTracks(seq.audioTracks)) {
-      const uses = mixes.filter((m) => m.ids.has(track.id)).length;
+      const uses = mixes.filter((m) => m.ids.has(trackGroupId(track))).length;
       if (uses === 0) continue;
       const plan = planTrackSegments(track, seq, media, renderStartF, renderEndF, 'audio', warnings);
       const label = audioTrack(ctx, plan);
@@ -1087,7 +1133,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
     mixes.forEach((mix, i) => {
       const out = audioOutputLabel(i);
       const labels: string[] = [];
-      for (const track of activeTracks(seq.audioTracks)) if (mix.ids.has(track.id)) { const l = trackLabels.get(track.id)?.shift(); if (l) labels.push(l); }
+      for (const track of activeTracks(seq.audioTracks)) if (mix.ids.has(trackGroupId(track))) { const l = trackLabels.get(track.id)?.shift(); if (l) labels.push(l); }
       const ml = mix.layout;
       if (labels.length === 0) {
         ctx.chains.push(`anullsrc=r=${SR}:cl=${ml}:d=${sec(durationSec + 0.1)},aformat=sample_fmts=fltp,atrim=duration=${sec(durationSec)},asetpts=PTS-STARTPTS${tail}${out}`);
@@ -1116,7 +1162,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   if (packaging && !opts.range && !opts.streams) {
     // Names and languages from the sequence's tracks, cues from the request (resolved to seconds by the dialog).
     const cueTracks = Array.isArray(req.subtitleTracks) ? req.subtitleTracks.filter((t) => t && typeof t.id === 'string') : [];
-    const seqTracks = (Array.isArray(seq.subtitleTracks) ? seq.subtitleTracks : []).filter((t) => t && typeof t.id === 'string')
+    const seqTracks = (Array.isArray(outer.subtitleTracks) ? outer.subtitleTracks : []).filter((t) => t && typeof t.id === 'string')
       .map((t) => ({ id: t.id, name: String(t.name ?? ''), language: String(t.language ?? '') }));
     for (const p of subtitleOutputPlan(seqTracks, settings)) {
       const t = cueTracks.find((x) => x.id === p.track.id);
@@ -1143,7 +1189,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   // A converted video can end up to half an output frame after the audio: never cut its last frame.
   const outputSec = wantVideo ? Math.max(durationSec, outputDurationSec) : durationSec;
   // Chapters: the whole export only (a chunked export writes them when joining the chunks, exporter.ts).
-  const chapters = opts.range || !cinfo.chapters ? [] : exportChapters(seq, startF, endF, outputSec);
+  const chapters = opts.range || !cinfo.chapters ? [] : exportChapters(outer, startF, endF, outputSec);
   const chaptersContent = chapters.length ? ffmetadataChapters(chapters) : undefined;
   let chaptersInput: number | null = null;
   const args: string[] = ['-hide_banner', '-nostdin', '-y', ...inputArgs];

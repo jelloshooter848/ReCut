@@ -9,6 +9,7 @@ import { resolveSubtitleCues } from '@shared/timeline';
 import { sidecarCandidates } from '@/transcript/providers';
 import { sequenceHasSubtitles } from './settings';
 import { subtitleOutputPlan } from '@shared/exportFormat';
+import { nestedSequencesFor } from '@shared/nest';
 
 /**
  * The parts of the project an export request is built from. `sequences` (for files imported into the
@@ -82,8 +83,10 @@ export function buildExportRequest(project: ExportProjectSources, seq: Sequence,
     ? resolveSubtitleCues(seq).map((c) => ({ start: framesToSeconds(c.start, seq.fps), end: framesToSeconds(c.end, seq.fps), text: c.text }))
     : undefined;
   const subtitleTracks = softSubtitleTracks(seq, settings);
+  // Nested sequences (Roadmap §8) travel with the request: the export flattens them into this timeline.
+  const nested = nestedSequencesFor(seq, project.sequences ?? {});
   return {
-    sequence: seq, media: project.media, settings: { ...settings, useProxies: false }, subtitles, ...(subtitleTracks ? { subtitleTracks } : {}),
+    sequence: seq, ...(Object.keys(nested).length ? { sequences: nested } : {}), media: project.media, settings: { ...settings, useProxies: false }, subtitles, ...(subtitleTracks ? { subtitleTracks } : {}),
     // `seq` may be an edited copy of the project's sequence: its own imported subtitle files count too.
     protectedPaths: [...new Set([...projectSourcePaths(project), ...sequenceSubtitleSources(seq.subtitleTracks)])],
   };
