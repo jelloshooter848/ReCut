@@ -14,7 +14,15 @@ import { SCRUB_REST_MS, SequencePlayer } from '../../src/playback/sequencePlayer
 // ------------------------------------------------------------------ fake DOM
 
 class FakeMedia {
-  constructor(public tag: 'video' | 'audio' = 'video') {}
+  constructor(public tag: 'video' | 'audio' = 'video') {
+    // Opt-in (withVfc): the tests above model an element without requestVideoFrameCallback.
+    if (withVfc && tag === 'video') this.requestVideoFrameCallback = (cb) => { this.vfcs.push(cb); return this.vfcs.length; };
+  }
+  requestVideoFrameCallback?: (cb: () => void) => number;
+  cancelVideoFrameCallback(): void { this.vfcs = []; }
+  vfcs: (() => void)[] = [];
+  /** Source time of the frame the element's compositor holds: what drawImage paints (Chromium updates it off-thread). */
+  shown = 0;
   attrs = new Map<string, string>();
   listeners = new Map<string, Set<() => void>>();
   preload = ''; playsInline = false; muted = false; defaultMuted = false; loop = false; controls = false; disableRemotePlayback = false;
@@ -39,18 +47,29 @@ class FakeMedia {
   load(): void { this.readyState = this.attrs.has('src') ? 1 : 0; }
   pause(): void { this.paused = true; }
   play(): Promise<void> { this.paused = false; return Promise.resolve(); }
-  /** Complete a pending seek / load: data available at currentTime, 'seeked' fires. */
-  land(): void {
+  /**
+   * Complete a pending seek / load: data available at currentTime, 'seeked' fires. `present: false` models the race
+   * seen in Chromium under load: 'seeked' fires before the landed frame reaches the compositor (present() later).
+   */
+  land(present = true): void {
     if (!this.attrs.has('src')) return;
     const was = this.seeking || this.readyState < 2;
     this.seeking = false; this.readyState = 4;
+    if (present) this.present();
     if (was) for (const cb of [...(this.listeners.get('seeked') ?? [])]) cb();
+  }
+  /** The frame at currentTime reaches the compositor; video frame callbacks run in the next rendering step. */
+  present(): void {
+    this.shown = this.t;
+    const cbs = this.vfcs; this.vfcs = [];
+    for (const cb of cbs) rafs.push(cb);
   }
 }
 
 let media: FakeMedia[] = [];
-/** Every drawImage of a video: the element and the source time it showed. */
-let drawn: { el: FakeMedia; t: number }[] = [];
+let withVfc = false;
+/** Every drawImage of a video: the element, its currentTime and the source time of the frame it painted. */
+let drawn: { el: FakeMedia; t: number; shown: number }[] = [];
 let fills = 0;
 let rafs: (() => void)[] = [];
 let now = 1000;
@@ -68,7 +87,7 @@ class FakeAudioContext {
 function fakeCanvas(): HTMLCanvasElement {
   const ctx = new Proxy({}, {
     get: (_t, k) => {
-      if (k === 'drawImage') return (el: FakeMedia) => { drawn.push({ el, t: el.currentTime }); };
+      if (k === 'drawImage') return (el: FakeMedia) => { drawn.push({ el, t: el.currentTime, shown: el.shown }); };
       if (k === 'fillRect') return () => { fills++; };
       return () => {};
     },
@@ -78,7 +97,7 @@ function fakeCanvas(): HTMLCanvasElement {
 }
 
 beforeEach(() => {
-  media = []; drawn = []; fills = 0; rafs = []; now = 1000;
+  media = []; drawn = []; fills = 0; rafs = []; now = 1000; withVfc = false;
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   vi.spyOn(performance, 'now').mockImplementation(() => now);
   vi.stubGlobal('document', { createElement: (tag: string) => { if (tag !== 'video' && tag !== 'audio') throw new Error(tag); const v = new FakeMedia(tag); media.push(v); return v; } });
@@ -253,5 +272,58 @@ describe('SequencePlayer scrubbing', () => {
     for (const m of media) expect(m.paused).toBe(false);
     player.pause();
     player.destroy();
+  });
+});
+
+describe("SequencePlayer: the landed frame reaches the compositor after 'seeked'", () => {
+  // bugs/closed/2026-10-07-program-stale-frame-after-seek.md: under load Chromium fires 'seeked' (readyState 4, not
+  // seeking) before the landed frame is in the element's compositor, so a draw at 'seeked' paints the previous frame.
+  // The picture was keyed on currentTime, so that stale frame stayed on screen at rest.
+
+  /** V1: 1-3 s of A at frames 0-47, 5-7 s of A at 48-95: both clips share one pooled element (program.spec.ts:327). */
+  function cutSequence(): Sequence {
+    const s = createSequence('cut', FPS, 1920, 1080);
+    s.videoTracks[0].clips.push(clip('c0', 'A', 0, 48, 1, 'video'), clip('c1', 'A', 48, 48, 5, 'video'));
+    return s;
+  }
+  const cutTarget = (f: number) => (f < 48 ? 1 + f / 24 : 5 + (f - 48) / 24) + 0.5 / 24;
+  const lastShown = () => drawn[drawn.length - 1].shown;
+
+  it('a cut back to the first clip of the same file repaints once the landed frame is presented', () => {
+    withVfc = true;
+    const { player } = setup(cutSequence());
+    const el = videos()[0];
+    expect(videos()).toHaveLength(1);
+    player.seek(70); frame(); el.land(); frame(); rest();
+    expect(lastShown()).toBeCloseTo(cutTarget(70), 9);
+    player.seek(10); frame();
+    el.land(false); // 'seeked' fires; the compositor still holds the 5.9 s frame
+    expect(lastShown()).toBeCloseTo(cutTarget(70), 9); // the stale draw (what the e2e test caught)
+    frame(); rest();
+    el.present(); frame(); frame();
+    expect(drawn[drawn.length - 1].t).toBeCloseTo(cutTarget(10), 9);
+    expect(lastShown()).toBeCloseTo(cutTarget(10), 9);
+    player.destroy();
+  });
+
+  it('a seek that lands after the playhead rests repaints once the landed frame is presented', () => {
+    withVfc = true;
+    const { player } = setup();
+    const top = byFile('C');
+    player.seek(240); frame(); rest();
+    for (const m of media) if (m !== top) m.land(); // the occluded layers and audio, parked by the rest update
+    top.land(false); frame();
+    expect(lastShown()).toBeCloseTo(target(0), 9); // the stale draw: the frame shown before the seek
+    top.present(); frame(); frame();
+    expect(lastShown()).toBeCloseTo(target(240), 9);
+    player.destroy();
+  });
+
+  it('stops asking for video frames when the player is destroyed', () => {
+    withVfc = true;
+    const { player } = setup();
+    expect(videos().every((v) => v.vfcs.length === 1)).toBe(true);
+    player.destroy();
+    expect(videos().every((v) => v.vfcs.length === 0)).toBe(true);
   });
 });

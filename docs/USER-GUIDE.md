@@ -135,6 +135,46 @@ Reading the same stream again replaces that track (undo restores the previous on
 cached. OCR is not perfect: italics, coloured text, signs drawn into the picture and unusual fonts can come out
 wrong, so check the lines you rely on. Teletext and ARIB captions are not supported.
 
+### Transcribing speech (Whisper)
+
+Sources without subtitles can get a transcript from their audio. ReCut has a speech recognition engine built in
+(whisper.cpp) and turns speech into an ordinary subtitle track that Transcript search, jump-to-source and series
+search use. It runs on your computer: **nothing is uploaded, and transcribing never uses the network.**
+
+1. Install a model once: **File › Transcription Models…** (also in **Preferences › Transcription models › Manage…**).
+   Each model shows its size; click **Install**. A download can be cancelled, and a stopped download resumes where
+   it stopped (**Resume**). **Install from file…** installs a `ggml-<model>.bin` you downloaded elsewhere (for
+   computers without internet access); ReCut checks every model against a fixed checksum before installing or using
+   it. The footer shows how much disk space the models use; **Remove** deletes one, **Open folder** shows where they
+   are (`whisper/models` in ReCut's user-data folder, so updates keep them).
+
+   | Model | Size | |
+   |---|---|---|
+   | Tiny | 78 MB | fastest, least accurate |
+   | Base / Base (English) | 148 MB | fast; fine for searching clear dialogue |
+   | Small / Small (English) | 488 MB | balanced (a good first choice) |
+   | Medium | 1.5 GB | more accurate, slow on a CPU |
+   | Large v3 Turbo | 1.6 GB | most accurate; needs the most memory |
+
+   The "(English)" models only transcribe English, a little more accurately; the others know about 100 languages.
+2. Select one or more media and open **Transcript › Import › Transcribe… › Local Whisper…**, or right-click the media
+   in the Project panel › **Transcribe with Whisper…**.
+3. In **Transcribe with Whisper**, tick the media to transcribe (others with audio can be added; a filter helps in
+   long projects) and, when a media has several audio streams, choose the stream. Choose the **Model** (installed
+   ones; **Manage models…** opens the model list) and the **Language** spoken: the stream's language tag is used
+   when it has one, otherwise **Auto-detect** (which listens to the start of the audio). **Translate the speech to
+   English** is off by default.
+4. Click **Transcribe**. Each media becomes one job in the **Jobs** list with its progress; cancel it there. Long
+   films are processed in parts of up to 30 minutes, cut at quiet moments.
+5. When a job finishes, a toast says how many lines were transcribed and the media gets a track named, for example,
+   "English (Whisper Small)" ("French (Whisper Small, #2)" when the media has more than one audio stream, "English
+   (Whisper Small, translated)" for a translation).
+
+Transcribing the same stream again (for example with a bigger model) replaces that track in one undo step; repeating
+the same settings is instant, because results are cached. Whisper is good but not perfect: names, songs, shouting,
+overlapping voices and quiet lines can be misheard or missed, and it does not say who is speaking. See
+[LIMITATIONS](LIMITATIONS.md) for speed.
+
 ## 5. Search dialogue across the franchise
 
 1. Open the **Transcript** panel (Shift+6) › **Search**. Type a phrase, e.g. `doctor`.

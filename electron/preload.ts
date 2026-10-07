@@ -5,6 +5,7 @@
 import { contextBridge, ipcRenderer, webUtils, IpcRendererEvent } from 'electron';
 import type { AppPreferences, ID, JobInfo, Project } from '../shared/model';
 import type { OcrRequest } from '../shared/ocr';
+import type { TranscribeRequest } from '../shared/whisper';
 import type { UpdateCheckSetting, UpdateStatus } from '../shared/update';
 import type { CollectRequest } from '../shared/collect';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
@@ -91,6 +92,12 @@ const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
   ocrInstallLanguage: (code: string) => ipcRenderer.invoke(IPC.ocrInstallLanguage, code),
   ocrRemoveLanguage: (code: string) => ipcRenderer.invoke(IPC.ocrRemoveLanguage, code),
   ocrInstallLanguageFromFile: (code: string, path: string) => ipcRenderer.invoke(IPC.ocrInstallLanguageFromFile, code, path),
+  startTranscribe: (req: TranscribeRequest) => ipcRenderer.invoke(IPC.whisperStart, req),
+  whisperEngine: () => ipcRenderer.invoke(IPC.whisperEngine),
+  whisperModels: () => ipcRenderer.invoke(IPC.whisperModels),
+  whisperInstallModel: (id: string) => ipcRenderer.invoke(IPC.whisperInstallModel, id),
+  whisperRemoveModel: (id: string) => ipcRenderer.invoke(IPC.whisperRemoveModel, id),
+  whisperInstallModelFromFile: (id: string, path: string) => ipcRenderer.invoke(IPC.whisperInstallModelFromFile, id, path),
 
   listJobs: () => ipcRenderer.invoke(IPC.jobsList),
   cancelJob: (id: ID) => ipcRenderer.invoke(IPC.jobsCancel, id),

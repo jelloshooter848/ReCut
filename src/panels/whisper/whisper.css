@@ -1,0 +1,25 @@
+/* Transcription Models dialog (WhisperModelsDialog.tsx) */
+.wm-note { margin: 0; line-height: 1.45; }
+.wm-list { display: flex; flex-direction: column; max-height: 360px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-1); }
+.wm-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 64px minmax(96px, auto); align-items: center; gap: 8px;
+  min-height: 40px; padding: 4px 8px; border-bottom: 1px solid var(--bg-3); cursor: default;
+}
+.wm-row:hover { background: var(--bg-3); }
+.wm-row.selected { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.wm-name { min-width: 0; gap: 1px; }
+.wm-size { font-size: var(--font-size-sm); text-align: right; }
+.wm-state { display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; }
+.wm-state .progress { max-width: 100px; }
+.wm-pct { width: 42px; text-align: right; font-size: var(--font-size-sm); }
+.wm-empty { padding: 16px; text-align: center; }
+
+/* Transcribe dialog (TranscribeDialog.tsx) */
+.trx-media { display: flex; flex-direction: column; max-height: 220px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-1); }
+.trx-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 240px) auto; align-items: center; gap: 8px; min-height: 28px; padding: 2px 8px; border-bottom: 1px solid var(--bg-3); }
+.trx-name { min-width: 0; }
+.trx-stream { min-width: 0; }
+.trx-empty { padding: 16px; text-align: center; }
+.trx-field > .text-sm:first-child { width: 72px; flex: none; }
+.trx-check { padding-left: 80px; }
+.trx-note { margin: 0; line-height: 1.45; }

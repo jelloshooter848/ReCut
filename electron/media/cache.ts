@@ -1,5 +1,5 @@
 /**
- * On-disk cache layout for derived media (thumbnails, waveforms, proxies, scene detection, OCR results).
+ * On-disk cache layout for derived media (thumbnails, waveforms, proxies, scene detection, OCR and transcription results).
  *
  * Keys (bugs/closed/2026-10-05-moved-media-cache-miss.md):
  *  - `cacheKeyForPath` is the file's CONTENT key (./identity.ts: size + a sampled fingerprint, no path, no mtime), so
@@ -22,8 +22,8 @@ import { assertAbsoluteMediaPath } from './ffmpeg';
 import { fingerprintFile } from './identity';
 
 /** `ids`: the content-key index (legacy key -> content key, see cacheKeysForPath). */
-export type CacheSubdir = 'thumbs' | 'waves' | 'proxies' | 'scenes' | 'ocr' | 'ids';
-export const CACHE_SUBDIRS: CacheSubdir[] = ['thumbs', 'waves', 'proxies', 'scenes', 'ocr', 'ids'];
+export type CacheSubdir = 'thumbs' | 'waves' | 'proxies' | 'scenes' | 'ocr' | 'ids' | 'whisper';
+export const CACHE_SUBDIRS: CacheSubdir[] = ['thumbs', 'waves', 'proxies', 'scenes', 'ocr', 'ids', 'whisper'];
 
 let configuredDir: string | null = null;
 
