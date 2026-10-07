@@ -178,7 +178,7 @@ describe('Windows workflow: the Linux AppImage gate', () => {
 });
 
 describe('speech-to-text engine in CI (Roadmap §5)', () => {
-  const wf = fs.readFileSync(path.join(repo, '.github', 'workflows', 'windows.yml'), 'utf8');
+  const wf = workflow; // CRLF already normalised (a Windows checkout)
   const jobText = (name: string) => {
     const lines = wf.split('\n');
     const start = lines.findIndex((l) => l === `  ${name}:`);
