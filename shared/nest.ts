@@ -28,7 +28,8 @@
  * - The nested clip past the end of its inner sequence is empty (black / silence), like media trimmed past its end.
  * - References to a missing sequence, or that close a cycle, render nothing (normalizeProject repairs cycles).
  */
-import type { Clip, ClipAudio, ClipTransform, ID, MediaItem, Rational, Sequence, SequenceSubtitleTrack, Track, Transition } from './model';
+import type { Clip, ClipAudio, ClipTransform, ID, Keyframe, MediaItem, Rational, Sequence, SequenceSubtitleTrack, Track, TransformKeyframes, Transition } from './model';
+import { evaluateKeyframes, hasKeyframes, hasMotionKeyframes, MAX_KEYFRAMES_PER_PROPERTY, TRANSFORM_KEY_PROPS } from './keyframes';
 import { addClipSorted, addTrack, clipEnd, makeClip, makeTrack, readItems, reconcileTransitions, removeClips, resolveSubtitleCues, sequenceDuration } from './timeline';
 import { uid } from './ids';
 import { activeTracks, isImageMedia, mediaDurationSec } from './exportPlan';
@@ -493,6 +494,7 @@ function flattenTrack(seq: Sequence, T: Track, kind: 'video' | 'audio', ctx: Ctx
       if (c.audio.fadeOut > 0) env.push({ from: clipEnd(c) - c.audio.fadeOut, to: clipEnd(c), dir: -1 });
       copy.audio = { ...c.audio, fadeIn: 0, fadeOut: 0 };
     }
+    shiftedKeys(c, copy, ew.before); // keyframes are clip-relative: the copy starts ew.before frames earlier
     origins.set(copy, { path: [], source: c, sequenceId: seq.id, env });
     base.push(copy);
   }
@@ -557,7 +559,12 @@ function mapNested(outer: Sequence, N: Clip & { sequenceId: ID }, innerSeq: Sequ
   const tracks = activeTracks(kind === 'video' ? innerSeq.videoTracks : innerSeq.audioTracks);
   const out: { clips: Clip[]; transitions: Transition[] }[] = [];
   if (kind === 'audio' && N.audio.muted) return out;
+  // Keyframes: the nested clip's own are relative to its start; the composed ones are evaluated within each copy's
+  // range widened by the transition handles an inner transition can add (`pad`).
+  const R = Math.round(tIn / fdO);
+  const keyed = hasKeyframes(N);
   for (const I of tracks) {
+    const pad = Math.ceil(Math.max(0, ...I.transitions.map((t) => (Number.isFinite(t.duration) ? t.duration : 0))) * (sameRate ? 1 : fdI / fdO)) + 1;
     const mappedClips: Clip[] = [];
     const ids = new Map<ID, Clip>();
     const intact = new Map<ID, { head: boolean; tail: boolean }>();
@@ -581,9 +588,15 @@ function mapNested(outer: Sequence, N: Clip & { sequenceId: ID }, innerSeq: Sequ
       const env: Envelope[] = (io?.env ?? []).map((e) => ({ from: outerPos(e.from), to: outerPos(e.to), dir: e.dir }));
       env.push(...envN);
       const head = a === fa, tail = b === fb;
+      const keys = keyed || hasKeyframes(c);
+      const nMap: FrameMap = { mul: 1, add: S - a };
+      const iMap: FrameMap = sameRate ? { mul: 1, add: c.start + S - R - a } : { mul: fdI / fdO, add: S - a + (c.start * fdI - tIn) / fdO };
+      const lo = -pad, hi = b - a - 1 + pad;
       if (kind === 'video') {
-        const t = composeTransform(N.transform, c.transform, mediaOf(ctx, c.mediaId), innerSeq, outer);
+        const m = mediaOf(ctx, c.mediaId);
+        const t = composeTransform(N.transform, c.transform, m, innerSeq, outer, hasMotionKeyframes(c));
         if (!t) continue; // clipped away entirely
+        if (keys) composeTransformKeys(t, N.transform, c.transform, m, innerSeq, outer, nMap, iMap, lo, hi);
         copy.transform = t;
       } else {
         const a0 = c.audio;
@@ -597,6 +610,7 @@ function mapNested(outer: Sequence, N: Clip & { sequenceId: ID }, innerSeq: Sequ
           if (a0.fadeOut > 0) env.push({ from: outerPos(clipEnd(c) - a0.fadeOut), to: outerPos(clipEnd(c)), dir: -1 });
           audio.fadeIn = 0; audio.fadeOut = 0;
         }
+        if (keys) composeAudioKeys(audio, N.audio, a0, I.volume, nMap, iMap, lo, hi);
         copy.audio = audio;
       }
       origins.set(copy, { path: [N.id, ...(io?.path ?? [])], source: io?.source ?? c, sequenceId: io?.sequenceId ?? innerSeq.id, env });
@@ -645,30 +659,24 @@ const fin = (v: number, d: number) => (Number.isFinite(v) ? v : d);
  * frame), then the inner frame fitted into the outer one and the nested clip's transform `to`. Null when the nested
  * clip's crop or the inner frame edge hides the layer entirely. The preview compositor and the export graph place a
  * layer the same way (fit, crop in place, scale, rotate, offset), so the composition is exact for both.
+ *
+ * Static values only: the result carries no keyframes (composeTransformKeys adds the composed ones). The clipping to
+ * the nested crop and the inner frame edge is done for unrotated layers whose position and scale are fixed
+ * (`innerMotion` false): it is a fixed crop, which cannot follow a moving layer.
  */
-export function composeTransform(to: ClipTransform, ti: ClipTransform, m: MediaItem | undefined, inner: Pick<Sequence, 'width' | 'height'>, outer: Pick<Sequence, 'width' | 'height'>): ClipTransform | null {
-  const Wi = inner.width, Hi = inner.height, Wo = outer.width, Ho = outer.height;
-  const fo = Math.min(Wo / Wi, Ho / Hi);
+export function composeTransform(to: ClipTransform, ti: ClipTransform, m: MediaItem | undefined, inner: Pick<Sequence, 'width' | 'height'>, outer: Pick<Sequence, 'width' | 'height'>, innerMotion = false): ClipTransform | null {
+  const g = layerGeometry(to, m, inner, outer);
   const So = fin(to.scale, 1) > 0 ? fin(to.scale, 1) : 1;
   const Si = fin(ti.scale, 1) > 0 ? fin(ti.scale, 1) : 1;
-  const ro = fin(to.rotation, 0), ri = fin(ti.rotation, 0);
-  const size = videoDisplaySize(m?.probe?.video, 'element');
-  // Ratio of the two fit scales (media into the inner frame, then into the outer) to the direct fit (1 when the
-  // frames have the same shape, whatever the media size).
-  let k = 1;
-  let fi = 0;
-  if (size) {
-    fi = Math.min(Wi / size.width, Hi / size.height);
-    const direct = Math.min(Wo / size.width, Ho / size.height);
-    k = (fo * fi) / direct;
-  }
-  const a = (ro * Math.PI) / 180;
+  const ri = fin(ti.rotation, 0);
   const tx = fin(ti.x, 0), ty = fin(ti.y, 0);
-  const x = fin(to.x, 0) + So * fo * (tx * Math.cos(a) - ty * Math.sin(a));
-  const y = fin(to.y, 0) + So * fo * (tx * Math.sin(a) + ty * Math.cos(a));
+  const x = fin(to.x, 0) + So * g.fo * (tx * g.cos - ty * g.sin);
+  const y = fin(to.y, 0) + So * g.fo * (tx * g.sin + ty * g.cos);
   const crop = { ...ti.crop };
-  // Clip the layer to the nested clip's crop and the inner frame edge (unrotated layers with a known size).
-  if (size && fi > 0 && ((ri % 360) + 360) % 360 === 0) {
+  // Clip the layer to the nested clip's crop and the inner frame edge (unrotated, unmoving layers with a known size).
+  const { size, fi } = g;
+  const Wi = inner.width, Hi = inner.height;
+  if (!innerMotion && size && fi > 0 && ((ri % 360) + 360) % 360 === 0) {
     const co = to.crop ?? { left: 0, top: 0, right: 0, bottom: 0 };
     const k1 = Si * fi; // inner pixels per media pixel
     const X0 = -Wi / 2 + clamp01(co.left) * Wi, X1 = Wi / 2 - clamp01(co.right) * Wi;
@@ -682,14 +690,193 @@ export function composeTransform(to: ClipTransform, ti: ClipTransform, m: MediaI
     if (1 - v1 > crop.bottom + EPS) crop.bottom = Math.min(1, 1 - v1);
     if (crop.left + crop.right >= 1 - EPS || crop.top + crop.bottom >= 1 - EPS) return null;
   }
+  const { keyframes: _k, ...rest } = ti;
   return {
-    ...ti,
+    ...rest,
     x, y,
-    scale: So * Si * k,
-    rotation: ro + ri,
+    scale: So * Si * g.k,
+    rotation: g.ro + ri,
     opacity: clamp01(fin(to.opacity, 1)) * clamp01(fin(ti.opacity, 1)),
     crop,
   };
+}
+
+/** Constants of composeTransform: the inner frame's fit into the outer one, the fit ratio for the media, the rotation. */
+function layerGeometry(to: ClipTransform, m: MediaItem | undefined, inner: Pick<Sequence, 'width' | 'height'>, outer: Pick<Sequence, 'width' | 'height'>) {
+  const Wi = inner.width, Hi = inner.height, Wo = outer.width, Ho = outer.height;
+  const fo = Math.min(Wo / Wi, Ho / Hi);
+  const size = videoDisplaySize(m?.probe?.video, 'element');
+  // Ratio of the two fit scales (media into the inner frame, then into the outer) to the direct fit (1 when the
+  // frames have the same shape, whatever the media size).
+  let k = 1;
+  let fi = 0;
+  if (size) {
+    fi = Math.min(Wi / size.width, Hi / size.height);
+    const direct = Math.min(Wo / size.width, Ho / size.height);
+    k = (fo * fi) / direct;
+  }
+  const ro = fin(to.rotation, 0);
+  const a = (ro * Math.PI) / 180;
+  return { fo, k, fi, size, ro, cos: Math.cos(a), sin: Math.sin(a) };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Keyframes through nesting (Roadmap §8 x §11)
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * Where a source clip's keyframes land on a flattened copy: copy frame = source frame x `mul` + `add`. Keyframe
+ * frames are clip-relative (shared/keyframes.ts), so a copy that starts elsewhere than its source, or plays an inner
+ * sequence of another frame rate, needs its keyframes re-timed. With equal rates `mul` is 1 (a shift); across rates
+ * it is innerFrameDuration / outerFrameDuration (a rescale: the keyframes keep their place in real time).
+ */
+export interface FrameMap { mul: number; add: number }
+
+/** Keyframe frames are kept to 1e-6 frame (the FFmpeg expressions print 6 decimals). */
+const qf = (f: number) => Math.round(f * 1e6) / 1e6;
+
+function remapKeys(keys: readonly Keyframe[] | undefined, m: FrameMap): Keyframe[] | undefined {
+  if (!keys || keys.length === 0) return undefined;
+  if (m.mul === 1 && m.add === 0) return keys as Keyframe[];
+  return keys.map((k) => ({ ...k, frame: qf(k.frame * m.mul + m.add) }));
+}
+
+/** An input of a composed property: a keyframe list in copy frames, or a fixed value. */
+interface KeyInput { keys?: readonly Keyframe[]; value: number }
+
+function keyInput(keys: readonly Keyframe[] | undefined, value: number): KeyInput {
+  if (!keys || keys.length === 0) return { value };
+  // A list that never changes is a fixed value (evaluateKeyframes returns it everywhere).
+  if (keys.every((k) => k.value === keys[0].value)) return { value: keys[0].value };
+  return { keys, value };
+}
+
+/**
+ * The keyframe list of a property composed from `inputs` by `fn` (undefined when no input varies: the property is then
+ * fixed at `fn` of the values). With one varying input, `fn` is affine in it, so its keyframes are mapped value by value
+ * (interpolation kept). With more, the result is sampled into linear keyframes: at every input keyframe, and at every
+ * integer frame where two inputs that `pairs` multiplies vary together or an input eases, within [lo, hi] (the frames
+ * the copy can render, transition handles included). So the result equals `fn` of the inputs at every integer frame,
+ * and between them wherever it is linear anyway. At most MAX_KEYFRAMES_PER_PROPERTY keyframes: denser sampling is
+ * strided down to that (the curve is then linear between the kept samples).
+ */
+export function composeKeyList(inputs: readonly KeyInput[], pairs: readonly (readonly [number, number])[], fn: (v: readonly number[]) => number, lo: number, hi: number): Keyframe[] | undefined {
+  const vary: number[] = [];
+  inputs.forEach((x, i) => { if (x.keys) vary.push(i); });
+  if (vary.length === 0) return undefined;
+  const base = inputs.map((x) => x.value);
+  if (vary.length === 1) {
+    const j = vary[0];
+    return inputs[j].keys!.map((kf) => {
+      const v = base.slice(); v[j] = kf.value;
+      const out: Keyframe = { frame: kf.frame, value: fn(v) };
+      if (kf.interp === 'ease') out.interp = 'ease';
+      return out;
+    });
+  }
+  // Changing spans of each input, the spans to sample per frame, and the input keyframes in [lo, hi].
+  const spans: [number, number][][] = inputs.map(() => []);
+  const dense: [number, number][] = [];
+  const pts = new Set<number>([qf(lo), qf(hi)]);
+  for (const j of vary) {
+    const k = inputs[j].keys!;
+    for (let i = 0; i + 1 < k.length; i++) {
+      if (k[i].value === k[i + 1].value) continue;
+      spans[j].push([k[i].frame, k[i + 1].frame]);
+      if (k[i].interp === 'ease') dense.push([k[i].frame, k[i + 1].frame]);
+    }
+    for (const kf of k) if (kf.frame > lo && kf.frame < hi) pts.add(kf.frame);
+  }
+  for (const [p, q] of pairs) {
+    const A = spans[p], B = spans[q];
+    let i = 0, j = 0;
+    while (i < A.length && j < B.length) {
+      const a = Math.max(A[i][0], B[j][0]), b = Math.min(A[i][1], B[j][1]);
+      if (b > a) dense.push([a, b]);
+      if (A[i][1] < B[j][1]) i++; else j++;
+    }
+  }
+  // Integer frames of the dense spans (inside [lo, hi]), thinned evenly when there are more than the list can hold.
+  const ranges = dense.map(([a, b]) => [Math.max(Math.ceil(a), Math.ceil(lo)), Math.min(Math.floor(b), Math.floor(hi))] as const).filter(([a, b]) => b >= a);
+  const count = ranges.reduce((n, [a, b]) => n + b - a + 1, 0);
+  const step = Math.max(1, Math.ceil(count / MAX_KEYFRAMES_PER_PROPERTY));
+  for (const [a, b] of ranges) for (let n = a; n <= b; n += step) pts.add(n);
+  let frames = [...pts].sort((a, b) => a - b).filter((f, i, arr) => i === 0 || f - arr[i - 1] > 1e-3);
+  if (frames.length > MAX_KEYFRAMES_PER_PROPERTY) {
+    const s = (frames.length - 1) / (MAX_KEYFRAMES_PER_PROPERTY - 1);
+    frames = Array.from({ length: MAX_KEYFRAMES_PER_PROPERTY }, (_, i) => frames[Math.round(i * s)]);
+  }
+  return frames.map((f) => ({ frame: f, value: fn(inputs.map((x) => (x.keys ? evaluateKeyframes(x.keys, f) : x.value))) }));
+}
+
+/**
+ * The composed keyframes of a flattened video layer (see composeTransform for the formulas), written on `t` (the
+ * composed static transform): the nested clip `N`'s keyframes (moved by `nMap`) with the inner layer `ti`'s (moved by
+ * `iMap`). `t` keeps no keyframes when neither side has any.
+ */
+export function composeTransformKeys(t: ClipTransform, to: ClipTransform, ti: ClipTransform, m: MediaItem | undefined, inner: Pick<Sequence, 'width' | 'height'>, outer: Pick<Sequence, 'width' | 'height'>, nMap: FrameMap, iMap: FrameMap, lo: number, hi: number): void {
+  const nk = to.keyframes, ik = ti.keyframes;
+  delete t.keyframes;
+  if (!hasAny(nk) && !hasAny(ik)) return;
+  const g = layerGeometry(to, m, inner, outer);
+  const pos = (v: number, d: number) => fin(v, d);
+  const xo = keyInput(remapKeys(nk?.x, nMap), pos(to.x, 0)), yo = keyInput(remapKeys(nk?.y, nMap), pos(to.y, 0));
+  const so = keyInput(remapKeys(nk?.scale, nMap), fin(to.scale, 1) > 0 ? fin(to.scale, 1) : 1);
+  const oo = keyInput(remapKeys(nk?.opacity, nMap), fin(to.opacity, 1));
+  const xi = keyInput(remapKeys(ik?.x, iMap), pos(ti.x, 0)), yi = keyInput(remapKeys(ik?.y, iMap), pos(ti.y, 0));
+  const si = keyInput(remapKeys(ik?.scale, iMap), fin(ti.scale, 1) > 0 ? fin(ti.scale, 1) : 1);
+  const oi = keyInput(remapKeys(ik?.opacity, iMap), fin(ti.opacity, 1));
+  const { fo, k, cos, sin } = g;
+  // Inputs [outer offset, outer scale, inner x, inner y]: the outer scale multiplies the inner offset (rotated).
+  const pairs = [[1, 2], [1, 3]] as const;
+  const out: TransformKeyframes = {};
+  const x = composeKeyList([xo, so, xi, yi], pairs, ([a, s, u, v]) => a + s * fo * (u * cos - v * sin), lo, hi);
+  const y = composeKeyList([yo, so, xi, yi], pairs, ([a, s, u, v]) => a + s * fo * (u * sin + v * cos), lo, hi);
+  const sc = composeKeyList([so, si], [[0, 1]], ([a, b]) => a * b * k, lo, hi);
+  const op = composeKeyList([oo, oi], [[0, 1]], ([a, b]) => clamp01(a) * clamp01(b), lo, hi);
+  if (x) out.x = x;
+  if (y) out.y = y;
+  if (sc) out.scale = sc;
+  if (op) out.opacity = op;
+  if (Object.keys(out).length) t.keyframes = out;
+}
+
+/**
+ * The composed level keyframes of a flattened audio clip (inner level x nested clip level x inner track volume),
+ * written on `a` (the composed static audio); none when neither side has level keyframes.
+ */
+export function composeAudioKeys(a: ClipAudio, an: ClipAudio, ai: ClipAudio, trackVolume: number, nMap: FrameMap, iMap: FrameMap, lo: number, hi: number): void {
+  delete a.keyframes;
+  const nk = an.keyframes?.volume, ik = ai.keyframes?.volume;
+  if (!nk?.length && !ik?.length) return;
+  const tv = Math.max(0, trackVolume);
+  const vol = composeKeyList([keyInput(remapKeys(ik, iMap), ai.volume), keyInput(remapKeys(nk, nMap), an.volume)], [[0, 1]],
+    ([u, v]) => Math.max(0, u) * Math.max(0, v) * tv, lo, hi);
+  if (vol) a.keyframes = { volume: vol };
+}
+
+function hasAny(k: TransformKeyframes | undefined): boolean {
+  return !!k && !!(k.x?.length || k.y?.length || k.scale?.length || k.opacity?.length);
+}
+
+/** A video copy's level keyframes (unused on a picture clip, kept for when it is linked audio's twin) moved by `delta`. */
+function shiftedAudioKeys(copy: Clip, delta: number): void {
+  const vk = remapKeys(copy.audio.keyframes?.volume, { mul: 1, add: delta });
+  if (vk) copy.audio.keyframes = { ...copy.audio.keyframes, volume: vk };
+}
+
+/** The copy of a clip that starts `delta` frames earlier than its source (a transition handle): keyframes moved. */
+function shiftedKeys(c: Clip, copy: Clip, delta: number): void {
+  if (!delta || !hasKeyframes(c)) return;
+  const m: FrameMap = { mul: 1, add: delta };
+  const tk = c.transform.keyframes;
+  if (hasAny(tk)) {
+    const next: TransformKeyframes = {};
+    for (const p of TRANSFORM_KEY_PROPS) { const l = remapKeys(tk?.[p], m); if (l) next[p] = l; }
+    copy.transform = { ...copy.transform, keyframes: next };
+  }
+  const vk = remapKeys(c.audio.keyframes?.volume, m);
+  if (vk) copy.audio = { ...copy.audio, keyframes: { ...copy.audio.keyframes, volume: vk } };
 }
 
 function clamp01(v: number): number { return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0; }
@@ -872,6 +1059,7 @@ export function breakApartCompoundClip(outer: Sequence, clipId: ID, sequences: S
     const live = new Set(activeTracks(tracks).map((t) => t.id));
     let from = x.index;
     for (const I of tracks) {
+      const pad = Math.ceil(Math.max(0, ...I.transitions.map((t) => (Number.isFinite(t.duration) ? t.duration : 0)))) + 1;
       const copies: Clip[] = [];
       const idMap = new Map<ID, ID>();
       for (const c of readItems(I.clips)) {
@@ -886,15 +1074,23 @@ export function breakApartCompoundClip(outer: Sequence, clipId: ID, sequences: S
         if (!live.has(I.id)) copy.enabled = false;
         if (a > c.start) copy.audio.fadeIn = 0;
         if (b < clipEnd(c)) copy.audio.fadeOut = 0;
+        // Keyframes (clip-relative): the inner clip's move with the copy's new start, the nested clip's are composed in.
+        const keys = hasKeyframes(K) || hasKeyframes(c);
+        const kMap: FrameMap = { mul: 1, add: K.start - copy.start };
+        const iMap: FrameMap = { mul: 1, add: c.start - a };
+        const lo = -pad, hi = copy.duration - 1 + pad;
         if (kind === 'video') {
           const m = Object.hasOwn(media, c.mediaId) ? media[c.mediaId] : undefined;
-          const t = composeTransform(K.transform, c.transform, m, inner, outer);
+          const t = composeTransform(K.transform, c.transform, m, inner, outer, hasMotionKeyframes(c));
           if (!t) continue;
+          if (keys) composeTransformKeys(t, K.transform, c.transform, m, inner, outer, kMap, iMap, lo, hi);
           copy.transform = t;
+          if (keys) shiftedAudioKeys(copy, c.start - a);
         } else {
           copy.audio.gain = (copy.audio.gain || 0) + (K.audio.gain || 0);
           copy.audio.volume = Math.max(0, copy.audio.volume) * Math.max(0, K.audio.volume) * Math.max(0, I.volume);
           if (K.audio.muted) copy.audio.muted = true;
+          if (keys) composeAudioKeys(copy.audio, K.audio, c.audio, I.volume, kMap, iMap, lo, hi);
         }
         idMap.set(c.id, copy.id);
         copies.push(copy);
