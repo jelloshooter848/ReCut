@@ -53,7 +53,7 @@ and every still image FFmpeg can decode shows in the monitors. Project files are
 - HEIC needs FFmpeg 7.1 or later (the Windows build bundles 9.0.2). With FFmpeg 6.1, a rotated AVIF is unrotated in
   preview and export alike. See [LIMITATIONS](docs/LIMITATIONS.md).
 - The bundled FFmpeg's licence is not yet shipped with the Windows build; 0.4.1 fixes this
-  ([open report](bugs/open/2026-10-07-bundled-ffmpeg-licence-not-shipped.md)).
+  ([report](bugs/closed/2026-10-07-bundled-ffmpeg-licence-not-shipped.md)).
 - The performance gate's verdict depends on the speed of the machine
   ([open report](bugs/open/2026-10-07-perf-gate-verdict-not-reproducible.md)).
 - Unchanged: moved media rebuilds its cache ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned
