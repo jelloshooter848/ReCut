@@ -5,7 +5,8 @@
  *
  *   Gates        user-facing; the bench's threshold is pass/fail.
  *   Guardrails   architecture health; FAIL on a material regression against tests/perf/baseline.json
- *                (REGRESSION_RULE in _gate.mjs), and also on the threshold unless the row marks it `reference`.
+ *                (REGRESSION_RULE in _gate.mjs; a count row with a baseline of 0 tolerates 1), and also on the
+ *                threshold unless the row marks it `reference`.
  *   Diagnostics  microbenchmarks; value, reference threshold and trend against the baseline. Never fail.
  *
  * Calibration: before each run, tests/perf/calibrate.mjs measures how fast this host is (fixed js, ffmpeg and render
@@ -30,7 +31,7 @@
  *
  *   node tests/perf/perf-check.mjs --ab <dirA> <dirB> [--runs N] [--electron-only | --node-only] [--skip-build]
  *       same-host A/B: <dirA> and <dirB> are two checkouts with node_modules (npm run perf:compare -- <refA> <refB>
- *       makes them from git refs). Builds each once, then runs A, B, A, B, ... (N runs each, default 2) on this
+ *       makes them from git refs). Builds each once, then runs A, B, A, B, ... (N runs each, default AB_RUNS = 3) on this
  *       host and prints per-row medians, B/A and a noise band; WORSE = B worse than A beyond the band in every run
  *       pair. Exits 1 if a gate or guardrail row is WORSE. Needs no baseline.
  *
@@ -46,7 +47,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { machineInfo, SPREAD_WARN } from './calibrate.mjs';
-import { REGRESSION_RULE, CALIBRATION_TOLERANCE, CATEGORIES, TIERS, isNum, r2, aggregate, evaluate, combineScores, calibrationRatios, compareAB, scoresOf } from './_gate.mjs';
+import { REGRESSION_RULE, AB_RUNS, CALIBRATION_TOLERANCE, CATEGORIES, TIERS, isNum, r2, aggregate, evaluate, combineScores, calibrationRatios, compareAB, scoresOf } from './_gate.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BASELINE = path.join(ROOT, 'tests', 'perf', 'baseline.json');
@@ -221,7 +222,7 @@ function writeBaseline(rows, nRuns, dirs, cals) {
   const out = {
     about: 'Medians of the guardrail and diagnostic rows of tests/perf, keyed by "<suite>|<section>|<metric>", and the calibration of the machine they were measured on (the reference machine). perf-check.mjs compares guardrails against it (REGRESSION_RULE) after normalizing each row to the reference machine with the calibration ratio, and shows the trend of diagnostics. Change it only in a PR that says why: an accepted cost of a feature, locking in an improvement, or a new reference machine. See docs/DEVELOPMENT.md -> Performance gate.',
     format: 2,
-    rule: `guardrail FAIL when the median of >= ${REGRESSION_RULE.minRuns} runs > ${REGRESSION_RULE.ratio} x baseline median and exceeds it by more than ${Object.entries(REGRESSION_RULE.floor).map(([u, f]) => `${f} ${u}`).join(' / ')} (other units: no floor), compared after normalization to this machine when the calibration ratio is beyond ±${pct(CALIBRATION_TOLERANCE)}`,
+    rule: `guardrail FAIL when the median of >= ${REGRESSION_RULE.minRuns} runs > ${REGRESSION_RULE.ratio} x baseline median and exceeds it by more than ${Object.entries(REGRESSION_RULE.floor).map(([u, f]) => `${f} ${u}`).join(' / ')} (other units: no floor; a count row with a baseline of 0 tolerates ${REGRESSION_RULE.zeroBaseCount}), compared after normalization to this machine when the calibration ratio is beyond ±${pct(CALIBRATION_TOLERANCE)}`,
     reason: val('--reason', 'not given'),
     commit,
     date: new Date().toISOString().slice(0, 10),
@@ -248,7 +249,7 @@ const show = (d) => { const r = path.relative(ROOT, d); return r && !r.startsWit
 
 // ---------------------------------------------------------------- A/B mode
 function abMode(dirA, dirB) {
-  const nRuns = Math.max(1, Number(val('--runs', '2')) || 2);
+  const nRuns = Math.max(1, Number(val('--runs', String(AB_RUNS))) || AB_RUNS);
   const t0 = Date.now();
   for (const d of [dirA, dirB]) if (!fs.existsSync(path.join(d, 'package.json')) || !fs.existsSync(path.join(d, 'node_modules'))) { console.log(`[perf:check] PROBLEM: ${d} is not a checkout with node_modules`); process.exit(2); }
   const problems = [];
@@ -344,7 +345,7 @@ if (ab) {
   console.log(anyNorm
     ? `[perf:check] VERDICTS NORMALIZED TO THE REFERENCE MACHINE (calibration ${CATEGORIES.filter((c) => cs.ratios[c].normalized).map((c) => `${c} ${kx(cs.ratios[c].k)}`).join(', ')}; beyond ±${pct(CALIBRATION_TOLERANCE)}): time and rate rows and long-task counts are judged as measured / k; counts and structural rows raw. Raw verdicts on this host are shown too.`
     : `[perf:check] verdicts are raw: ${cs.ratios ? `this host is within ±${pct(CALIBRATION_TOLERANCE)} of the reference machine in every category` : 'no calibration to compare (see above)'}`);
-  console.log(`[perf:check] regression rule: ${REGRESSION_RULE.ratio} x baseline median, >= ${REGRESSION_RULE.minRuns} runs, floor ${JSON.stringify(REGRESSION_RULE.floor)}`);
+  console.log(`[perf:check] regression rule: ${REGRESSION_RULE.ratio} x baseline median, >= ${REGRESSION_RULE.minRuns} runs, floor ${JSON.stringify(REGRESSION_RULE.floor)}, count rows with baseline 0 tolerate ${REGRESSION_RULE.zeroBaseCount}`);
   console.log(`[perf:check] gates:       ${count(byTier.gate)}${anyNorm ? ` (normalized to the reference machine; ${byTier.gate.filter((r) => r.normalized).length} rows normalized); raw on this host: PASS ${byTier.gate.filter((r) => r.raw.pass).length}, FAIL ${byTier.gate.filter((r) => !r.raw.pass).length}` : ''}`);
   const gFail = byTier.guardrail.filter((r) => !r.pass);
   console.log(`[perf:check] guardrails:  ${count(byTier.guardrail)} (budget ${gFail.filter((r) => r.verdict.includes('budget')).length}, regression ${gFail.filter((r) => r.verdict.includes('regression')).length}, missing ${gFail.filter((r) => r.verdict.includes('missing')).length}); unconfirmed ${byTier.guardrail.filter((r) => r.unconfirmed).length}; no baseline ${byTier.guardrail.filter((r) => r.noBaseline).length}${anyNorm ? `; raw on this host: PASS ${byTier.guardrail.filter((r) => r.raw.pass).length}, FAIL ${byTier.guardrail.filter((r) => !r.raw.pass).length}` : ''}`);

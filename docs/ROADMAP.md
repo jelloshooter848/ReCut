@@ -8,6 +8,10 @@ Order is rough priority for fan editing: restructuring finished films and series
 2 are gates rather than capabilities: they come before the next large feature. Why some entries sit where they do is
 recorded under [Ordering decisions](#ordering-decisions) at the end.
 
+**Scheduled next after §4:** official Linux and macOS releases (§19) follow Bitmap subtitle OCR (§4, release 0.6.0):
+**Linux in 0.6.1, macOS in 0.7.0** (project owner's decision, 7 October 2026). §19 keeps its number, out of list
+order, so existing references stay valid.
+
 ## 1. Performance at franchise scale
 
 **Why:** ReCut is for franchise-scale work: thousands of timeline clips, thousands of scenes, multi-hour
@@ -253,25 +257,49 @@ server.
 - A **Build alternate cut without matching clips** button next to the What-if buttons (duplicate, ripple-delete
   matches, open Compare).
 - Transcript hits flagged "on timeline" in every scope, not only Sequence scope.
-- Code signing (Windows) and notarisation (macOS). Tested dmg and AppImage builds with bundled FFmpeg. The Windows
-  installer and portable exe are already built, installed and smoke-tested in CI with FFmpeg bundled, but unsigned.
+- Code signing (Windows). The Windows installer and portable exe are already built, installed and smoke-tested in CI
+  with FFmpeg bundled, but unsigned. Tested AppImage and dmg builds with bundled FFmpeg, and macOS signing and
+  notarisation, are planned in §19.
 - Snapshots stored as diffs, to keep project files small.
 - Titles / text generator.
 
-## 19. macOS build (.dmg) with each 0.X.0 release
+## 19. Official Linux and macOS releases
 
-**Status:** parked at the bottom by the project owner (7 October 2026) until they decide where it goes.
-**Why:** ReCut ships only Windows builds. `package.json` → `build.mac` already targets `dmg`, and the app has macOS
-menu and quit handling, but no Mac build has ever been made or tested.
-**Plan (unsigned first, about 3–5 h):** a `macos-latest` job in `.github/workflows/windows.yml` (or a sibling
-workflow) for releases only, not dev builds, since GitHub bills macOS minutes at 10× on private repos. It builds a
-universal or arm64 + x64 dmg, bundles static `ffmpeg` / `ffprobe` for both architectures, smoke-tests the app
-(launch, FFmpeg encode and probe; ideally the e2e suite) and joins the publish job's `needs`, so a red Mac build
-blocks the release like any other gate. Unsigned apps need right-click › **Open** on first launch; Apple Silicon
-also needs the ad-hoc signature electron-builder applies by default.
-**Later, optional:** signing and notarisation (an Apple Developer account at $99 a year, certificates and an
-app-specific password as GitHub secrets, about 2–3 h more), only if the Mac build is for other people. This
-overlaps the code-signing line in §18.
+**Status:** scheduled by the project owner on 7 October 2026 (it was parked at the bottom until then), next after
+Bitmap subtitle OCR (§4, 0.6.0). Order: **Linux first, in 0.6.1; macOS in 0.7.0.** Source of the decision: the owner's
+review of the "ReCut Cross-Platform Release Support Proposal". The section keeps its number because other documents
+and bug files cite § numbers.
+**Why:** ReCut ships only Windows builds. `package.json` → `build.linux` already targets `AppImage` and `build.mac`
+`dmg`, and the app has macOS menu and quit handling, but neither package has been released or tested: the Linux
+unpacked build is what the test suites run on, and no Mac build has ever been made. Fan editors work on all three
+platforms.
+**Why deferred:** the Windows release path (bundled FFmpeg with its licence files, install checks, the four release
+gates in `docs/RELEASING.md`) had to be solid first, and a macOS release needs signing that only an Apple Developer
+account can provide.
+**Plan, 0.6.1, Linux:**
+- An x86-64 **AppImage** with a bundled, known FFmpeg / FFprobe build, shipped with its licence and source
+  information as the Windows bundle is: `FFMPEG-LICENSE.txt`, `FFMPEG-README.txt` (when the build has one) and
+  `FFMPEG-BUILD.txt` (where the build came from, its version and how to get its source), listed in
+  `THIRD_PARTY_NOTICES.md`.
+- A **Linux CI job**: unit tests, the e2e suite under xvfb, packaging, then launching the AppImage and a smoke test
+  (FFmpeg found, probe and encode). It joins the release gate (the `publish` job's `needs`) and is **blocking once
+  Linux is official**, like the Windows gates.
+- **Clear asset names** on the release page, so Windows, Linux and macOS downloads cannot be confused.
+**Plan, 0.7.0, macOS:**
+- A **.dmg**, **Apple Silicon first**; Intel or a universal build too if practical.
+- A bundled **arm64 FFmpeg / FFprobe** with the same licence and source files. **Main risk:** sourcing a relocatable
+  arm64 static FFmpeg build whose licence and source can be documented as for Windows and Linux.
+- A **macOS CI job** (build, tests, package, launch and smoke test): **advisory during bring-up, blocking once macOS
+  is official.** macOS runner minutes are billed at a higher rate, so it runs for releases rather than every build if
+  that becomes a cost problem.
+- **Signing and notarization** with a Developer ID belonging to someone the owner trusts (the owner's brother has an
+  Apple Developer account). Plan: CI secrets holding a Developer ID Application certificate (`.p12` and its password)
+  and an App Store Connect API key for notarization. **Until it is signed, the .dmg is a test build**, published with
+  first-launch instructions (right-click › **Open**, or allow it under System Settings › Privacy & Security).
+**Out of scope** for both: `.deb`, `.rpm`, Flatpak, Snap, the Mac App Store, auto-update, and ARM Linux.
+**Done when:** 0.6.1 publishes a Linux AppImage with bundled FFmpeg and its licence files, gated by a blocking Linux
+CI job; 0.7.0 publishes a macOS .dmg with bundled arm64 FFmpeg, signed and notarized (or labelled a test build with
+first-launch instructions until it is), with the macOS job blocking once the platform is official.
 
 ## Ordering decisions
 
@@ -286,5 +314,9 @@ Recorded so they are not re-proposed without new information.
   the F key; the Scenes panel has **New scene from clip** and **New scene from Source In/Out**.
 - **Rejected: raise the performance gate to 5,000+ clips now.** Premature until the 2,500-clip project meets its edit,
   scrub and open budgets (§1). A multi-hour sequence is already part of §1.
+- **Cross-platform releases next after OCR.** Official Linux (0.6.1) and macOS (0.7.0) releases (§19) come right
+  after Bitmap subtitle OCR (§4, 0.6.0), by the project owner's decision on 7 October 2026 (review of the
+  "ReCut Cross-Platform Release Support Proposal"). Linux goes first: the test suites already run on Linux and it
+  needs no signing; the macOS risks are an arm64 FFmpeg build with documented licence and source, and signing.
 - **Rejected: nested sequences ahead of OCR.** OCR (§4) is cheap and self-contained and unblocks transcript search
   on most Blu-ray and DVD rips. Nesting is the most invasive entry on the list.

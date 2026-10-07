@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   aggregate, evaluate, calibrationRatios, combineScores, compareAB, categoryOf, metricClass, normalize, parseThreshold, runPass,
-  CALIBRATION_TOLERANCE, type RunRow, type Aggregated, type Ratios,
+  AB_RUNS, CALIBRATION_TOLERANCE, REGRESSION_RULE, type RunRow, type Aggregated, type Ratios,
 } from '../perf/_gate.mjs';
 
 /** One run's row. */
@@ -187,6 +187,27 @@ describe('verdicts', () => {
     expect(evaluate(aggregate([[g(5)], [g(5.2)]]), base, 2, null)[0].verdict).toMatch(/FAIL \(regression/);
   });
 
+  it('a count row with a baseline of 0 tolerates 1, fails at 2; non-zero baselines keep the ratio rule', () => {
+    expect(REGRESSION_RULE.zeroBaseCount).toBe(1);
+    const metric = 'media elements (<video> + <audio>) created during 10 s playback @ 1 px/frame';
+    const c = (v: number) => row('electron', 'pool', metric, v, '', '<= 16 (pool capacity)', v <= 16, { tier: 'guardrail' });
+    const base = (median: number) => ({ rows: { [`electron|pool|${metric}`]: { tier: 'guardrail' as const, median } } });
+    const verdict = (b: number, ...vs: number[]) => evaluate(aggregate(vs.map((v) => [c(v)])), base(b), vs.length, null)[0];
+    expect(verdict(0, 0, 0).verdict).toBe('PASS');
+    expect(verdict(0, 1, 1).verdict).toBe('PASS'); // 0 -> 1: tolerated
+    expect(verdict(0, 0, 1).pass).toBe(true);
+    expect(verdict(0, 2, 2).verdict).toMatch(/^FAIL \(regression x∞\)$/); // 0 -> 2: still a regression
+    expect(verdict(0, 1, 2).pass).toBe(false); // median 1.5
+    expect(verdict(0, 2).unconfirmed).toBe(true); // one run: UNCONFIRMED as before
+    // Non-zero baselines are unchanged: 2 -> 3 is x1.5 (not more), 2 -> 4 fails; 1 -> 2 fails.
+    expect(verdict(2, 3, 3).pass).toBe(true);
+    expect(verdict(2, 4, 4).verdict).toMatch(/FAIL \(regression x2\.00\)/);
+    expect(verdict(1, 2, 2).pass).toBe(false);
+    // Only the count class: a 0 ms baseline (time) or 0 long tasks keep the old rule.
+    const lt = (v: number) => row('electron', 'fairness', 'long tasks while autosaving', v, '', '<= 3', v <= 3, { tier: 'guardrail' });
+    expect(evaluate(aggregate([[lt(1)], [lt(1)]]), { rows: { 'electron|fairness|long tasks while autosaving': { tier: 'guardrail', median: 0 } } }, 2, null)[0].pass).toBe(false);
+  });
+
   it('a gate passes only when it passed in more than half of the runs, normalized per run', () => {
     const rows = evaluate(aggregate(runsOf(msGate('switch sequence x20 -> paint (median)', 100, 150, 190, 150))), null, 3, ratiosFor({ render: 1.6 }));
     const r = rows[0];
@@ -242,6 +263,10 @@ describe('same-host A/B', () => {
     expect(cmp.map((r) => r.verdict)).toEqual(['WORSE', 'WORSE', 'changed']);
     const better = compareAB(agg([f(45), f(44)]), agg([f(60), f(59)]));
     expect(better[0].verdict).toBe('better');
+  });
+
+  it('runs 3 times per side by default', () => {
+    expect(AB_RUNS).toBe(3);
   });
 
   it('reports rows measured on one side only', () => {

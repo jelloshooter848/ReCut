@@ -9,8 +9,11 @@
  * median AND more than `floor[unit]` above it (absolute noise floor: few-ms rows differ up to 2x between runs of
  * identical code, and 0.04 -> 0.07 ms is timer resolution; units not listed, e.g. counts, have no floor). With fewer
  * runs an excess is reported as UNCONFIRMED, not FAIL. Values are compared after normalization (see below).
+ * `zeroBaseCount`: a count-class row (metricClass 'count') whose baseline median is 0 tolerates up to this value (1
+ * passes, 2 fails): `media elements created during 10 s playback` measures 1 now and then on unchanged code, and with
+ * a baseline of 0 the ratio rule has no room at all (owner's decision, 7 October 2026).
  */
-export const REGRESSION_RULE = { ratio: 1.5, minRuns: 2, floor: { ms: 2, MB: 8 } };
+export const REGRESSION_RULE = { ratio: 1.5, minRuns: 2, floor: { ms: 2, MB: 8 }, zeroBaseCount: 1 };
 
 /**
  * A host whose calibration ratio is within +-CALIBRATION_TOLERANCE of the baseline's counts as the reference machine:
@@ -30,6 +33,12 @@ export const CAP_NEAR = 0.95;
 
 /** Same-host A/B: a difference is beyond the noise band when it exceeds max(rel x A, A's own run spread, floor[unit]). */
 export const AB_BAND = { rel: 0.1, floor: { ms: 2, MB: 8, fps: 2 } };
+
+/**
+ * Same-host A/B: runs per side when --runs is not given. 2 gave false WORSE flags on the 4-core cloud container where
+ * 3 were clean (PR #49), so 3 (owner's decision, 7 October 2026).
+ */
+export const AB_RUNS = 3;
 
 export const TIERS = ['gate', 'guardrail', 'diagnostic'];
 export const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -220,8 +229,9 @@ export function judge(r, { base, baseText }, nRuns, k, rule = REGRESSION_RULE) {
   let excess = false;
   if (numeric && base !== null) {
     const floor = rule.floor[r.unit] ?? 0;
-    const higherIsBetter = metricClass(r).kind === 'rate';
-    excess = higherIsBetter ? value * rule.ratio < base && base - value > floor : value > rule.ratio * base && value - base > floor;
+    const kind = metricClass(r).kind;
+    if (kind === 'count' && base === 0) excess = value > (rule.zeroBaseCount ?? 0);
+    else excess = kind === 'rate' ? value * rule.ratio < base && base - value > floor : value > rule.ratio * base && value - base > floor;
   }
   out.unconfirmed = excess && nRuns < rule.minRuns;
   const x = ratio === null ? '∞' : ratio.toFixed(2);
