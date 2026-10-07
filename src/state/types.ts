@@ -309,6 +309,16 @@ export interface StoreActions {
   setJobs(jobs: JobInfo[]): void;
   setPlaying(playing: boolean): void;
   setPlaybackRate(rate: number): void;
+
+  // ---- nested sequences (Roadmap §8, shared/nest.ts) ----
+  /** Make Compound Clip: the clips (default: the selection) and their linked clips move into a new sequence that one nested clip per kind replaces (one undo step). Returns the new sequence's id. */
+  makeCompoundClip(seqId?: ID, clipIds?: ID[], name?: string): ID | null;
+  /** Break Apart Compound Clip: a nested clip is replaced by the inner sequence's clips (one undo step). Returns the new clips' ids. */
+  breakApartCompoundClip(seqId: ID, clipId: ID): ID[];
+  /** Open in Timeline: make a nested clip's sequence the active one, its playhead at the frame shown at `frame` (default: the outer playhead). */
+  openNestedSequence(seqId: ID, clipId: ID, frame?: number): boolean;
+  /** Nest sequence `childId` in `seqId` at `frame` (video and / or audio nested clips; cycles and too deep nesting are refused with a toast). */
+  nestSequence(seqId: ID, childId: ID, frame: number, opts?: { mode?: 'insert' | 'overwrite'; videoTrackId?: ID; audioTrackId?: ID }): ID[];
 }
 
 export type RecutStore = StoreState & StoreActions;

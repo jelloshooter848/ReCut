@@ -29,7 +29,8 @@
  * - References to a missing sequence, or that close a cycle, render nothing (normalizeProject repairs cycles).
  */
 import type { Clip, ClipAudio, ClipTransform, ID, MediaItem, Rational, Sequence, SequenceSubtitleTrack, Track, Transition } from './model';
-import { clipEnd, resolveSubtitleCues, sequenceDuration } from './timeline';
+import { addClipSorted, addTrack, clipEnd, makeClip, makeTrack, readItems, reconcileTransitions, removeClips, resolveSubtitleCues, sequenceDuration } from './timeline';
+import { uid } from './ids';
 import { activeTracks, isImageMedia, mediaDurationSec } from './exportPlan';
 import { videoDisplaySize } from './media';
 import { fpsEquals } from './time';
@@ -691,3 +692,269 @@ export function composeTransform(to: ClipTransform, ti: ClipTransform, m: MediaI
 }
 
 function clamp01(v: number): number { return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0; }
+
+// ---------------------------------------------------------------------------------------------------
+// Commands (pure ops on immer drafts or plain data, called from store actions: src/state/store.ts)
+// ---------------------------------------------------------------------------------------------------
+
+function plain<T>(v: T): T { return JSON.parse(JSON.stringify(v)) as T; }
+
+function rawClips(seq: Sequence): { track: Track; clip: Clip; index: number; kind: 'video' | 'audio' }[] {
+  const out: { track: Track; clip: Clip; index: number; kind: 'video' | 'audio' }[] = [];
+  seq.videoTracks.forEach((t, index) => { for (const c of readItems(t.clips)) out.push({ track: t, clip: c, index, kind: 'video' }); });
+  seq.audioTracks.forEach((t, index) => { for (const c of readItems(t.clips)) out.push({ track: t, clip: c, index, kind: 'audio' }); });
+  return out;
+}
+
+/** Frames [start, end) of a sequence subtitle cue on its sequence (null: not placeable). */
+function cueSpan(seq: Sequence, cue: SequenceSubtitleTrack['cues'][number], byId: Map<ID, Clip>): { start: number; end: number } | null {
+  if (!cue.clipId) return { start: cue.start + cue.offset, end: cue.start + cue.duration + cue.offset };
+  const c = byId.get(cue.clipId);
+  if (!c || cue.srcStart === undefined || cue.srcEnd === undefined) return null;
+  const toF = (sec: number) => c.start + Math.round(((sec - c.sourceIn) / (c.speed || 1)) * seq.fps.num / seq.fps.den) + cue.offset;
+  return { start: toF(cue.srcStart), end: toF(cue.srcEnd) };
+}
+
+/** First unlocked track of `kind` at index `from` or above with nothing in [start, end); a new track when none. */
+function freeTrack(seq: Sequence, kind: 'video' | 'audio', from: number, start: number, end: number): Track {
+  const list = kind === 'video' ? seq.videoTracks : seq.audioTracks;
+  for (let i = Math.max(0, from); i < list.length; i++) {
+    const t = list[i];
+    if (t.locked) continue;
+    if (!readItems(t.clips).some((c) => c.start < end && clipEnd(c) > start)) return t;
+  }
+  return addTrack(seq, kind);
+}
+
+export type CompoundResult = { ok: true; videoClipId: ID | null; audioClipId: ID | null } | { ok: false; error: string };
+
+/**
+ * Make Compound Clip: the clips `clipIds` of `outer` (and the clips linked to them) move into `inner` (a new, empty
+ * sequence the caller made with the outer sequence's settings) at the same relative positions and track numbers,
+ * with the transitions between them, and one nested clip per kind (video, audio; linked) takes their place on the
+ * lowest of their tracks that is free over the whole range (a new track when none is). Subtitle cues attached to
+ * the moved clips stay where they are, attached to the nested clip. Inner audio track volumes keep the mix
+ * unchanged under the nested clip's track volume. Refused when a clip is on a locked track.
+ */
+export function makeCompoundClip(outer: Sequence, clipIds: Iterable<ID>, inner: Sequence): CompoundResult {
+  const want = new Set(clipIds);
+  const all = rawClips(outer);
+  const links = new Set<ID>();
+  for (const x of all) if (want.has(x.clip.id) && x.clip.linkId) links.add(x.clip.linkId);
+  const chosen = all.filter((x) => want.has(x.clip.id) || (!!x.clip.linkId && links.has(x.clip.linkId)));
+  if (chosen.length === 0) return { ok: false, error: 'Select the clips to nest first.' };
+  if (chosen.some((x) => x.track.locked)) return { ok: false, error: 'A selected clip is on a locked track.' };
+  const ids = new Set(chosen.map((x) => x.clip.id));
+  const s0 = Math.min(...chosen.map((x) => x.clip.start));
+  const s1 = Math.max(...chosen.map((x) => clipEnd(x.clip)));
+  const fd = outer.fps.den / outer.fps.num;
+  const outerTracks = (kind: 'video' | 'audio') => (kind === 'video' ? outer.videoTracks : outer.audioTracks);
+  const innerTracks = (kind: 'video' | 'audio') => (kind === 'video' ? inner.videoTracks : inner.audioTracks);
+  const hostIndex = (kind: 'video' | 'audio') => {
+    const used = chosen.filter((x) => x.kind === kind);
+    return used.length ? Math.min(...used.map((x) => x.index)) : -1;
+  };
+  const vHost = hostIndex('video'), aHost = hostIndex('audio');
+
+  // Inner tracks: the same numbers, names and mute as the outer ones.
+  for (const kind of ['video', 'audio'] as const) {
+    const used = chosen.filter((x) => x.kind === kind);
+    const list = innerTracks(kind);
+    const n = used.length ? Math.max(...used.map((x) => x.index)) + 1 : 0;
+    while (list.length < n) list.push(makeTrack(kind, list.length + 1));
+    const src = outerTracks(kind);
+    const host = kind === 'video' ? vHost : aHost;
+    list.forEach((it, i) => {
+      const ot = src[i];
+      if (!ot) return;
+      it.name = ot.name;
+      it.muted = ot.muted;
+      // The host track's volume applies on top of the nested clip: keep each track's level as it was.
+      if (kind === 'audio' && host >= 0) {
+        const hv = src[host]?.volume ?? 1;
+        it.volume = hv > 0 ? ot.volume / hv : ot.volume;
+      }
+    });
+  }
+  for (const x of chosen) {
+    const copy = plain(x.clip);
+    copy.start = x.clip.start - s0;
+    innerTracks(x.kind)[x.index].clips.push(copy);
+  }
+  for (const kind of ['video', 'audio'] as const) {
+    const list = innerTracks(kind);
+    outerTracks(kind).forEach((t, i) => {
+      if (!list[i]) return;
+      for (const tr of readItems(t.transitions)) {
+        const ends = [tr.outClipId, tr.inClipId].filter((x): x is ID => !!x);
+        if (ends.length && ends.every((id) => ids.has(id))) list[i].transitions.push(plain(tr));
+      }
+    });
+    for (const t of list) { t.clips.sort((a, b) => a.start - b.start); reconcileTransitions(t); }
+  }
+
+  // The nested clips (placed after the selection is removed).
+  const linkId = vHost >= 0 && aHost >= 0 ? uid('link') : null;
+  const make = (kind: 'video' | 'audio'): Clip => {
+    const c = makeClip({ mediaId: inner.id, name: inner.name, sourceIn: 0, duration: s1 - s0, kind, linkId }, s0);
+    c.sequenceId = inner.id;
+    return c;
+  };
+  const vClip = vHost >= 0 ? make('video') : null;
+  const aClip = aHost >= 0 ? make('audio') : null;
+  const anchor = (vClip ?? aClip)!;
+
+  // Cues on the moved clips: same place, attached to the nested clip (inner timeline seconds).
+  const byId = new Map<ID, Clip>(chosen.map((x) => [x.clip.id, x.clip] as const));
+  for (const st of outer.subtitleTracks) {
+    const cues = readItems(st.cues);
+    if (!cues.some((c) => c.clipId && ids.has(c.clipId))) continue;
+    st.cues = cues.map((c) => {
+      if (!c.clipId || !ids.has(c.clipId)) return c;
+      const span = cueSpan(outer, c, byId);
+      if (!span) return c;
+      return { ...c, clipId: anchor.id, srcStart: (span.start - s0) * fd, srcEnd: (span.end - s0) * fd, offset: 0, start: span.start, duration: Math.max(1, span.end - span.start) };
+    });
+  }
+  removeClips(outer, [...ids]);
+  if (vClip) { const t = freeTrack(outer, 'video', vHost, s0, s1); addClipSorted(t, vClip); reconcileTransitions(t); }
+  if (aClip) { const t = freeTrack(outer, 'audio', aHost, s0, s1); addClipSorted(t, aClip); reconcileTransitions(t); }
+  return { ok: true, videoClipId: vClip?.id ?? null, audioClipId: aClip?.id ?? null };
+}
+
+export type BreakApartResult = { ok: true; clipIds: ID[] } | { ok: false; error: string };
+
+/**
+ * Break Apart Compound Clip: the nested clip `clipId` (and the nested clips linked to it that play the same range
+ * of the same sequence) is replaced by copies of the inner sequence's clips over the range it plays, one level deep
+ * (nested clips inside stay nested), at the same timeline positions. Inner track N goes to the nested clip's track
+ * or the next free one above it, in order, new tracks when needed. The nested clip's transform / opacity and gain /
+ * volume / mute and the inner track volumes are folded into the copies; clips of muted inner tracks come out
+ * disabled; inner transitions between copied clips are kept; cues attached to the nested clip become free cues.
+ * Not possible across frame rates. The inner sequence stays in the project.
+ */
+export function breakApartCompoundClip(outer: Sequence, clipId: ID, sequences: Seqs, media: Readonly<Record<ID, MediaItem>>): BreakApartResult {
+  const all = rawClips(outer);
+  const hit = all.find((x) => x.clip.id === clipId);
+  if (!hit || !isNestedClip(hit.clip)) return { ok: false, error: 'Select a nested sequence clip.' };
+  const N = hit.clip;
+  const inner = own(sequences, N.sequenceId);
+  if (!inner) return { ok: false, error: 'Its sequence is no longer in the project.' };
+  if (!fpsEquals(inner.fps, outer.fps)) return { ok: false, error: 'The nested sequence has another frame rate.' };
+  const group = all.filter((x) => x.clip.id === N.id || (!!N.linkId && x.clip.linkId === N.linkId && isNestedClip(x.clip)
+    && x.clip.sequenceId === N.sequenceId && x.clip.start === N.start && x.clip.duration === N.duration && Math.abs(x.clip.sourceIn - N.sourceIn) < 1e-9));
+  if (group.some((x) => x.track.locked)) return { ok: false, error: 'The clip is on a locked track.' };
+  const fd = outer.fps.den / outer.fps.num;
+  const inF = Math.round(N.sourceIn / fd);
+  const start = N.start, end = clipEnd(N);
+  const linkMap = new Map<ID, ID>();
+  const mapLink = (id: ID | null) => { if (!id) return null; let n = linkMap.get(id); if (!n) { n = uid('link'); linkMap.set(id, n); } return n; };
+  const created: ID[] = [];
+  const groupIds = new Set(group.map((x) => x.clip.id));
+  const byId = new Map<ID, Clip>(group.map((x) => [x.clip.id, x.clip] as const));
+  for (const st of outer.subtitleTracks) {
+    const cues = readItems(st.cues);
+    if (!cues.some((c) => c.clipId && groupIds.has(c.clipId))) continue;
+    st.cues = cues.map((c) => {
+      if (!c.clipId || !groupIds.has(c.clipId)) return c;
+      const span = cueSpan(outer, c, byId);
+      if (!span) return c;
+      const { clipId: _c, srcStart: _s, srcEnd: _e, ...rest } = c;
+      return { ...rest, start: span.start, duration: Math.max(1, span.end - span.start), offset: 0 };
+    });
+  }
+  removeClips(outer, [...groupIds]);
+  for (const x of group) {
+    const K = x.clip;
+    const kind = x.kind;
+    const tracks = kind === 'video' ? inner.videoTracks : inner.audioTracks;
+    const live = new Set(activeTracks(tracks).map((t) => t.id));
+    let from = x.index;
+    for (const I of tracks) {
+      const copies: Clip[] = [];
+      const idMap = new Map<ID, ID>();
+      for (const c of readItems(I.clips)) {
+        const a = Math.max(c.start, inF), b = Math.min(clipEnd(c), inF + K.duration);
+        if (b <= a) continue;
+        const copy = plain(c);
+        copy.id = uid('clip');
+        copy.start = start + (a - inF);
+        copy.duration = b - a;
+        copy.sourceIn = c.sourceIn + (a - c.start) * fd * (c.speed || 1);
+        copy.linkId = mapLink(c.linkId);
+        if (!live.has(I.id)) copy.enabled = false;
+        if (a > c.start) copy.audio.fadeIn = 0;
+        if (b < clipEnd(c)) copy.audio.fadeOut = 0;
+        if (kind === 'video') {
+          const m = Object.hasOwn(media, c.mediaId) ? media[c.mediaId] : undefined;
+          const t = composeTransform(K.transform, c.transform, m, inner, outer);
+          if (!t) continue;
+          copy.transform = t;
+        } else {
+          copy.audio.gain = (copy.audio.gain || 0) + (K.audio.gain || 0);
+          copy.audio.volume = Math.max(0, copy.audio.volume) * Math.max(0, K.audio.volume) * Math.max(0, I.volume);
+          if (K.audio.muted) copy.audio.muted = true;
+        }
+        idMap.set(c.id, copy.id);
+        copies.push(copy);
+      }
+      if (!copies.length) { from++; continue; }
+      const target = freeTrack(outer, kind, from, start, end);
+      from = (kind === 'video' ? outer.videoTracks : outer.audioTracks).indexOf(target) + 1;
+      for (const copy of copies) addClipSorted(target, copy);
+      for (const tr of readItems(I.transitions)) {
+        const o = tr.outClipId ? idMap.get(tr.outClipId) : null;
+        const i = tr.inClipId ? idMap.get(tr.inClipId) : null;
+        if ((tr.outClipId && !o) || (tr.inClipId && !i)) continue;
+        target.transitions.push({ ...plain(tr), id: uid('tr'), outClipId: o ?? null, inClipId: i ?? null });
+      }
+      reconcileTransitions(target);
+      created.push(...copies.map((c) => c.id));
+    }
+  }
+  return { ok: true, clipIds: created };
+}
+
+/**
+ * The clips that nest sequence `child` in `host` at `frame`: a video clip when the child has video clips (or
+ * nothing at all), an audio clip when it has audio clips (or nothing), linked, as long as the child's timeline at the
+ * host's frame rate (at least one frame).
+ */
+export function nestedClipsFor(host: Pick<Sequence, 'fps'>, child: Sequence, frame: number): Clip[] {
+  const hasV = child.videoTracks.some((t) => t.clips.length > 0);
+  const hasA = child.audioTracks.some((t) => t.clips.length > 0);
+  const kinds: ('video' | 'audio')[] = hasV || hasA ? [...(hasV ? ['video' as const] : []), ...(hasA ? ['audio' as const] : [])] : ['video', 'audio'];
+  const duration = Math.max(1, Math.floor((sequenceSeconds(child) * host.fps.num) / host.fps.den + 1e-6));
+  const linkId = kinds.length > 1 ? uid('link') : null;
+  return kinds.map((kind) => {
+    const c = makeClip({ mediaId: child.id, name: child.name, sourceIn: 0, duration, kind, linkId }, Math.max(0, Math.round(frame)));
+    c.sequenceId = child.id;
+    return c;
+  });
+}
+
+/** Inner timeline frame of the nested clip `clip` at outer frame `frame` (Open in Timeline puts the inner playhead there). */
+export function innerFrameAt(clip: Clip, frame: number, outerFps: Rational, innerFps: Rational): number {
+  const f = Math.max(clip.start, Math.min(clipEnd(clip) - 1, frame));
+  const t = clip.sourceIn + ((f - clip.start) * outerFps.den) / outerFps.num;
+  return Math.max(0, Math.floor((t * innerFps.num) / innerFps.den + 1e-6));
+}
+
+/**
+ * Match Frame through nesting: the media clip of the flattened sequence that plays under `clip` (a clip of `seq`) at
+ * `frame`, and its source time. For a media clip, the clip itself. Null when nothing plays there.
+ */
+export function sourceUnder(seq: Sequence, clip: Clip, frame: number, sequences: Seqs, media: Readonly<Record<ID, MediaItem>>): { clip: Clip; time: number } | null {
+  const fd = seq.fps.den / seq.fps.num;
+  if (!isNestedClip(clip)) return { clip, time: clip.sourceIn + (frame - clip.start) * fd * clip.speed };
+  const flat = flattenSequence(seq, sequences, media);
+  const tracks = clip.kind === 'audio' ? flat.audioTracks : flat.videoTracks;
+  for (let i = tracks.length - 1; i >= 0; i--) {
+    for (const c of tracks[i].clips) {
+      if (!c.enabled || c.start > frame || clipEnd(c) <= frame) continue;
+      const o = origins.get(c);
+      if (o && o.path[0] === clip.id) return { clip: c, time: c.sourceIn + (frame - c.start) * fd * c.speed };
+    }
+  }
+  return null;
+}
