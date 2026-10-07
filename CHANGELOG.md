@@ -5,6 +5,52 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
+## [0.6.0] - 2026-10-07
+
+Read image subtitles ([Roadmap](docs/ROADMAP.md) §4): the picture subtitles on Blu-ray and DVD rips (PGS, VobSub,
+DVB, XSUB) become timed, searchable text tracks, read on your computer. Project files stay `formatVersion` 1 (subtitle
+tracks gain an optional `streamIndex`).
+
+### Added
+
+- **Read with OCR…** for image subtitle streams: in Transcript › Import › Embedded…, the Project panel's Embedded
+  Subtitles menu and Transcribe… › Read bitmap subtitles (OCR)…. Pick the language, and the job reads every subtitle
+  with its timing into a track named for example "English (OCR #3)", which transcript search finds like any other.
+  Reading the same stream again replaces that track (one undo step) and is instant from the cache.
+- **OCR languages** (File › OCR Languages…, or Preferences): 57 languages, each installed on request from the
+  Tesseract project's language data (about 0.4–8 MB each, checked against a fixed SHA-256), with progress, Cancel,
+  Remove and Install from file…. The OCR engine is built in; nothing is downloaded until you install a language, and
+  reading subtitles never uses the network.
+
+### Changed
+
+- Importing an image subtitle stream as text now offers **Read with OCR…** instead of telling you to convert it with
+  another tool. DVB teletext and ARIB captions stay unsupported and say so.
+
+### Fixed
+
+- Scene detection on media longer than about 2 h 47 min put cuts up to several frames early (FFmpeg 6.1 printed the
+  times rounded); previously detected results are recomputed
+  ([report](bugs/closed/2026-10-07-scene-detect-pts-precision.md)).
+- The job queue's count of running jobs left out language downloads.
+
+### Development
+
+- New runtime dependency: tesseract.js 7.0.0 (Apache-2.0). Only its two LSTM engine builds ship (about 5.8 MB, unpacked
+  from the app archive); Windows CI fails if the OCR folder grows past 7 MB, and the smoke tests require the OCR engine
+  to start in the unpacked, installed and portable builds. THIRD_PARTY_NOTICES lists Tesseract and the libraries in its
+  engine build; Help › About › Licences… includes the Tesseract licence.
+- The performance gate: a count guardrail with a baseline of 0 tolerates 1, and `npm run perf:compare` runs 3 times per
+  side by default.
+- The roadmap has a Progress table, updated by every feature PR and checked by every release PR.
+
+### Known issues
+
+- OCR accuracy is measured on generated subtitles (100 % on the test streams); italic, coloured and sign subtitles on
+  real discs may read less well. See [LIMITATIONS](docs/LIMITATIONS.md).
+- Unchanged: moved media rebuilds its cache ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned
+  builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
+
 ## [0.5.0] - 2026-10-07
 
 Pre-export warnings ([Roadmap](docs/ROADMAP.md) §3): the Export dialog points out, before a long export, the mistakes
