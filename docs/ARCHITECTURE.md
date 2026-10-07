@@ -235,6 +235,14 @@ frame by construction, and the unit and real-FFmpeg tests compare nested timelin
   the flattened clips: the planner multiplies `envelopeAt(clip, frame)` into each layer's alpha / gain, the render
   graph adds the same ramps as `fade=...:alpha=1` / `afade`. Inner frames before the in point / after the out point are
   the handles of a dissolve into or out of a nested clip.
+- **Keyframes** (§11) are clip-relative, so every flattened copy gets its own: the inner clip's moved to the copy's
+  start (rescaled by innerFrameDuration / outerFrameDuration across frame rates) and the nested clip's moved likewise,
+  then composed with composeTransform's formulas (`composeTransformKeys`, `composeAudioKeys`). When one input varies,
+  its keyframe values are mapped directly (interpolation kept); when several vary together (the nested scale times an
+  inner offset, both opacities, both levels, an ease against another curve), `composeKeyList` samples linear
+  keyframes at every integer frame of those spans, so preview and export are exact at every frame. A list stays within
+  2,000 keyframes (denser sampling is strided). A layer whose own position or scale is keyed is not clipped to the
+  nested crop and the inner frame edge.
 - **Memoization.** The result is cached per sequence object and is reused while the sequences it reaches and `media`
   are the same objects; a sequence without nested clips is returned as it is after one cached reference scan per
   track list. So an edit inside a nested sequence (a new sequence object) invalidates every outer sequence that
