@@ -394,6 +394,10 @@ server.
   dmg build with bundled FFmpeg, and macOS signing and notarisation, are planned in §19.
 - Snapshots stored as diffs, to keep project files small.
 - Titles / text generator.
+- **More than one audio track and soft subtitles in MP4** (project owner's request, 7 October 2026; after 1.0). MKV
+  export already has them (§7) and the render graph already builds every output track, so this is mostly muxing: per-track
+  language and title metadata and `mov_text` subtitles. Limits to design around: FFmpeg's MP4 muxer does not keep track
+  titles or the default flag on every version, and many players only play an MP4's first audio track.
 
 ## 19. Official Linux and macOS releases
 
