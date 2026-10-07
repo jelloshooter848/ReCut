@@ -7,8 +7,9 @@
  *  - values: position / scale / rotation compose as composeTransform does with both sides' values at that frame,
  *    opacity = N(t) × inner(t), level = inner(t) × N(t) × inner track volume; exact at integer frames;
  *  - long clips with both sides animated: at most MAX_KEYFRAMES_PER_PROPERTY keyframes, and the export graph builds;
- *  - animated layers keep the inner clip's own crop (not cut to the inner frame edge or the nested crop: a documented
- *    limitation, docs/LIMITATIONS.md);
+ *  - inner layers whose own position or scale is keyed keep the inner clip's own crop (not cut to the inner frame edge
+ *    or the nested crop: a documented limitation, docs/LIMITATIONS.md); layers that only move with the nested clip are
+ *    still cut there (the cut is in the layer's own picture, which the nested clip's motion does not change);
  *  - clips without keyframes on either side come through without a `keyframes` key.
  * Checked in the preview planner (per-frame transform, alpha, gain) and on the flattened clips the render graph
  * evaluates (shared/keyframes.ts evaluateClipProperty, the same evaluation as its filters).
@@ -294,7 +295,7 @@ describe('keyframes on inner clips', () => {
 
 describe('keyframes on the nested clip', () => {
   for (const rotation of [0, 30]) {
-    it(`(b) N keyed for position, scale and opacity over static offset layers, N rotation ${rotation}°: composed per frame, crop kept`, () => {
+    it(`(b) N keyed for position, scale and opacity over static offset layers, N rotation ${rotation}°: composed per frame, still cut to the inner frame`, () => {
       // Inner 1280x720 (fit 1.5 into the outer frame), two tracks of static, offset layers.
       const I = mkSeq('I', R24, 1280, 720);
       const a = clip('a', 'A', 0, 48, 10, { transform: { ...defaultTransform(), x: 100, y: -50, scale: 0.5, crop: { left: 0.1, top: 0, right: 0, bottom: 0.05 } } });
@@ -311,7 +312,9 @@ describe('keyframes on the nested clip', () => {
       });
       put(O.videoTracks[0], N);
       const src: Record<ID, Clip> = { a, b, c };
-      const want = (id: ID, f: number) => (src[id] ? compose(at(N, f), src[id].transform, src[id].mediaId, I, O) : null);
+      // Static inner layers are cut to the inner frame edge and N's crop as without keyframes (N's motion moves the cut picture).
+      const cut = (id: ID) => composeTransform(N.transform, src[id].transform, MEDIA[src[id].mediaId], I, O)!.crop;
+      const want = (id: ID, f: number) => (src[id] ? compose(at(N, f), src[id].transform, src[id].mediaId, I, O, cut(id)) : null);
       const F = mkSeq('F');
       put(F.videoTracks[0], sampledVideo('a', 'A', 10, 48, 10, (f) => want('a', f)!), sampledVideo('b', 'B', 58, 48, 5, (f) => want('b', f)!));
       put(F.videoTracks[1], sampledVideo('c', 'C', 10, 96, 0, (f) => want('c', f)!));
@@ -327,8 +330,9 @@ describe('keyframes on the nested clip', () => {
       expect(evaluateClipProperty('opacity', fa, 30)).toBeCloseTo(0.3, 9);
       expect(evaluateClipProperty('opacity', byId(mediaClips(flat, 'video'), 'c'), 30)).toBeCloseTo(0.15, 9);
       expect(fa.transform.rotation).toBe(rotation);
-      // Animated layers are not cut to the inner frame edge or the nested crop: each keeps its own crop.
-      for (const x of mediaClips(flat, 'video')) expect(x.transform.crop).toEqual(src[sourceId(x)].transform.crop);
+      // Cut to the inner frame edge and the nested crop: b (300 px past the inner frame's left edge) loses its left part.
+      for (const x of mediaClips(flat, 'video')) expect(x.transform.crop).toEqual(cut(sourceId(x)));
+      expect(byId(mediaClips(flat, 'video'), 'b').transform.crop.left).toBeGreaterThan(0.2);
       expect(graph(O, { I, O })).toContain('perspective=');
     });
   }
