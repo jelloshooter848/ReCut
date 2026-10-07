@@ -187,6 +187,11 @@ export class NameClaims {
 
   claim(segments: string[]): string {
     const dirs = segments.slice(0, -1);
+    // A folder whose name a file already has is numbered (`Disc 1 (2)/`): numbering the file alone would never help.
+    for (let i = 0; i < dirs.length; i++) {
+      const orig = dirs[i];
+      for (let n = 2; this.files.has(fold(dirs.slice(0, i + 1).join('/'))); n++) dirs[i] = `${orig} (${n})`;
+    }
     const [stem, ext] = splitExt(segments[segments.length - 1]);
     for (let n = 1; ; n++) {
       const file = n === 1 ? `${stem}${ext}` : `${stem} (${n})${ext}`;
