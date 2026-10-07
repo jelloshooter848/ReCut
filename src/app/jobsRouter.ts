@@ -3,6 +3,8 @@
  *  - proxy: queued/running/ready/failed → media.proxy (+ media element invalidation when ready)
  *  - sceneDetect: done → detected scenes; failed → status
  *  - export: toasts
+ *  - download (OCR language installs): toasts + refresh of the OCR language list (src/state/ocrStatus.ts)
+ *  - ocr: done → the OCR subtitle track of that media + stream (added, or the earlier one replaced); toasts
  * This is the ONLY job→project mirror (jobsStore → store): each terminal result is applied once (by job id) and
  * every write is additionally guarded by the media's current state, so results survive a project reload without
  * double-applying. Jobs are also mirrored into store.jobs so panels may read either store consistently.
@@ -17,6 +19,10 @@ import { useJobsStore } from './jobsStore';
 import { invalidateMediaPath } from './media';
 import { requeueStaleProxy } from '@/state/mediaActions';
 import { toast } from '@/components/ui/toastStore';
+import { useOcrStatus } from '@/state/ocrStatus';
+import { OCR_TITLE_TAIL, ocrTrackName } from '@/ocr/ocrUi';
+import { iso6392ForOcr, ocrLanguage, type OcrResult } from '@shared/ocr';
+import { uid } from '@shared/ids';
 
 interface ProxyResultLike { path: string; width?: number; height?: number; cached?: boolean; audioStreams?: number[] }
 interface ExportResultLike { outputPath?: string; sidecarPath?: string; warnings?: string[] }
@@ -120,6 +126,57 @@ function routeExport(job: JobInfo): void {
   }
 }
 
+/** "English" from a download job titled "Install English OCR data (4.1 MB)"; the title itself otherwise. */
+function downloadName(job: JobInfo): string {
+  return /^Install (.+) OCR data\b/.exec(job.title)?.[1] ?? job.title;
+}
+
+function routeDownload(job: JobInfo): void {
+  if (!isTerminal(job) || !claim(job)) return;
+  const name = downloadName(job);
+  if (job.status === 'done') toast('ok', `${name} OCR language installed`);
+  else if (job.status === 'failed') toast('error', `Could not install ${name} OCR data: ${job.error ?? 'unknown error'}`);
+  else toast('info', `${name} OCR download canceled`);
+  void useOcrStatus.getState().refresh();
+}
+
+/** "#3 (English)" from an OCR job title ("Read subtitles with OCR: film.mkv #3 (English)"); the title otherwise. */
+function ocrJobLabel(job: JobInfo): string {
+  return OCR_TITLE_TAIL.exec(job.title)?.[0] ?? job.title;
+}
+
+function isOcrResult(r: unknown): r is OcrResult {
+  if (!r || typeof r !== 'object') return false;
+  const o = r as Partial<OcrResult>;
+  return Array.isArray(o.cues) && typeof o.language === 'string' && Number.isInteger(o.streamIndex);
+}
+
+function routeOcr(job: JobInfo): void {
+  if (!isTerminal(job) || !claim(job)) return;
+  const st = useStore.getState();
+  const media = job.mediaId ? st.project.media[job.mediaId] : undefined;
+  if (job.status === 'failed') { toast('error', `OCR failed for ${media?.name ?? 'media'} ${ocrJobLabel(job)}: ${job.error ?? 'unknown error'}`); return; }
+  if (job.status === 'canceled') { toast('info', `OCR canceled (${ocrJobLabel(job)})`); return; }
+  const r = job.result;
+  if (!isOcrResult(r)) { toast('error', `OCR returned no result (${ocrJobLabel(job)})`); return; }
+  const name = ocrLanguage(r.language)?.name ?? r.language;
+  const where = `#${r.streamIndex} (${name})`;
+  if (!media) { toast('warn', `OCR of ${where} finished, but its media is no longer in the project`); return; }
+  if (r.cues.length === 0) { toast('warn', `No subtitle text read from ${media.name} ${where}`); return; }
+  const stream = media.probe?.subtitles.find((s) => s.index === r.streamIndex);
+  st.putOcrSubtitleTrack({
+    id: uid('sub'),
+    name: ocrTrackName(r.language, r.streamIndex),
+    language: stream?.language && stream.language !== 'und' ? stream.language : iso6392ForOcr(r.language),
+    mediaId: media.id,
+    cues: r.cues.map((c) => ({ ...c })),
+    origin: 'ocr',
+    streamIndex: r.streamIndex,
+  });
+  const n = r.cues.length;
+  toast('ok', `${n} subtitle line${n === 1 ? '' : 's'} read from ${where}${r.cached ? ' (from cache)' : ''}`);
+}
+
 /** Reveal an exported file in the OS file manager (for UI that renders export results). */
 export function revealExport(path: string): void { void window.recut?.showItemInFolder?.(path).catch(() => { /* ignore */ }); }
 
@@ -131,6 +188,8 @@ export function routeJobs(jobs: JobInfo[]): void {
       if (job.kind === 'proxy') routeProxy(job);
       else if (job.kind === 'sceneDetect') routeSceneDetect(job);
       else if (job.kind === 'export') routeExport(job);
+      else if (job.kind === 'download') routeDownload(job);
+      else if (job.kind === 'ocr') routeOcr(job);
     } catch (e) {
       console.error('[jobsRouter] failed to route job', job.id, e);
     }

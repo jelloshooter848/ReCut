@@ -17,6 +17,7 @@ ReCut is an Electron + React + TypeScript non-linear video editor for fan edits.
 - Run `npm run typecheck` and `npm test` before reporting done.
 - Agents own only the files named in their task. Do not edit other files; report needed changes instead.
 - Bugs are filed and closed as Markdown files under `bugs/` (see `bugs/README.md`, copy `bugs/TEMPLATE.md`).
+- A PR that completes a roadmap entry updates `docs/ROADMAP.md` in the same PR: the entry's **Status** line and its row in the Progress table.
 - Versioning and releases: see docs/RELEASING.md. Feature and bug PRs never change the version.
 
 ## Commands

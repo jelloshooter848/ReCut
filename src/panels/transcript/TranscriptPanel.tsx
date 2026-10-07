@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { FileText, FileUp, Mic, Search, Upload } from 'lucide-react';
+import { FileText, FileUp, Mic, ScanText, Search, Upload } from 'lucide-react';
 import { useStore } from '@/state';
 import { MenuButton, Tabs, type MenuItem } from '@/components/ui';
 import type { PanelProps } from '../registry';
@@ -7,6 +7,7 @@ import { getProviders, type TranscriptProvider } from '@/transcript/providers';
 import { SearchTab } from './SearchTab';
 import { TranscriptView } from './TranscriptView';
 import { importEmbedded, importSubtitlesDialog, targetMediaId, transcribeWith, useTranscriptIndex } from './shared';
+import { embeddedStreamEntry, ocrStreams, ocrUnavailableReason, openOcrDialog } from '@/ocr/ocrUi';
 
 type Tab = 'search' | 'transcript';
 
@@ -42,28 +43,40 @@ export function TranscriptPanel({ active }: PanelProps) {
     const mediaId = targetMediaId();
     const streams = targetMedia?.probe?.subtitles ?? [];
     const providers: TranscriptProvider[] = getProviders();
+    const ocrWhy = ocrUnavailableReason(targetMedia);
+    const firstOcr = ocrStreams(targetMedia)[0];
     return [
       { heading: targetMedia ? `For: ${targetMedia.name}` : 'No media selected' },
       { label: 'Import subtitles… (.srt / .vtt)', icon: FileUp, onSelect: () => { void importSubtitlesDialog(mediaId); } },
       {
         label: 'Embedded…', disabled: !mediaId || streams.length === 0,
-        submenu: streams.map((s) => ({
-          label: `#${s.index} ${s.language ?? 'und'}${s.title ? ` — ${s.title}` : ''} (${s.codec})`,
-          onSelect: () => { if (mediaId) void importEmbedded(mediaId, s.index); },
-        })),
+        submenu: streams.map((s) => {
+          const e = embeddedStreamEntry(s);
+          return {
+            label: e.label, disabled: e.disabled, icon: e.ocr ? ScanText : undefined,
+            onSelect: () => { if (mediaId) void importEmbedded(mediaId, s.index); },
+          };
+        }),
       },
       { separator: true },
       {
         label: 'Transcribe…', icon: Mic, disabled: !mediaId,
-        submenu: providers.map((p) => {
-          const a = availability.get(p.id);
-          const ok = a?.available ?? false;
-          return {
-            label: ok ? p.name : `${p.name} — ${a?.reason ?? 'not available'}`,
-            disabled: !ok,
-            onSelect: () => { if (mediaId) void transcribeWith(p, mediaId); },
-          };
-        }),
+        submenu: [
+          ...providers.map((p): MenuItem => {
+            const a = availability.get(p.id);
+            const ok = a?.available ?? false;
+            return {
+              label: ok ? p.name : `${p.name} — ${a?.reason ?? 'not available'}`,
+              disabled: !ok,
+              onSelect: () => { if (mediaId) void transcribeWith(p, mediaId); },
+            };
+          }),
+          { separator: true },
+          {
+            label: ocrWhy ? `Read bitmap subtitles (OCR) — ${ocrWhy}` : 'Read bitmap subtitles (OCR)…', icon: ScanText, disabled: !!ocrWhy,
+            onSelect: () => { if (targetMedia && firstOcr) openOcrDialog({ mediaId: targetMedia.id, streamIndex: firstOcr.index }); },
+          },
+        ],
       },
     ];
   }, [targetMedia, availability]);

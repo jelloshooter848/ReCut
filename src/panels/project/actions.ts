@@ -14,6 +14,7 @@ import {
   activeSequence, fileNameOf,
 } from '@/state';
 import { activeJobFor, useJobsStore } from '@/app/jobsStore';
+import { ocrStream, openOcrDialog } from '@/ocr/ocrUi';
 
 export const VIDEO_EXT = VIDEO_EXTS;
 export const AUDIO_EXT = AUDIO_EXTS;
@@ -80,7 +81,9 @@ export async function importSubtitlesViaDialog(mediaId: ID): Promise<void> {
   for (const p of paths) await attachSubtitleFile(mediaId, p);
 }
 
+/** Extract an embedded text stream; a bitmap stream (PGS, VobSub, DVB, XSUB) opens the Read with OCR dialog instead. */
 export async function importEmbedded(mediaId: ID, streamIndex: number): Promise<void> {
+  if (ocrStream(useStore.getState().project.media[mediaId], streamIndex)) { openOcrDialog({ mediaId, streamIndex }); return; }
   try {
     const r = await importEmbeddedSubtitles(mediaId, streamIndex);
     if (r.trackId) toast('ok', 'Embedded subtitles imported');

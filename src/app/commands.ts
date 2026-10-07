@@ -29,6 +29,7 @@ import { requestNewProject, requestOpenProject, requestSave, requestSaveAs } fro
 import { confirm, promptText } from './dialogs/ConfirmDialog';
 import { openSpeedDialog } from './dialogs/SpeedDialog';
 import { openSequenceDialog } from './dialogs/NewSequenceDialog';
+import { openOcrLanguages } from '@/ocr/ocrUi';
 import type { Tool } from '@/state/types';
 
 /** Command ids implemented here that are not part of the shell's COMMAND_IDS (menu names match electron/menu.ts). */
@@ -43,6 +44,7 @@ export const EXTRA_COMMAND_IDS = {
   toggleSnapping: 'view.toggleSnapping',
   importSubtitles: 'file.importSubtitles',
   preferences: 'app.preferences',
+  ocrLanguages: 'app.ocrLanguages',
   quit: 'file.quit',
   duplicateSequence: 'sequence.duplicate',
   removeDisabledClips: 'sequence.removeDisabledClips',
@@ -64,6 +66,7 @@ const EXTRA_META: Record<string, { title: string; category: string; keys: string
   [EXTRA_COMMAND_IDS.toggleSnapping]: { title: 'Toggle Snapping', category: 'View & Panels', keys: ['S'] },
   [EXTRA_COMMAND_IDS.importSubtitles]: { title: 'Import Subtitles…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.preferences]: { title: 'Preferences…', category: 'File', keys: ['Ctrl+,'] },
+  [EXTRA_COMMAND_IDS.ocrLanguages]: { title: 'OCR Languages…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.quit]: { title: 'Quit', category: 'File', keys: ['Ctrl+Q'] },
   [EXTRA_COMMAND_IDS.duplicateSequence]: { title: 'Duplicate Sequence…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.removeDisabledClips]: { title: 'Remove Disabled Clips…', category: 'Editing', keys: [] },
@@ -504,6 +507,7 @@ export function buildEditingCommands(): CommandInput[] {
     cmd(X.importSubtitles, () => importSubtitlesViaDialog()),
     cmd(C.export, () => S().openDialog('export'), hasSeq),
     cmd(X.preferences, () => S().openDialog('preferences')),
+    cmd(X.ocrLanguages, () => openOcrLanguages()),
     cmd(X.quit, () => { const api = recutApi(); if (api) void api.quit(false); }),
 
     // ---- sequence ----

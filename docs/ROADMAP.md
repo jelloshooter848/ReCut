@@ -1,12 +1,29 @@
 # Roadmap
 
-None of the capabilities below exist in ReCut yet. They are deferred, not abandoned. Each entry says why it waited
-and where it would plug in. For what works today, see the [README](../README.md). For current gaps and bugs, see
-[LIMITATIONS](LIMITATIONS.md).
+Entries marked **done** have shipped; the table below shows where each one stands. Every other entry does not exist
+in ReCut yet: it is deferred, not abandoned, and says why it waited and where it would plug in. For what works today,
+see the [README](../README.md). For current gaps and bugs, see [LIMITATIONS](LIMITATIONS.md).
 
 Order is rough priority for fan editing: restructuring finished films and series at franchise scale. Entries 1 and
 2 are gates rather than capabilities: they come before the next large feature. Why some entries sit where they do is
 recorded under [Ordering decisions](#ordering-decisions) at the end.
+
+## Progress
+
+Updated with every feature PR (the PR that lands an entry sets its row and the entry's **Status** line) and checked
+in every release PR (docs/RELEASING.md).
+
+| § | Entry | Status | Release |
+|---|---|---|---|
+| 1 | Performance at franchise scale | Done | 0.3.0 |
+| 2 | Fix the remaining preview gaps | Done | 0.4.0 |
+| 3 | Pre-export warnings | Done | 0.5.0 |
+| 4 | Bitmap subtitle OCR (PGS / VobSub / DVB) | Done | 0.6.0 |
+| 19 | Official Linux and macOS releases | **Next:** Linux, then macOS | 0.6.1 (Linux), 0.7.0 (macOS) |
+| 5–18 | Everything else | Not started | — |
+
+Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
+the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
 
 **Scheduled next after §4:** official Linux and macOS releases (§19) follow Bitmap subtitle OCR (§4, release 0.6.0):
 **Linux in 0.6.1, macOS in 0.7.0** (project owner's decision, 7 October 2026). §19 keeps its number, out of list
@@ -103,10 +120,19 @@ cannot read them today. OCR produces the same thing as speech-to-text, a searcha
 sources it is cheaper than speech recognition and keeps the authored timing. It can ship before Whisper (§5).
 **Why deferred:** OCR needs an engine and per-language trained data, and ReCut must stay offline and cloud-free.
 Bitmap streams are refused by the subtitle import today.
-**Plan:** a `TranscriptProvider` backed by a user-installed OCR engine (for example Tesseract), running as a
-main-process job. FFmpeg decodes the bitmap stream to images with their display times, the engine reads each event,
-and cues attach as a `SubtitleTrack` with `origin: 'ocr'`. Results are cached with the existing path + size + mtime
-key plus stream index, engine and language.
+**Plan:** an OCR engine built into ReCut, with languages installed from inside the app, running as a main-process
+job. FFmpeg decodes the bitmap stream to images with their display times, the engine reads each event, and cues
+attach as a `SubtitleTrack` with `origin: 'ocr'`. Results are cached with the existing path + size + mtime key plus
+stream index, engine and language.
+**Status: done (7 October 2026, release 0.6.0).** **Read with OCR…** (Transcript › Import › Embedded…, the Project
+panel's Embedded Subtitles, Transcript › Import › Transcribe… › Read bitmap subtitles (OCR)…) turns a PGS, VobSub, DVB
+or XSUB stream into a subtitle track named "English (OCR #3)" that Transcript search finds. The engine is Tesseract
+compiled to WebAssembly (tesseract.js 7.0.0, about 5.9 MB in the app, no native program); languages (57, pinned
+`tessdata_fast` files with SHA-256) are installed in the app from **File › OCR Languages…** or from the OCR dialog,
+and OCR then runs offline. Reading runs as an `ocr` job on the background lane (a pool of up to 3 worker threads);
+results are cached per file, stream, language file and engine core, so a re-run is instant and replaces the earlier
+track. On generated fixtures character accuracy is 100 % (PGS, VobSub, DVB, XSUB, 17 lines each) and a 1,500-event
+PGS stream reads in about 28 s on 4 cores (99.96 %). Teletext and ARIB captions are not supported.
 
 ## 5. Local speech-to-text (Whisper)
 

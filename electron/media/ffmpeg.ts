@@ -471,9 +471,12 @@ export function runFfmpeg(args: string[], opts: RunFfmpegOptions = {}): FfmpegRu
 // ------------------------------------------------------------------
 
 /** Run ffprobe with `-v error -print_format json` prepended and parse stdout as JSON. */
-export function runFfprobeJson<T = unknown>(args: string[], opts: { timeoutMs?: number } = {}): Promise<T> {
+export function runFfprobeJson<T = unknown>(args: string[], opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<T> {
   const bin = getFfprobePath();
   if (!bin) return Promise.reject(new FfmpegError(ffmpegMissingMessage('ffprobe'), {}));
+  const { signal } = opts;
+  const canceled = () => new FfmpegError('ffprobe canceled', { canceled: true });
+  if (signal?.aborted) return Promise.reject(canceled());
   return new Promise<T>((resolve, reject) => {
     const child = spawn(bin, ['-v', 'error', '-print_format', 'json', ...args], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     const out: Buffer[] = [];
@@ -486,12 +489,18 @@ export function runFfprobeJson<T = unknown>(args: string[], opts: { timeoutMs?: 
       timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* ignore */ } }, opts.timeoutMs);
       timer.unref();
     }
+    // Abort (a canceled job): kill ffprobe and reject with FfmpegError{canceled: true}.
+    let aborted = false;
+    const onAbort = () => { aborted = true; try { child.kill('SIGKILL'); } catch { /* gone */ } };
+    signal?.addEventListener('abort', onAbort, { once: true });
     let spawnError: Error | null = null;
     child.on('error', (e) => { spawnError = e; });
     child.on('close', (code, signal) => {
       if (timer) clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', onAbort);
       errSplit.flush();
       const stderr = errLines.join('\n');
+      if (aborted) return reject(canceled());
       if (spawnError) return reject(new FfmpegError(`failed to run ffprobe: ${spawnError.message}`, { stderr }));
       const text = Buffer.concat(out).toString('utf8');
       if (code !== 0) {

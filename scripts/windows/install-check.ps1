@@ -107,7 +107,7 @@ for ($n = 1; $n -le $Attempts; $n++) {
     }
     if ($exe -and $inst.ExitCode -eq 0 -and $n -le $SmokeAttempts) {
       Write-Host "Attempt ${n}: installed at $($exe.FullName); smoke-testing it"
-      $fail = Invoke-Smoke $exe.FullName "installed-$n" 180000 @('encode\+probe ok')
+      $fail = Invoke-Smoke $exe.FullName "installed-$n" 180000 @('encode\+probe ok', 'ocr core=(relaxedsimd-lstm|lstm) ok')
       $row.Smoke = if ($fail) { 'FAILED' } else { 'ok' }
       if ($fail) { $row.Error = "installed-app smoke test: $fail" }
     }
@@ -144,7 +144,7 @@ if (-not $SkipPortable) {
   if (-not $exe) { $portable = 'FAILED: no ReCut-Portable-*.exe' }
   else {
     Write-Host "Portable: $($exe.FullName); smoke-testing it (extracts to %TEMP% first)"
-    $fail = Invoke-Smoke $exe.FullName 'portable' 300000 @('encode\+probe ok', 'status=206', 'resources\\ffmpeg')
+    $fail = Invoke-Smoke $exe.FullName 'portable' 300000 @('encode\+probe ok', 'status=206', 'resources\\ffmpeg', 'ocr core=(relaxedsimd-lstm|lstm) ok')
     $portable = if ($fail) { "FAILED: $fail" } else { 'ok' }
   }
 }

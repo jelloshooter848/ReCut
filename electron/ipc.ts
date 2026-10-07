@@ -13,6 +13,9 @@ import path from 'node:path';
 import { ensureDirSafe } from './safeMkdir';
 import { getFfmpegPath, getFfprobePath } from './media/ffmpeg';
 import { licenceDirs, listLicenceFiles, resolveLicenceFile } from './licences';
+import { ocrDataDir } from './ocr/dataDir';
+import { assertAbsolutePath, assertOcrLanguageCode, parseOcrRequest } from './ocr/validate';
+import type { OcrLanguageState, OcrRequest } from '../shared/ocr';
 import type { AppPreferences, ID, JobInfo, MediaProbe, Project } from '../shared/model';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import type {
@@ -35,7 +38,12 @@ export interface MediaContext {
   ffprobePath: string | null;
   /** Broadcast to every renderer window (used for ev:jobs). */
   broadcast(channel: string, ...args: unknown[]): void;
+  /** HTTP client for OCR language downloads (main.ts passes Electron's `net.fetch`, which uses the system proxy). */
+  fetch?: MediaFetch;
 }
+
+/** The part of `fetch` the media layer uses (Electron's `net.fetch` takes no URL object). */
+export type MediaFetch = (url: string, init?: RequestInit) => Promise<Response>;
 
 /**
  * The media/jobs/export portion of RecutApi, as implemented in the main process, plus
@@ -56,6 +64,12 @@ export interface MediaHandlers {
   startSceneDetect(req: SceneDetectRequest): Promise<JobInfo>;
   extractSubtitles(path: string, streamIndex: number): Promise<string>;
 
+  startOcr(req: OcrRequest): Promise<JobInfo>;
+  ocrLanguages(): Promise<OcrLanguageState[]>;
+  ocrInstallLanguage(code: string): Promise<JobInfo>;
+  ocrRemoveLanguage(code: string): Promise<{ ok: boolean; error?: string }>;
+  ocrInstallLanguageFromFile(code: string, path: string): Promise<{ ok: boolean; error?: string }>;
+
   listJobs(): Promise<JobInfo[]>;
   cancelJob(id: ID): Promise<void>;
   clearJobs(): Promise<void>;
@@ -70,6 +84,7 @@ export interface MediaHandlers {
 
 // Compile-time check: MediaHandlers must stay in sync with the RecutApi surface.
 type MediaApiKeys = 'probe' | 'thumbnail' | 'filmstrip' | 'cancelThumbnails' | 'waveform' | 'startProxy' | 'startSceneDetect' | 'extractSubtitles'
+  | 'startOcr' | 'ocrLanguages' | 'ocrInstallLanguage' | 'ocrRemoveLanguage' | 'ocrInstallLanguageFromFile'
   | 'listJobs' | 'cancelJob' | 'clearJobs' | 'startExport' | 'cancelExport' | 'previewExportCommand';
 type _AssertMediaHandlers = Pick<RecutApi, MediaApiKeys> extends Pick<MediaHandlers, MediaApiKeys> ? true : never;
 const _mediaHandlersInSync: _AssertMediaHandlers = true;
@@ -85,6 +100,13 @@ export function registerMediaIpc(h: MediaHandlers): void {
   ipcMain.handle(IPC.mediaProxyStart, (_e, req: ProxyRequest) => h.startProxy(req));
   ipcMain.handle(IPC.mediaSceneDetectStart, (_e, req: SceneDetectRequest) => h.startSceneDetect(req));
   ipcMain.handle(IPC.mediaExtractSubtitles, (_e, p: string, streamIndex: number) => h.extractSubtitles(assertString(p, 'path'), Number(streamIndex)));
+  // OCR: arguments are checked here (electron/ocr/validate.ts) before they reach the OCR layer.
+  ipcMain.handle(IPC.ocrStart, (_e, req: unknown) => h.startOcr(parseOcrRequest(req)));
+  ipcMain.handle(IPC.ocrLanguages, () => h.ocrLanguages());
+  ipcMain.handle(IPC.ocrInstallLanguage, (_e, code: unknown) => h.ocrInstallLanguage(assertOcrLanguageCode(code)));
+  ipcMain.handle(IPC.ocrRemoveLanguage, (_e, code: unknown) => h.ocrRemoveLanguage(assertOcrLanguageCode(code)));
+  ipcMain.handle(IPC.ocrInstallLanguageFromFile, (_e, code: unknown, p: unknown) =>
+    h.ocrInstallLanguageFromFile(assertOcrLanguageCode(code), assertAbsolutePath(p)));
   ipcMain.handle(IPC.jobsList, () => h.listJobs());
   ipcMain.handle(IPC.jobsCancel, (_e, id: ID) => h.cancelJob(assertString(id, 'id')));
   ipcMain.handle(IPC.jobsClear, () => h.clearJobs());
@@ -171,6 +193,7 @@ export function registerIpc(deps: IpcDeps): void {
       ffmpegVersion: await ffmpegVersion(ffmpegPath),
       cacheDir: await resolveCacheDir(userData),
       userDataDir: userData,
+      ocrDataDir: ocrDataDir(userData),
       homeDir: app.getPath('home'),
       isDev: deps.isDev,
     };

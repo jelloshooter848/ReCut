@@ -32,6 +32,8 @@ Electron + React + TypeScript. FFmpeg does all media work. See [CHANGELOG.md](CH
 - **Transcript search across a franchise.** Import SRT / WebVTT (sidecars next to a video are picked up
   automatically) or extract embedded text subtitles. Search by project, series, season, franchise, collection, source
   or sequence, with regex and whole-word options. Click a hit to load it in the Source monitor at that line.
+- **OCR for Blu-ray and DVD subtitles.** Picture subtitles (PGS, VobSub, DVB, XSUB) are read into searchable text
+  tracks by a built-in OCR engine (Tesseract). Languages are installed from inside ReCut; OCR then runs offline.
 - **Scene library.** Reusable source ranges with characters, location, arc, tags, rating and colour. Filter, sort
   and group them, and drag them to the timeline.
 - **Story tagging.** Tag clips with characters, plotlines, locations and tags. The Storyline panel can **Highlight** or

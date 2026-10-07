@@ -4,6 +4,7 @@
  * Main-process handlers are registered under the channel names in `IPC`.
  */
 import type { AppPreferences, ExportSettings, ID, JobInfo, MediaProbe, Project, Sequence, MediaItem } from './model';
+import type { OcrLanguageState, OcrRequest } from './ocr';
 import type { ProjectWire } from './projectWire';
 
 export const IPC = {
@@ -50,6 +51,12 @@ export const IPC = {
   mediaSceneDetectStart: 'media:sceneDetectStart',
   mediaExtractSubtitles: 'media:extractSubtitles',
   mediaUrl: 'media:url',
+  // OCR of bitmap subtitles (shared/ocr.ts)
+  ocrStart: 'ocr:start',
+  ocrLanguages: 'ocr:languages',
+  ocrInstallLanguage: 'ocr:installLanguage',
+  ocrRemoveLanguage: 'ocr:removeLanguage',
+  ocrInstallLanguageFromFile: 'ocr:installLanguageFromFile',
   // jobs
   jobsList: 'jobs:list',
   jobsCancel: 'jobs:cancel',
@@ -84,13 +91,15 @@ export interface AppInfo {
   ffmpegVersion: string | null;
   cacheDir: string;
   userDataDir: string;
+  /** Folder holding the installed OCR language files (`<userData>/ocr/tessdata`). */
+  ocrDataDir: string;
   /** The user's home directory (fallback output location for exports). */
   homeDir: string;
   isDev: boolean;
 }
 
 /** Licence files Help › About can open (see electron/licences.ts). The renderer opens them by id, never by path. */
-export type LicenceFileId = 'recut' | 'notices' | 'ffmpegBuild' | 'ffmpegLicense' | 'ffmpegReadme' | 'electron' | 'chromium';
+export type LicenceFileId = 'recut' | 'notices' | 'ffmpegBuild' | 'ffmpegLicense' | 'ffmpegReadme' | 'electron' | 'chromium' | 'tesseract';
 export interface LicenceFile { id: LicenceFileId; label: string; fileName: string }
 export type OpenLicenceResult = { ok: true } | { ok: false; error: string };
 
@@ -259,6 +268,17 @@ export interface RecutApi {
   extractSubtitles(path: string, streamIndex: number): Promise<string>;
   /** Convert a filesystem path to a streamable URL for <video>/<img>. */
   mediaUrl(path: string): string;
+
+  /** Read a bitmap subtitle stream (PGS / VobSub / DVB / XSUB) with OCR: a job of kind 'ocr' whose result is an OcrResult. */
+  startOcr(req: OcrRequest): Promise<JobInfo>;
+  /** Every installable OCR language (shared/ocr.ts OCR_LANGUAGES) and whether it is installed or downloading. */
+  ocrLanguages(): Promise<OcrLanguageState[]>;
+  /** Download and verify one OCR language: a job of kind 'download' (one per language at a time). */
+  ocrInstallLanguage(code: string): Promise<JobInfo>;
+  /** Delete an installed OCR language (refused while it is downloading). */
+  ocrRemoveLanguage(code: string): Promise<{ ok: boolean; error?: string }>;
+  /** Install an OCR language from a local file the user picked; refused unless it matches the manifest SHA-256. */
+  ocrInstallLanguageFromFile(code: string, path: string): Promise<{ ok: boolean; error?: string }>;
 
   listJobs(): Promise<JobInfo[]>;
   cancelJob(id: ID): Promise<void>;

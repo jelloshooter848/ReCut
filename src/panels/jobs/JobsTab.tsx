@@ -3,7 +3,8 @@
  */
 import React, { memo, useCallback, useEffect, useState } from 'react';
 import {
-  Activity, AudioWaveform, Ban, ChevronDown, ChevronRight, Clapperboard, Film, FileVideo, FolderOpen, Images, Loader2, Mic, Search, Trash2, X,
+  Activity, AudioWaveform, Ban, ChevronDown, ChevronRight, Clapperboard, Download, Film, FileVideo, FolderOpen, Images, Loader2, Mic, ScanText, Search,
+  Trash2, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { JobInfo, JobKind, JobStatus } from '@shared/model';
@@ -15,9 +16,11 @@ import { arrayEq, jobEq, useJobsSelect } from './useJobsSelect';
 
 const KIND_ICON: Record<JobKind, LucideIcon> = {
   probe: Search, proxy: FileVideo, waveform: AudioWaveform, sceneDetect: Clapperboard, export: Film, thumbnails: Images, transcribe: Mic,
+  ocr: ScanText, download: Download,
 };
 const KIND_LABEL: Record<JobKind, string> = {
   probe: 'Probe', proxy: 'Proxy', waveform: 'Waveform', sceneDetect: 'Scene detection', export: 'Export', thumbnails: 'Thumbnails', transcribe: 'Transcribe',
+  ocr: 'OCR', download: 'Download',
 };
 const STATUS_BADGE: Record<JobStatus, { label: string; cls: string }> = {
   queued: { label: 'Queued', cls: 'dim' },

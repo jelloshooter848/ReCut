@@ -8,7 +8,10 @@
  *  - `<resources>/LICENSE`, `<resources>/THIRD_PARTY_NOTICES.md` (extraResources)
  *  - `<resources>/ffmpeg/FFMPEG-*.txt` (extraResources `resources/ffmpeg`, written by scripts/windows/get-ffmpeg.ps1)
  *  - `LICENSE.electron.txt`, `LICENSES.chromium.html` next to the executable (added by electron-builder itself)
- * In development the repository root (working directory / app path) stands in for `<resources>`.
+ *  - `<resources>/app.asar.unpacked/dist/electron/ocr/core/LICENSE`: Tesseract's licence, copied with the OCR core by
+ *    scripts/build-electron.mjs (dist/electron/ocr/** is unpacked from app.asar, build.asarUnpack)
+ * In development the repository root (working directory / app path) stands in for `<resources>`, and
+ * `<root>/dist/electron/ocr/core` for the OCR folder.
  *
  * No `electron` import, so the resolution is unit-testable; electron/ipc.ts supplies the directories.
  */
@@ -16,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { LicenceFile, LicenceFileId } from '../shared/ipc';
 
-type Where = 'app' | 'ffmpeg' | 'exe';
+type Where = 'app' | 'ffmpeg' | 'exe' | 'ocr';
 
 interface LicenceDef { id: LicenceFileId; label: string; fileName: string; where: Where }
 
@@ -29,10 +32,14 @@ export const LICENCE_FILES: readonly LicenceDef[] = Object.freeze([
   { id: 'ffmpegReadme', label: 'FFmpeg readme', fileName: 'FFMPEG-README.txt', where: 'ffmpeg' },
   { id: 'electron', label: 'Electron licence', fileName: 'LICENSE.electron.txt', where: 'exe' },
   { id: 'chromium', label: 'Chromium licences', fileName: 'LICENSES.chromium.html', where: 'exe' },
+  { id: 'tesseract', label: 'Tesseract OCR licence (Apache-2.0)', fileName: 'LICENSE', where: 'ocr' },
 ].map((d) => Object.freeze(d as LicenceDef)));
 
 /** Directories searched, in order, for each kind of file. */
-export interface LicenceDirs { app: string[]; ffmpeg: string[]; exe: string[] }
+export interface LicenceDirs { app: string[]; ffmpeg: string[]; exe: string[]; ocr: string[] }
+
+/** The OCR core folder, relative to the app root (repository root or app.asar.unpacked). */
+const OCR_CORE_DIR = path.join('dist', 'electron', 'ocr', 'core');
 
 /**
  * The search directories for this process. Packaged: `process.resourcesPath` and the executable's folder only.
@@ -41,15 +48,21 @@ export interface LicenceDirs { app: string[]; ffmpeg: string[]; exe: string[] }
 export function licenceDirs(env: { packaged: boolean; resourcesPath?: string; appPath?: string; execPath: string; cwd: string }): LicenceDirs {
   const app: string[] = [];
   const ffmpeg: string[] = [];
-  if (env.resourcesPath) { app.push(env.resourcesPath); ffmpeg.push(path.join(env.resourcesPath, 'ffmpeg')); }
+  const ocr: string[] = [];
+  if (env.resourcesPath) {
+    app.push(env.resourcesPath);
+    ffmpeg.push(path.join(env.resourcesPath, 'ffmpeg'));
+    ocr.push(path.join(env.resourcesPath, 'app.asar.unpacked', OCR_CORE_DIR));
+  }
   if (!env.packaged) {
     for (const root of [env.appPath, env.cwd]) {
       if (!root || /\.asar$/i.test(root)) continue;
       app.push(root);
       ffmpeg.push(path.join(root, 'resources', 'ffmpeg'));
+      ocr.push(path.join(root, OCR_CORE_DIR));
     }
   }
-  return { app: unique(app), ffmpeg: unique(ffmpeg), exe: unique([path.dirname(env.execPath)]) };
+  return { app: unique(app), ffmpeg: unique(ffmpeg), exe: unique([path.dirname(env.execPath)]), ocr: unique(ocr) };
 }
 
 function unique(xs: string[]): string[] {

@@ -23,8 +23,9 @@ flowchart LR
   subgraph Main [Main process: Node]
     IPC[ipc.ts handlers]
     IO[project/io.ts: atomic save, .bak, autosave, prefs]
-    Q[JobQueue: media x2, background x1, export x1]
+    Q[JobQueue: media x2, background x1, network x2, export x1]
     Media[media/*: probe, thumbs, waveform, proxy, sceneDetect, subtitlesExtract]
+    Ocr[ocr/*: bitmap events, Tesseract worker pool, language installer]
     Exp[export/*: renderGraph, chunks, exporter]
     Proto[recut-media:// protocol with Range]
   end
@@ -33,7 +34,10 @@ flowchart LR
   IPC --> IO
   IPC --> Media
   IPC --> Exp
+  IPC --> Ocr
   Media --> Q
+  Ocr --> Q
+  Ocr --> FF
   Exp --> Q
   Q -- ev:jobs --> UI
   Media --> FF
@@ -55,9 +59,14 @@ flowchart LR
 | `media/waveform.ts` | Streams the audio to u8 mono peaks (O(peaks) memory, even for multi-hour files). Late-starting audio is padded. |
 | `media/proxy.ts` | H.264 / AAC proxy transcode carrying every audio stream, one AAC track each in source order: `<cache>/proxies/<key>_<h>p_all.mp4`. If that run fails (a stream FFmpeg cannot decode or encode), it retries with the decodable streams (`<key>_<h>p_a<N>_a<M>….mp4`), then the media's selected stream alone (`_a<N>`), and returns the streams it carries (`ProxyResult.audioStreams`, recorded in `ProxyInfo.audioStreams`). Older single-stream proxies (`<key>_<h>p_a<N>.mp4`, `<key>_<h>p.mp4` = first stream) stay valid for their stream. Still images get `<key>_still.png` (first picture, upright, long side ≤ 3840). Writes a per-job `.part` file first, then renames it. |
 | `media/sceneDetect.ts` | `select='gt(scene,T)'` + `showinfo` on a downscaled stream. Results are cached per threshold. |
-| `media/subtitlesExtract.ts` | Embedded text subtitle stream → SRT. Bitmap codecs are rejected. |
+| `media/subtitlesExtract.ts` | Embedded text subtitle stream → SRT. Bitmap codecs ReCut can OCR (PGS, VobSub, DVB, XSUB) are refused with a pointer to **Read with OCR…**; teletext and ARIB captions are refused as unsupported. |
 | `media/cache.ts` | Cache root and `sha1(path + size + mtime)` keys. |
-| `jobs/jobQueue.ts` | Three lanes: **media** (proxies, waveforms, extraction; concurrency 2), **background** (scene detection; 1), **export** (1). Progress, cancel and `AbortSignal` per job. Snapshots are pushed at most 10×/s on `ev:jobs`. `jobs/inFlight.ts` de-duplicates identical requests (same proxy output, same scene-detect key). |
+| `jobs/jobQueue.ts` | Four lanes: **media** (proxies, waveforms, extraction; concurrency 2), **background** (scene detection, OCR; 1), **network** (OCR language downloads, kind `download`; 2), **export** (1). Progress, cancel and `AbortSignal` per job. Snapshots are pushed at most 10×/s on `ev:jobs`. `jobs/inFlight.ts` de-duplicates identical requests (same proxy output, same scene-detect key). |
+| `ocr/ocrJob.ts` | The `ocr` job (background lane): checks the language file's SHA-256, then the cache (`<cache>/ocr/<key>_s<stream>_<lang>-<sha8>_v<pipeline>-<core>.json`, `.part` + rename), starts the worker pool while FFmpeg isolates the stream, reads each new image's bands on the pool (a band read with confidence under 50 is read again with the polarity flipped), reuses the text of repeated images and merges touching identical lines. Progress: isolate 0–25 %, then "n/N events". Cancel kills FFmpeg and terminates the workers. De-duplicated per path + stream + language. |
+| `ocr/bitmapEvents.ts` | Bitmap subtitle stream → timed images: remux the stream alone into a temp file, `ffprobe -show_frames` for the timing, sub2video to raw `ya8` for the pixels (with stdout backpressure); pure `assembleEvents` pairs them, drops blank and < 40 ms events, merges back-to-back repeats and gives each distinct picture an `imageId`. |
+| `ocr/preprocess.ts`, `ocr/postprocess.ts` | Pure: crop to the ink, composite onto black and invert (black text on white), split into bands at empty rows, PGM; text clean-up (`|` → `I`, whitespace, punctuation-only lines). |
+| `ocr/engine.ts`, `ocr/worker.ts` | A pool of `min(3, cores − 1)` worker threads running Tesseract (tesseract.js 7.0.0 WebAssembly, LSTM-only core: relaxed SIMD when supported, else plain), unpacked from app.asar. The workers never touch the network. `probeOcrCore` feeds the packaged smoke test. |
+| `ocr/download.ts`, `ocr/languages.ts`, `ocr/dataDir.ts` | Language installer: `download` jobs (network lane, one per language) fetch pinned `tessdata_fast` files with `net.fetch` (resume, size cap, same-host redirects only, SHA-256 check, `.part` + rename) into `<userData>/ocr/tessdata`; remove; install from a local file; `verifyInstalled` before each OCR run. |
 | `export/renderGraph.ts` | Pure: `ExportRequest` → ffmpeg args + `filter_complex` script. Unit-tested. Also used by "Show FFmpeg command". Its segment and transition-handle planning lives in `shared/exportPlan.ts`. |
 | `export/chunks.ts` | Pure: decides when to chunk and where the chunk boundaries go. |
 | `export/exporter.ts` | Runs the graph (single pass or chunked), parses `-progress`, handles cancel, renders into an exclusively created `<name>.recut-part-<random>.mp4` and moves it onto the output (kept as `<name>.recut-unsaved-<time>.mp4` if that fails), writes the `.srt` sidecar through a temp, cleans temp files. Refuses an output that is a project source file, and an existing output unless the request says `overwrite` (see [export-pipeline.md](export-pipeline.md#output-files)). |
@@ -253,6 +262,11 @@ See `docs/attack/performance.md` for the measurements that drove these changes. 
   Transcript › Import › **Transcribe…**. `SubtitleFileProvider` (sidecar SRT/VTT) is the working example.
   `LocalWhisperProvider` is a disabled placeholder. A real local provider should run as a main-process job (the
   `'transcribe'` `JobKind` is reserved) that extracts audio with FFmpeg and streams progress.
+- **OCR languages:** the installable list is the manifest in `shared/ocr.ts` (`OCR_LANGUAGES`, generated by
+  `scripts/ocr-manifest.mjs` with sizes and SHA-256 for the pinned commit). In the renderer, `src/ocr/ocrUi.ts` holds
+  the OCR dialog state and menu helpers, `src/state/ocrStatus.ts` the installed list, and `jobsRouter.ts` turns a
+  finished `ocr` job into the media's OCR track (`putOcrSubtitleTrack`, which replaces the earlier track of the same
+  stream).
 - **Export presets:** add entries to `EXPORT_PRESETS` in `shared/model.ts` (partial `ExportSettings`). The dialog
   lists them, followed by **Match Sequence**.
 - **Panels:** `registerPanel({ id, title, component, defaultZone, icon, keepAlive? })` in a new `src/panels/<name>/index.ts`

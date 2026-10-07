@@ -1,9 +1,10 @@
 /**
  * Background job queue for the main process.
  *
- * - Three lanes: 'export' jobs run one at a time; 'sceneDetect' (long, full-file decodes) runs one at a
- *   time in its own 'background' lane; every other kind (proxies, waveforms, subtitle extraction...) shares
- *   the 'media' lane with concurrency 2, so a long scene detection never starves a proxy (P-07).
+ * - Four lanes: 'export' jobs run one at a time; 'sceneDetect' and 'ocr' (long, CPU-heavy full-file work) run
+ *   one at a time in their own 'background' lane; 'download' (OCR language installs, network-bound) runs two at
+ *   a time in the 'network' lane; every other kind (proxies, waveforms, subtitle extraction...) shares the
+ *   'media' lane with concurrency 2, so a long scene detection or OCR run never starves a proxy (P-07).
  * - Jobs expose a run context with progress reporting, cancellation callbacks and an AbortSignal.
  * - Subscribers receive JobInfo[] snapshots, throttled to at most 10 updates/sec.
  *
@@ -41,12 +42,13 @@ interface InternalJob {
 
 export type JobsListener = (jobs: JobInfo[]) => void;
 
-export type Lane = 'export' | 'media' | 'background';
+export type Lane = 'export' | 'media' | 'background' | 'network';
 
 /** Lane a job kind runs in. */
 export function laneFor(kind: JobKind): Lane {
   if (kind === 'export') return 'export';
-  if (kind === 'sceneDetect') return 'background';
+  if (kind === 'sceneDetect' || kind === 'ocr') return 'background';
+  if (kind === 'download') return 'network';
   return 'media';
 }
 
@@ -57,8 +59,10 @@ export class JobCanceledError extends Error {
 export interface JobQueueOptions {
   mediaConcurrency?: number;
   exportConcurrency?: number;
-  /** Concurrency of the background lane (scene detection), default 1. */
+  /** Concurrency of the background lane (scene detection, OCR), default 1. */
   backgroundConcurrency?: number;
+  /** Concurrency of the network lane (OCR language downloads), default 2. */
+  networkConcurrency?: number;
   /** Minimum ms between snapshot emissions (default 100 → ≤10/sec). */
   throttleMs?: number;
 }
@@ -67,7 +71,7 @@ export class JobQueue {
   private jobs = new Map<ID, InternalJob>();
   private order: ID[] = [];
   private listeners = new Set<JobsListener>();
-  private running: Record<Lane, number> = { media: 0, export: 0, background: 0 };
+  private running: Record<Lane, number> = { media: 0, export: 0, background: 0, network: 0 };
   private readonly limits: Record<Lane, number>;
   private readonly throttleMs: number;
   private emitTimer: NodeJS.Timeout | null = null;
@@ -75,7 +79,10 @@ export class JobQueue {
   private dirty = false;
 
   constructor(opts: JobQueueOptions = {}) {
-    this.limits = { media: opts.mediaConcurrency ?? 2, export: opts.exportConcurrency ?? 1, background: opts.backgroundConcurrency ?? 1 };
+    this.limits = {
+      media: opts.mediaConcurrency ?? 2, export: opts.exportConcurrency ?? 1, background: opts.backgroundConcurrency ?? 1,
+      network: opts.networkConcurrency ?? 2,
+    };
     this.throttleMs = opts.throttleMs ?? 100;
   }
 
@@ -164,7 +171,7 @@ export class JobQueue {
   }
 
   /** Number of jobs currently running (all lanes). */
-  get activeCount(): number { return this.running.media + this.running.export + this.running.background; }
+  get activeCount(): number { return Object.values(this.running).reduce((a, b) => a + b, 0); }
 
   // ------------------------------------------------------------------
 
