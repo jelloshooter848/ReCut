@@ -133,6 +133,11 @@ describe('Windows workflow: the Linux AppImage gate', () => {
     }
     expect(linux).toContain("grep -E 'FAILED|layout=MISSING'");
     expect(linux).toContain('exit "$bad"');
+    // A stalled package mirror never blocks a release: without libfuse2 the smoke test runs the extracted AppImage only.
+    expect(linux).toContain("modes='mounted extracted'");
+    expect(linux).toContain("modes='extracted'");
+    expect(linux).toMatch(/timeout \d+ sudo apt-get/);
+    expect(linux).not.toMatch(/^\s+sudo apt-get update$/m);
   });
 
   it('keeps the AppImage as the ReCut-linux artifact on every run', () => {
@@ -162,7 +167,7 @@ describe('Windows workflow: the Linux AppImage gate', () => {
   });
 
   it('get-ffmpeg.sh writes the same licence, readme and build files as get-ffmpeg.ps1', () => {
-    const sh = fs.readFileSync(path.join(repo, 'scripts/linux/get-ffmpeg.sh'), 'utf8');
+    const sh = fs.readFileSync(path.join(repo, 'scripts/linux/get-ffmpeg.sh'), 'utf8').replace(/\r\n/g, '\n'); // CRLF on a Windows checkout
     expect(sh.startsWith('#!/usr/bin/env bash\n')).toBe(true);
     expect(sh).toContain('set -euo pipefail');
     for (const f of ['FFMPEG-LICENSE.txt', 'FFMPEG-README.txt', 'FFMPEG-BUILD.txt']) expect(sh).toContain(`'${f}'`);

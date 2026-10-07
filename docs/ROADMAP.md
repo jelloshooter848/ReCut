@@ -29,6 +29,81 @@ the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
 **Linux in 0.6.1, macOS in 0.7.0** (project owner's decision, 7 October 2026). §19 keeps its number, out of list
 order, so existing references stay valid.
 
+## Road to 1.0
+
+Decided by the project owner on 7 October 2026, from the review of "ReCut — Whisper Findings and Recommended Roadmap
+to v1.0" and [the 1.0 definition report](../bugs/closed/2026-10-07-roadmap-no-1.0-definition.md).
+
+**What 1.0 means:** ReCut is reliable for the workflow it was built for (restructuring finished films and television
+at franchise scale), on Windows, Linux and macOS. It is not feature parity with Premiere Pro or DaVinci Resolve.
+
+### Milestones
+
+| Release | Milestone | Entries |
+|---|---|---|
+| 0.6.0 | Bitmap subtitle OCR | §4 (done) |
+| 0.6.1 | Official Linux release (AppImage) | §19, Linux part |
+| 0.7.0 | Official macOS release (dmg, signed and notarised) | §19, macOS part |
+| 0.8.0 | Delivery 1: intermediates and audio | §6 (ProRes, DNxHR, WAV / audio-only, one file per audio track) and the centre-channel utility from §9 |
+| 0.9.0 | Delivery 2: MKV packaging | §7 (MKV, more than one audio track, soft subtitle tracks, chapters) |
+| 0.10.0 | Portability and trust | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/open/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
+| 0.11.0 | Local transcription (Whisper) | §5 |
+| 0.12.0 | Nested sequences and compound clips | §8 |
+| 0.13.0 | Keyframes, first version | §11 (position, scale, opacity, volume) |
+| 1.0.0-rc.N | Feature freeze, release candidates | see below |
+| 1.0.0 | Stable release | |
+
+Version numbers after 0.6.1 are the plan, not a promise: a bug-fix release in between takes the next PATCH number,
+and a milestone that ships early or late moves its number with it.
+
+**Required for 1.0:** cross-platform releases, both delivery milestones, portability and trust, nested sequences.
+**Strongly preferred:** local transcription. **First to move to 1.1 if 1.0 needs cutting:** keyframes; then local
+transcription, if it threatens stability or platform support. No optional milestone holds 1.0 back indefinitely.
+
+**Portability and trust (0.10.0) includes:**
+- **Project compatibility promise:** every 1.x release opens projects saved by earlier stable releases, or refuses
+  them with a clear message, never silently damaging them. Projects saved by each stable release (0.3.0 onwards) are
+  kept as test fixtures and opened by CI on every build; `normalizeProject()` gets real migrations when
+  `formatVersion` first changes.
+- **Update notice:** checks the latest GitHub release and says when a newer version exists, with an opt-out in
+  Preferences. No auto-update (as in §19).
+
+### Release candidates (1.0.0-rc.1, rc.2, …)
+
+Feature freeze: only fixes for release-blocking defects. Each candidate is a real release on the Releases page,
+marked as a pre-release. Work for the candidates:
+- macOS signing and notarisation (with the Developer ID of the owner's brother, set up in 0.7.0).
+- Package checks on Windows, Linux and macOS; the full unit and end-to-end suites on each.
+- Opening every saved-project fixture; save, autosave and recovery tests; Collect round trips.
+- A real-media test pass by the owner: real Blu-ray and DVD rips (OCR on real disc subtitles, 5.1 sources,
+  multi-hour sequences), from import to export, on each platform available.
+- The performance gate on the reference machine.
+- Documentation and LIMITATIONS checked against the app.
+- At least one week of normal use of the candidate without a release-blocking discovery.
+
+### Ready for 1.0
+
+1.0.0 ships when all of these hold:
+1. No known data-loss or project-corruption defect.
+2. No known preview or export correctness defect in a supported workflow.
+3. The Windows, Linux and macOS release gates are green.
+4. Every saved-project fixture opens; save, autosave and recovery tests pass.
+5. Install and launch checks pass on every platform.
+6. The owner's real-media test pass is complete, and Collect is verified on real projects.
+7. The performance gate passes.
+8. The documentation matches the app, and LIMITATIONS is current.
+9. A release candidate has been in normal use for at least a week without a release-blocking discovery.
+
+### Not required for 1.0
+
+- **Windows code signing.** Windows builds stay unsigned through 1.0, so SmartScreen warns on first launch (the
+  release notes and install guide explain **More info › Run anyway**). The owner will not pay for a certificate for a
+  free project. After 1.0, apply to a free open-source signing programme (for example SignPath Foundation) or accept
+  a sponsor. macOS is different: an unsigned app is much harder to open there, and signing costs the project nothing.
+- After 1.0: the full surround mixer (§9), interchange (§10, after nesting), stem separation (§12), colour tools
+  (§13), GPU decode (§14), multi-language subtitle authoring (§15), collaboration (§17), advanced keyframe curves,
+  titles, and more Linux package formats.
+
 ## 1. Performance at franchise scale
 
 **Why:** ReCut is for franchise-scale work: thousands of timeline clips, thousands of scenes, multi-hour
@@ -140,10 +215,26 @@ PGS stream reads in about 28 s on 4 cores (99.96 %). Teletext and ARIB captions 
 Many sources have none, or only bitmap subtitles (see §4).
 **Why deferred:** a good model is large (hundreds of MB to GB), GPU support varies by platform, and ReCut must stay
 offline and cloud-free.
-**Plan:** add a `TranscriptProvider` (`src/transcript/providers.ts`) backed by a user-installed `whisper.cpp` binary
-and model, running as a main-process job (`JobKind: 'transcribe'` is already reserved). FFmpeg extracts 16 kHz mono
-audio, progress streams back, and cues attach as a `SubtitleTrack` with `origin: 'whisper'`. The disabled
-**Local Whisper** entry under Transcribe… is the placeholder.
+**Scheduled:** release 0.11.0, before nested sequences (§8) (project owner's decision, 7 October 2026; see
+[Road to 1.0](#road-to-10)). Strongly preferred for 1.0, second to move to 1.1 if 1.0 needs cutting.
+**Plan:** the same model as OCR (§4): **engine built in, models downloaded on request.**
+- **Engine:** a CPU build of `whisper.cpp` (a few MB) ships inside the app for each platform (Metal on Apple Silicon
+  where it helps), so it is signed with the app on macOS and nothing executable is ever downloaded. No GPU-vendor
+  builds (CUDA) in the first version.
+- **Models:** none in the installer. Preferences and the Transcribe… dialog list the models (for example base, small,
+  medium, large-v3-turbo, with their sizes); each is downloaded only when the user asks, from a pinned URL checked
+  against a fixed SHA-256, with progress, resume, Cancel, Remove and Install from file…, through the OCR downloader
+  (`electron/ocr/download.ts`) and the jobs network lane. Models live in ReCut's user-data folder, so updates keep
+  them.
+- **Transcribing:** a `TranscriptProvider` (`src/transcript/providers.ts`) running as a main-process job
+  (`JobKind: 'transcribe'` is already reserved), queued and cancellable like any job. FFmpeg extracts 16 kHz mono
+  audio, progress streams back, and the cues become an ordinary `SubtitleTrack` with `origin: 'whisper'`, so
+  transcript search, jump-to-source and series search treat it like imported or OCR subtitles. Results are cached by
+  source, model (with its hash) and settings; reading the same media again is instant. Transcription never uses the
+  network.
+- The disabled **Local Whisper** entry under Transcribe… is the placeholder.
+**Done when:** ReCut can transcribe media locally into the transcript that search and navigation already use, on
+Windows, Linux and macOS, with no model in the installer.
 
 ## 6. Intermediate and audio-only export
 
@@ -359,3 +450,14 @@ Recorded so they are not re-proposed without new information.
   needs no signing; the macOS risks are an arm64 FFmpeg build with documented licence and source, and signing.
 - **Rejected: nested sequences ahead of OCR.** OCR (§4) is cheap and self-contained and unblocks transcript search
   on most Blu-ray and DVD rips. Nesting is the most invasive entry on the list.
+- **The 1.0 plan (7 October 2026).** The project owner adopted the [Road to 1.0](#road-to-10) milestones from the
+  review of "ReCut — Whisper Findings and Recommended Roadmap to v1.0", with three changes to that review: local
+  transcription bundles its engine and downloads only models (as OCR does) instead of downloading the engine too;
+  delivery is two releases (intermediates and audio first, then MKV packaging), because MKV with several audio tracks
+  needs export mixes the model does not have yet; and local transcription comes before nested sequences, because it
+  reuses the OCR downloader, jobs and cache and does not depend on nesting.
+- **Windows code signing after 1.0.** The owner will not pay for a certificate for a free project (7 October 2026).
+  Windows builds stay unsigned through 1.0; after 1.0, apply to a free open-source signing programme or accept a
+  sponsor. macOS builds are signed from 0.7.0.
+- **Interchange stays after nesting**, including export-only CMX3600 EDL (proposed for the delivery milestone in the
+  1.0 review): it would have to be reworked for nested sequences.

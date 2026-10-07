@@ -8,7 +8,7 @@ ReCut uses [semantic versioning](https://semver.org/). Before 1.0 the version is
 |---|---|
 | MINOR (`0.2.0` → `0.3.0`) | A roadmap milestone, a user-visible feature, or a behaviour change users will notice. Reset PATCH to 0. |
 | PATCH (`0.2.0` → `0.2.1`) | Bug fixes only. |
-| `1.0.0` | The owner's call, when ReCut is stable enough for other people to rely on. |
+| `1.0.0` | The owner's call, when every item under **Ready for 1.0** in [ROADMAP → Road to 1.0](ROADMAP.md#road-to-10) holds. Release candidates (`1.0.0-rc.1`, `rc.2`, …) come first; the release workflow publishes only `X.Y.Z` today and needs pre-release support for them before rc.1. |
 
 The version lives in `package.json` (and `package-lock.json`). The app reads it from there through Electron's
 `app.getVersion()` (Preferences › Version and Help › About), the release file names use it
