@@ -16,6 +16,7 @@ import { activeTracks, planTrackSegments, widenRangeForTransitions, type ClipSeg
 import { framesToSeconds, isValidFps } from '@shared/time';
 import { serializeSrt } from '@shared/subtitles';
 import { videoDisplaySize } from '@shared/media';
+import { audioStreamInfo, channelPanFilter, channelSelectionLabel, channelSelectionProblem } from '@shared/audioChannels';
 
 /** Placeholder in `args` for the path of the filter script file (see exporter.ts). */
 export const FILTER_SCRIPT_TOKEN = '__FILTER_SCRIPT__';
@@ -495,6 +496,23 @@ function audioStreamIndex(seg: ClipSeg, warnings: string[]): number | null {
   return want ?? null;
 }
 
+/**
+ * The `pan` filter of a clip's channel selection for the export's channel layout, or null for the stream's normal
+ * mix. A selection the stream cannot honour falls back to the normal mix with a warning (sequenceExportWarnings says
+ * the same before the export).
+ */
+function clipChannelPan(ctx: Ctx, seg: ClipSeg, streamIdx: number | null): string | null {
+  const sel = seg.clip.audio.channelSelection;
+  if (!sel) return null;
+  const stream = audioStreamInfo(seg.media.probe?.audio, streamIdx);
+  const pan = channelPanFilter(sel, stream, ctx.layout);
+  if (!pan) {
+    const why = stream ? channelSelectionProblem(sel, stream) : 'the source has no probed audio stream';
+    ctx.warnings.push(`Clip "${seg.clip.name}": ${channelSelectionLabel(sel)} cannot be used (${why}); exporting the stream's normal mix.`);
+  }
+  return pan;
+}
+
 function atempoChain(speed: number): string[] {
   // atempo accepts 0.5..100 per stage; chain stages within 0.5..2 for quality.
   const out: string[] = [];
@@ -513,6 +531,10 @@ function audioSegment(ctx: Ctx, seg: ClipSeg): string {
   const streamIdx = audioStreamIndex(seg, ctx.warnings);
   const inLabel = streamIdx === null ? `[${index}:a:0]` : `[${index}:${streamIdx}]`;
   const f: string[] = [];
+  // Channel selection (Roadmap §9): one source channel as mono, or a controlled stereo downmix, picked from the
+  // stream before anything else. The preview's channel proxy is made with this same filter (channelProxy.ts).
+  const pan = clipChannelPan(ctx, seg, streamIdx);
+  if (pan) f.push(pan);
   // Rebase to the in-point (not to the stream's first sample) and fill a late start with silence, so a
   // stream that starts after the container start keeps its offset (M-04). pts are container-relative.
   f.push(`atrim=start=${sec(srcStart)}:duration=${sec(srcLen + 0.25)}`, `asetpts=${ptsMinus(srcStart)}`, 'aresample=async=1:first_pts=0');

@@ -30,6 +30,11 @@ export interface AudioStreamInfo {
   sampleRate: number;
   language?: string;
   title?: string;
+  /**
+   * True when ffprobe reported no channel layout and `layout` is a guess from the channel count (probe.ts
+   * layoutForChannels): channels are then numbered, not named (shared/audioChannels.ts). Absent on older probes.
+   */
+  layoutGuessed?: boolean;
 }
 
 export interface VideoStreamInfo {
@@ -141,6 +146,12 @@ export interface MediaItem {
   preferredAudioStream?: number;
   /** Cache of waveform availability: path to peaks file */
   waveformStatus?: 'none' | 'running' | 'ready' | 'failed';
+  /**
+   * Preview proxies of clips' channel selections (ClipAudio.channelSelection), keyed by shared/audioChannels.ts
+   * channelProxyKey (stream + selection): stereo audio files made with the export's `pan` filter
+   * (electron/media/channelProxy.ts). Mirrored quietly from the jobs, like `proxy`; entries no clip uses are pruned.
+   */
+  channelProxies?: Record<string, ProxyInfo>;
 }
 
 export interface Bin {
@@ -169,7 +180,21 @@ export interface ClipAudio {
   fadeIn: number;    // frames
   fadeOut: number;   // frames
   muted: boolean;
+  /**
+   * What the clip plays of its (multichannel) source stream; absent = the stream's normal mix. See
+   * shared/audioChannels.ts. A selection the stream cannot honour plays the normal mix (with an export warning).
+   */
+  channelSelection?: AudioChannelSelection;
 }
+
+/**
+ * Per-clip channel selection: one source channel as mono (`channel`: an FFmpeg channel name of the stream's layout
+ * such as 'FC', or 'c<N>' (0-based) when the layout is unknown), or a controlled stereo downmix with centre and
+ * surround levels in dB (BS.775 defaults −3 / −3; LFE omitted).
+ */
+export type AudioChannelSelection =
+  | { mode: 'channel'; channel: string }
+  | { mode: 'downmix'; centreDb: number; surroundDb: number };
 
 export type TransitionType = 'crossDissolve' | 'dipToBlack' | 'audioCrossfade';
 
@@ -390,8 +415,11 @@ export interface AppPreferences {
 // ------------------------------------------------------------------
 // Jobs (background work in the main process)
 // ------------------------------------------------------------------
-/** 'ocr': bitmap subtitles to text; 'download': OCR language install; 'transcribe' is reserved for speech-to-text. */
-export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download';
+/**
+ * 'ocr': bitmap subtitles to text; 'download': OCR language install; 'transcribe' is reserved for speech-to-text;
+ * 'channelProxy': preview audio of a clip's channel selection (electron/media/channelProxy.ts).
+ */
+export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download' | 'channelProxy';
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled';
 
 export interface JobInfo {

@@ -16,11 +16,11 @@ import { arrayEq, jobEq, useJobsSelect } from './useJobsSelect';
 
 const KIND_ICON: Record<JobKind, LucideIcon> = {
   probe: Search, proxy: FileVideo, waveform: AudioWaveform, sceneDetect: Clapperboard, export: Film, thumbnails: Images, transcribe: Mic,
-  ocr: ScanText, download: Download,
+  ocr: ScanText, download: Download, channelProxy: AudioWaveform,
 };
 const KIND_LABEL: Record<JobKind, string> = {
   probe: 'Probe', proxy: 'Proxy', waveform: 'Waveform', sceneDetect: 'Scene detection', export: 'Export', thumbnails: 'Thumbnails', transcribe: 'Transcribe',
-  ocr: 'OCR', download: 'Download',
+  ocr: 'OCR', download: 'Download', channelProxy: 'Preview audio',
 };
 const STATUS_BADGE: Record<JobStatus, { label: string; cls: string }> = {
   queued: { label: 'Queued', cls: 'dim' },

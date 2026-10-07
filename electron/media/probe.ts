@@ -273,6 +273,8 @@ export function probeFromFfprobe(raw: FfprobeOutput, filePath: string, fileSize?
         codec: s.codec_name ?? 'unknown',
         channels,
         layout: s.channel_layout || layoutForChannels(channels),
+        // No layout from ffprobe: the one above is a guess, so channels are numbered, not named (shared/audioChannels.ts).
+        ...(s.channel_layout ? {} : { layoutGuessed: true }),
         sampleRate: num(s.sample_rate) ?? 0,
         language: s.tags?.language && s.tags.language !== 'und' ? s.tags.language : undefined,
         title: s.tags?.title,
