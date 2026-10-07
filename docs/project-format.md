@@ -2,8 +2,10 @@
 
 A ReCut project is a single UTF-8 JSON document. It references source media by absolute path and never
 copies media. Derived data (thumbnails, waveforms, proxies, scene-detection caches) lives in the cache
-directory (`<userData>/cache` or `$RECUT_CACHE_DIR`) keyed by file path + size + mtime, so a project file
-stays small (typically well under 10 MB even for long-form work) and can be put under version control.
+directory (`<userData>/cache` or `$RECUT_CACHE_DIR`) keyed by the media file's content (its size and a
+fingerprint of nine sampled 64 KiB blocks, `electron/media/identity.ts`; not its path or modification time, so
+derived data survives moving, renaming and copying the file; entries from before 0.10, keyed by path + size + mtime,
+are still read), so a project file stays small (typically well under 10 MB even for long-form work) and can be put under version control.
 
 The authoritative TypeScript definitions are in `shared/model.ts`; `shared/project.ts` contains
 `normalizeProject()`, which repairs/migrates older or partially damaged files on load.
@@ -73,7 +75,9 @@ which writes it as-is.
 lists the source audio streams the proxy carries (absolute ffprobe indexes, in its track order): every stream for a
 `*_all.mp4` proxy, fewer when FFmpeg could not proxy one of them. It is optional: proxies from older builds have none
 and are read by their file name: `*_all.mp4` carries every stream, `*_a<N>.mp4` stream N, any other proxy the stream
-in its optional `audioStream`, else the first one. A still image's proxy is `<key>_still.png`. An invalid
+in its optional `audioStream`, else the first one. A still image's proxy is `<key>_still.png`. In a project made
+by **Collect Project** with proxies included, `proxy.path` points into the collected folder
+(`<folder>/Proxies/<media file name>_540p_all.mp4`), the suffix kept so the name still says which streams it carries. An invalid
 `audioStreams` (not a list of non-negative integers) is dropped on load. `probe.video.sar`
 (`{num, den}`) is the sample aspect ratio; it is kept only when both terms are positive safe integers and the ratio
 is within 1/16–16, otherwise it is dropped (square pixels). Probes from older builds have none.

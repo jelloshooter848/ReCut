@@ -241,6 +241,45 @@ Scenes in the library are reusable, tagged source ranges.
   folder…** (matches by name + size) › **Apply N matches**, or **Locate…** per file. **Check files** re-verifies.
 - If a relinked file is shorter than before, clips that now run past its end are trimmed to it and clips that start
   after its end are removed, in every sequence (one undo step, with a warning that gives the counts).
+- Thumbnails, waveforms, proxies, detected scenes and OCR results follow the file, not its folder: they are cached by
+  the file's content (its size and a sample of its bytes), so a moved, renamed or copied file reuses them after Relink
+  instead of building them again.
+
+### Collect Project
+
+**File › Collect Project…** copies the project and the media it uses into one new folder, to archive a finished edit,
+move it to another drive or hand it to someone else.
+
+1. **Choose…** a destination folder. ReCut creates a folder named after the project inside it; that folder must not
+   exist yet, or be empty.
+2. Pick **Media used in sequences only** (every file a clip or a sequence snapshot uses) or **All project media**.
+   Turn on **Include subtitle files** to copy the subtitle files the project imported, and **Include proxies** to copy
+   ready proxies so the copy previews without rebuilding them on another computer.
+3. Check the summary: the folder it creates, the total size and the free space on the destination. Media that are
+   offline are listed and skipped. **Collect** stays disabled when the folder is not empty or the space is short.
+4. **Collect** runs as a job: the dialog (and **Jobs**) shows the bytes copied, and **Cancel collect** stops it.
+   Close the dialog with **Hide** to keep working while it copies.
+
+The result looks like this:
+
+```
+Saga Fan Cut/
+  Saga Fan Cut.recut
+  Media/        title_t00.mkv, Disc 1/title_t01.mkv, Disc 2/title_t01.mkv, …
+  Subtitles/    the subtitle files (option)
+  Proxies/      the proxies (option)
+```
+
+- Each file keeps its own name. Files with the same name from different folders go into subfolders named after the
+  folders that tell them apart (`Disc 1/title_t01.mkv`, `Disc 2/title_t01.mkv`), so nothing is overwritten.
+- Every copy is checked against its original (size and a fingerprint of its start, middle and end) before the
+  project file is written. The collected project's paths point at the copies; media that were not copied keep their
+  original paths. Paths stay absolute, so after moving the collected folder itself use **Relink › Search folder…**.
+- Your open project and the original files are not changed. **Open collected project** (when it finishes) opens
+  the copy.
+- If the collect fails (a full disk, an unreadable file) or you cancel it, the folder keeps what was copied, has no
+  project file, and holds `COLLECT-INCOMPLETE.txt` saying why. Delete the folder and collect again.
+- The copied media keep their thumbnails, waveforms and proxies on this computer: the cache recognises them.
 
 ## 15. Export
 

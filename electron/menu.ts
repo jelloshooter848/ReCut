@@ -4,7 +4,7 @@
  * carry accelerators here so they do not steal keys from the renderer.
  *
  * Commands sent:
- *  file.new, file.open, file.clearRecent, file.save, file.saveAs, file.importMedia,
+ *  file.new, file.open, file.clearRecent, file.save, file.saveAs, file.collect, file.importMedia,
  *  file.importSubtitles, file.export
  *  edit.undo, edit.redo, edit.cut, edit.copy, edit.paste, edit.delete, edit.rippleDelete, edit.selectAll
  *  sequence.new, sequence.duplicate, sequence.addEdit, (Render & Export → file.export)
@@ -50,6 +50,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       { type: 'separator' },
       cmd('Save', 'file.save', 'CmdOrCtrl+S'),
       cmd('Save As…', 'file.saveAs', 'CmdOrCtrl+Shift+S'),
+      cmd('Collect Project…', 'file.collect'),
       { type: 'separator' },
       cmd('Import Media…', 'file.importMedia'),
       cmd('Import Subtitles…', 'file.importSubtitles'),

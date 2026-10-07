@@ -28,6 +28,7 @@ import { UpdateBanner } from '@/app/UpdateBanner';
 import { initUpdates } from '@/app/updates';
 import { ExportDialog } from '@/panels/export/ExportDialog';
 import { OcrLanguagesDialog } from '@/panels/ocr/OcrLanguagesDialog';
+import { CollectDialog } from '@/panels/collect/CollectDialog';
 import { OcrDialog } from '@/panels/ocr/OcrDialog';
 import { recutApi, setFfmpegAvailability } from '@/state';
 import '@/panels';
@@ -119,6 +120,7 @@ export function App() {
       <ExportDialog />
       <OcrDialog />
       <OcrLanguagesDialog />
+      <CollectDialog />
       <DialogHost />
     </>
   );

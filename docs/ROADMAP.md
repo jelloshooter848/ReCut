@@ -20,7 +20,8 @@ in every release PR (docs/RELEASING.md).
 | 3 | Pre-export warnings | Done | 0.5.0 |
 | 4 | Bitmap subtitle OCR (PGS / VobSub / DVB) | Done | 0.6.0 |
 | 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS next | 0.6.1 (Linux), 0.7.0 (macOS) |
-| 5–18 | Everything else | Not started | — |
+| 16 | Collect / Consolidate Project (with the moved-media cache fix) | Done | next release |
+| 5–15, 17, 18 | Everything else | Not started | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
 the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
@@ -46,7 +47,7 @@ at franchise scale), on Windows, Linux and macOS. It is not feature parity with 
 | 0.7.0 | Official macOS release (dmg, signed and notarised) | §19, macOS part |
 | 0.8.0 | Delivery 1: intermediates and audio | §6 (ProRes, DNxHR, WAV / audio-only, one file per audio track) and the centre-channel utility from §9 |
 | 0.9.0 | Delivery 2: MKV packaging | §7 (MKV, more than one audio track, soft subtitle tracks, chapters) |
-| 0.10.0 | Portability and trust | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/open/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
+| 0.10.0 | Portability and trust | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/closed/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
 | 0.11.0 | Local transcription (Whisper) | §5 |
 | 0.12.0 | Nested sequences and compound clips | §8 |
 | 0.13.0 | Keyframes, first version | §11 (position, scale, opacity, volume) |
@@ -359,6 +360,14 @@ sequences, and optionally subtitle sidecars and proxies) into one folder, and sa
 that folder. It shares groundwork with relative media roots (§17). Derived media should survive the move: today the
 cache key includes the absolute path, so thumbnails, waveforms and proxies are rebuilt after media moves
 (see [LIMITATIONS](LIMITATIONS.md#projects)).
+**Status: done (7 October 2026; ships in the next release).** **File › Collect Project…** copies the project and its media
+(media used in sequences, or all project media; optionally subtitle files and ready proxies) into
+`<destination>/<Project name>/` (`Media/`, `Subtitles/`, `Proxies/`), as a cancellable job with byte progress that
+verifies each copy (size and fingerprint) and writes the project, with absolute paths rewritten to the copies, last.
+Same-named files from different folders get distinguishing subfolders; offline media are skipped with a warning; a
+failed or canceled collect leaves the folder marked `COLLECT-INCOMPLETE.txt` and never touches the originals. The
+derived-media cache is now keyed by content (size + sampled fingerprint, with the old path key still read), which
+closes the [moved-media cache bug](../bugs/closed/2026-10-05-moved-media-cache-miss.md). Paths stay absolute (§17).
 
 ## 17. Cloud-free collaboration
 
@@ -391,7 +400,14 @@ and bug files cite § numbers.
 `FFMPEG-BUILD.txt` (`scripts/linux/get-ffmpeg.sh`; the BtbN builds have no readme), listed in
 `THIRD_PARTY_NOTICES.md`; the blocking `linux` job in `.github/workflows/windows.yml` on `ubuntu-22.04` (unit tests,
 e2e under xvfb, packaging, AppImage smoke test mounted and extracted), which the `publish` job needs; the AppImage
-attached to the release with run instructions in the notes. The macOS part has not started.
+attached to the release with run instructions in the notes.
+**macOS part implemented, pending CI validation and signing** (not done until 0.7.0 publishes it): the Apple Silicon
+dmg `ReCut-<version>-macos-arm64.dmg` (macOS 12+) with a bundled, pinned and checksum-verified jellyfin-ffmpeg
+`macarm64-gpl` build and its `FFMPEG-LICENSE.txt` / `FFMPEG-BUILD.txt` (`scripts/mac/get-ffmpeg.sh`), hardened runtime
+with only the `allow-jit` entitlement, and the advisory `macos` and `macos-e2e` jobs in `.github/workflows/windows.yml`
+on `macos-14` (unit tests, dmg, per-binary signature checks, smoke test of the app in the mounted dmg; signing and
+notarization when the five secrets of `docs/MACOS-SIGNING.md` are set, an ad-hoc signed test build otherwise). Not
+yet in the `publish` job's `needs` and not attached to releases (TODO block above the `publish` job).
 **Why:** ReCut ships only Windows builds. `package.json` → `build.linux` already targets `AppImage` and `build.mac`
 `dmg`, and the app has macOS menu and quit handling, but neither package has been released or tested: the Linux
 unpacked build is what the test suites run on, and no Mac build has ever been made. Fan editors work on all three

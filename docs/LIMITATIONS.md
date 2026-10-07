@@ -109,14 +109,22 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **Verified packages:** the Windows installer and portable exe (built, installed and smoke-tested on Windows in CI;
   the unit and end-to-end suites run on Windows on every build and must pass before anything is published) and the
   Linux x86-64 AppImage (built on Ubuntu 22.04 in CI, launched and smoke-tested; the unit and end-to-end suites run on
-  Linux on every build and must pass before anything is published). The macOS dmg is configured but untested.
-  Nothing is signed or notarised, so Windows SmartScreen warns on first launch.
+  Linux on every build and must pass before anything is published). Nothing is signed for Windows, so SmartScreen
+  warns on first launch.
+- **macOS: Apple Silicon test builds only, not released.** CI builds an arm64 dmg on every build, with FFmpeg
+  bundled, and smoke-tests the app from the mounted dmg, but the macOS jobs are advisory: they do not gate releases
+  and the dmg is not attached to them (planned for 0.7.0, [ROADMAP](ROADMAP.md) §19). No Intel or universal build.
+  Needs macOS 12 or newer (the bundled FFmpeg's minimum); tested in CI on macOS 14 only. Until the Developer ID
+  signing secrets are set up ([MACOS-SIGNING](MACOS-SIGNING.md)) the dmg is ad-hoc signed and not notarized, so macOS
+  blocks the first launch until it is allowed under System Settings › Privacy & Security. The end-to-end suite on
+  macOS (advisory `macos-e2e` job) has not passed on a Mac yet.
 - **Linux: AppImage only, x86-64 only.** No `.deb`, `.rpm`, Flatpak or Snap, and no ARM build. The AppImage needs the
   FUSE 2 library (`libfuse2`) unless it is started with `--appimage-extract-and-run`, and it does not add itself to
   the application menu or register `.recut` files (an AppImage integration tool can). The bundled FFmpeg needs glibc
   2.28 or newer, so very old distributions (before Debian 10 / Ubuntu 18.10 / RHEL 8) cannot run it. Tested on Ubuntu
   22.04 only.
-- **FFmpeg is bundled only in the Windows release builds and the Linux AppImage** (and fetched by `Start ReCut.cmd`).
+- **FFmpeg is bundled only in the Windows release builds, the Linux AppImage and the macOS test dmg** (and fetched
+  by `Start ReCut.cmd`).
   Elsewhere, install it yourself or drop static binaries into `resources/ffmpeg/` before `npm run package` /
   `npm run dist` (see
   [INSTALL](INSTALL.md#bundling-ffmpeg)). ReCut works with FFmpeg 6 through 9. When FFmpeg is missing, ReCut shows a banner and import / proxies / export stop with
@@ -132,11 +140,17 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - Projects store **absolute** media paths, so moving media means using Relink. A media path that is not absolute
   (for example in a hand-edited project file) is refused by probing, thumbnails, proxies and export with "media path
   must be an absolute path".
-- **Moving media rebuilds its derived media.** Thumbnails, waveforms and proxies are cached under a key made from the
-  file's absolute path, size and modified time. After you move a file (even unchanged, to a new folder or drive) and
-  relink it, its thumbnails and waveform are generated again, and so is its proxy the next time one is built. A
-  proxy that was ready before the move keeps being used while its cache file exists. The old cache entries stay on
-  disk until you clear the cache. There is no Collect / Consolidate Project command.
+- **Derived media are cached by a sampled fingerprint, not a full hash.** Thumbnails, waveforms, proxies, scene cuts
+  and OCR results are keyed by the file's size and nine 64 KiB blocks (start, end and evenly between), so they survive
+  moving, renaming and copying a file. A file changed in place without changing its size, where every changed byte
+  lies outside those blocks (a hex patch, a fixed-size tag rewritten in the middle), keeps its old derived media until
+  you clear the cache folder. Remuxes and re-encodes change the size or the sampled bytes.
+- **Collect Project copies, it does not move.** It needs room for a full copy of the media on the destination, and
+  it does not delete or relink anything in the open project. It stops at the first file it cannot copy or verify
+  (the folder is left marked incomplete); there is no resume, so collect again into an empty folder. Media not used
+  in any sequence (with **Media used in sequences only**) and offline media keep their original paths in the copy.
+  Collected projects still store absolute paths (relative media roots are [roadmap §17](ROADMAP.md#17-cloud-free-collaboration)).
+  A FAT32 drive cannot hold a file over 4 GB, so collecting a large remux there fails at that file.
 - **Limits on load:** timeline positions and durations are capped at 86,400,000 frames (24 h at 1000 fps, far more
   at normal rates), clip speed at 1 %–10 000 %, and nesting at 64 levels. An invalid sequence frame rate becomes
   23.976.

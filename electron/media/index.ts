@@ -20,7 +20,9 @@ import { startOcrJob } from '../ocr/ocrJob';
 import { JobQueue } from '../jobs/jobQueue';
 import { ensureDirSafe } from '../safeMkdir';
 import { buildExportCommand, cancelExportJob, startExportJob } from '../export/exporter';
-import { cacheKeyForPath, setCacheDir } from './cache';
+import { collectPreflight, startCollectJob } from '../project/collect';
+import type { CollectRequest, CollectStartResult, CollectSummary } from '@shared/collect';
+import { cacheKeysForPath, setCacheDir } from './cache';
 import { getFfmpegPath, getFfprobePath, setFfmpegPaths } from './ffmpeg';
 import { probeMedia } from './probe';
 import { cancelThumbRequests, getFilmstrip, getThumbnail } from './thumbs';
@@ -92,8 +94,8 @@ export const mediaHandlers: MediaHandlers = {
   },
 
   async waveform(path: string, _mediaId?: ID, streamIndex?: number): Promise<WaveformData> {
-    const key = await cacheKeyForPath(path);
-    return getWaveform(path, key, { streamIndex });
+    const { key, legacyKey } = await cacheKeysForPath(path);
+    return getWaveform(path, key, { streamIndex, legacyKey });
   },
 
   async startProxy(req: ProxyRequest): Promise<JobInfo> {
@@ -157,6 +159,14 @@ export const mediaHandlers: MediaHandlers = {
 
   async previewExportCommand(req: ExportRequest): Promise<string[]> {
     return buildExportCommand(req);
+  },
+
+  collectPreflight(req: CollectRequest): Promise<CollectSummary> {
+    return collectPreflight(req);
+  },
+
+  startCollect(req: CollectRequest): Promise<CollectStartResult> {
+    return startCollectJob(jobQueue, req);
   },
 
   onJobsUpdate(cb: (jobs: JobInfo[]) => void): () => void {

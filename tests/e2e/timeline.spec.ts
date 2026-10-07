@@ -349,7 +349,7 @@ test.describe('timeline keyboard target and dialogs', () => {
     expect(focused.tag).toBe('INPUT');
     // Ctrl+A inside the field selects text, not every clip on the timeline.
     const before = await page.evaluate(() => (window as unknown as { __recut: { store: AnyStore } }).__recut.store.getState().ui.selectedClipIds.length);
-    await page.keyboard.press('Control+a');
+    await page.keyboard.press('ControlOrMeta+a');
     const after = await page.evaluate(() => (window as unknown as { __recut: { store: AnyStore } }).__recut.store.getState().ui.selectedClipIds.length);
     expect(after).toBe(before);
     await page.keyboard.type('Hero shot');
@@ -363,7 +363,7 @@ test.describe('timeline keyboard target and dialogs', () => {
 
     // Speed dialog: type the number straight away and press Enter → applied.
     await clip.click();
-    await page.keyboard.press('Control+r');
+    await page.keyboard.press('ControlOrMeta+r');
     await expect(dialog).toBeVisible();
     expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).not.toBe('Close');
     await page.keyboard.type('200');
