@@ -56,7 +56,8 @@ Path aliases: `@shared/*` → `shared/`, `@/*` → `src/` (in `vite.config.ts` a
 | `npm test` | Vitest over `tests/unit/**/*.test.ts` (node environment). Some tests run real FFmpeg. |
 | `npm run test:watch` | Vitest in watch mode. |
 | `npm run test:e2e` | Build, then Playwright over `tests/e2e` (needs a display; use xvfb). |
-| `npm run perf:check` | Performance gate: node perf suite, build, Electron perf script, every budgeted row in three tiers (gates, guardrails against `tests/perf/baseline.json`, diagnostics; allow about 25 min; run it alone). See [Performance gate](#performance-gate-npm-run-perfcheck). |
+| `npm run perf:check` | Performance gate: host calibration, node perf suite, build, Electron perf script, every budgeted row in three tiers (gates, guardrails against `tests/perf/baseline.json`, diagnostics), judged on the reference machine's scale; allow about 25 min; run it alone. See [Performance gate](#performance-gate-npm-run-perfcheck). |
+| `npm run perf:compare -- <refA> <refB>` | Same-host A/B of two git refs (or checkouts): runs both perf suites interleaved on this machine and flags rows where B is worse than A beyond the noise. See [Same-host A/B](#same-host-ab-npm-run-perfcompare). |
 | `npm run package` | Build, then `electron-builder --dir` → `release/<platform>-unpacked`. Windows installers are built by `.github/workflows/windows.yml`. |
 | `npm run dist` | Build, then electron-builder installers (AppImage / dmg / nsis + portable exe). The Windows nsis installer and portable exe are built in CI by `.github/workflows/windows.yml`, which smoke-tests the unpacked app and a silent install (unsigned, FFmpeg bundled); the dmg and AppImage are untested. |
 
@@ -106,13 +107,18 @@ own `-c` config.
 
 ### Performance gate (`npm run perf:check`)
 
-`npm run perf:check` runs the node perf suite, builds the app, runs `electron-perf.mjs` under xvfb, then reads the
-JSON results (`test-results/perf/{store,panels,main,export,electron}.json`) and prints every budgeted row in three
-sections, **Gates**, **Guardrails** and **Diagnostics**, with value, budget, baseline, ratio to the baseline and
-the verdict (PASS/FAIL for gates and guardrails, a trend for diagnostics). It exits 1 if a gate or a guardrail
-fails, if a suite exits non-zero, if a result file is missing, or if a guardrail row recorded in the baseline is no
-longer measured. Diagnostics never change the exit code. Old result files are deleted before each run, so a
-crashed suite cannot pass on stale data.
+`npm run perf:check` calibrates the host (`tests/perf/calibrate.mjs`, about 15 s), runs the node perf suite, builds
+the app, runs `electron-perf.mjs` under xvfb, then reads the JSON results
+(`test-results/perf/{calibration,store,panels,main,export,electron}.json`). It prints the machine and its calibration
+next to the baseline's, then every budgeted row in three sections, **Gates**, **Guardrails** and **Diagnostics**,
+with value, the value normalized to the reference machine (when that applies), budget, baseline, ratio to the
+baseline and the verdict (PASS/FAIL for gates and guardrails, a trend for diagnostics). It exits 1 if a gate or a
+guardrail fails, if a suite exits non-zero, if a result file is missing, or if a guardrail row recorded in the
+baseline is no longer measured. Diagnostics never change the exit code. Old result files are deleted before each run,
+so a crashed suite cannot pass on stale data.
+
+The code: `tests/perf/perf-check.mjs` (running, printing), `tests/perf/_gate.mjs` (the rules below; pure, tested by
+`tests/unit/perf-gate.test.ts`), `tests/perf/calibrate.mjs` and `tests/perf/perf-compare.mjs`.
 
 #### Tiers
 
@@ -124,9 +130,10 @@ Every budgeted row has a tier. The owner decided this policy on 6 October 2026:
 | **guardrail** | Architecture guardrail: internal costs that matter for the health of the architecture (normalizeProject, store commit times, memory and heap growth, element and audio-node growth, the autosave handler, history size, media-layer service times, render-graph build). | FAIL on a **material regression** against `tests/perf/baseline.json`, unless the PR explains it. A guardrail with a meaningful absolute budget (element creation ≤ pool size, a commit within one frame) also keeps that budget as pass/fail. A guardrail whose absolute target no longer means anything on its own marks it `reference` (shown as `ref <= …`): only the regression check applies. |
 | **diagnostic** | Microbenchmark of a pure ingredient: full-project `structuredClone`, full-project `JSON.stringify` / `JSON.parse`, `serializeProject` alone, the main-side open-handler step, and similar. | Measured and reported with the trend against the baseline (`steady` / `slower` / `faster`, and whether it is within its reference budget). Never blocks. |
 
-- **Material regression** (one constant, `REGRESSION_RULE` in `tests/perf/perf-check.mjs`): the median of at
+- **Material regression** (one constant, `REGRESSION_RULE` in `tests/perf/_gate.mjs`): the median of at
   least 2 runs is more than 1.5 × the baseline median, and more than an absolute noise floor above it (2 ms for
-  `ms` rows, 8 MB for `MB` rows, none for counts). The floor exists because rows of a few milliseconds are not
+  `ms` rows, 8 MB for `MB` rows, none for counts), compared after normalization to the reference machine (see
+  [Calibration](#calibration-and-the-reference-machine)). The floor exists because rows of a few milliseconds are not
   stable on identical code: in the two seed runs `searchTranscript regex` read 3.39 and 1.67 ms and
   `resolveSubtitleCues` 1.87 and 2.86 ms; a 0.04 → 0.07 ms change at timer resolution is not material either.
   With a single run an excess is printed as `UNCONFIRMED` and does not fail; run `--runs 2` before you call a
@@ -140,22 +147,75 @@ Every budgeted row has a tier. The owner decided this policy on 6 October 2026:
 - **Changing a row's tier** needs a stated reason in the PR (and an update of the table below). Do not move a row
   because it fails: the 3 h save round trip is a gate although it fails today.
 
+#### Calibration and the reference machine
+
+Cloud hosts of the same nominal class differ in real speed: identical code measured 1.5–2.3× slower on one 4-core
+container than on another and failed 15 of 98 gates there
+(`bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md`). So every run measures the host first and judges its
+rows on the scale of the **reference machine**, the machine the baseline was seeded on.
+
+- **Calibration** (`tests/perf/calibrate.mjs`, run before each run into `<run dir>/calibration.json`; on its own:
+  `node --expose-gc tests/perf/calibrate.mjs`). Three fixed workloads, each repeated after a warm-up; the score is the
+  median wall time in ms (lower = faster), printed with its min–max and interquartile spread (`NOISY` when the
+  interquartile range is over 15 % of the median: the host was not quiet):
+  - `js`: pure JavaScript shaped like store and timeline work (a 9,000-clip sequence, copy-on-write ripple edits,
+    binary search, `Map` index, filter / sort, `JSON.stringify` / `parse`, `structuredClone`, substring search),
+    11 samples of 3 workloads, in Node.
+  - `ffmpeg`: a fixed 1.5 s 720p libx264 `veryfast` encode on one thread (9 samples). One thread because the
+    multi-threaded encode varied ±15 % between repeats on the 4-core container, one thread ±2 %.
+  - `render`: inside Electron with software rendering, as the Electron bench runs: style and layout of 1,500
+    absolutely positioned clip-like `div`s, forced synchronously, plus a 2D canvas raster flushed with `getImageData`
+    (9 samples).
+- **Ratio** `k = this host / reference` per category, from the median of the runs' calibrations (`k > 1`: this host
+  is slower). Each row uses one category: FFmpeg work (the media layer: thumbnails, filmstrips, waveforms, proxies,
+  export) uses `ffmpeg`; every other Electron row uses `render`; the Node suites' pure JavaScript (store, panels,
+  render graph) uses `js`. A missing category falls back to `js`. Per category because they can differ: with busy
+  neighbours on every core, Node slowed 2× but the Electron renderer, which Chromium runs at a raised priority, 1.1×.
+- **Tolerance ±10 %** (`CALIBRATION_TOLERANCE`): within it the host counts as the reference machine and every row is
+  judged raw (the calibration repeats within about ±5 % on one quiet host; the tolerance keeps that noise out of the
+  verdicts). Beyond it, rows are normalized before they are judged.
+- **Metric classes** (`metricClass` in `_gate.mjs`). Only time and rate rows are normalized:
+
+  | Class | Rows | Normalized value |
+  |---|---|---|
+  | time | unit `ms` | `value / k` |
+  | rate | unit `fps` | `min(cap, value × k)`; the cap is the display (60) or, for Program playback, the sequence rate (24). A rate within 5 % of its cap on a faster host (`k < 1`) says nothing about the reference machine and stays raw (`capped`). |
+  | long-task count | `long tasks …` rows | The recorded task durations (`longTasks` on the row) re-counted against `50 ms × k` (the Long Tasks API reports tasks over 50 ms). On a faster host this is a lower bound: shorter tasks were never reported. The count itself is never scaled. |
+  | count / structural | everything else: DOM nodes, renders and mutations per frame, page flips, IPC calls, pool elements, MB, frames out, strings | never normalized |
+
+- **Gates**: the bench's own budget, applied to each run's normalized value; a gate passes when it passed in more
+  than half of the runs. A row that failed for another reason (an in-page scrub that page-flipped) still fails.
+  Budgets are not changed. When normalization applies, the summary says so (`VERDICTS NORMALIZED TO THE REFERENCE
+  MACHINE (calibration js x1.80 …)`), prints the raw PASS/FAIL counts too, and every row whose raw verdict differs
+  shows it (`(raw on this host: FAIL)`), so what a slow host's user would feel stays visible.
+- **Guardrails**: budget and regression rule on the normalized value, so a slow host is not a regression and a fast
+  host does not hide one (a 25 ms commit on a host 1.6× faster is 40 ms on the reference machine). **Diagnostics**:
+  the trend of the normalized value.
+- **Limits**: normalization models a host that is uniformly faster or slower. Waits that do not scale (the next
+  vsync inside a `… -> paint` row) are scaled too, a little generous on a slow host. A faster host cannot show a
+  regression hidden under a capped rate or a long task under 50 ms; use the reference machine or the same-host A/B
+  below for those.
+
 #### Baseline (`tests/perf/baseline.json`)
 
 The baseline holds the median of every guardrail and diagnostic row, keyed by the stable row name
-`<suite>|<section>|<metric>`, with the commit, date, run count and machine notes (`nproc`, CPU, Node, FFmpeg version).
-Write it from at least two runs of each suite, alone on the machine:
+`<suite>|<section>|<metric>`, with the commit, date, run count, the machine (`nproc`, CPU, memory, kernel, Node,
+FFmpeg version) and its `calibration` (each run's scores and their median): the machine it was seeded on is the
+reference machine. `format: 2` added the calibration; a baseline without one makes every verdict raw. Write it from
+at least two runs of each suite, alone on a quiet machine of the class the gate runs on (today the 4-core cloud
+container):
 
 ```
-node tests/perf/perf-check.mjs --update-baseline --reason "<why>" --from <run dir> <run dir> [...]
+node tests/perf/perf-check.mjs --update-baseline --reason "<why>" --machine-notes "<notes>" --from <run dir> <run dir> [...]
 node tests/perf/perf-check.mjs --update-baseline --reason "<why>" --runs 2      # run, then write
 ```
 
-**The baseline only changes in a PR that states why**: an accepted cost of a feature (the regression is understood
-and worth it), or locking in an improvement (so the guardrail protects it). Reviewers send back a `baseline.json`
-change without that sentence. The exit code after `--update-baseline` is the normal one (gates still count).
-The baseline is machine-dependent: compare only runs on the same machine class (the seed is the 4-core cloud
-container); on a different machine, write a local baseline and do not commit it.
+`--from` takes the calibration from each run folder's `calibration.json`; if a run has none, the baseline is written
+without calibration (a warning says so). **The baseline only changes in a PR that states why**: an accepted cost of a
+feature (the regression is understood and worth it), locking in an improvement (so the guardrail protects it), or a
+new reference machine. Reviewers send back a `baseline.json` change without that sentence. The exit code after
+`--update-baseline` is the normal one (gates still count). Runs on any other host are normalized to the reference
+machine, so no local baseline is needed; to judge a change against main on one host, use the A/B mode below.
 
 #### Running it
 
@@ -174,10 +234,31 @@ container); on a different machine, write a local baseline and do not commit it.
   evidence of a regression or a fix, and rows within a few percent of their budget flip between runs. Compare
   medians of at least two runs: `npm run perf:check -- --runs 2` runs everything twice and reports the median per row
   with its min–max spread; a row passes its budget only when it passed in more than half of the runs.
-- Options: `--skip-build` (dist/ is current), `--node-only`, `--electron-only`, and `--from <dir> [<dir> …]` to
-  aggregate result folders from earlier runs without running anything (for example one run with
-  `RECUT_PERF_OUT=/tmp/run1`, a later one with `RECUT_PERF_OUT=/tmp/run2`, then
-  `npm run perf:check -- --from /tmp/run1 /tmp/run2`).
+- Options: `--skip-build` (dist/ is current), `--node-only`, `--electron-only`, `--no-calibrate` (judge raw), and
+  `--from <dir> [<dir> …]` to aggregate result folders from earlier runs without running anything (for example one
+  run with `RECUT_PERF_OUT=/tmp/run1`, a later one with `RECUT_PERF_OUT=/tmp/run2`, then
+  `npm run perf:check -- --from /tmp/run1 /tmp/run2`); each folder's `calibration.json` comes along.
+
+#### Same-host A/B (`npm run perf:compare`)
+
+To judge a feature against main without re-seeding the baseline, measure both on the same machine, interleaved:
+
+```
+npm run perf:compare -- origin/main HEAD [--runs N] [--electron-only | --node-only] [--keep]
+node tests/perf/perf-check.mjs --ab <checkoutA> <checkoutB> [--runs N] [--electron-only | --node-only] [--skip-build]
+node tests/perf/perf-check.mjs --ab <checkoutA> <checkoutB> --from-a <dirs…> --from-b <dirs…>   # re-print earlier runs
+```
+
+`perf:compare` checks each ref out as a detached worktree under `$RECUT_PERF_SCRATCH/ab` (a ref that is a directory
+is used as it is, e.g. a worktree with uncommitted changes), links this checkout's `node_modules` when the lockfiles
+match (else runs `npm ci` there), and calls `perf-check.mjs --ab`. That builds each checkout once, then runs A, B, A,
+B, … (`--runs` each, default 2; each side runs its own bench scripts; results in `<out>/ab/{A,B}/run-<k>`),
+calibrating before each run so a change in the host's load shows. It prints, per budgeted row, A's and B's median
+and min–max, B/A and the noise band, `max(10 %, A's own min–max spread / median, floor 2 ms | 8 MB | 2 fps)`.
+**WORSE** means B is worse than A beyond the band in every run pair (A1/B1, A2/B2, …) and in the medians (worse =
+higher time or count, lower rate); a difference in the medians only is reported as noise, and non-numeric rows report
+`changed`. It exits 1 when a gate or guardrail row is WORSE. Both suites with `--runs 2` take about an hour,
+`--electron-only` about 25 minutes; run it alone, like `perf:check`.
 
 #### Classification of every budgeted row
 
