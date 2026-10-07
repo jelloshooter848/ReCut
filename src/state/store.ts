@@ -18,6 +18,7 @@ import type {
 import { uid } from '../../shared/ids';
 import { isValidFps, secondsToFrames } from '../../shared/time';
 import { createProject, LiveView } from '../../shared/project';
+import { STILL_IMAGE_CODECS, STILL_IMAGE_EXTS } from '../../shared/media';
 import {
   MIN_CLIP_FRAMES, allTracks, clipEnd, clipSourceOut, findClip, maxDurationFrom, findTrack, linkedClips, makeClip, placeClips,
   razorAt, removeClips as tlRemoveClips, rippleDeleteClips, rippleDeleteDisabledClips, removableDisabledClipIds, liftRange, extractRange, trimStart, trimEnd,
@@ -93,15 +94,8 @@ function resetSelectionUi(ui: UIState): UIState {
   };
 }
 
-/** Still-image extensions; the same list as IMAGE_EXT in electron/media/probe.ts (tests/unit/stills.test.ts). */
-export const STILL_IMAGE_EXTS: readonly string[] = [
-  'png', 'apng', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'bmp', 'tif', 'tiff', 'gif', 'heic', 'heif', 'avif',
-  'jxl', 'tga', 'exr', 'psd', 'dpx', 'sgi', 'pcx', 'ppm', 'pgm', 'pbm', 'pam', 'qoi', 'hdr', 'jp2', 'j2k',
-];
-const STILL_IMAGE_CODECS: readonly string[] = [
-  'png', 'apng', 'mjpeg', 'jpegls', 'webp', 'bmp', 'tiff', 'gif', 'jpegxl', 'targa', 'exr', 'psd', 'dpx', 'sgi', 'pcx',
-  'ppm', 'pgm', 'pgmyuv', 'pbm', 'pam', 'qoi', 'hdr', 'jpeg2000', 'av1', 'hevc',
-];
+/** Still-image extensions and codecs: one list for the main process and the renderer (shared/media.ts). */
+export { STILL_IMAGE_EXTS };
 
 /**
  * Media kind from a probe; mirrors classifyKind in electron/media/probe.ts. The main process marks stills (an image
