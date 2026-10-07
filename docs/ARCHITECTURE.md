@@ -140,7 +140,8 @@ SequencePlayer                  SourcePlayer (one <video>, JKL; native at 0<rate
    │  MediaElementPool.acquire()    ← pooled <video> per (path, role), LRU capacity 12
    │  keep elements at sourceTime + ½ media frame (drift > 80 ms → re-seek)
    │  draw bottom→top on a 2D canvas (transform, crop, opacity, transition alpha), subtitles on top
-   │  WebAudio: element → clip gain → track gain → master gain (→ AudioMeter tap)
+   │  WebAudio: element → clip gain → track gain → master gain (→ AudioMeter tap); a mono stream played directly
+   │            gets 1/√2 in its clip gain, the export's equal-power up-mix (previewUpmixGain)
 SyncGroup: two SequencePlayers on one clock with a frame offset (Compare)
 ```
 
