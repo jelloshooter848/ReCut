@@ -28,7 +28,8 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   - An inner layer whose own position or scale is keyed is not cut to the inner frame edge or the nested crop.
   - A long clip animated both inside and on the nested clip is sampled into keyframes, at most 2,000 points per
     property: beyond 2,000 frames the motion is followed through every second (or n-th) frame, in straight lines
-    between them.
+    between them. Such long keyframe lists export slowly, because FFmpeg evaluates the whole list on every frame
+    (a 6-second clip with 2,000 keyframes on position, scale and level took about 13 seconds to export).
   - **Break Apart** goes one level deep and needs the same frame rate inside and outside.
   - Chapters, markers and subtitle tracks inside a nested sequence are not exported (only the exported sequence's
     own), and the Subtitles panel does not show them on the outer timeline.

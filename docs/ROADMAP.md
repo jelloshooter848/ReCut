@@ -25,7 +25,8 @@ in every release PR (docs/RELEASING.md).
 | 7 | MKV packaging export | Done | next release |
 | 9 | Surround: centre-channel and channel-selection utility (the mixer comes after 1.0) | Quick utility done | next release |
 | 11 | Keyframes, first version (position, scale, opacity, volume; linear and ease) | Done | next release |
-| 5, 8, 10, 12–15, 17, 18 | Everything else | Not started | — |
+| 8 | Nested sequences and compound clips | Done | next release |
+| 5, 10, 12–15, 17, 18 | Everything else | Not started | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
 the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
