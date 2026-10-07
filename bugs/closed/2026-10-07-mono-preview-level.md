@@ -149,7 +149,8 @@ With the fix: 10/10 pass. `tests/e2e/mono-level.spec.ts` before the fix failed w
 0.067 to be less than -2.5` (mono heard at the stereo level); after the fix it passes with the levels above.
 
 ### Tests run
-See the final section of the branch report: `npm run typecheck`, `npm test`, `npm run test:e2e`.
+`npm run typecheck`: clean. `npm test`: 1530/1530 (83 files, including `tests/unit/mono-level.test.ts` 10/10).
+`npm run test:e2e` (xvfb, Linux): 68/68, including `tests/e2e/mono-level.spec.ts`. Windows and macOS not run.
 
 ### Changed existing assertions
 None.
