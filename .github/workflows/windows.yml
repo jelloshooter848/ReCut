@@ -2,7 +2,9 @@ name: Windows build
 
 # Builds the Windows installer + portable exe on a real Windows machine, smoke-tests them, runs the unit and
 # end-to-end suites on Windows, checks that "Start ReCut.cmd" works from a fresh clone, keeps the installers as the
-# run's ReCut-windows artifact, and publishes a GitHub Release when the run is a real release.
+# run's ReCut-windows artifact, and publishes a GitHub Release when the run is a real release. The same workflow
+# builds and gates the Linux x86-64 AppImage (job linux, artifact ReCut-linux): the file name stays windows.yml and the
+# display name "Windows build" because docs and bookmarks point to them.
 #
 # Job graph (the required gates run in parallel on every run; publishing is a separate final job):
 #   installer  build, smoke test, install check, upload the ReCut-windows artifact (every run) and, on a release run,
@@ -10,17 +12,21 @@ name: Windows build
 #   tests      unit tests (vitest) on Windows
 #   e2e        end-to-end tests (Playwright + Electron) on Windows
 #   launcher   "Start ReCut.cmd" self-test from a fresh clone
-#   publish    needs installer, tests, e2e and launcher. Runs only on a real release run (installer output
-#              release == 'true') and only when all four succeeded (default success() semantics: a failed, cancelled
+#   linux      on ubuntu-22.04: typecheck, unit tests and the e2e suite (xvfb) with the bundled FFmpeg, the x86-64
+#              AppImage (scripts/linux/get-ffmpeg.sh bundles FFmpeg and its licence files), an AppImage smoke test
+#              (FUSE-mounted and --appimage-extract-and-run), and the ReCut-linux artifact (every run)
+#   publish    needs installer, tests, e2e, launcher and linux. Runs only on a real release run (installer output
+#              release == 'true') and only when all five succeeded (default success() semantics: a failed, cancelled
 #              or skipped gate skips it), then re-checks the tag and publishes the release from the installer job's
-#              artifacts and outputs.
+#              outputs and the ReCut-windows, ReCut-linux and release-notes artifacts.
 #   installer-stress  manual only, not a gate (see below).
 # Every gate is required: none has continue-on-error. A red gate means nothing is published and no tag is created;
 # fix the problem and push again (docs/RELEASING.md).
 #
 # Only real versions (vX.Y.Z) ever appear on the Releases page (owner's decision, 7 October 2026): there are no dev
 # prereleases. Every other run is a test build: it runs every gate the same way and keeps the installer and portable
-# exe as the run's ReCut-windows artifact (Actions -> the run -> Artifacts), but creates no tag and no release.
+# exe as the run's ReCut-windows artifact and the AppImage as its ReCut-linux artifact (Actions -> the run ->
+# Artifacts), but creates no tag and no release.
 #
 # Releases are automatic (docs/RELEASING.md). The normal flow is: a release PR bumps package.json
 # (npm version X.Y.Z --no-git-tag-version) and adds a "## [X.Y.Z]" section to CHANGELOG.md -> the PR is merged ->
@@ -112,11 +118,12 @@ jobs:
           $install = @(
             "**ReCut-Setup-$v.exe** — installer. Adds Start-menu and desktop shortcuts, opens ``.recut`` projects, and can be removed from *Settings › Apps*.",
             "**ReCut-Portable-$v.exe** — no install; double-click to run (starts a little slower).",
+            "**ReCut-$v-linux-x86_64.AppImage** — Linux, x86-64 only; no install. Make it executable and run it: ``chmod +x ReCut-$v-linux-x86_64.AppImage``, then ``./ReCut-$v-linux-x86_64.AppImage``. If it reports that FUSE is missing, install ``libfuse2`` (``libfuse2t64`` on Ubuntu 24.04 and later) or run it with ``--appimage-extract-and-run``.",
             '',
-            'FFmpeg is bundled, so nothing else needs to be installed. The app is not code-signed: if Windows shows',
+            'FFmpeg is bundled in all three, so nothing else needs to be installed. The app is not code-signed: if Windows shows',
             '"Windows protected your PC", click **More info › Run anyway**.',
             '',
-            "Built from $env:SHA. This build launched, encoded and probed a test clip on a Windows runner before publishing."
+            "Built from $env:SHA. This build launched, encoded and probed a test clip on a Windows runner and a Linux runner before publishing."
           ) -join "`n"
 
           # The "## [<ver>]" section of CHANGELOG.md, from its heading to the next "## [" heading (or a link-reference
@@ -370,14 +377,174 @@ jobs:
           name: e2e-results-windows
           path: test-results/
 
+  # The Linux release gate (docs/ROADMAP.md §19): unit tests, the e2e suite under xvfb, the x86-64 AppImage with a
+  # bundled FFmpeg, and a smoke test of the AppImage itself. Required like the Windows gates: publish needs it.
+  # Pinned to ubuntu-22.04, not ubuntu-latest: the gate tests on the older of the two supported Ubuntu LTS releases
+  # (glibc 2.35 and GTK / NSS of that age), so a dependency on something newer shows up here rather than on users'
+  # machines; the image does not change when GitHub moves ubuntu-latest; and it has the libfuse2 package the AppImage
+  # runtime loads (24.04 renamed it libfuse2t64). The bundled FFmpeg needs only glibc 2.28 or newer
+  # (scripts/linux/get-ffmpeg.sh checks its linkage and records it in FFMPEG-BUILD.txt). Move to the next LTS image
+  # before GitHub retires ubuntu-22.04.
+  linux:
+    name: Linux AppImage + tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # xvfb (on the GitHub image already) is required: headless Electron for the e2e and smoke tests. libfuse2 is only
+      # for the AppImage's mounted smoke run. The Ubuntu package mirror has stalled on it (run #108 hung for 12 minutes,
+      # run #110 again), so a mirror problem must not block a release: each apt call is time-limited, and when libfuse2
+      # still cannot be installed the smoke test runs the AppImage extracted only, with a warning. The mounted run is
+      # FUSE's own loader and identical for every AppImage; the extracted run exercises everything ReCut ships.
+      - name: System packages (xvfb; libfuse2 when the mirror allows)
+        timeout-minutes: 12
+        run: |
+          set -u
+          apt_opts='-o Acquire::Retries=2 -o Acquire::http::Timeout=20'
+          apt_install() {
+            timeout 150 sudo apt-get $apt_opts install -y --no-install-recommends "$@" ||
+              { timeout 150 sudo apt-get $apt_opts update && timeout 150 sudo apt-get $apt_opts install -y --no-install-recommends "$@"; }
+          }
+          if ! dpkg -s xvfb > /dev/null 2>&1; then
+            apt_install xvfb || { echo '::error::could not install xvfb'; exit 1; }
+          fi
+          if dpkg -s libfuse2 > /dev/null 2>&1 || apt_install libfuse2; then
+            echo 'APPIMAGE_FUSE=1' >> "$GITHUB_ENV"
+          else
+            echo '::warning::libfuse2 could not be installed (package mirror); the AppImage smoke test runs extracted only'
+            echo 'APPIMAGE_FUSE=0' >> "$GITHUB_ENV"
+          fi
+          echo "installed: $(dpkg-query -W -f='${Package} ${Version}, ' xvfb libfuse2 2> /dev/null)"
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+
+      # The same build is bundled into the AppImage (resources/ffmpeg -> <resources>/ffmpeg) and put on PATH for the
+      # unit and e2e tests, so the tests exercise the FFmpeg users get. The app run from the checkout also finds it as
+      # resources/ffmpeg in its working directory.
+      - name: Download FFmpeg to bundle (and put it on PATH)
+        run: |
+          ./scripts/linux/get-ffmpeg.sh --dest resources/ffmpeg
+          echo "$GITHUB_WORKSPACE/resources/ffmpeg" >> "$GITHUB_PATH"
+
+      - name: Unit tests
+        run: npx vitest run
+
+      - run: npm run build
+      - name: End-to-end tests (xvfb)
+        run: xvfb-run -a npx playwright test -c tests/e2e/playwright.config.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-results-linux
+          path: test-results/
+
+      - name: Package the AppImage
+        run: npx electron-builder --linux AppImage --x64 --publish never
+
+      # Same budget as the Windows job: the OCR worker and the LSTM-only Tesseract cores are unpacked from app.asar and
+      # fit 7 MB, and tesseract.js / tesseract.js-core are not in app.asar.
+      - name: OCR packaging budget
+        run: |
+          set -euo pipefail
+          dir=release/linux-unpacked/resources/app.asar.unpacked/dist/electron/ocr
+          test -f "$dir/worker.js" || { echo "::error::OCR worker is not unpacked: $dir/worker.js"; exit 1; }
+          find "$dir" -type f -printf '%12s  %P\n'
+          bytes=$(find "$dir" -type f -printf '%s\n' | awk '{ s += $1 } END { print s + 0 }')
+          echo "OCR folder: $bytes bytes (budget 7 MB)"
+          if [ "$bytes" -gt $((7 * 1024 * 1024)) ]; then echo "::error::OCR folder is $bytes bytes, over the 7 MB budget"; exit 1; fi
+          npx asar list release/linux-unpacked/resources/app.asar > "$RUNNER_TEMP/asar-list.txt"
+          test -s "$RUNNER_TEMP/asar-list.txt" || { echo '::error::npx asar list failed'; exit 1; }
+          if grep -E '/node_modules/tesseract\.js(-core)?(/|$)' "$RUNNER_TEMP/asar-list.txt" > "$RUNNER_TEMP/asar-bad.txt"; then
+            head -n 10 "$RUNNER_TEMP/asar-bad.txt"; echo '::error::app.asar contains tesseract.js or tesseract.js-core'; exit 1
+          fi
+          echo "app.asar: $(wc -l < "$RUNNER_TEMP/asar-list.txt") entries, no tesseract.js / tesseract.js-core"
+
+      # The FFmpeg folder that went into the AppImage: both programs, the licence and the build record (the BtbN Linux
+      # builds have no readme, so FFMPEG-README.txt is optional, as in get-ffmpeg.sh).
+      - name: Bundled FFmpeg files
+        run: |
+          set -euo pipefail
+          ff=release/linux-unpacked/resources/ffmpeg
+          ls -la "$ff"
+          for f in ffmpeg ffprobe; do test -x "$ff/$f" || { echo "::error::$ff/$f is missing or not executable"; exit 1; }; done
+          for f in FFMPEG-LICENSE.txt FFMPEG-BUILD.txt; do test -s "$ff/$f" || { echo "::error::$ff/$f is missing or empty"; exit 1; }; done
+          grep -q '^Platform: *x86-64 Linux$' "$ff/FFMPEG-BUILD.txt" || { echo '::error::FFMPEG-BUILD.txt does not name the x86-64 Linux platform'; exit 1; }
+          grep -q '^Corresponding source$' "$ff/FFMPEG-BUILD.txt" || { echo '::error::FFMPEG-BUILD.txt has no Corresponding source section'; exit 1; }
+          sed -n '1,/^ffmpeg -version$/p' "$ff/FFMPEG-BUILD.txt"
+
+      # Launches the AppImage twice, the two ways users can run it: mounted with FUSE (the default; skipped with a warning
+      # when libfuse2 could not be installed, see System packages) and with --appimage-extract-and-run (no FUSE needed).
+      # Each run must serve byte ranges over recut-media:// (206), encode and probe a clip with the FFmpeg inside the
+      # AppImage (its path must be the AppImage's resources/ffmpeg, never one on PATH: the run starts outside the checkout
+      # with the checkout's FFmpeg off PATH), ship the FFmpeg licence files, start the OCR worker from app.asar.unpacked
+      # and mount the UI. The smoke file is the AppImage itself.
+      - name: Smoke-test the AppImage
+        run: |
+          set +e -uo pipefail   # the runner starts bash with -e; each run's result is checked below instead
+          app="$(ls "$GITHUB_WORKSPACE"/release/ReCut-*-linux-x86_64.AppImage)"
+          chmod +x "$app"
+          ls -la "$app"
+          cd "$RUNNER_TEMP"
+          bad=0
+          modes='mounted extracted'
+          if [ "${APPIMAGE_FUSE:-0}" != 1 ]; then modes='extracted'; echo '::warning::no libfuse2: smoke-testing the extracted AppImage only'; fi
+          for mode in $modes; do
+            out="$RUNNER_TEMP/smoke-$mode.txt"
+            args=(--no-sandbox)
+            if [ "$mode" = extracted ]; then args=(--appimage-extract-and-run --no-sandbox); fi
+            echo "::group::AppImage smoke test ($mode)"
+            RECUT_SMOKE=1 RECUT_SMOKE_OUT="$out" RECUT_SMOKE_FILE="$app" RECUT_USER_DATA="$RUNNER_TEMP/ud-$mode" \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              timeout 180 xvfb-run -a "$app" "${args[@]}"
+            rc=$?
+            echo '::endgroup::'
+            if [ "$rc" -eq 124 ]; then echo "::error::AppImage smoke test ($mode) timed out"; bad=1; continue; fi
+            echo "--- smoke ($mode), exit $rc"
+            cat "$out" || { echo "::error::AppImage smoke test ($mode) wrote no results"; bad=1; continue; }
+            if grep -E 'FAILED|layout=MISSING' "$out"; then echo "::error::AppImage smoke test ($mode) reported a failure"; bad=1; fi
+            for want in \
+              'smoke: protocol status=206 ' \
+              'smoke: ffmpeg path=[^ ]*/(\.mount_[^/ ]+|appimage_extracted_[^/ ]+)/resources/ffmpeg/ffmpeg ffprobe path=[^ ]*/resources/ffmpeg/ffprobe ' \
+              'smoke: ffmpeg encode\+probe ok ' \
+              'smoke: licences shipped=[^ ]*FFMPEG-BUILD\.txt,FFMPEG-LICENSE\.txt' \
+              'smoke: ocr core=(relaxedsimd-lstm|lstm) ok worker=.*app\.asar\.unpacked' \
+              'smoke: window loaded=.* layout=mounted'; do
+              grep -qE "$want" "$out" || { echo "::error::AppImage smoke test ($mode): no line matching: $want"; bad=1; }
+            done
+          done
+          exit "$bad"
+
+      # Kept 14 days like ReCut-windows. The artifact root is release/, so downloading it into release/ restores
+      # release/ReCut-<version>-linux-x86_64.AppImage for the publish job. (An artifact download does not keep the
+      # executable bit; users chmod +x the file anyway.)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ReCut-linux
+          path: release/ReCut-*-linux-x86_64.AppImage
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Linux build summary
+        run: |
+          f="$(basename "$(ls release/ReCut-*-linux-x86_64.AppImage)")"
+          {
+            echo "**Linux AppImage: \`$f\` is in this run's Artifacts (ReCut-linux).**"
+            echo ''
+            echo 'It passed the unit tests, the end-to-end tests and the AppImage smoke test on ubuntu-22.04. On a release run the publish job also attaches it to the release; otherwise it is a test build, kept for 14 days: use it only if every job in this run is green. Run it with `chmod +x` and `./'"$f"'` (needs libfuse2, or add `--appimage-extract-and-run`).'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # The only job that publishes, and it only ever publishes a real release (vX.Y.Z, never a prerelease). It runs
   # only when the installer job decided this run is a release (automatic on main, or the tag-push fallback); a test
   # build skips it. It needs every required gate and has no always()/failure()/cancelled() in its if:, so the
-  # implicit success() applies: if installer, tests, e2e or launcher failed, was cancelled or was skipped, this job is
-  # skipped and nothing is published (no release, no tag).
+  # implicit success() applies: if installer, tests, e2e, launcher or linux failed, was cancelled or was skipped, this
+  # job is skipped and nothing is published (no release, no tag).
   publish:
     name: Publish GitHub Release
-    needs: [installer, tests, e2e, launcher]
+    needs: [installer, tests, e2e, launcher, linux]
     if: needs.installer.outputs.release == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
@@ -389,6 +556,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ReCut-windows
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: ReCut-linux
           path: release
       - uses: actions/download-artifact@v4
         with:
@@ -442,3 +613,4 @@ jobs:
           files: |
             release/ReCut-Setup-*.exe
             release/ReCut-Portable-*.exe
+            release/ReCut-*-linux-x86_64.AppImage

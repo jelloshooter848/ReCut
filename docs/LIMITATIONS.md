@@ -119,10 +119,17 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 
 - **Verified packages:** the Windows installer and portable exe (built, installed and smoke-tested on Windows in CI;
   the unit and end-to-end suites run on Windows on every build and must pass before anything is published) and the
-  Linux unpacked build. The macOS dmg and Linux AppImage are configured but untested. Nothing is signed or notarised,
-  so Windows SmartScreen warns on first launch.
-- **FFmpeg is bundled only in the Windows release builds** (and fetched by `Start ReCut.cmd`). Elsewhere, install it
-  yourself or drop static binaries into `resources/ffmpeg/` before `npm run package` / `npm run dist` (see
+  Linux x86-64 AppImage (built on Ubuntu 22.04 in CI, launched and smoke-tested; the unit and end-to-end suites run on
+  Linux on every build and must pass before anything is published). The macOS dmg is configured but untested.
+  Nothing is signed or notarised, so Windows SmartScreen warns on first launch.
+- **Linux: AppImage only, x86-64 only.** No `.deb`, `.rpm`, Flatpak or Snap, and no ARM build. The AppImage needs the
+  FUSE 2 library (`libfuse2`) unless it is started with `--appimage-extract-and-run`, and it does not add itself to
+  the application menu or register `.recut` files (an AppImage integration tool can). The bundled FFmpeg needs glibc
+  2.28 or newer, so very old distributions (before Debian 10 / Ubuntu 18.10 / RHEL 8) cannot run it. Tested on Ubuntu
+  22.04 only.
+- **FFmpeg is bundled only in the Windows release builds and the Linux AppImage** (and fetched by `Start ReCut.cmd`).
+  Elsewhere, install it yourself or drop static binaries into `resources/ffmpeg/` before `npm run package` /
+  `npm run dist` (see
   [INSTALL](INSTALL.md#bundling-ffmpeg)). ReCut works with FFmpeg 6 through 9. When FFmpeg is missing, ReCut shows a banner and import / proxies / export stop with
   an explanation. ReCut finds FFmpeg once per session, so restart it after installing.
 - The cache location can only be changed with `RECUT_CACHE_DIR` or `cacheDir` in `prefs.json`. There is no UI for it.
