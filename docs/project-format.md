@@ -131,6 +131,28 @@ left out). On load an unusable selection is removed (the normal mix) and out-of-
 reported as repairs. A selection the clip's stream cannot honour is kept and plays the normal mix, with a pre-export
 warning. Added in 0.8.0; `formatVersion` stays 1.
 
+`transform.keyframes` and `audio.keyframes` (optional; absent = the static values) animate a clip (Roadmap §11):
+
+```jsonc
+"transform": { "x": 0, "y": 0, "scale": 1, "rotation": 0, "opacity": 1, "crop": { … },
+  "keyframes": {
+    "x": [{ "frame": 0, "value": -120, "interp": "ease" }, { "frame": 96, "value": 80 }],
+    "y": [{ "frame": 0, "value": 0 }, { "frame": 96, "value": 0 }],
+    "scale": [{ "frame": 0, "value": 1 }, { "frame": 96, "value": 1.25 }],
+    "opacity": [{ "frame": 0, "value": 0 }, { "frame": 12, "value": 1 }]
+  } },
+"audio": { "gain": 0, "volume": 1, …, "keyframes": { "volume": [{ "frame": 48, "value": 1 }, { "frame": 60, "value": 0.25 }] } }
+```
+
+Each list holds the keyframes of one property, sorted by `frame`, one per frame. `frame` is an integer in
+**clip-relative timeline frames** (0 = the clip's first frame; it may be negative or past the clip's end after a
+trim, and still shapes the curve). `value` is in the property's unit (pixels, scale factor, opacity 0–1, level 0–2).
+`interp` is `"ease"` for the smoothstep curve from this keyframe to the next, absent for linear. A property with a
+non-empty list ignores its static value; before the first keyframe the first value holds, after the last the last.
+On load, entries without a finite frame and value are dropped, frames are rounded, values clamped to the property's
+range, duplicates and unknown properties dropped, lists sorted and cut at 2,000 keyframes; any of this is reported
+as a repair. Added in 0.8.0 (planned); `formatVersion` stays 1, and older files (no keyframes) open unchanged.
+
 ### Transition
 
 `{ id, type: 'crossDissolve'|'dipToBlack'|'audioCrossfade', duration (frames), outClipId, inClipId }`.
@@ -186,12 +208,13 @@ the app shows a warning naming the repairs and the copy. Repairs include:
   64 levels dropped;
 * frame values outside the limits above: items starting out of range are dropped, ends pulled in, view values
   reset; fractional values rounded (both ends of a span, so touching clips stay touching);
-* overlapping clips on one track: a clip loses its overlapping head (`sourceIn` follows) when at least one frame
-  remains, otherwise it moves unchanged to an extra track of the same kind (at most 32 per kind and sequence;
+* overlapping clips on one track: a clip loses its overlapping head (`sourceIn` and its keyframes follow) when at
+  least one frame remains, otherwise it moves unchanged to an extra track of the same kind (at most 32 per kind and sequence;
   beyond that it is dropped);
 * duplicate ids within a sequence are re-issued (the first keeps its id); references that resolve only through
   `Object.prototype` (`"constructor"`, `"toString"`, ...) are cleared;
-* settings clamped to the Preferences ranges, clip speed clamped, reversed story blocks turned around.
+* settings clamped to the Preferences ranges, clip speed clamped, reversed story blocks turned around;
+* keyframe lists repaired as described under Clip.
 
 Valid files and expected resets (jobs that were running) report nothing, and normalizing a repaired project
 again reports nothing.

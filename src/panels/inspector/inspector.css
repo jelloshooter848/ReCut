@@ -113,3 +113,12 @@
 .insp-swatch-none.selected { box-shadow: 0 0 0 1px var(--bg-0), 0 0 0 2px var(--text-bright); }
 .insp-multi-list { display: flex; flex-direction: column; gap: 1px; max-height: 120px; overflow: auto; }
 .insp-multi-list > div { font-size: var(--font-size-sm); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* keyframes (Roadmap §11): the diamond on an animatable row, the bar under an animated one */
+.insp-ctl .insp-kf-btn { width: 18px; height: 18px; }
+.insp-ctl .insp-kf-btn > svg { width: 10px; height: 10px; }
+.insp-ctl .insp-kf-btn.on { color: var(--accent); }
+.insp-ctl .insp-kf-btn.on > svg { fill: currentColor; }
+.insp-kf-row .insp-kf-count { color: var(--text-faint); font-size: var(--font-size-xs); padding-left: 10px; }
+.insp-kf-row .insp-ctl .btn-icon { width: 18px; height: 18px; }
+.insp-kf-row .insp-ctl .select { flex: 0 1 80px; }

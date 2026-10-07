@@ -29,6 +29,7 @@ import {
   setClipChannelSelection as tlSetClipChannelSelection, addChannelClip,
 } from '../../shared/timeline';
 import { centreClipName, centreExtraction } from '../../shared/audioChannels';
+import { addKeyframeAt, clearKeyframes, KEYFRAME_GROUPS, removeKeyframeAt, setInterpAt, type KeyframeGroup } from '../../shared/keyframes';
 import { emptyHistory, pushHistory, undoHistory, redoHistory, changedSequenceIds, undoLabel, redoLabel } from './history';
 import { proxyStreamStale } from '../playback/mediaSource';
 import type {
@@ -166,6 +167,14 @@ function addToVocab(tags: TagVocabulary, kind: keyof TagVocabulary, values: stri
 }
 
 function plainClone<T>(v: T): T { return JSON.parse(JSON.stringify(v)) as T; }
+
+/** Writable clips of `clipIds` a keyframe edit of `group` applies to: video clips for the picture, audio for the level. */
+function keyframeTargets(d: Project, seqId: ID, clipIds: ID[], group: KeyframeGroup): Clip[] {
+  const seq = d.sequences[seqId];
+  if (!seq) return [];
+  const kind = group === 'volume' ? 'audio' : 'video';
+  return clipsWithIds(seq, clipIds).filter((c) => c.kind === kind && !findClip(seq, c.id)?.track.locked);
+}
 
 /** Resolved [start,end) frames of a sequence subtitle cue, or null when it cannot be placed. */
 function cueFrames(seq: Sequence, cue: SequenceSubtitleCue): { start: number; end: number; clip?: Clip } | null {
@@ -1236,6 +1245,19 @@ export const useStore = create<RecutStore>()((set, get) => {
         }
         reconcileAll(seq);
       });
+    },
+    // Keyframes (Roadmap §11): pure edits in shared/keyframes.ts, one undo step each.
+    addClipKeyframe(seqId, clipIds, group, frame) {
+      commit('Add keyframe', (d) => { for (const c of keyframeTargets(d, seqId, clipIds, group)) addKeyframeAt(c, KEYFRAME_GROUPS[group], frame); });
+    },
+    removeClipKeyframe(seqId, clipIds, group, frame) {
+      commit('Remove keyframe', (d) => { for (const c of keyframeTargets(d, seqId, clipIds, group)) removeKeyframeAt(c, KEYFRAME_GROUPS[group], frame); });
+    },
+    setClipKeyframeInterp(seqId, clipIds, group, frame, interp) {
+      commit(interp === 'ease' ? 'Ease keyframe' : 'Linear keyframe', (d) => { for (const c of keyframeTargets(d, seqId, clipIds, group)) setInterpAt(c, KEYFRAME_GROUPS[group], frame, interp); });
+    },
+    clearClipKeyframes(seqId, clipIds, group, frame) {
+      commit('Clear keyframes', (d) => { for (const c of keyframeTargets(d, seqId, clipIds, group)) clearKeyframes(c, KEYFRAME_GROUPS[group], frame); });
     },
     setClipTags(seqId, clipId, patch) {
       commit('Tag clip', (d) => {

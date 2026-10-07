@@ -5,7 +5,12 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 
 ## Editing and effects
 
-- **No keyframes.** Position, scale, rotation, opacity, crop, gain and level are fixed per clip.
+- **Keyframes (first version):** only position, scale, opacity and level animate. Rotation, crop, gain and the
+  fades keep one value per clip. Interpolation is Linear or Ease (one fixed curve, chosen per keyframe for the
+  segment that follows it); there are no Bézier handles, hold keyframes or graph editor. The timeline's keyframe
+  diamonds are read-only (no dragging); keyframes are added, changed and removed in the Inspector at the playhead.
+  Keyframes cannot be copied between clips. With several clips selected, an edit applies to each clip at its own
+  frame under the playhead.
 - **No colour tools.** There is no grading, LUT, exposure or white balance, and no video effects beyond transform,
   opacity and crop.
 - **No titles or generators.** Text, shapes and solids are not available. Import a still image instead.
@@ -43,6 +48,9 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   a short FFmpeg job before it is heard; the clip is silent in the Program monitor until then. Each distinct
   selection (stream, channel or downmix levels) of a file gets its own file in the cache.
 - **Channel-selected clips draw the whole stream's waveform** on the timeline, not the selected channel's.
+- **Keyframed level:** the timeline waveform is drawn at the clip's static level, not the keyframed one. The
+  Program monitor follows the keyframes with a gain ramp re-aimed on every display frame (about every 16 ms, 50 ms
+  ahead), so a steep ramp can lag the export's level briefly; while scrubbing or shuttling it is silent, as before.
 - **Multi-stream originals** preview the stream the export renders for each clip. This relies on Chromium's
   `HTMLMediaElement.audioTracks`, which sits behind the `AudioVideoTracks` Blink feature; ReCut turns it on at
   startup (`electron/main.ts`). If a future Electron drops that feature, the preview would fall back to each file's
@@ -143,6 +151,13 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **Frame-rate conversion** (an export frame rate other than the sequence's) repeats or drops whole frames. There is
   no frame blending or motion interpolation, so 23.976 → 30 shows a regular repeat cadence and 23.976 ↔ 24 repeats
   or drops one frame about every 42 s. Duration and audio sync are not affected.
+- **Keyframes in the export:** a clip with keyframed position or scale is placed per frame with FFmpeg's
+  `perspective` filter (bilinear, sub-pixel) instead of the static scale / rotate / pad chain, which costs time: on
+  the 4-core test machine about 35 frames per second at 1080p for that clip's part of the timeline, on top of the
+  decode and encode. The picture is first scaled (bicubic) to the largest size the clip reaches when that is below
+  100 %; well below that size fine detail can shimmer, and the Checks list warns when the scale drops under half of
+  it. Keyframed opacity changes in steps of 1/1024; keyframed level is evaluated every 256 samples (5.3 ms at
+  48 kHz). Clips without keyframes export exactly as before.
 - **Pre-export warnings** (Export dialog › Checks) do not cover abrupt level jumps at cuts or subtitle timing drift:
   both need an analysis pass over the media.
 - **AC-3 audio** is limited to 32, 44.1 and 48 kHz (the FFmpeg encoder's rates). 96 kHz is available with AAC only.

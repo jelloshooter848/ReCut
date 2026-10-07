@@ -219,3 +219,11 @@
 .tl-clip:hover { filter: brightness(1.08); }
 .tl-clip-edge:hover { background: rgba(255, 255, 255, 0.25); }
 .tl-lod-lane { position: absolute; display: block; }
+
+/* keyframes (Roadmap §11): read-only diamonds along the bottom of the clip */
+.tl-keyframes { position: absolute; left: 0; right: 0; bottom: 1px; height: 9px; pointer-events: none; z-index: 2; }
+.tl-keyframe {
+  position: absolute; bottom: 1px; width: 7px; height: 7px; margin-left: -3.5px; transform: rotate(45deg);
+  background: #f5d76e; border: 1px solid rgba(0, 0, 0, 0.6); box-sizing: border-box;
+}
+.tl-clip.compact .tl-keyframe { width: 5px; height: 5px; margin-left: -2.5px; }

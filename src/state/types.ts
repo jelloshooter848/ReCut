@@ -5,9 +5,10 @@
 import type {
   AudioChannelSelection, Bin, Clip, ClipAudio, ClipTransform, DetectedScene, ID, JobInfo, Marker, MediaItem, MediaProbe, Project,
   ProjectSettings, ProxyInfo, SceneRecord, Sequence, SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock,
-  SubtitleTrack, TagVocabulary, Track, Transition, TransitionType,
+  SubtitleTrack, TagVocabulary, Track, Transition, TransitionType, KeyframeInterp,
 } from '../../shared/model';
 import type { MoveSpec, NewClipSpec } from '../../shared/timeline';
+import type { KeyframeGroup } from '../../shared/keyframes';
 
 export type Tool = 'select' | 'razor' | 'ripple' | 'rolling' | 'slip' | 'slide' | 'track' | 'hand';
 export type SelectMode = 'set' | 'add' | 'toggle' | 'clear';
@@ -249,6 +250,16 @@ export interface StoreActions {
    * the reason when the source has no centre channel (shared/audioChannels.ts centreExtraction).
    */
   extractCentreChannel(seqId: ID, clipId: ID): { ok: true; clipId: ID; trackId: ID } | { ok: false; reason: string };
+  // Keyframes (Roadmap §11): each is one undo step; `frame` is a timeline frame (the playhead), applied to every clip
+  // in `clipIds` at its own clip frame (kept inside the clip). `group` 'position' animates x and y together.
+  /** Add a keyframe holding the property's current value. */
+  addClipKeyframe(seqId: ID, clipIds: ID[], group: KeyframeGroup, frame: number): void;
+  /** Remove the keyframe at `frame`; removing a property's last keyframe leaves it static at that value. */
+  removeClipKeyframe(seqId: ID, clipIds: ID[], group: KeyframeGroup, frame: number): void;
+  /** Interpolation of the keyframe that governs `frame` (the one at it, else the previous one). */
+  setClipKeyframeInterp(seqId: ID, clipIds: ID[], group: KeyframeGroup, frame: number, interp: KeyframeInterp): void;
+  /** Remove every keyframe of the property; it stays at its value at `frame`. */
+  clearClipKeyframes(seqId: ID, clipIds: ID[], group: KeyframeGroup, frame: number): void;
   setClipTags(seqId: ID, clipId: ID, patch: ClipTagsPatch): void;
   addTransitionAtCut(seqId: ID, trackId: ID, frame: number, type: TransitionType, frames?: number): Transition | null;
   addDefaultTransitionAtSelection(seqId?: ID): void;

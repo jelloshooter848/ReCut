@@ -241,6 +241,30 @@ Scenes in the library are reusable, tagged source ranges.
 - Transitions are centred on the cut and use media beyond the clip edges (handles). If there is not enough media,
   the transition is shortened. Drag a transition's edge to change its length, or edit it in the Inspector.
 
+### Keyframes: Ken Burns moves, ducking, fades that are not straight
+
+A clip's **Position**, **Scale** and **Opacity** (Inspector › Video) and its **Level** (Inspector › Audio) can change
+over time.
+
+1. Put the playhead where the move starts and click the **diamond** at the end of the row. This adds a keyframe
+   holding the current value; the property is now animated.
+2. Move the playhead and change the value: the field edits the keyframe at the playhead, or adds one there. A filled
+   diamond means there is a keyframe at the playhead; click it to remove that keyframe.
+3. The row under an animated property shows the keyframe count, **previous / next keyframe** (moves the playhead),
+   how the value moves from the keyframe at (or before) the playhead to the next one (**Linear**, or **Ease**:
+   slow at both ends), and **×**, which removes all of the property's keyframes and keeps the value at the
+   playhead.
+
+Every keyframe edit is one undo step. Keyframes show as small diamonds along the bottom of the clip on the timeline.
+Position keys X and Y together. Rotation, crop, gain and the fades are not animated (they keep their single value),
+and the clip's fades and transitions are applied on top of keyframed opacity and level.
+
+Keyframes belong to the clip: moving it moves them. Trimming the start keeps each keyframe on the same moment of the
+source, and a keyframe left outside the clip still shapes the move (trim back out and it reappears). Razor gives
+both halves every keyframe, so the move does not change across the cut. Slip keeps them where they are in the clip.
+They count timeline frames, so a speed change does not stretch them. Before the first keyframe the value is the
+first keyframe's, after the last it is the last one's.
+
 ## 10. Tags and what-if experiments
 
 1. Tag clips: right-click › **Tag…**, or Inspector › **Story tags** (Characters, Plotlines, Locations, Tags). Tags

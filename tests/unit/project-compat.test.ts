@@ -208,10 +208,27 @@ describe('saved-project fixtures', () => {
       expect(v1.clips[1]).toMatchObject({ name: 'Luke meets Yoda', characters: ['Luke', 'Yoda'], plotlines: ['Jedi Training'], locations: ['Dagobah'], tags: ['keep'], color: '#30a46c' });
       expect(v2.locked).toBe(true);
       expect(v2.clips.map(span)).toEqual([[48, 96]]);
-      expect(v2.clips[0].transform).toEqual({ x: 40, y: -20, scale: 0.8, rotation: 2.5, opacity: 0.9, crop: { left: 0.05, top: 0, right: 0.05, bottom: 0.1 } });
+      const { keyframes: titleKeys, ...titleTransform } = v2.clips[0].transform;
+      expect(titleTransform).toEqual({ x: 40, y: -20, scale: 0.8, rotation: 2.5, opacity: 0.9, crop: { left: 0.05, top: 0, right: 0.05, bottom: 0.1 } });
       expect(a2).toMatchObject({ name: 'Music', volume: 0.7 });
       expect(a2.clips.map(span)).toEqual([[0, 480]]);
       expect(a2.clips[0].audio).toMatchObject({ fadeOut: 24, volume: 0.5 });
+      // Keyframes (Roadmap §11) from 0.8.0: clip-relative frames, interpolation only where it is 'ease'.
+      if (atLeast(v, [0, 8, 0])) {
+        expect(plain(titleKeys)).toEqual({
+          opacity: [{ frame: 0, value: 0, interp: 'ease' }, { frame: 24, value: 0.9 }],
+          scale: [{ frame: 0, value: 0.8 }, { frame: 95, value: 1.1, interp: 'ease' }],
+          x: [{ frame: 12, value: 40 }, { frame: 90, value: -60 }],
+          y: [{ frame: 12, value: -20 }, { frame: 90, value: -20 }],
+        });
+        expect(plain(a2.clips[0].audio.keyframes)).toEqual({ volume: [
+          { frame: 48, value: 0.5, interp: 'ease' }, { frame: 72, value: 0.2 }, { frame: 96, value: 0.2, interp: 'ease' }, { frame: 120, value: 0.5 },
+        ] });
+      } else {
+        expect(titleKeys).toBeUndefined();
+        expect(a2.clips[0].audio.keyframes).toBeUndefined();
+      }
+      for (const c of [...v1.clips, ...a1.clips]) expect([c.transform.keyframes, c.audio.keyframes]).toEqual([undefined, undefined]);
 
       expect(v1.transitions.map((t) => [t.type, t.duration, t.outClipId, t.inClipId]).sort()).toEqual([
         ['crossDissolve', 12, v1.clips[0].id, v1.clips[1].id],

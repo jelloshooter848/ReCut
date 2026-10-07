@@ -17,6 +17,7 @@
  */
 import type { Clip, ClipTransform, ID, MediaItem, Rational, Sequence, Track, Transition } from '../../shared/model';
 import { clipEnd, sourceTimeAt } from '../../shared/timeline';
+import { evaluateClipProperty, hasTransformKeyframes, hasVolumeKeyframes, transformAt } from '../../shared/keyframes';
 import { audioTrackOrdinal, channelProxyPendingReason, clipChannelProxy, mediaFps, mediaSize, mediaTimeOffset, previewUpmixGain, proxyAudioStreams, resolveAudioStream, resolvePlaybackPath } from './mediaSource';
 
 export interface LayerPlan {
@@ -28,7 +29,10 @@ export interface LayerPlan {
   sourceTime: number;
   /** Final alpha including clip opacity and transition ramp (0..1). */
   alpha: number;
+  /** The clip's transform at this frame: keyframed position / scale / opacity already evaluated (shared/keyframes.ts). */
   transform: ClipTransform;
+  /** Position, scale or opacity is keyframed: the picture can change from frame to frame with the same media frame. */
+  animated?: boolean;
   /** Index into seq.videoTracks (0 = bottom). */
   trackIndex: number;
   /** Seconds added to sourceTime to get the element's currentTime (container start of an original; 0 for proxies). */
@@ -61,6 +65,11 @@ export interface AudioPlan {
   gain: number;
   /** Track volume (linear) so the player can keep a per-track GainNode. */
   trackVolume: number;
+  /**
+   * Only for a clip with level keyframes: the same gain at any (fractional) timeline frame, with this frame's
+   * transition gain, so the player can ramp between frames like the export's per-sample-block evaluation.
+   */
+  gainAt?: (frame: number) => number;
   speed: number;
   /** Absolute index of the source audio stream played: the one the export renders (clip's, else the media's). */
   audioStream?: number;
@@ -107,6 +116,22 @@ export function fadeEnvelope(clip: Clip, frame: number): number {
 }
 
 function clamp01(v: number): number { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+/**
+ * A clip's linear gain at a (possibly fractional) timeline frame: clip gain (dB) × level (keyframed or static) × fade
+ * envelope × transition weight × `extra` (the preview's mono up-mix). The export multiplies the same factors.
+ */
+export function clipGain(clip: Clip, frame: number, weight: number, extra: number): number {
+  const level = clip.audio.keyframes ? evaluateClipProperty('volume', clip, frame) : clip.audio.volume;
+  return dbToLinear(clip.audio.gain) * Math.max(0, level) * fadeEnvelope(clip, frame) * weight * extra;
+}
+
+const NO_CURVE: { gainAt?: (frame: number) => number } = Object.freeze({});
+/** `{ gainAt }` for a clip with level keyframes (see AudioPlan.gainAt), else nothing. */
+function gainCurve(clip: Clip, weight: number, extra: number): { gainAt?: (frame: number) => number } {
+  if (!clip.audio.keyframes || !hasVolumeKeyframes(clip)) return NO_CURVE;
+  return { gainAt: (f: number) => clipGain(clip, f, weight, extra) };
+}
 
 interface Contribution { clip: Clip; weight: number; handle: boolean }
 
@@ -249,8 +274,11 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
       if (!m) { report(clip, 'media not in project'); continue; }
       const res = resolvePlaybackPath(m, useProxies);
       if (!res.path) { report(clip, res.reason ?? 'not playable'); continue; }
+      // Keyframes (Roadmap §11): only a clip that has them pays for the evaluation.
+      const animated = clip.transform.keyframes !== undefined && hasTransformKeyframes(clip);
+      const transform = animated ? transformAt(clip, frame) : clip.transform;
       // Zero-alpha layers are kept so the element is acquired and pre-rolled before it fades in.
-      const alpha = clamp01(clip.transform.opacity) * weight;
+      const alpha = clamp01(transform.opacity) * weight;
       layers.push({
         clipId: clip.id,
         mediaId: clip.mediaId,
@@ -259,7 +287,8 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
         sourceTime: sourceTimeAt(clip, frame, fps),
         timeOffset: res.timeOffset ?? 0,
         alpha,
-        transform: clip.transform,
+        transform,
+        ...(animated ? { animated } : null),
         trackIndex: index,
         mediaFps: mediaFps(m),
         mediaSize: mediaSize(m),
@@ -287,8 +316,9 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
         audio.push({
           clipId: clip.id, mediaId: clip.mediaId, trackId: track.id, path: ch.info.path, usingProxy: true,
           sourceTime: sourceTimeAt(clip, frame, fps), timeOffset: 0,
-          gain: dbToLinear(clip.audio.gain) * Math.max(0, clip.audio.volume) * fadeEnvelope(clip, frame) * weight,
+          gain: clipGain(clip, frame, weight, 1),
           trackVolume: Math.max(0, track.volume), speed: clip.speed, audioStream: ch.stream, audioTrack: -1, handle,
+          ...gainCurve(clip, weight, 1),
         });
         continue;
       }
@@ -303,8 +333,8 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
         path = m.path; usingProxy = false; timeOffset = mediaTimeOffset(m, false);
       }
       // A mono stream played directly is up-mixed to stereo at unity by Web Audio, at -3 dB by the export: match it.
-      const gain = dbToLinear(clip.audio.gain) * Math.max(0, clip.audio.volume) * fadeEnvelope(clip, frame) * weight
-        * previewUpmixGain(m, usingProxy, stream);
+      const upmix = previewUpmixGain(m, usingProxy, stream);
+      const gain = clipGain(clip, frame, weight, upmix);
       audio.push({
         clipId: clip.id,
         mediaId: clip.mediaId,
@@ -319,6 +349,7 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
         audioStream: stream ?? undefined,
         audioTrack: audioTrackOrdinal(m, usingProxy, stream ?? undefined),
         handle,
+        ...gainCurve(clip, weight, upmix),
       });
     }
   }

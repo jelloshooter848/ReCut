@@ -6,6 +6,7 @@ import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Link2 } from 'lucide-react';
 import type { Clip, MediaItem, Rational } from '@shared/model';
 import { formatSequenceSecondsTimecode, validFpsOr } from '@shared/time';
+import { AUDIO_KEY_PROPS, clipKeyframeFrames, TRANSFORM_KEY_PROPS } from '@shared/keyframes';
 import type { WaveformData } from '@shared/ipc';
 import { thumbs, waves } from '@/app/media';
 import { peaksForRange } from '@/playback/thumbnails';
@@ -59,6 +60,9 @@ const EDGE_START = <div className="tl-clip-edge left " data-edge="start" />;
 const EDGE_START_CUT = <div className="tl-clip-edge left cut" data-edge="start" />;
 const EDGE_END = <div className="tl-clip-edge right " data-edge="end" />;
 const EDGE_END_CUT = <div className="tl-clip-edge right cut" data-edge="end" />;
+
+/** More keyframes than this on one clip are not drawn (they would merge into a line). */
+const MAX_KEY_MARKS = 400;
 
 const waveMaxCache = new WeakMap<WaveformData, number>();
 /** Loudest peak of a waveform (cached per data object) used to normalise the drawing. */
@@ -200,6 +204,20 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   const srcTc = p.showSourceTc ? formatSequenceSecondsTimecode(clip.sourceIn, mediaFps) : null;
   const stripe = labelColorHex(clip.color);
   const characters = clip.characters.slice(0, 2);
+  // Keyframes (Roadmap §11): read-only diamonds at the clip's keyframes (picture properties on video, level on audio)
+  // inside its visible range, from the clip's keyframe objects only (nothing for a clip without keyframes).
+  const kfSource = isVideo ? clip.transform.keyframes : clip.audio.keyframes;
+  const keyMarks = useMemo(() => {
+    if (!kfSource) return null;
+    const frames = clipKeyframeFrames(clip, isVideo ? TRANSFORM_KEY_PROPS : AUDIO_KEY_PROPS).filter((f) => f >= 0 && f < clip.duration);
+    if (!frames.length || frames.length > MAX_KEY_MARKS) return null;
+    return (
+      <div className="tl-keyframes" data-keyframes={frames.length}>
+        {frames.map((f) => <span key={f} className="tl-keyframe" style={{ left: (f + 0.5) * zoom }} title={`Keyframe at clip frame ${f}`} />)}
+      </div>
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kfSource, clip.duration, zoom, isVideo]);
   const fadeInW = clip.audio.fadeIn * zoom;
   const fadeOutW = clip.audio.fadeOut * zoom;
 
@@ -256,6 +274,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
           <line x1={0} y1={0} x2={fadeOutW} y2={bodyH} stroke="rgba(255,255,255,0.8)" strokeWidth={1} />
         </svg>
       ) : null}
+      {keyMarks}
       {p.cutAtStart ? EDGE_START_CUT : EDGE_START}
       {p.cutAtEnd ? EDGE_END_CUT : EDGE_END}
     </div>
