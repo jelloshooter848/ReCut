@@ -238,6 +238,18 @@ offline and cloud-free.
   source, model (with its hash) and settings; reading the same media again is instant. Transcription never uses the
   network.
 - The disabled **Local Whisper** entry under Transcribe… is the placeholder.
+**Status: implemented, pending release 0.11.0** (not done until 0.11.0 is published). The engine is whisper.cpp
+1.9.5 (`whisper-cli`, CPU, about 10 MB with five CPU-variant kernels picked at run time; Metal on Apple Silicon),
+compiled in CI from the pinned, SHA-256-checked source (`scripts/whisper-source.mjs`, `scripts/{linux,windows,mac}/
+get-whisper.*`) and bundled like FFmpeg. Seven models (tiny, base, base.en, small, small.en, medium, large-v3-turbo;
+78 MB to 1.6 GB), pinned to one Hugging Face commit with size and SHA-256 (`shared/whisper.ts`), are installed from
+**File › Transcription Models…** or Preferences through the shared verified downloader (`electron/net/download.ts`,
+redirects only to Hugging Face's storage host). **Transcribe with Whisper…** (Transcript › Import › Transcribe… ›
+Local Whisper…, or the Project panel's media menu) queues a `transcribe` job per media (own lane, cancellable,
+chunked at quiet moments for bounded memory, cached) and adds a track named "English (Whisper Small)" with
+`origin: 'whisper'`. The macOS build steps are written (`scripts/mac/get-whisper.sh`) but wait for the macOS CI job;
+no model was downloaded during development (the network policy blocked Hugging Face), so the pins were cross-checked
+against three independent projects and real-model recognition is tested only in CI.
 **Done when:** ReCut can transcribe media locally into the transcript that search and navigation already use, on
 Windows, Linux and macOS, with no model in the installer.
 

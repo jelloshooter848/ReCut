@@ -135,6 +135,29 @@ are licensed under the Apache License 2.0 by the Tesseract project. OCR itself n
 (The repository's unit tests include one such file, `tests/fixtures/ocr/eng.traineddata`, with its `LICENSE`; it is
 not part of the app.)
 
+## whisper.cpp (built in, for speech-to-text)
+
+| | |
+|---|---|
+| Files | `resources/whisper/`: `whisper-cli` with `libwhisper.so.1`, `libggml.so.0`, `libggml-base.so.0` and `libggml-cpu-*.so` (Linux); `whisper-cli.exe` with `whisper.dll`, `ggml*.dll` and the Visual C++ runtime DLLs (Windows); a single `whisper-cli` (macOS) |
+| What it is | [whisper.cpp](https://github.com/ggml-org/whisper.cpp) 1.9.5 (commit `d1be6fde11ac6e0407606b4e42fe72d34add8037`), a C/C++ implementation of OpenAI's Whisper speech recognition model, with the [ggml](https://github.com/ggml-org/ggml) tensor library it contains, compiled for the CPU (and Metal on Apple Silicon) by `scripts/linux/get-whisper.sh`, `scripts/windows/get-whisper.ps1` and `scripts/mac/get-whisper.sh` |
+| Licence | MIT ("Copyright (c) 2023-2026 The ggml authors"), for whisper.cpp and ggml |
+| Licence text | `resources/whisper/WHISPER-LICENSE.txt` (**Help › About › Licences › whisper.cpp licence**); `WHISPER-BUILD.txt` next to it records the version, the source and its SHA-256, and the build flags |
+| Source | <https://github.com/ggml-org/whisper.cpp/tree/v1.9.5>, unmodified (`scripts/whisper-source.mjs` checks the tarball's and the source tree's SHA-256 before building) |
+
+whisper-cli also contains, from the same source tree, [miniaudio](https://miniaud.io) (public domain or MIT No
+Attribution, at your choice) and [stb_vorbis](https://github.com/nothings/stb) (public domain or MIT), which read audio
+files. On Windows the Visual C++ runtime (`vcruntime140.dll`, `vcruntime140_1.dll`, `msvcp140.dll`) is copied next to
+the engine under the Microsoft Visual Studio redistribution terms.
+
+**Speech recognition models are not distributed with ReCut.** Transcription needs a Whisper model. ReCut downloads one
+only when you click **Install** for it in **File › Transcription Models…** (or you choose a file with **Install from
+file…**), from the [ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp) model repository on Hugging
+Face at commit `5359861c739e955e79d9a303bcbc70fb988958b1`, checks its SHA-256 and stores it in
+`<userData>/whisper/models`. The models are OpenAI's Whisper weights converted to the ggml format; OpenAI releases
+Whisper's code and model weights under the MIT License (<https://github.com/openai/whisper>, "Copyright (c) 2022
+OpenAI"). Transcription itself never uses the network.
+
 #### Leptonica (BSD-2-Clause)
 
 ```text

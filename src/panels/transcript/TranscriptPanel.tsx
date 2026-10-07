@@ -66,7 +66,7 @@ export function TranscriptPanel({ active }: PanelProps) {
             const a = availability.get(p.id);
             const ok = a?.available ?? false;
             return {
-              label: ok ? p.name : `${p.name} — ${a?.reason ?? 'not available'}`,
+              label: ok ? `${p.name}${p.openDialog ? '…' : ''}` : `${p.name} — ${a?.reason ?? 'not available'}`,
               disabled: !ok,
               onSelect: () => { if (mediaId) void transcribeWith(p, mediaId); },
             };
