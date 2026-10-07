@@ -26,6 +26,7 @@ import { RelinkDialog } from '@/panels/project/RelinkDialog';
 import { FfmpegBanner } from '@/app/FfmpegBanner';
 import { ExportDialog } from '@/panels/export/ExportDialog';
 import { OcrLanguagesDialog } from '@/panels/ocr/OcrLanguagesDialog';
+import { OcrDialog } from '@/panels/ocr/OcrDialog';
 import { recutApi, setFfmpegAvailability } from '@/state';
 import '@/panels';
 
@@ -113,6 +114,7 @@ export function App() {
       <RelinkDialog />
       {/* Mounted at the root: the Jobs panel (its old host) unmounts while hidden, which made Export do nothing. */}
       <ExportDialog />
+      <OcrDialog />
       <OcrLanguagesDialog />
       <DialogHost />
     </>

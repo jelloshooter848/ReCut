@@ -14,3 +14,9 @@
 .ocrl-state .progress { max-width: 90px; }
 .ocrl-pct { width: 42px; text-align: right; font-size: var(--font-size-sm); }
 .ocrl-empty { padding: 16px; text-align: center; }
+
+/* Read with OCR dialog (OcrDialog.tsx) */
+.ocr-lang-row > .text-sm:first-child { width: 72px; flex: none; }
+.ocr-install { padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-1); }
+.ocr-install .progress { max-width: 120px; }
+.ocr-note { margin: 0; line-height: 1.45; }

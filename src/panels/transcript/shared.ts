@@ -11,6 +11,7 @@ import { buildTranscriptIndex, type TranscriptIndex } from '@/transcript/index';
 import { getProviders, SubtitleFileProvider, type TranscriptProvider } from '@/transcript/providers';
 import { uid } from '../../../shared/ids';
 import { fileNameOf } from '@/state/selectors';
+import { ocrStream, openOcrDialog } from '@/ocr/ocrUi';
 
 const DEFAULT_FPS: Rational = { num: 24000, den: 1001 };
 
@@ -88,7 +89,9 @@ export async function importSubtitlesDialog(mediaId: ID | null = targetMediaId()
   }
 }
 
+/** Extract an embedded text stream; a bitmap stream (PGS, VobSub, DVB, XSUB) opens the Read with OCR dialog instead. */
 export async function importEmbedded(mediaId: ID, streamIndex: number): Promise<void> {
+  if (ocrStream(useStore.getState().project.media[mediaId], streamIndex)) { openOcrDialog({ mediaId, streamIndex }); return; }
   try {
     const res = await importEmbeddedSubtitles(mediaId, streamIndex);
     reportImport(res, `embedded stream #${streamIndex}`);

@@ -4,6 +4,7 @@ import type { MenuItem } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
 import { useStore } from '@/state';
 import { IS_MAC } from '@/keyboard/shortcuts';
+import { embeddedStreamEntry } from '@/ocr/ocrUi';
 import type { BinRow, GroupRow, SceneRow, SequenceRow } from './tree';
 import type { PanelDialog } from './dialogs';
 import {
@@ -45,7 +46,10 @@ export function mediaMenu(m: MediaItem, env: MenuEnv): MenuItem[] {
     { label: 'Import Subtitles…', disabled: m.offline, onSelect: () => { void importSubtitlesViaDialog(m.id); } },
     {
       label: 'Embedded Subtitles', disabled: m.offline || embedded.length === 0,
-      submenu: embedded.map((s) => ({ label: `#${s.index} ${s.title ?? ''} ${s.language ? `[${s.language}]` : ''} (${s.codec})`.replace(/\s+/g, ' ').trim(), onSelect: () => { void importEmbedded(m.id, s.index); } })),
+      submenu: embedded.map((s) => {
+        const e = embeddedStreamEntry(s);
+        return { label: e.label, disabled: e.disabled, onSelect: () => { void importEmbedded(m.id, s.index); } };
+      }),
     },
     { separator: true },
     {

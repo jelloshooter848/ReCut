@@ -16,7 +16,7 @@ import { normalizePrefs } from '../../electron/project/io';
 import { subtitleExtractRefusal } from '../../electron/media/subtitlesExtract';
 import { assertOcrLanguageCode, parseOcrRequest } from '../../electron/ocr/validate';
 import { listOcrLanguages, ocrDataDir, ocrLanguagePath } from '../../electron/ocr/dataDir';
-import { mediaHandlers } from '../../electron/media/index';
+import { jobQueue, mediaHandlers } from '../../electron/media/index';
 import { useStore, resetStore } from '../../src/state/store';
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-ocr-contract-'));
@@ -174,7 +174,11 @@ describe('installed OCR languages', () => {
     const list = await mediaHandlers.ocrLanguages();
     expect(list.filter((l) => l.installed).map((l) => l.code)).toEqual(['eng']);
     await expect(mediaHandlers.ocrInstallLanguage('eng')).rejects.toThrow(/not available/); // init was given no fetch
-    await expect(mediaHandlers.startOcr({ mediaId: 'm', path: path.join(tmpRoot, 'a.mkv'), streamIndex: 2, language: 'eng' })).rejects.toThrow(/not implemented yet/);
+    // startOcr runs an 'ocr' job, which checks the language file first (this one is all zeros: damaged).
+    const job = await mediaHandlers.startOcr({ mediaId: 'm', path: path.join(tmpRoot, 'a.mkv'), streamIndex: 2, language: 'eng' });
+    expect(job).toMatchObject({ kind: 'ocr', mediaId: 'm', title: 'Read subtitles with OCR: a.mkv #2 (English)' });
+    const final = await jobQueue.waitFor(job.id);
+    expect(final).toMatchObject({ status: 'failed', error: expect.stringMatching(/English OCR data is damaged/) });
     expect(await mediaHandlers.ocrInstallLanguageFromFile('eng', path.join(tmpRoot, 'x'))).toMatchObject({ ok: false });
     expect(await mediaHandlers.ocrRemoveLanguage('eng')).toEqual({ ok: true });
     expect((await mediaHandlers.ocrLanguages()).some((l) => l.installed)).toBe(false);

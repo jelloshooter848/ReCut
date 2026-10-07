@@ -62,6 +62,7 @@ export const menuCommandMap: Record<string, string> = {
   'sequence.duplicateWithoutDisabled': 'sequence.duplicateWithoutDisabled',
   'sequence.removeDisabledClips': 'sequence.removeDisabledClips',
   'app.preferences': 'app.preferences',
+  'app.ocrLanguages': 'app.ocrLanguages',
   'help.about': 'help.about',
 };
 
