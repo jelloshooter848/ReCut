@@ -532,7 +532,7 @@ function computeSequenceWarnings(seq: Sequence, media: Record<ID, MediaItem>, st
     const list = [...byLink.values()].sort((a, b) => a.clip.start - b.clip.start);
     items.push({
       level: 'warning', target: { frame: list[0].clip.start, clipIds: list.flatMap((e) => e.ids) },
-      text: `Linked clips out of sync: ${namesWithMore(list.map((e) => `"${e.clip.name}" (${formatSyncOffset(e.off)} frames)`))}. Picture and sound will not line up.`,
+      text: `Linked clips out of sync: ${namesWithMore(list.map((e) => `"${e.clip.name}" (${formatSyncOffset(e.off)} frame${Math.abs(e.off) === 1 ? '' : 's'})`))}. Picture and sound will not line up.`,
     });
   }
 

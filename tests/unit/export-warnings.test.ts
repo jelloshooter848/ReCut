@@ -192,7 +192,7 @@ describe('out-of-sync linked clips', () => {
       fixtureClip(seq.videoTracks[0], m, i * 100, 48, 1, 1, { linkId: `L${i}`, name: `shot ${i}` });
       fixtureClip(seq.audioTracks[0], m, i * 100 + i + 1, 48, 1, 1, { linkId: `L${i}`, name: `shot ${i}` });
     }
-    expect(find(checklist(seq, media), SYNC)!.text).toBe('Linked clips out of sync: "shot 0" (−1 frames), "shot 1" (−2 frames), "shot 2" (−3 frames) and 2 more. Picture and sound will not line up.');
+    expect(find(checklist(seq, media), SYNC)!.text).toBe('Linked clips out of sync: "shot 0" (−1 frame), "shot 1" (−2 frames), "shot 2" (−3 frames) and 2 more. Picture and sound will not line up.');
   });
 });
 
@@ -338,10 +338,10 @@ describe('memoization and cost', () => {
     console.log(`export checklist on ${seq.videoTracks[0].clips.length + seq.audioTracks[0].clips.length} clips / ${pos} frames: median ${median.toFixed(1)} ms (runs ${runs.map((r) => r.toFixed(1)).join(', ')})`);
     expect(median).toBeLessThan(100);
     // Memoized: settings-only changes (file name, quality) do not redo the timeline checks.
-    const t1 = performance.now();
-    exportChecklist(seq, media, settings); exportChecklist(seq, media, { ...settings, fileName: 'x.mp4' });
-    const memoRun = performance.now() - t1;
-    expect(memoRun).toBeLessThan(median + 5);
+    exportChecklist(seq, media, settings);
+    const memo = sequenceExportWarnings(seq, media, 0, pos);
+    exportChecklist(seq, media, { ...settings, fileName: 'x.mp4', crf: 30 });
+    expect(sequenceExportWarnings(seq, media, 0, pos)).toBe(memo);
   });
 });
 
