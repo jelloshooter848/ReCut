@@ -7,7 +7,9 @@
  * Where electron-builder puts them (package.json → build):
  *  - `<resources>/LICENSE`, `<resources>/THIRD_PARTY_NOTICES.md` (extraResources)
  *  - `<resources>/ffmpeg/FFMPEG-*.txt` (extraResources `resources/ffmpeg`, written by scripts/windows/get-ffmpeg.ps1)
- *  - `LICENSE.electron.txt`, `LICENSES.chromium.html` next to the executable (added by electron-builder itself)
+ *  - `LICENSE.electron.txt`, `LICENSES.chromium.html` next to the executable (added by electron-builder itself on Windows
+ *    and Linux); on macOS electron-builder leaves them out, so build.mac.extraResources copies them into `<resources>`
+ *    (ReCut.app/Contents/Resources) and they are looked up there after the executable's folder
  *  - `<resources>/app.asar.unpacked/dist/electron/ocr/core/LICENSE`: Tesseract's licence, copied with the OCR core by
  *    scripts/build-electron.mjs (dist/electron/ocr/** is unpacked from app.asar, build.asarUnpack)
  * In development the repository root (working directory / app path) stands in for `<resources>`, and
@@ -62,7 +64,10 @@ export function licenceDirs(env: { packaged: boolean; resourcesPath?: string; ap
       ocr.push(path.join(root, OCR_CORE_DIR));
     }
   }
-  return { app: unique(app), ffmpeg: unique(ffmpeg), exe: unique([path.dirname(env.execPath)]), ocr: unique(ocr) };
+  // Electron's and Chromium's licences: next to the executable (Windows, Linux), else in <resources> (macOS).
+  const exe = [path.dirname(env.execPath)];
+  if (env.resourcesPath) exe.push(env.resourcesPath);
+  return { app: unique(app), ffmpeg: unique(ffmpeg), exe: unique(exe), ocr: unique(ocr) };
 }
 
 function unique(xs: string[]): string[] {

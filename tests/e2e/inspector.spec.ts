@@ -32,7 +32,7 @@ async function typeNumber(p: Page, selector: string, value: string) {
   await field.scrollIntoViewIfNeeded();
   await field.click();
   await expect(field.locator('input')).toBeVisible();
-  await p.keyboard.press('Control+A');
+  await p.keyboard.press('ControlOrMeta+A');
   await p.keyboard.type(value);
   await p.keyboard.press('Enter');
 }

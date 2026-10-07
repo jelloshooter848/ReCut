@@ -95,7 +95,7 @@ async function stubOpenDialog(L: Launched, paths: string[]): Promise<void> {
 async function openExportDialog(page: Page, g: Gauntlet): Promise<void> {
   await g.step('Open the Export dialog with Ctrl+M', 'UI', async () => {
     await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur?.(); });
-    await page.keyboard.press('Control+M');
+    await page.keyboard.press('ControlOrMeta+M');
     await expect(page.getByTestId('export-dialog')).toBeVisible({ timeout: 5_000 });
   }, { fallback: async () => { await evalStore(page, '(s) => s.openDialog("export")'); await expect(page.getByTestId('export-dialog')).toBeVisible(); } });
 }
@@ -274,7 +274,7 @@ test.describe.serial('TEST 1 — Basic Movie Edit', () => {
         seq = await seqState(page);
         const [x, y] = aclips(seq);
         await evalStore(page, '(s, ids) => s.select(ids, "set")', [x.id, y.id]);
-        await page.keyboard.press('Control+Shift+D');
+        await page.keyboard.press('ControlOrMeta+Shift+D');
         seq = await seqState(page);
         if (seq.audioTracks[0].transitions.length !== 1) {
           await evalStore(page, '(s, a) => s.addTransitionAtCut(s.project.activeSequenceId, a.trackId, a.frame, "audioCrossfade")', { trackId: seq.audioTracks[0].id, frame: y.start });

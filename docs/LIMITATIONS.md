@@ -109,14 +109,22 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **Verified packages:** the Windows installer and portable exe (built, installed and smoke-tested on Windows in CI;
   the unit and end-to-end suites run on Windows on every build and must pass before anything is published) and the
   Linux x86-64 AppImage (built on Ubuntu 22.04 in CI, launched and smoke-tested; the unit and end-to-end suites run on
-  Linux on every build and must pass before anything is published). The macOS dmg is configured but untested.
-  Nothing is signed or notarised, so Windows SmartScreen warns on first launch.
+  Linux on every build and must pass before anything is published). Nothing is signed for Windows, so SmartScreen
+  warns on first launch.
+- **macOS: Apple Silicon test builds only, not released.** CI builds an arm64 dmg on every build, with FFmpeg
+  bundled, and smoke-tests the app from the mounted dmg, but the macOS jobs are advisory: they do not gate releases
+  and the dmg is not attached to them (planned for 0.7.0, [ROADMAP](ROADMAP.md) §19). No Intel or universal build.
+  Needs macOS 12 or newer (the bundled FFmpeg's minimum); tested in CI on macOS 14 only. Until the Developer ID
+  signing secrets are set up ([MACOS-SIGNING](MACOS-SIGNING.md)) the dmg is ad-hoc signed and not notarized, so macOS
+  blocks the first launch until it is allowed under System Settings › Privacy & Security. The end-to-end suite on
+  macOS (advisory `macos-e2e` job) has not passed on a Mac yet.
 - **Linux: AppImage only, x86-64 only.** No `.deb`, `.rpm`, Flatpak or Snap, and no ARM build. The AppImage needs the
   FUSE 2 library (`libfuse2`) unless it is started with `--appimage-extract-and-run`, and it does not add itself to
   the application menu or register `.recut` files (an AppImage integration tool can). The bundled FFmpeg needs glibc
   2.28 or newer, so very old distributions (before Debian 10 / Ubuntu 18.10 / RHEL 8) cannot run it. Tested on Ubuntu
   22.04 only.
-- **FFmpeg is bundled only in the Windows release builds and the Linux AppImage** (and fetched by `Start ReCut.cmd`).
+- **FFmpeg is bundled only in the Windows release builds, the Linux AppImage and the macOS test dmg** (and fetched
+  by `Start ReCut.cmd`).
   Elsewhere, install it yourself or drop static binaries into `resources/ffmpeg/` before `npm run package` /
   `npm run dist` (see
   [INSTALL](INSTALL.md#bundling-ffmpeg)). ReCut works with FFmpeg 6 through 9. When FFmpeg is missing, ReCut shows a banner and import / proxies / export stop with
