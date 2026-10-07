@@ -15,7 +15,7 @@ import { startProxyJob, type ProxyResult } from '../../electron/media/proxy';
 import { getThumbnail } from '../../electron/media/thumbs';
 import { buildRenderGraph } from '../../electron/export/renderGraph';
 import { FFMPEG, SCRATCH, ff, ffprobeJson, makeMediaItem, makeSeq, vclip, exportSeq, request, countFrames, FPS_24 } from './helpers';
-import { writeHeicFromMp4, writeJpegWithOrientation } from './stillfiles';
+import { writeHeifFromMp4, writeJpegWithOrientation } from './stillfiles';
 
 const DIR = path.join(SCRATCH, 'stills');
 const W = 320, H = 240;
@@ -43,7 +43,7 @@ const FORMATS: Fmt[] = [
   { ext: 'heic', lossy: true, make: (o, r) => {
     const mp4 = `${o}.hevc.mp4`;
     if (!run(['-i', r, '-frames:v', '1', '-c:v', 'libx265', '-x265-params', 'log-level=none', '-pix_fmt', 'yuv420p', '-tag:v', 'hvc1', mp4])) return false;
-    writeHeicFromMp4(mp4, o);
+    writeHeifFromMp4(mp4, o);
     return true;
   } },
   { ext: 'exr', make: (o, r) => run(['-i', r, '-c:v', 'exr', o]) },
@@ -227,11 +227,35 @@ describe('EXIF orientation: probe, thumbnail, export and proxy agree', () => {
     for (const [name, fx, fy, c] of upright) expect(near(px(out, 70 + Math.floor(180 * fx), Math.floor(240 * fy)), c, 60), `export ${name}: ${px(out, 70 + Math.floor(180 * fx), Math.floor(240 * fy))}`).toBe(true);
   }, 120_000);
 
+  it('a rotated AVIF (irot): the preview proxy and the export come from the same FFmpeg decode', async () => {
+    const mp4 = path.join(DIR, 'rot.av1.mp4');
+    if (!run(['-i', ref, '-frames:v', '1', '-c:v', 'libaom-av1', '-still-picture', '1', '-pix_fmt', 'yuv420p', mp4])) { console.log('[avif irot] skipped: no libaom-av1'); return; }
+    const avif = path.join(DIR, 'rot.avif');
+    writeHeifFromMp4(mp4, avif, 1); // 90 degrees counter-clockwise: Chromium draws it 240x320
+    if (!decodes(avif)) { console.log('[avif irot] skipped: the local FFmpeg cannot read it'); return; }
+    const item = await makeMediaItem(avif);
+    expect(item.kind).toBe('image');
+    const p = await stillProxy(item);
+    const seq = makeSeq(FPS_24, W, H);
+    vclip(seq, item, 0, 6, 0);
+    const { outputPath } = await exportSeq(seq, [item]);
+    const out = await rgbFrame(outputPath, 3);
+    const portrait = p.height! > p.width!;
+    // FFmpeg 6.1 ignores irot (landscape, fills the frame); a build that applies it gives a pillarboxed portrait.
+    console.log(`[avif irot] FFmpeg decodes ${p.width}x${p.height} (${portrait ? 'applies' : 'ignores'} irot); export left edge ${px(out, 20, 120)}`);
+    expect(near(px(out, 20, 120), [0, 0, 0], 24)).toBe(portrait);
+    const prev = await rgbFrame(p.path, 0, portrait ? H : W, portrait ? W : H);
+    // The proxy's top-left quadrant colour is where the export shows it (fitted into the frame the same way).
+    const k = portrait ? H / W : 1, x0 = portrait ? (W - H * H / W) / 2 : 0;
+    const exp = px(out, Math.floor(x0 + (portrait ? H : W) * k / 4), Math.floor(H / 4));
+    expect(near(exp, px(prev, Math.floor((portrait ? H : W) / 4), Math.floor((portrait ? W : H) / 4), portrait ? H : W), 40), `export ${exp}`).toBe(true);
+  });
+
   it('a HEIC with irot (90 CCW) decodes upright when the local FFmpeg reads HEIF (else skipped)', async () => {
     const mp4 = path.join(DIR, 'rot.hevc.mp4');
     if (!run(['-i', ref, '-frames:v', '1', '-c:v', 'libx265', '-x265-params', 'log-level=none', '-pix_fmt', 'yuv420p', '-tag:v', 'hvc1', mp4])) { console.log('[heic irot] skipped: no libx265'); return; }
     const heic = path.join(DIR, 'rot.heic');
-    writeHeicFromMp4(mp4, heic, 1);
+    writeHeifFromMp4(mp4, heic, 1);
     if (!decodes(heic)) { console.log('[heic irot] skipped: the local FFmpeg cannot demux HEIF (needs 7.0+)'); return; }
     const item = await makeMediaItem(heic);
     expect(item.kind).toBe('image');

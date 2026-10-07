@@ -1,6 +1,7 @@
 /**
- * Test-only writers for still images FFmpeg cannot (or not always) produce: a single-image HEIC built from a one-frame
- * HEVC mp4 (FFmpeg has no HEIF muxer), and a JPEG with an EXIF orientation tag.
+ * Test-only writers for still images FFmpeg cannot (or not always) produce: a single-image HEIC (or AVIF) built from a
+ * one-frame HEVC (AV1) mp4, optionally with an `irot` rotation (FFmpeg has no HEIF muxer, and its AVIF muxer writes no
+ * irot), and a JPEG with an EXIF orientation tag.
  */
 import fs from 'node:fs';
 
@@ -45,10 +46,11 @@ function fullBox(type: string, version: number, flags: number, ...parts: Buffer[
 }
 
 /**
- * Write a single-image HEIC (`ftyp heic`, one `hvc1` item with hvcC + ispe, optional `irot`) from a one-frame HEVC mp4
- * (`ffmpeg ... -frames:v 1 -c:v libx265 -tag:v hvc1 x.mp4`). `irotQuarterTurns` is the counter-clockwise `irot` angle.
+ * Write a single-image HEIF from a one-frame mp4: HEVC (`-c:v libx265 -tag:v hvc1`) gives a HEIC (`ftyp heic`, an
+ * `hvc1` item with hvcC + ispe), AV1 (`-c:v libaom-av1`) an AVIF (`ftyp avif`, an `av01` item with av1C + ispe).
+ * `irotQuarterTurns` adds an `irot` property (counter-clockwise quarter turns).
  */
-export function writeHeicFromMp4(mp4Path: string, outPath: string, irotQuarterTurns?: number): void {
+export function writeHeifFromMp4(mp4Path: string, outPath: string, irotQuarterTurns?: number): void {
   const mp4 = fs.readFileSync(mp4Path);
   const root: Box = { type: 'root', start: 0, hdr: 0, end: mp4.length };
   const trak = child(mp4, root, 'moov', 'trak');
@@ -58,8 +60,10 @@ export function writeHeicFromMp4(mp4Path: string, outPath: string, irotQuarterTu
   const stsd = child(mp4, stbl, 'stsd');
   const entry = boxes(mp4, stsd.start + stsd.hdr + 8, stsd.end)[0];
   // VisualSampleEntry: 8-byte header + 78 bytes of fields, then child boxes.
-  const hvcC = boxes(mp4, entry.start + 8 + 78, entry.end).find((b) => b.type === 'hvcC');
-  if (!hvcC) throw new Error(`no hvcC in sample entry ${entry.type}`);
+  const av1 = entry.type === 'av01';
+  const cfgType = av1 ? 'av1C' : 'hvcC';
+  const hvcC = boxes(mp4, entry.start + 8 + 78, entry.end).find((b) => b.type === cfgType);
+  if (!hvcC) throw new Error(`no ${cfgType} in sample entry ${entry.type}`);
   const stsz = child(mp4, stbl, 'stsz');
   const fixed = mp4.readUInt32BE(stsz.start + stsz.hdr + 4);
   const sampleSize = fixed || mp4.readUInt32BE(stsz.start + stsz.hdr + 12);
@@ -69,12 +73,13 @@ export function writeHeicFromMp4(mp4Path: string, outPath: string, irotQuarterTu
 
   const props = [mp4.subarray(hvcC.start, hvcC.end), fullBox('ispe', 0, 0, u32(width), u32(height))];
   if (irotQuarterTurns !== undefined) props.push(box('irot', u8(irotQuarterTurns & 3)));
-  const ftyp = box('ftyp', str('heic'), u32(0), str('mif1'), str('heic'));
+  const brand = av1 ? 'avif' : 'heic';
+  const ftyp = box('ftyp', str(brand), u32(0), str('mif1'), str(brand), str('miaf'));
   const meta = (dataOffset: number) => fullBox('meta', 0, 0,
     fullBox('hdlr', 0, 0, u32(0), str('pict'), u32(0), u32(0), u32(0), u8(0)),
     fullBox('pitm', 0, 0, u16(1)),
     fullBox('iloc', 0, 0, u8(0x44), u8(0x00), u16(1), u16(1), u16(0), u16(1), u32(dataOffset), u32(sample.length)),
-    fullBox('iinf', 0, 0, u16(1), fullBox('infe', 2, 0, u16(1), u16(0), str('hvc1'), u8(0))),
+    fullBox('iinf', 0, 0, u16(1), fullBox('infe', 2, 0, u16(1), u16(0), str(av1 ? 'av01' : 'hvc1'), u8(0))),
     box('iprp', box('ipco', ...props), fullBox('ipma', 0, 0, u32(1), u16(1), u8(props.length), ...props.map((_, i) => u8((i === 0 ? 0x80 : 0) | (i + 1))))),
   );
   const dataOffset = ftyp.length + meta(0).length + 8;

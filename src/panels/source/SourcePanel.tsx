@@ -97,7 +97,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
   const [subclipName, setSubclipName] = useState('');
 
   const fps = useMemo(() => mediaFps(media), [media]);
-  // Stills are drawn with an <img>: the original (PNG / JPEG / WebP / GIF / BMP / AVIF) or its PNG proxy.
+  // Stills are drawn with an <img>: the original (PNG / JPEG / WebP / GIF / BMP) or its PNG proxy.
   const isImage = media?.kind === 'image' || isStillImage(media);
   const [imageFailed, setImageFailed] = useState<string | null>(null);
   const isAudio = media?.kind === 'audio' || (!!media?.probe && !media.probe.video && media.probe.audio.length > 0);

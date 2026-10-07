@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import type { MediaItem, MediaProbe } from '../../shared/model';
-import { classifyKind, probeFromFfprobe, IMAGE_EXT, type FfprobeOutput, type FfprobeStream } from '../../electron/media/probe';
+import { applyStillOrientation, classifyKind, probeFromFfprobe, IMAGE_EXT, type FfprobeOutput, type FfprobeStream } from '../../electron/media/probe';
 import { buildStillProxyArgs, isStillProbe, pixFmtHasAlpha, stillProxyOutputPath, STILL_PROXY_MAX_SIDE } from '../../electron/media/proxy';
 import { kindFromProbe, STILL_IMAGE_EXTS } from '../../src/state/store';
 import {
@@ -91,6 +91,17 @@ describe('still classification (main and renderer agree)', () => {
     expect(classifyKind(withDuration, '/m/x.avif')).toBe('video');
   });
 
+  it('a still whose first frame carries a display matrix (EXIF Orientation 6) reports its upright size', () => {
+    const p = probeFromFfprobe(CASES.find((c) => c.file === '/m/a.jpg')!.raw, '/m/a.jpg', 1);
+    applyStillOrientation(p, [{ side_data_type: '3x3 displaymatrix', rotation: -90 }]);
+    expect(p.video).toMatchObject({ width: 240, height: 320, rotation: 270, codedWidth: 320, codedHeight: 240 }); // streamRotation's quarter turn (only the axis swap matters)
+    const q = probeFromFfprobe(CASES.find((c) => c.file === '/m/a.jpg')!.raw, '/m/a.jpg', 1);
+    applyStillOrientation(q, [{ side_data_type: '3x3 displaymatrix', rotation: 180 }]);
+    expect(q.video).toMatchObject({ width: 320, height: 240, rotation: 180 });
+    applyStillOrientation(q, undefined);
+    expect(q.video).toMatchObject({ width: 320, height: 240 });
+  });
+
   it('the main and renderer still-extension lists are the same, and everything drawn directly is a still', () => {
     expect([...IMAGE_EXT].map((e) => e.slice(1)).sort()).toEqual([...STILL_IMAGE_EXTS].sort());
     for (const e of ['tga', 'exr', 'psd', 'heif', 'heic', 'jxl', 'avif', 'tif', 'tiff']) expect(STILL_IMAGE_EXTS).toContain(e);
@@ -160,8 +171,8 @@ function still(ext: string, over: Partial<MediaItem> = {}): MediaItem {
 }
 
 describe('still preview resolution', () => {
-  it('TIFF / TGA / EXR / PSD / JXL / HEIC need a proxy; PNG / JPEG / WebP / GIF / BMP / AVIF are drawn directly', () => {
-    for (const ext of ['tiff', 'tif', 'tga', 'exr', 'psd', 'jxl', 'heic', 'heif', 'dpx']) {
+  it('TIFF / TGA / EXR / PSD / JXL / HEIC / AVIF need a proxy; PNG / JPEG / WebP / GIF / BMP are drawn directly', () => {
+    for (const ext of ['tiff', 'tif', 'tga', 'exr', 'psd', 'jxl', 'heic', 'heif', 'dpx', 'avif']) {
       const m = still(ext);
       expect(isStillImage(m), ext).toBe(true);
       expect(isDisplayableImage(m), ext).toBe(false);
@@ -169,7 +180,7 @@ describe('still preview resolution', () => {
       expect(resolvePlaybackPath(m, true).path, ext).toBeNull();
       expect(previewPlaybackLabel(m).direct).toBe(false);
     }
-    for (const ext of ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif']) {
+    for (const ext of ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp']) {
       const m = still(ext);
       expect(isDisplayableImage(m), ext).toBe(true);
       expect(mediaNeedsProxyForPreview(m), ext).toBe(false);
@@ -189,10 +200,12 @@ describe('still preview resolution', () => {
     expect(resolvePlaybackPath(m, true)).toEqual({ path: '/cache/proxies/k_still.png', usingProxy: true, timeOffset: 0, isImage: true });
   });
 
-  it('an AVIF saved as a playable mov video (older probe) is drawn as a still', () => {
+  it('an AVIF saved as a playable mov video (older probe) is a still that needs its PNG proxy', () => {
     const m = still('avif', { kind: 'video', probe: { ...still('avif').probe!, container: 'mov', browserPlayable: true, playabilityReason: undefined } });
     expect(isStillImage(m)).toBe(true);
-    expect(resolvePlaybackPath(m, true)).toMatchObject({ path: '/media/s.avif', isImage: true });
+    expect(mediaNeedsProxyForPreview(m)).toBe(true);
+    expect(resolvePlaybackPath(m, true)).toMatchObject({ path: null, reason: 'AVIF image needs a preview proxy; generate a proxy to preview' });
+    expect(resolvePlaybackPath({ ...m, proxy: { status: 'ready', path: '/c/k_still.png' } }, false)).toMatchObject({ path: '/c/k_still.png', isImage: true });
   });
 
   it('the Source monitor names the format', () => {

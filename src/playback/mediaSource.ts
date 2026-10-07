@@ -26,9 +26,12 @@ export interface PlaybackPathResolution {
 
 /**
  * Still-image extensions Chromium decodes in an <img> (drawn directly; never proxied). Every other still (TIFF, TGA,
- * EXR, PSD, JPEG XL, HEIC, ...) is previewed from a PNG proxy that FFmpeg decodes on import (electron/media/proxy.ts).
+ * EXR, PSD, JPEG XL, HEIC, ...) is previewed from a PNG proxy that FFmpeg decodes on import (electron/media/proxy.ts),
+ * so the preview shows what the export decodes. AVIF is proxied too although Electron 33 decodes it: Chromium applies
+ * the AVIF `irot` / `imir` orientation and FFmpeg 6.1 does not, so a rotated AVIF drawn directly would preview
+ * rotated and export unrotated (bugs/closed/2026-10-07-avif-preview-orientation-differs-from-export.md).
  */
-export const DISPLAYABLE_IMAGE_EXTS: readonly string[] = ['png', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'gif', 'bmp', 'avif'];
+export const DISPLAYABLE_IMAGE_EXTS: readonly string[] = ['png', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'gif', 'bmp'];
 
 /** Still-image extensions (FFmpeg decodes them all); see STILL_IMAGE_EXTS in src/state/store.ts. */
 const STILL_EXTS: readonly string[] = [
@@ -53,7 +56,7 @@ export function isStillImage(media: MediaItem | undefined): boolean {
   return !!p?.video && !(p.duration > 0) && p.audio.length === 0 && STILL_EXTS.includes(fileExt(media.path));
 }
 
-/** A still image the renderer can draw directly from the original file (png/jpg/jpeg/webp/gif/bmp/avif). */
+/** A still image the renderer can draw directly from the original file (png/jpg/jpeg/webp/gif/bmp). */
 export function isDisplayableImage(media: MediaItem | undefined): boolean {
   return isStillImage(media) && DISPLAYABLE_IMAGE_EXTS.includes(fileExt(media!.path));
 }

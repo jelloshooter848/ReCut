@@ -1,6 +1,7 @@
 /**
  * Still images Chromium cannot draw (TIFF, TGA) show in the Program and Source monitors through the PNG proxy built on
- * import, with proxies off; AVIF is drawn directly; an EXIF-rotated JPEG is upright (as the export draws it).
+ * import, with proxies off; so does an AVIF (Chromium decodes it, but applies its irot orientation where FFmpeg 6.1
+ * does not); an EXIF-rotated JPEG is upright (as the export draws it).
  * Run: npm run build && xvfb-run -a npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/stills.spec.ts
  */
 import { test, expect, type Page } from '@playwright/test';
@@ -133,16 +134,17 @@ test.describe('Still images in the monitors', () => {
     await expect(page.getByTestId('program-needs-proxy')).toHaveCount(0);
   });
 
-  test('an AVIF is drawn directly by Chromium (no proxy)', async () => {
+  test('an AVIF is previewed through its PNG proxy, like the export decodes it', async () => {
     const { page, tmp } = launched;
     const seqId = await freshProject(page);
     const file = path.join(tmp, 'still.avif');
     ffmpeg(['-f', 'lavfi', '-i', 'color=c=0x2040E0:s=320x240:d=1', '-frames:v', '1', file]);
     const [id] = await importMedia(page, [file]);
     expect(await getState<string>(page, `(s) => s.project.media[${JSON.stringify(id)}].kind`)).toBe('image');
+    await expect.poll(() => getState<string>(page, `(s) => { const p = s.project.media[${JSON.stringify(id)}].proxy; return p.status + ':' + (p.path ?? ''); }`),
+      { timeout: 30_000 }).toMatch(/^ready:.*_still\.png$/);
     await placeStill(page, seqId, id);
     await expect.poll(async () => near(await canvasPixel(page, 0.5, 0.5), [32, 64, 224]), { timeout: 20_000, intervals: [250] }).toBe(true);
-    expect(await getState<string>(page, `(s) => s.project.media[${JSON.stringify(id)}].proxy.status`)).toBe('none');
     await expect(page.getByTestId('program-needs-proxy')).toHaveCount(0);
   });
 
