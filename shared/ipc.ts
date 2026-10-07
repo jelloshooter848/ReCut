@@ -216,7 +216,8 @@ export interface ExportRequest {
   overwrite?: boolean;
 }
 export type ExportStartResult =
-  | { ok: true; jobId: ID; outputPath: string }
+  /** `outputPaths`: every file of a per-track audio export (one per audio track); `outputPath` is the first. */
+  | { ok: true; jobId: ID; outputPath: string; outputPaths?: string[] }
   /** `code: 'exists'`: the output or sidecar exists; ask the user and resend with `overwrite: true`. */
   | { ok: false; error: string; code?: 'exists' }
 

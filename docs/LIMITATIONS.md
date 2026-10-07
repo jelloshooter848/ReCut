@@ -105,8 +105,20 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 
 ## Export
 
-- MP4 only, with H.264 or H.265 video and AAC or AC-3 audio. There is no ProRes / DNxHR / image-sequence / audio-only
-  export, and no hardware encoders.
+- Formats: MP4 (H.264 / H.265, AAC / AC-3), MOV (ProRes or DNxHR with PCM audio), and audio-only WAV or FLAC (one
+  mixed file or one file per audio track). No MKV yet (planned, ROADMAP §7), no image sequences, no hardware
+  encoders, no DNxHD (the legacy fixed-size profiles) and no ProRes 4444 XQ or alpha channel.
+- **Intermediates are composited in 8-bit 4:2:0.** ProRes and DNxHR are written in their 4:2:2 / 4:4:4 10-bit pixel
+  formats, but the render graph composites every clip in 8-bit 4:2:0 (as for H.264), so a 10-bit or 4:2:2 source
+  loses that precision. They are edit-friendly intra-frame files, not a higher-quality master.
+- **Colour tags:** MOV files carry the same colour tags as the MP4 export: no primaries, transfer or matrix
+  for ProRes (FFmpeg 8 and later mark it limited range; 6.1 leaves the range unmarked). FFmpeg's DNxHR encoder
+  always marks its stream BT.709, limited range, whatever the source.
+- **DNxHR needs at least 256×120** (an FFmpeg encoder limit); the dialog refuses smaller frame sizes.
+- **One file per audio track:** muted tracks, tracks not soloed (when any track is soloed) and tracks with no enabled
+  clip in the range get no file. There is no per-clip channel routing or panning in the files: each is the track at
+  the export's channel layout. There are no stems by content (dialogue / music / effects, §12).
+- **WAV files over 4 GB** are written as RF64, which some older programs cannot open.
 - No interchange formats (EDL, FCPXML, OTIO, AAF).
 - **Frame-rate conversion** (an export frame rate other than the sequence's) repeats or drops whole frames. There is
   no frame blending or motion interpolation, so 23.976 → 30 shows a regular repeat cadence and 23.976 ↔ 24 repeats

@@ -9,13 +9,17 @@
  * exact frame counts, compositing, audio mixing).
  */
 import path from 'node:path';
-import type { ExportSettings, MediaItem, Rational, Sequence, VideoStreamInfo } from '@shared/model';
+import type { ExportContainer, ExportSettings, ID, MediaItem, Rational, Sequence, VideoStreamInfo } from '@shared/model';
 import type { ExportRequest } from '@shared/ipc';
 import { clipEnd, sequenceDuration } from '@shared/timeline';
 import { activeTracks, planTrackSegments, widenRangeForTransitions, type ClipSeg, type TrackPlan } from '@shared/exportPlan';
 import { framesToSeconds, isValidFps } from '@shared/time';
 import { serializeSrt } from '@shared/subtitles';
 import { videoDisplaySize } from '@shared/media';
+import {
+  audioEncoder, CONTAINERS, DNXHR_MIN_HEIGHT, DNXHR_MIN_WIDTH, exportContainer, isPerTrackAudio, PER_TRACK_SKIP_REASON, perTrackAudioPlan,
+  usesAc3, videoEncoder, withExportExtension,
+} from '@shared/exportFormat';
 
 /** Placeholder in `args` for the path of the filter script file (see exporter.ts). */
 export const FILTER_SCRIPT_TOKEN = '__FILTER_SCRIPT__';
@@ -39,7 +43,7 @@ export interface RenderGraph {
   /** Duration of the output video stream (`outputFrameCount / outputFps`; `durationSec` at the sequence rate). */
   outputDurationSec: number;
   /**
-   * Final output path (absolute outputDir/fileName.mp4). This is the last element of `args`; the exporter runs
+   * Final output path (absolute outputDir/fileName.<format extension>). This is the last element of `args`; the exporter runs
    * ffmpeg on a `file:` URL of a temp next to it instead (exporter.ts).
    */
   outputPath: string;
@@ -57,9 +61,9 @@ export interface RenderGraph {
   inputCount: number;
   /** The `-i` input args alone (flattened), as they appear in `args`. */
   inputArgs: string[];
-  /** Video encoder args (`-c:v` .. `-fps_mode cfr`), as they appear in `args`. */
+  /** Video encoder args (`-c:v` .. `-fps_mode cfr`), as they appear in `args`; empty for an audio-only format. */
   videoCodecArgs: string[];
-  /** Audio encoder args (`-c:a` .. `-ac N`), as they appear in `args`. */
+  /** Audio encoder args (`-c:a` .. `-ac N`: AAC / AC-3, PCM or FLAC), as they appear in `args`. */
   audioCodecArgs: string[];
   /** Output audio sample rate and channel count. */
   sampleRate: number;
@@ -67,6 +71,12 @@ export interface RenderGraph {
   /** Rendered range in absolute sequence frames `[startF, endF)`. */
   startF: number;
   endF: number;
+  /** Output file format (shared/exportFormat.ts). */
+  container: ExportContainer;
+  /** True when the output has no video stream (WAV / FLAC). */
+  audioOnly: boolean;
+  /** Muxer args (`-movflags +faststart`, `-rf64 auto`, ...) and the `-f` value, as they appear in `args`. */
+  muxArgs: string[];
 }
 
 export interface RenderGraphOptions {
@@ -101,6 +111,12 @@ export interface RenderGraphOptions {
   streams?: 'video' | 'audio';
   /** Make `[aout]` exactly this many samples long (padded with silence / trimmed). */
   audioSamples?: number;
+  /**
+   * Per-track audio export: mix only this audio track into `[aout]` (it must be one the full export renders). The
+   * range, its widening for transitions and every other timing are the full export's, so the per-track files line
+   * up sample for sample with each other and with the mixed export.
+   */
+  audioTrackId?: ID;
 }
 
 /** Result of RenderGraphOptions.statPath. */
@@ -680,36 +696,54 @@ export function sanitizeExportFileName(name: string): string {
   return cleaned || 'export';
 }
 
+/** The output's extension (`.mp4`, `.mov`, `.wav`, `.flac`), or '' when it has none of those. */
+function outputExt(outputPath: string): string {
+  const m = /\.(mp4|mov|wav|flac)$/i.exec(outputPath);
+  return m ? m[0] : '';
+}
+
+/** `outputPath` without its output extension. */
+function outputStem(outputPath: string): string {
+  const ext = outputExt(outputPath);
+  return ext ? outputPath.slice(0, -ext.length) : outputPath;
+}
+
 /**
- * Temp file ffmpeg writes to before the rename: `<out>.recut-part-<token>.mp4`. The exporter picks a random token
- * and creates the file exclusively, so the temp is never a file that existed before (a user's file, a hard link).
+ * Temp file ffmpeg writes to before the rename: `<out>.recut-part-<token>.<ext>` (`.mp4`, `.mov`, ...). The exporter
+ * picks a random token and creates the file exclusively, so the temp is never a file that existed before (a user's
+ * file, a hard link).
  */
 export function exportPartPath(outputPath: string, token: string): string {
-  return `${outputPath.replace(/\.mp4$/i, '')}.recut-part-${token}.mp4`;
+  return `${outputStem(outputPath)}.recut-part-${token}${outputExt(outputPath).toLowerCase() || '.mp4'}`;
 }
 
 /** Sidecar subtitle path next to the output: `<out>.srt`. */
 export function exportSidecarPath(outputPath: string): string {
-  return outputPath.replace(/\.mp4$/i, '') + '.srt';
+  return outputStem(outputPath) + '.srt';
 }
 
 /** Temp file the sidecar is written to (exclusively, random token) before its rename: `<out>.recut-part-<token>.srt`. */
 export function exportSidecarTempPath(outputPath: string, token: string): string {
-  return `${outputPath.replace(/\.mp4$/i, '')}.recut-part-${token}.srt`;
+  return `${outputStem(outputPath)}.recut-part-${token}.srt`;
+}
+
+/** Where a finished render is kept when the final move fails: `<out>.recut-unsaved-<stamp>.<ext>`. */
+export function exportUnsavedPath(outputPath: string, stamp: string): string {
+  return `${outputStem(outputPath)}.recut-unsaved-${stamp}${outputExt(outputPath).toLowerCase() || '.mp4'}`;
 }
 
 /**
- * Output path for a request: outputDir/fileName with a .mp4 extension (file name sanitized to a basename).
- * The folder must be absolute: a relative one would resolve against the main process cwd for Node while ffmpeg
- * reads a prefix such as `tee:`, `concat:` or `pipe:` as a protocol, bypassing the source-file check.
+ * Output path for a request: outputDir/fileName with the format's extension (`.mp4` unless the settings choose
+ * another format; file name sanitized to a basename). The folder must be absolute: a relative one would resolve
+ * against the main process cwd for Node while ffmpeg reads a prefix such as `tee:`, `concat:` or `pipe:` as a
+ * protocol, bypassing the source-file check.
  */
 export function exportOutputPath(settings: ExportSettings): string {
   const dir = typeof settings.outputDir === 'string' ? settings.outputDir : '';
   if (!path.isAbsolute(dir)) {
     throw new Error(`The output folder must be an absolute path (a full path such as ${process.platform === 'win32' ? 'C:\\Videos' : '/home/me/Videos'}); got "${dir}".`);
   }
-  let name = sanitizeExportFileName(settings.fileName || 'export');
-  if (!/\.mp4$/i.test(name)) name = name.replace(/\.(mov|mkv|m4v|avi)$/i, '') + '.mp4';
+  const name = withExportExtension(sanitizeExportFileName(settings.fileName || 'export'), exportContainer(settings));
   return path.resolve(dir, name);
 }
 
@@ -723,9 +757,9 @@ function validateDimensions(W: number, H: number): void {
   }
 }
 
-/** True when an enabled clip on a rendered (non-muted / soloed) track overlaps [startF, endF). */
-function hasEnabledClipInRange(seq: Sequence, startF: number, endF: number): boolean {
-  return [...activeTracks(seq.videoTracks), ...activeTracks(seq.audioTracks)]
+/** True when an enabled clip on a rendered (non-muted / soloed) track overlaps [startF, endF); audio tracks only for an audio-only export. */
+function hasEnabledClipInRange(seq: Sequence, startF: number, endF: number, audioOnly = false): boolean {
+  return [...(audioOnly ? [] : activeTracks(seq.videoTracks)), ...activeTracks(seq.audioTracks)]
     .some((t) => t.clips.some((c) => c.enabled && c.start < endF && clipEnd(c) > startF));
 }
 
@@ -739,6 +773,19 @@ function hasEnabledClipInRange(seq: Sequence, startF: number, endF: number): boo
  * folder, one that is the same file as a source (hard link, alias), and an existing one unless `req.overwrite`.
  */
 function assertOutputNotASource(req: ExportRequest, outputPath: string, opts: RenderGraphOptions): void {
+  const outputs = [outputPath];
+  if (req.settings.exportSubtitleSidecar) outputs.push(exportSidecarPath(outputPath));
+  // The sidecar is only written when there are cues to write.
+  const written = req.settings.exportSubtitleSidecar && req.subtitles?.length ? outputs : [outputPath];
+  assertExportPathsSafe(req, outputs, written, opts);
+}
+
+/**
+ * The checks of assertOutputNotASource for a list of paths: none of `outputs` may be a project source; with
+ * `opts.statPath`, none of `written` may be a folder or the same file as a source, nor (unless `req.overwrite`)
+ * exist already. Per-track audio export checks every file and the shared sidecar with it (exportOutputFiles).
+ */
+export function assertExportPathsSafe(req: ExportRequest, outputs: string[], written: string[], opts: RenderGraphOptions): void {
   const canon = (p: string) => {
     let c: string;
     try { c = opts.canonicalPath ? opts.canonicalPath(p) : path.resolve(p); } catch { c = path.resolve(p); }
@@ -760,8 +807,6 @@ function assertOutputNotASource(req: ExportRequest, outputPath: string, opts: Re
   }
   for (const m of Object.values(req.media)) if (m) for (const p of [m.path, m.proxy?.path]) add(p, 'a source file of the project');
   if (Array.isArray(req.protectedPaths)) for (const p of req.protectedPaths) add(p, 'a source file of the project');
-  const outputs = [outputPath];
-  if (req.settings.exportSubtitleSidecar) outputs.push(exportSidecarPath(outputPath));
   for (const o of outputs) {
     const hit = sources.get(canon(o));
     if (hit) throw new Error(`Refusing to export to "${o}": that file is ${describe(hit)}. Choose a different file name or folder.`);
@@ -769,8 +814,6 @@ function assertOutputNotASource(req: ExportRequest, outputPath: string, opts: Re
 
   if (!opts.statPath) return;
   const stat = (p: string): ExportPathStat | null => { try { return opts.statPath!(p); } catch { return null; } };
-  // The sidecar is only written when there are cues to write.
-  const written = req.settings.exportSubtitleSidecar && req.subtitles?.length ? outputs : [outputPath];
   const existing = written.map((o) => ({ o, st: stat(o) })).filter((e): e is { o: string; st: ExportPathStat } => e.st !== null);
   for (const { o, st } of existing) {
     if (st.isDirectory) throw new Error(`Cannot export to "${o}": "${o}" is a folder. Choose a different file name or folder.`);
@@ -816,6 +859,8 @@ function buildBurnInSrt(req: ExportRequest, startF: number, endF: number): strin
 export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = {}): RenderGraph {
   const { sequence: seq, media, settings } = req;
   const warnings: string[] = [];
+  const container = exportContainer(settings);
+  const audioOnly = CONTAINERS[container].audioOnly;
   // Output frame rate. Everything on the timeline (trims, transitions, fades, subtitles, audio) is computed at
   // the sequence rate; a different output rate only resamples the final video (see the end of the video graph).
   let outFps: Rational = seq.fps;
@@ -832,9 +877,13 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   const convert = outFps !== seq.fps;
   const W = Math.round(Number(settings.width) || seq.width);
   const H = Math.round(Number(settings.height) || seq.height);
-  validateDimensions(W, H);
+  if (!audioOnly) validateDimensions(W, H);
+  const vEnc = videoEncoder(settings);
+  if (vEnc?.codec === 'dnxhd' && (W < DNXHR_MIN_WIDTH || H < DNXHR_MIN_HEIGHT)) {
+    throw new Error(`DNxHR needs a frame of at least ${DNXHR_MIN_WIDTH}×${DNXHR_MIN_HEIGHT} pixels; the export is ${W}×${H}.`);
+  }
   let SR = settings.sampleRate > 0 ? Math.round(settings.sampleRate) : seq.sampleRate || 48000;
-  if (settings.audioCodec === 'ac3' && !AC3_SAMPLE_RATES.includes(SR)) {
+  if (usesAc3(settings) && !AC3_SAMPLE_RATES.includes(SR)) {
     // The AC-3 encoder only takes 32 / 44.1 / 48 kHz: fail-safe for IPC callers (the dialog validates this).
     const to = SR > 48000 ? 48000 : AC3_SAMPLE_RATES.find((r) => r >= SR) ?? 48000;
     warnings.push(`AC-3 audio supports 32, 44.1 and 48 kHz only; exporting at ${to} Hz instead of ${SR} Hz.`);
@@ -854,9 +903,17 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   }
   const frameCount = endF - startF;
   if (frameCount <= 0) throw new Error('Nothing to export: the range is empty.');
-  if (!opts.range && !hasEnabledClipInRange(seq, startF, endF)) throw new Error('Nothing enabled to export in the selected range');
-  const wantVideo = opts.streams !== 'audio';
+  if (!opts.range && !hasEnabledClipInRange(seq, startF, endF, audioOnly)) {
+    throw new Error(audioOnly ? 'Nothing to export: no enabled audio clips in the selected range.' : 'Nothing enabled to export in the selected range');
+  }
+  const wantVideo = opts.streams !== 'audio' && !audioOnly;
   const wantAudio = opts.streams !== 'video';
+  if (audioOnly && opts.streams === 'video') throw new Error('An audio-only export has no video to render.');
+  if (audioOnly && settings.burnSubtitles && req.subtitles?.length) warnings.push('Subtitle burn-in does not apply to an audio-only export (there is no picture); subtitles were not burned in.');
+  const trackFilter = opts.audioTrackId;
+  if (trackFilter !== undefined && !activeTracks(seq.audioTracks).some((t) => t.id === trackFilter)) {
+    throw new Error(`Audio track ${String(trackFilter)} is not rendered by this export (muted, not soloed or missing).`);
+  }
   assertOutputNotASource(req, exportOutputPath(settings), opts);
   const seqFd = seq.fps.den / seq.fps.num;
   const durationSec = frameCount * seqFd;
@@ -906,7 +963,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
         else warnings.push('Subtitle burn-in requested but no subtitle file path was provided; subtitles are not burned in.');
       }
     }
-    finalVideo.push('format=yuv420p');
+    finalVideo.push(`format=${vEnc?.pixFmt ?? 'yuv420p'}`);
     if (convert) {
       // Output frame-rate conversion. Frames get their absolute sequence index (pts in 1/seqFps units), so
       // `fps` places output frame n on the last sequence frame i with round(i * out / seq) <= n (see
@@ -927,12 +984,15 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   if (wantAudio) {
     const audioLabels: string[] = [];
     for (const track of activeTracks(seq.audioTracks)) {
+      if (trackFilter !== undefined && track.id !== trackFilter) continue;
       const plan = planTrackSegments(track, seq, media, renderStartF, renderEndF, 'audio', warnings);
       const label = audioTrack(ctx, plan);
       if (label) audioLabels.push(label);
     }
-    // Exact sample count (chunked export: sample-exact chunk boundaries).
-    const N = opts.audioSamples !== undefined ? Math.max(0, Math.round(opts.audioSamples)) : -1;
+    // Exact sample count (chunked export: sample-exact chunk boundaries). Audio-only files always have exactly the
+    // range's samples, so per-track files have equal lengths.
+    const rangeSamples = Math.round((frameCount * SR * seq.fps.den) / seq.fps.num);
+    const N = opts.audioSamples !== undefined ? Math.max(0, Math.round(opts.audioSamples)) : audioOnly ? rangeSamples : -1;
     const tail = N >= 0 ? `,apad=whole_len=${N},atrim=end_sample=${N}` : '';
     // Widened render (D2): keep the samples of [startF, endF).
     const sampleAt = (f: number) => Math.round((f * SR * seq.fps.den) / seq.fps.num);
@@ -950,24 +1010,16 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   const outputPath = exportOutputPath(settings);
   const inputArgs: string[] = [];
   for (const inp of ctx.inputs) inputArgs.push(...inp);
-  const videoCodecArgs: string[] = [];
-  const vcodec = settings.videoCodec === 'libx265' ? 'libx265' : 'libx264';
-  videoCodecArgs.push('-c:v', vcodec, '-preset', settings.preset || 'medium');
-  if (settings.qualityMode === 'bitrate' && settings.videoBitrateKbps > 0) {
-    const kb = Math.round(settings.videoBitrateKbps);
-    videoCodecArgs.push('-b:v', `${kb}k`, '-maxrate', `${kb}k`, '-bufsize', `${kb * 2}k`);
-  } else {
-    videoCodecArgs.push('-crf', String(Math.round(Number.isFinite(settings.crf) ? settings.crf : 18)));
-  }
-  if (vcodec === 'libx265') videoCodecArgs.push('-tag:v', 'hvc1');
-  videoCodecArgs.push('-pix_fmt', 'yuv420p', '-r', fpsStr(outFps), '-fps_mode', 'cfr');
-  const acodec = settings.audioCodec === 'ac3' ? 'ac3' : 'aac';
-  const audioCodecArgs = ['-c:a', acodec, '-b:a', `${Math.round(settings.audioBitrateKbps || (channels === 6 ? 640 : 192))}k`, '-ar', String(SR), '-ac', String(channels)];
+  // Encoder args (shared/exportFormat.ts): H.264 / H.265 (MP4), ProRes / DNxHR (MOV); AAC / AC-3, PCM or FLAC.
+  const videoCodecArgs: string[] = vEnc ? [...vEnc.args, '-pix_fmt', vEnc.pixFmt, '-r', fpsStr(outFps), '-fps_mode', 'cfr'] : [];
+  const audioCodecArgs = [...audioEncoder(settings).args, '-ar', String(SR), '-ac', String(channels)];
+  const cinfo = CONTAINERS[container];
+  const muxArgs = [...cinfo.muxArgs, '-f', cinfo.muxer];
 
   // A converted video can end up to half an output frame after the audio: never cut its last frame.
   const outputSec = wantVideo ? Math.max(durationSec, outputDurationSec) : durationSec;
   // Chapters: the whole export only (a chunked export writes them when joining the chunks, exporter.ts).
-  const chapters = opts.range ? [] : exportChapters(seq, startF, endF, outputSec);
+  const chapters = opts.range || !cinfo.chapters ? [] : exportChapters(seq, startF, endF, outputSec);
   const chaptersContent = chapters.length ? ffmetadataChapters(chapters) : undefined;
   let chaptersInput: number | null = null;
   const args: string[] = ['-hide_banner', '-nostdin', '-y', ...inputArgs];
@@ -985,11 +1037,88 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   args.push(...outputMetadataArgs(chaptersInput));
   if (wantVideo) args.push(...videoCodecArgs); else args.push('-vn');
   if (wantAudio) args.push(...audioCodecArgs); else args.push('-an');
-  args.push('-movflags', '+faststart', '-t', sec(outputSec), '-f', 'mp4', outputPath);
+  args.push(...cinfo.muxArgs, '-t', sec(outputSec), '-f', cinfo.muxer, outputPath);
 
   return {
     args, filterGraph: ctx.chains.join(';\n'), durationSec, frameCount, outputFps: outFps, outputFrameCount, outputDurationSec, outputPath, warnings,
     subtitleContent, chapters, chaptersContent, inputCount: ctx.inputs.length,
-    inputArgs, videoCodecArgs, audioCodecArgs, sampleRate: SR, channels, startF, endF,
+    inputArgs, videoCodecArgs, audioCodecArgs, sampleRate: SR, channels, startF, endF, container, audioOnly, muxArgs,
   };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Output files (one, or one per audio track)
+// ---------------------------------------------------------------------------------------------------
+
+/** One file an export writes. */
+export interface ExportOutputFile {
+  /** The request for this file (per-track: the file's own name and no sidecar). */
+  req: ExportRequest;
+  /** Per-track audio export: the audio track mixed into this file (RenderGraphOptions.audioTrackId). */
+  audioTrackId?: ID;
+  /** Per-track audio export: "A1 Dialogue". */
+  label?: string;
+}
+
+export interface ExportOutputs {
+  files: ExportOutputFile[];
+  /** True for a per-track audio export (shared/exportFormat.ts isPerTrackAudio). */
+  perTrack: boolean;
+  /** The sidecar .srt path when the settings ask for one (per-track: `<base>.srt`, written once). */
+  sidecarPath?: string;
+  /** Per-track: the audio tracks that get no file and why ("A3 (muted)"). */
+  skipped: string[];
+}
+
+/**
+ * The files `req` writes. A per-track audio export (WAV / FLAC with `audioPerTrack`) writes one file per audio
+ * track the mixed export renders that has an enabled clip in the range (shared/exportFormat.ts perTrackAudioPlan),
+ * named `<base> - A1 <track name>.wav`; every other export writes one file.
+ */
+export function exportOutputFiles(req: ExportRequest): ExportOutputs {
+  const { settings } = req;
+  const sidecarPath = settings.exportSubtitleSidecar ? exportSidecarPath(exportOutputPath(settings)) : undefined;
+  if (!isPerTrackAudio(settings)) return { files: [{ req }], perTrack: false, sidecarPath, skipped: [] };
+  const { startF, endF } = resolveRange(req.sequence, settings, []);
+  const plan = perTrackAudioPlan(req.sequence, settings, startF, endF);
+  if (plan.files.length === 0) throw new Error('Nothing to export: no audio track has enabled clips in the selected range (muted and empty tracks get no file).');
+  return {
+    perTrack: true, sidecarPath,
+    files: plan.files.map((f) => ({
+      req: { ...req, settings: { ...settings, fileName: f.fileName, exportSubtitleSidecar: false, burnSubtitles: false, audioPerTrack: false } },
+      audioTrackId: f.track.id,
+      label: trackLabel(f),
+    })),
+    skipped: plan.skipped.map((k) => `${trackLabel(k)} (${PER_TRACK_SKIP_REASON[k.reason]})`),
+  };
+}
+
+/** "A1 Dialogue" ("A1" for a track named "A1"). */
+function trackLabel(t: { label: string; track: { name: string } }): string {
+  const name = typeof t.track.name === 'string' ? t.track.name.trim() : '';
+  return name && name.toLowerCase() !== t.label.toLowerCase() ? `${t.label} ${name}` : t.label;
+}
+
+/**
+ * Builds (and so validates) the graph of every file of `req` (exportOutputFiles). For a per-track export it also
+ * checks the shared sidecar path and refuses two files with the same name.
+ */
+export function buildExportGraphs(req: ExportRequest, opts: RenderGraphOptions = {}): { outputs: ExportOutputs; graphs: RenderGraph[] } {
+  const outputs = exportOutputFiles(req);
+  const graphs = outputs.files.map((f) => buildRenderGraph(f.req, { ...opts, audioTrackId: f.audioTrackId }));
+  if (outputs.perTrack) {
+    const seen = new Set<string>();
+    for (const g of graphs) {
+      const k = g.outputPath.toLowerCase();
+      if (seen.has(k)) throw new Error(`Two audio tracks would be written to the same file "${g.outputPath}". Rename one of the tracks.`);
+      seen.add(k);
+    }
+    if (outputs.sidecarPath) {
+      const sc = outputs.sidecarPath;
+      if (seen.has(sc.toLowerCase())) throw new Error(`The subtitle sidecar "${sc}" has the name of an audio file.`);
+      assertExportPathsSafe(req, [sc], req.subtitles?.length ? [sc] : [], opts);
+    }
+    if (outputs.skipped.length) graphs[0].warnings.push(`No file for ${outputs.skipped.join(', ')}.`);
+  }
+  return { outputs, graphs };
 }

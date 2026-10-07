@@ -21,7 +21,8 @@ in every release PR (docs/RELEASING.md).
 | 4 | Bitmap subtitle OCR (PGS / VobSub / DVB) | Done | 0.6.0 |
 | 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS dmg built as a CI test build, waiting for signing | 0.6.1 (Linux), macOS once signed |
 | 16 | Collect / Consolidate Project (with the moved-media cache fix) | Done | 0.7.0 |
-| 5–15, 17, 18 | Everything else | Not started | — |
+| 6 | Intermediate and audio-only export | Done | next release |
+| 5, 7–15, 17, 18 | Everything else | Not started | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
 the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
@@ -260,6 +261,12 @@ frame-exact and safe first.
 **Plan:** ProRes (`prores_ks`) and DNxHR (`dnxhd`) in MOV, PCM audio in MOV, audio-only WAV (PCM) and other audio
 containers, and per-track or per-stem export (one WAV per audio track, or per stem once §12 exists). The render graph
 already builds video and audio separately; this adds containers, codecs and a "no video" mode.
+**Status: done (7 October 2026; ships in the next release).** Export › Format offers MP4, MOV (ProRes Proxy / LT / 422 / HQ /
+4444 with `prores_ks`, DNxHR LB / SQ / HQ / HQX / 444 with `dnxhd`, PCM 16- or 24-bit audio), WAV and FLAC (audio
+only, the mix or one file per audio track, sample-aligned and the length of the range); the file extension follows
+the format, and settings saved before load as MP4. Formats and encoder arguments live in `shared/exportFormat.ts`.
+Not done: per-stem export (needs §12), MKV (§7), and a higher-precision compositing path for 10-bit / 4:2:2 sources
+(see [LIMITATIONS](LIMITATIONS.md#export)).
 
 ## 7. MKV packaging export
 

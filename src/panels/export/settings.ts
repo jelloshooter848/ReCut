@@ -5,9 +5,13 @@
 import type { Clip, ExportPreset, ExportSettings, ID, MediaItem, Rational, Sequence } from '@shared/model';
 import { EXPORT_PRESETS } from '@shared/model';
 import { FPS_PRESETS, fpsEquals, fpsLabel, fpsValue, framesToSeconds, isValidFps } from '@shared/time';
-import { allTracks, sequenceDuration } from '@shared/timeline';
+import { allTracks, clipEnd, sequenceDuration } from '@shared/timeline';
 import { activeTracks, planTrackSegments, widenRangeForTransitions, type ClipSeg, type PastEndIssue, type TransitionIssueReason, type TransitionOutcome } from '@shared/exportPlan';
 import { formatSyncOffset, linkedSyncOffsets } from '@shared/linkSync';
+import {
+  CONTAINERS, DNXHR_MIN_HEIGHT, DNXHR_MIN_WIDTH, PER_TRACK_SKIP_REASON, audioEncoder, exportContainer, intermediateVideoBitsPerSecond, isAudioOnly,
+  isPerTrackAudio, pcmBitsPerSecond, perTrackAudioPlan, usesAc3, videoEncoder, withExportExtension,
+} from '@shared/exportFormat';
 
 export const MATCH_SEQUENCE = 'Match Sequence';
 export const CUSTOM = 'Custom';
@@ -41,11 +45,14 @@ export function sanitizeFileName(name: string): string {
   return cleaned || 'export';
 }
 
-/** Ensure an .mp4 extension (mirrors electron/export/renderGraph.ts exportOutputPath). */
+/** Ensure an .mp4 extension (mirrors electron/export/renderGraph.ts exportOutputPath for MP4). */
 export function withMp4(name: string): string {
-  const n = name.trim();
-  if (/\.mp4$/i.test(n)) return n;
-  return n.replace(/\.(mov|mkv|m4v|avi)$/i, '') + '.mp4';
+  return withExportExtension(name, 'mp4');
+}
+
+/** `name` with the extension of the settings' format (`.mp4` when none is chosen; see exportOutputPath). */
+export function withFormatExtension(name: string, settings: Pick<ExportSettings, 'container'>): string {
+  return withExportExtension(name, exportContainer(settings));
 }
 
 export function dirnameOf(p: string): string {
@@ -59,9 +66,19 @@ export function joinPath(dir: string, name: string): string {
   return dir.endsWith('/') || dir.endsWith('\\') ? dir + name : dir + sep + name;
 }
 
-/** Full output path for the settings (outputDir/fileName.mp4). */
-export function outputPathFor(settings: Pick<ExportSettings, 'outputDir' | 'fileName'>): string {
-  return joinPath(settings.outputDir, withMp4(settings.fileName || 'export'));
+/** Full output path for the settings (outputDir/fileName.<format extension>, .mp4 by default). */
+export function outputPathFor(settings: Pick<ExportSettings, 'outputDir' | 'fileName'> & Partial<Pick<ExportSettings, 'container'>>): string {
+  return joinPath(settings.outputDir, withFormatExtension(settings.fileName || 'export', settings));
+}
+
+/**
+ * The files a per-track audio export writes for the settings' range (shared/exportFormat.ts perTrackAudioPlan), as
+ * full paths; null when the settings do not ask for one file per track.
+ */
+export function perTrackOutputPaths(seq: Sequence, settings: ExportSettings): string[] | null {
+  if (!isPerTrackAudio(settings)) return null;
+  const r = exportRange(seq, settings);
+  return perTrackAudioPlan(seq, settings, r.startF, r.endF).files.map((f) => joinPath(settings.outputDir, f.fileName));
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -90,6 +107,12 @@ export function defaultExportSettings(seq: Sequence, ctx: ExportDefaultsContext 
     burnSubtitles: false,
     exportSubtitleSidecar: false,
     useProxies: false,
+    container: 'mp4',
+    intermediateCodec: 'prores',
+    proresProfile: 'hq',
+    dnxhrProfile: 'hq',
+    audioBitDepth: 24,
+    audioPerTrack: false,
   };
 }
 
@@ -104,9 +127,20 @@ export function matchSequencePreset(seq: Sequence): ExportPreset {
   };
 }
 
-/** Applies a preset's partial settings on top of `settings`. Returns a new object. */
+/**
+ * The format a preset selects: its `container`, MP4 for the presets without one (all presets before 0.8.0), and
+ * none for Match Sequence (it only describes the frame size, rate and audio layout).
+ */
+export function presetContainer(preset: ExportPreset): ExportSettings['container'] {
+  if (preset.name === MATCH_SEQUENCE) return undefined;
+  return exportContainer(preset.settings);
+}
+
+/** Applies a preset's partial settings on top of `settings` (and its format, see presetContainer). Returns a new object. */
 export function applyPreset(settings: ExportSettings, preset: ExportPreset): ExportSettings {
-  const next: ExportSettings = { ...settings, ...preset.settings, useProxies: false };
+  const container = presetContainer(preset) ?? exportContainer(settings);
+  const next: ExportSettings = { ...settings, ...preset.settings, container, useProxies: false };
+  if (container !== exportContainer(settings)) next.fileName = withExportExtension(settings.fileName, container);
   if (preset.settings.audioChannels === 6 && !preset.settings.audioCodec) next.audioCodec = 'ac3';
   return clampSampleRateForCodec(next);
 }
@@ -114,8 +148,12 @@ export function applyPreset(settings: ExportSettings, preset: ExportPreset): Exp
 /** Sample rates the AC-3 encoder accepts (FFmpeg `ac3`: 48, 44.1 and 32 kHz). */
 export const AC3_SAMPLE_RATES = [32000, 44100, 48000];
 
-/** True when `sampleRate` can be encoded with `codec`. */
-export function sampleRateSupported(codec: ExportSettings['audioCodec'], sampleRate: number): boolean {
+/**
+ * True when `sampleRate` can be encoded with `codec`. Only AC-3 is limited; with settings whose format is not MP4
+ * (PCM, FLAC) every rate is fine whatever `audioCodec` says.
+ */
+export function sampleRateSupported(codec: ExportSettings['audioCodec'], sampleRate: number, settings?: Pick<ExportSettings, 'container'>): boolean {
+  if (settings && exportContainer(settings) !== 'mp4') return true;
   return codec !== 'ac3' || AC3_SAMPLE_RATES.includes(sampleRate);
 }
 
@@ -125,7 +163,7 @@ export function sampleRateSupported(codec: ExportSettings['audioCodec'], sampleR
  */
 export function clampSampleRateForCodec(settings: ExportSettings): ExportSettings {
   const sr = settings.sampleRate;
-  if (!(sr > 0) || sampleRateSupported(settings.audioCodec, sr)) return settings;
+  if (!(sr > 0) || !usesAc3(settings) || AC3_SAMPLE_RATES.includes(sr)) return settings;
   const to = sr > 48000 ? 48000 : AC3_SAMPLE_RATES.find((r) => r >= sr) ?? 48000;
   return { ...settings, sampleRate: to };
 }
@@ -137,12 +175,18 @@ export function presetsFor(seq: Sequence): ExportPreset[] {
 
 function settingEquals(key: keyof ExportSettings, a: ExportSettings[keyof ExportSettings], b: ExportSettings[keyof ExportSettings]): boolean {
   if (key === 'fps') return fpsEquals(a as Rational, b as Rational);
+  // Optional format fields: missing means the default (settings saved before 0.8.0).
+  if (key === 'audioPerTrack') return (a === true) === (b === true);
+  if (key === 'audioBitDepth') return (a === 16 ? 16 : 24) === (b === 16 ? 16 : 24);
   return a === b;
 }
 
-/** True when every key in the preset equals the settings' value. */
+/** True when the settings have the preset's format (presetContainer) and every key in the preset equals the settings' value. */
 export function matchesPreset(settings: ExportSettings, preset: ExportPreset): boolean {
+  const c = presetContainer(preset);
+  if (c !== undefined && c !== exportContainer(settings)) return false;
   for (const k of Object.keys(preset.settings) as (keyof ExportSettings)[]) {
+    if (k === 'container') continue;
     if (!settingEquals(k, settings[k], preset.settings[k] as ExportSettings[keyof ExportSettings])) return false;
   }
   return true;
@@ -206,10 +250,20 @@ export interface SizeEstimate { bytes: number; approximate: boolean }
 
 /**
  * Estimated output size. Bitrate mode: (video + audio bitrate) × duration. CRF mode: a rough bits-per-pixel
- * model (flagged approximate) — real sizes vary a lot with content.
+ * model (flagged approximate) — real sizes vary a lot with content. MOV: the codec profile's published data rate
+ * plus PCM; WAV: exact PCM; FLAC: about 60 % of PCM. `files`: the number of audio files (per-track export).
  */
-export function estimateFileSize(settings: ExportSettings, durationSec: number): SizeEstimate {
+export function estimateFileSize(settings: ExportSettings, durationSec: number, files = 1): SizeEstimate {
   const d = Math.max(0, durationSec);
+  const container = exportContainer(settings);
+  if (container !== 'mp4') {
+    // PCM is exact; FLAC compresses film sound to roughly 60 %; ProRes / DNxHR follow their published data rates.
+    // A per-track export is the size of one file per track (the dialog passes the file count in `files`).
+    const pcm = pcmBitsPerSecond(settings) * (container === 'flac' ? 0.6 : 1) * Math.max(1, files);
+    const fps = isValidFps(settings.fps) ? fpsValue(settings.fps) : 24;
+    const video = intermediateVideoBitsPerSecond(settings, fps) ?? 0;
+    return { bytes: Math.round((video + pcm) / 8 * d), approximate: container !== 'wav' };
+  }
   const audioKbps = settings.audioBitrateKbps > 0 ? settings.audioBitrateKbps : (settings.audioChannels === 6 ? 640 : 192);
   if (settings.qualityMode === 'bitrate') {
     const kbps = Math.max(0, settings.videoBitrateKbps) + audioKbps;
@@ -287,6 +341,9 @@ function isAbsoluteFolder(dir: string): boolean {
 }
 
 export function validateExportSettings(settings: ExportSettings): ValidationResult {
+  const container = exportContainer(settings);
+  const audioOnly = CONTAINERS[container].audioOnly;
+  const mp4 = container === 'mp4';
   const issues: ValidationIssue[] = [];
   const name = (settings.fileName ?? '').trim();
   if (!name) issues.push({ field: 'fileName', message: 'Enter a file name.' });
@@ -296,18 +353,23 @@ export function validateExportSettings(settings: ExportSettings): ValidationResu
   else if (!isAbsoluteFolder(settings.outputDir)) {
     issues.push({ field: 'outputDir', message: 'The output folder must be an absolute (full) path, such as /home/me/Videos or C:\\Videos.' });
   }
-  for (const field of ['width', 'height'] as const) {
+  // Audio-only formats have no frame size or video quality to check.
+  for (const field of audioOnly ? [] : ['width', 'height'] as const) {
     const v = settings[field];
     const label = field === 'width' ? 'Width' : 'Height';
     if (!Number.isInteger(v) || v < MIN_DIMENSION) issues.push({ field, message: `${label} must be at least ${MIN_DIMENSION}.` });
     else if (v > MAX_DIMENSION) issues.push({ field, message: `${label} must be at most ${MAX_DIMENSION}.` });
     else if (v % 2 !== 0) issues.push({ field, message: `${label} must be an even number.` });
   }
-  if (settings.qualityMode === 'bitrate' && !(settings.videoBitrateKbps > 0)) issues.push({ field: 'videoBitrateKbps', message: 'Video bitrate must be greater than 0.' });
-  if (settings.qualityMode === 'crf' && !(settings.crf >= 0 && settings.crf <= 51)) issues.push({ field: 'crf', message: 'CRF must be between 0 and 51.' });
-  if (!(settings.audioBitrateKbps > 0)) issues.push({ field: 'audioBitrateKbps', message: 'Audio bitrate must be greater than 0.' });
+  if (videoEncoder(settings)?.codec === 'dnxhd' && !issues.some((i) => i.field === 'width' || i.field === 'height')
+    && (settings.width < DNXHR_MIN_WIDTH || settings.height < DNXHR_MIN_HEIGHT)) {
+    issues.push({ field: settings.width < DNXHR_MIN_WIDTH ? 'width' : 'height', message: `DNxHR needs a frame of at least ${DNXHR_MIN_WIDTH}×${DNXHR_MIN_HEIGHT}.` });
+  }
+  if (mp4 && settings.qualityMode === 'bitrate' && !(settings.videoBitrateKbps > 0)) issues.push({ field: 'videoBitrateKbps', message: 'Video bitrate must be greater than 0.' });
+  if (mp4 && settings.qualityMode === 'crf' && !(settings.crf >= 0 && settings.crf <= 51)) issues.push({ field: 'crf', message: 'CRF must be between 0 and 51.' });
+  if (mp4 && !(settings.audioBitrateKbps > 0)) issues.push({ field: 'audioBitrateKbps', message: 'Audio bitrate must be greater than 0.' });
   if (!(settings.sampleRate > 0)) issues.push({ field: 'sampleRate', message: 'Sample rate must be greater than 0.' });
-  else if (!sampleRateSupported(settings.audioCodec, settings.sampleRate)) {
+  else if (!sampleRateSupported(settings.audioCodec, settings.sampleRate, settings)) {
     issues.push({ field: 'sampleRate', message: 'AC-3 audio supports 32, 44.1 and 48 kHz only: choose 48 kHz or less, or AAC.' });
   }
   return { ok: issues.length === 0, issues };
@@ -342,7 +404,8 @@ export function sequenceHasSubtitles(seq: Sequence): boolean {
 export type ChecklistLevel = 'error' | 'warning' | 'info';
 /** Where a checklist item points on the timeline: the dialog's "Show" selects these and moves the playhead there. */
 export interface ChecklistTarget { frame: number; clipIds: ID[]; transitionId?: ID }
-export interface ChecklistItem { level: ChecklistLevel; text: string; target?: ChecklistTarget }
+/** `scope: 'video'`: only about the picture (left out of an audio-only export's list). */
+export interface ChecklistItem { level: ChecklistLevel; text: string; target?: ChecklistTarget; scope?: 'video' }
 
 /**
  * Client-side pre-flight checks. An 'error' item blocks the export; warnings and info do not. The timeline warnings
@@ -362,15 +425,69 @@ export function exportChecklist(seq: Sequence, media: Record<ID, MediaItem>, set
   const pending = unprobed.filter((m) => !m.probeError);
   if (pending.length) items.push({ level: 'warning', text: `Media not analyzed yet: ${pending.map((m) => m.name).join(', ')}.` });
   if (settings.rangeMode === 'inOut' && !hasInOut(seq)) items.push({ level: 'warning', text: 'In/Out range is not set; the entire sequence will be exported.' });
+  const audioOnly = isAudioOnly(settings);
   // A different (valid) export frame rate is converted at the output (see fpsConversionNote); nothing to check.
-  if (!isValidFps(settings.fps)) items.push({ level: 'warning', text: `The export frame rate is not valid; the sequence frame rate (${fpsLabel(seq.fps)} fps) is used.` });
+  if (!audioOnly && !isValidFps(settings.fps)) items.push({ level: 'warning', text: `The export frame rate is not valid; the sequence frame rate (${fpsLabel(seq.fps)} fps) is used.` });
   if (settings.audioChannels === 6 && maxSourceChannels(seq, media) < 6) items.push({ level: 'warning', text: 'No source has 6 audio channels; 5.1 output will be upmixed from stereo.' });
-  if ((settings.burnSubtitles || settings.exportSubtitleSidecar) && !sequenceHasSubtitles(seq)) items.push({ level: 'warning', text: 'The sequence has no subtitle tracks; nothing will be burned in or written.' });
+  const burnIn = settings.burnSubtitles && !audioOnly;
+  if ((burnIn || settings.exportSubtitleSidecar) && !sequenceHasSubtitles(seq)) items.push({ level: 'warning', text: 'The sequence has no subtitle tracks; nothing will be burned in or written.' });
+  if (audioOnly && settings.burnSubtitles && sequenceHasSubtitles(seq)) {
+    items.push({ level: 'info', text: 'Subtitle burn-in does not apply to an audio-only format (there is no picture). Use Sidecar to write an .srt next to the audio.' });
+  }
   const range = exportRange(seq, settings);
-  items.push(...sequenceExportWarnings(seq, media, range.startF, range.endF));
+  const timeline = sequenceExportWarnings(seq, media, range.startF, range.endF);
+  items.push(...(audioOnly ? timeline.filter((i) => i.scope !== 'video') : timeline));
+  items.push(...formatChecks(seq, settings, range));
   const readyProxies = ids.map((id) => media[id]).filter((m): m is MediaItem => !!m && m.proxy.status === 'ready');
   if (projectUsesProxies && readyProxies.length) items.push({ level: 'info', text: 'Export always uses original media, not proxies.' });
   return items;
+}
+
+/** An intermediate export above this estimated size gets a "Large output" warning (a 2-hour 1080p ProRes 422 HQ is about 160 GB). */
+export const LARGE_EXPORT_BYTES = 100e9;
+/** A plain WAV header cannot describe more than 4 GiB: larger files are written as RF64. */
+export const WAV_LIMIT_BYTES = 2 ** 32;
+
+/**
+ * Checks that depend on the chosen format: audio-only exports with nothing to write, the file list of a per-track
+ * export (and the tracks that get no file), very large intermediates and WAV files that need RF64.
+ */
+export function formatChecks(seq: Sequence, settings: ExportSettings, range: ExportRange): ChecklistItem[] {
+  const items: ChecklistItem[] = [];
+  const container = exportContainer(settings);
+  const audioOnly = CONTAINERS[container].audioOnly;
+  let files = 1;
+  if (audioOnly && range.frames > 0) {
+    const hasAudio = activeTracks(seq.audioTracks).some((t) => t.clips.some((c) => c.enabled && c.start < range.endF && clipEnd(c) > range.startF));
+    if (!hasAudio) {
+      items.push({ level: 'error', text: 'No enabled audio clips in the export range (on tracks that are not muted): there is no sound to export.' });
+      return items;
+    }
+    if (isPerTrackAudio(settings)) {
+      const plan = perTrackAudioPlan(seq, settings, range.startF, range.endF);
+      files = plan.files.length;
+      items.push({ level: 'info', text: `${files} file${files === 1 ? '' : 's'}, one per audio track, all ${formatDuration(range.seconds)} long: ${namesWithMore(plan.files.map((f) => f.fileName))}.` });
+      if (plan.skipped.length) {
+        items.push({ level: 'info', text: `No file for ${namesWithMore(plan.skipped.map((k) => `${k.label}${k.track.name && k.track.name !== k.label ? ` ${k.track.name}` : ''} (${PER_TRACK_SKIP_REASON[k.reason]})`))}.` });
+      }
+    }
+  }
+  const size = estimateFileSize(settings, range.seconds, files);
+  if (container === 'mov' && size.bytes > LARGE_EXPORT_BYTES) {
+    items.push({
+      level: 'warning',
+      text: `Large output: about ${formatBytes(size.bytes)} (${videoEncoder(settings)?.label ?? 'MOV'}, ${formatDuration(range.seconds)}). Check that the output drive has that much free space; a lighter profile (ProRes 422 LT, DNxHR LB or SQ) is smaller.`,
+    });
+  }
+  if (container === 'wav' && size.bytes / files >= WAV_LIMIT_BYTES) {
+    items.push({ level: 'info', text: `The WAV will be larger than 4 GB (about ${formatBytes(size.bytes / files)}), so it is written as RF64, which some older programs cannot open. FLAC or a shorter range avoids it.` });
+  }
+  return items;
+}
+
+/** One-line description of the output's audio for the dialog summary ("AAC 320 kbps", "PCM 24-bit"). */
+export function audioSummary(settings: ExportSettings): string {
+  return audioEncoder(settings).label;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -505,14 +622,14 @@ function computeSequenceWarnings(seq: Sequence, media: Record<ID, MediaItem>, st
     const groups = groupByMedia(fpsOff);
     const names = groups.map((g) => `${g.media.name} (${fpsLabel(g.media.probe!.video!.fps)} fps)`);
     items.push({
-      level: 'warning', target: mediaTarget(groups),
+      level: 'warning', target: mediaTarget(groups), scope: 'video',
       text: `Source frame rate differs from the sequence (${fpsLabel(seq.fps)} fps): ${namesWithMore(names)}. Frames are repeated or dropped to fit, so motion may stutter.`,
     });
   }
   if (vfr.length) {
     const groups = groupByMedia(vfr);
     items.push({
-      level: 'warning', target: mediaTarget(groups),
+      level: 'warning', target: mediaTarget(groups), scope: 'video',
       text: `Variable frame rate (VFR) media in the sequence: ${namesWithMore(groups.map((g) => g.media.name))}. Frames are repeated or dropped unevenly; convert it to a constant frame rate if motion or sync looks off.`,
     });
   }
@@ -531,7 +648,7 @@ function computeSequenceWarnings(seq: Sequence, media: Record<ID, MediaItem>, st
     }
     const list = [...byLink.values()].sort((a, b) => a.clip.start - b.clip.start);
     items.push({
-      level: 'warning', target: { frame: list[0].clip.start, clipIds: list.flatMap((e) => e.ids) },
+      level: 'warning', target: { frame: list[0].clip.start, clipIds: list.flatMap((e) => e.ids) }, scope: 'video',
       text: `Linked clips out of sync: ${namesWithMore(list.map((e) => `"${e.clip.name}" (${formatSyncOffset(e.off)} frame${Math.abs(e.off) === 1 ? '' : 's'})`))}. Picture and sound will not line up.`,
     });
   }
@@ -604,7 +721,10 @@ export function initialExportSettings(seq: Sequence, saved: SavedExportSettings 
   const defaults = defaultExportSettings(seq, ctx);
   if (!saved) return defaults;
   const s = { ...defaults, ...saved.settings, useProxies: false as const };
+  // Settings saved before 0.8.0 have no format fields: they keep the defaults (MP4). Unknown values fall back too.
+  s.container = exportContainer(s);
   if (saved.sequenceId !== seq.id) { s.fileName = defaults.fileName; }
+  s.fileName = withExportExtension(s.fileName, s.container);
   if (!s.outputDir) s.outputDir = defaults.outputDir;
   if (!isValidFps(s.fps)) s.fps = seq.fps;
   return clampSampleRateForCodec(s);
