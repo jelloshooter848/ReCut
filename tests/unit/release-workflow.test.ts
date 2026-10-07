@@ -184,7 +184,7 @@ describe('Windows workflow: the macOS dmg job (advisory during bring-up)', () =>
   const macosE2e = code(job('macos-e2e'));
   const publish = code(job('publish'));
   const pkg = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8'));
-  const script = fs.readFileSync(path.join(repo, 'scripts/mac/get-ffmpeg.sh'), 'utf8');
+  const script = fs.readFileSync(path.join(repo, 'scripts/mac/get-ffmpeg.sh'), 'utf8').replace(/\r\n/g, '\n'); // CRLF on a Windows checkout
 
   it('runs on every run on an Apple Silicon runner, and the e2e suite runs in its own job', () => {
     expect(jobIf(macos)).toBeUndefined();
