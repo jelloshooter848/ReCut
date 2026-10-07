@@ -2,7 +2,7 @@
 .wm-note { margin: 0; line-height: 1.45; }
 .wm-list { display: flex; flex-direction: column; max-height: 360px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-1); }
 .wm-row {
-  display: grid; grid-template-columns: minmax(0, 1fr) 64px 250px; align-items: center; gap: 8px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 64px minmax(96px, auto); align-items: center; gap: 8px;
   min-height: 40px; padding: 4px 8px; border-bottom: 1px solid var(--bg-3); cursor: default;
 }
 .wm-row:hover { background: var(--bg-3); }

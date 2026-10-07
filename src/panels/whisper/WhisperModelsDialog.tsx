@@ -188,8 +188,8 @@ export function WhisperModelsDialog() {
               ))}
         </div>
         <p className="text-faint text-sm wm-note">
-          Bigger models are more accurate and slower. On a typical 4-core PC, Base transcribes an hour of audio in a few minutes
-          and Small in about a quarter of an hour; Medium and Large need much longer and several GB of memory.
+          Bigger models are more accurate, slower and need more memory. Small is a good start; on a CPU, Medium and
+          Large v3 Turbo can take longer than the media plays. English-only models are a little more accurate on English.
         </p>
       </div>
     </Dialog>

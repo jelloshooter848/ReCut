@@ -208,9 +208,10 @@ function routeTranscribe(job: JobInfo): void {
   if (!media) { toast('warn', `Transcription finished, but its media is no longer in the project`); return; }
   if (r.cues.length === 0) { toast('warn', `No speech recognized in ${media.name}`); return; }
   const several = (media.probe?.audio.length ?? 0) > 1;
+  const modelName = whisperModel(r.model)?.name ?? useWhisperStatus.getState().models?.find((x) => x.id === r.model)?.name ?? r.model;
   st.putWhisperSubtitleTrack({
     id: uid('sub'),
-    name: whisperTrackName(r.language, r.model, r.translate, several ? r.streamIndex : undefined),
+    name: whisperTrackName(r.language, modelName, r.translate, several ? r.streamIndex : undefined),
     language: whisperLanguage(r.language)?.iso6392 ?? 'und',
     mediaId: media.id,
     cues: r.cues.map((c) => ({ ...c })),
@@ -218,7 +219,7 @@ function routeTranscribe(job: JobInfo): void {
     streamIndex: r.streamIndex,
   });
   const n = r.cues.length;
-  toast('ok', `${n} line${n === 1 ? '' : 's'} transcribed from ${media.name} (Whisper ${whisperModel(r.model)?.name ?? r.model})${r.cached ? ' (from cache)' : ''}`);
+  toast('ok', `${n} line${n === 1 ? '' : 's'} transcribed from ${media.name} (Whisper ${modelName})${r.cached ? ' (from cache)' : ''}`);
 }
 
 /** Reveal an exported file in the OS file manager (for UI that renders export results). */

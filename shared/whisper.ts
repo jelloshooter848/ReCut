@@ -153,12 +153,15 @@ export function whisperLanguageName(code: string): string {
   return LANG_BY_CODE.get(code)?.name ?? code;
 }
 
-/** Track name: "English (Whisper Small)", "English (Whisper Small, translated)", with "#2" when `streamLabel` is set. */
-export function whisperTrackName(languageCode: string, modelId: string, translated: boolean, streamIndex?: number): string {
+/**
+ * Track name: "English (Whisper Small)", "English (Whisper Small, translated)", with ", #2" when `streamIndex` is given.
+ * `model` is a manifest model id (its display name is used) or a display name.
+ */
+export function whisperTrackName(languageCode: string, model: string, translated: boolean, streamIndex?: number): string {
   const lang = translated ? 'English' : whisperLanguageName(languageCode);
-  const model = whisperModel(modelId)?.name ?? modelId;
+  const modelName = whisperModel(model)?.name ?? model;
   const extras = [translated ? 'translated' : null, streamIndex !== undefined ? `#${streamIndex}` : null].filter(Boolean);
-  return `${lang} (Whisper ${model}${extras.length ? `, ${extras.join(', ')}` : ''})`;
+  return `${lang} (Whisper ${modelName}${extras.length ? `, ${extras.join(', ')}` : ''})`;
 }
 
 /** Start the transcription of one audio stream (runs as a job of kind 'transcribe'). */

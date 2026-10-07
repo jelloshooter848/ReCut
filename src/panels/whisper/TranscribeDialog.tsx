@@ -135,7 +135,7 @@ export function TranscribeDialog() {
   });
 
   const modelOptions = installed.map((m) => ({ value: m.id, label: `${m.name} (${formatModelSize(m.bytes)})` }));
-  const exampleName = whisperTrackName(lang === 'auto' ? 'en' : lang, selectedModel ?? 'small', translate && !englishOnly);
+  const exampleName = whisperTrackName(lang === 'auto' ? 'en' : lang, modelInfo?.name ?? 'Small', translate && !englishOnly);
 
   return (
     <Dialog open title={<span className="row gap-6"><Mic size={14} /> Transcribe with Whisper</span>} onClose={closeTranscribeDialog} width={620}
