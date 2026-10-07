@@ -14,6 +14,8 @@ import {
 import type { OcrLanguageState, OcrRequest } from '@shared/ocr';
 import type { MediaContext, MediaFetch, MediaHandlers } from '../ipc';
 import { listOcrLanguages, ocrDataDir } from '../ocr/dataDir';
+import { parseLangUrlOverride } from '../ocr/download';
+import { installFromFile, removeLanguage, startInstallJob } from '../ocr/languages';
 import { JobQueue } from '../jobs/jobQueue';
 import { buildExportCommand, cancelExportJob, startExportJob } from '../export/exporter';
 import { cacheKeyForPath, setCacheDir } from './cache';
@@ -30,11 +32,14 @@ export type { MediaHandlers, MediaContext } from '../ipc';
 /** The one job queue shared by proxies, scene detection, waveforms, OCR, language downloads and exports. */
 export const jobQueue = new JobQueue();
 
-/** What init() was given that the OCR layer needs: the user-data folder and the HTTP client for downloads. */
-let ocrCtx: { userData: string; fetch?: MediaFetch } | null = null;
+/**
+ * What init() was given that the OCR layer needs: the user-data folder, the HTTP client for downloads and the
+ * language base URL when RECUT_OCR_LANG_URL overrides it (tests; only a loopback http(s) URL is accepted).
+ */
+let ocrCtx: { userData: string; fetch?: MediaFetch; langBaseUrl?: string | null } | null = null;
 
 /** The OCR context from init(); throws before init. */
-export function ocrContext(): { userData: string; dataDir: string; fetch?: MediaFetch } {
+export function ocrContext(): { userData: string; dataDir: string; fetch?: MediaFetch; langBaseUrl?: string | null } {
   if (!ocrCtx) throw new Error('OCR is not ready yet (the media layer has not started)');
   return { ...ocrCtx, dataDir: ocrDataDir(ocrCtx.userData) };
 }
@@ -52,7 +57,10 @@ const notImplemented = (what: string) => new Error(`${what} is not implemented y
 
 export const mediaHandlers: MediaHandlers = {
   init(ctx: MediaContext): void {
-    ocrCtx = { userData: ctx.userData, fetch: ctx.fetch };
+    const rawLangUrl = process.env.RECUT_OCR_LANG_URL;
+    const langBaseUrl = parseLangUrlOverride(rawLangUrl);
+    if (rawLangUrl && !langBaseUrl) console.warn('RECUT_OCR_LANG_URL ignored: only a loopback http(s) URL is accepted');
+    ocrCtx = { userData: ctx.userData, fetch: ctx.fetch, langBaseUrl };
     if (ctx.cacheDir) setCacheDir(ctx.cacheDir);
     // Prefer our own resolver (env → bundled → PATH); fall back to whatever the IPC layer found.
     if (!getFfmpegPath() && ctx.ffmpegPath) setFfmpegPaths({ ffmpeg: ctx.ffmpegPath });
@@ -110,16 +118,17 @@ export const mediaHandlers: MediaHandlers = {
     return listOcrLanguages(ocrContext().dataDir, activeDownloadJob);
   },
 
-  async ocrInstallLanguage(_code: string): Promise<JobInfo> {
-    throw notImplemented('Installing OCR languages');
+  async ocrInstallLanguage(code: string): Promise<JobInfo> {
+    const c = ocrContext();
+    return startInstallJob(jobQueue, code, { dataDir: c.dataDir, fetch: c.fetch, baseUrl: c.langBaseUrl, jobs: ocrDownloadJobs });
   },
 
-  async ocrRemoveLanguage(_code: string): Promise<{ ok: boolean; error?: string }> {
-    return { ok: false, error: notImplemented('Removing OCR languages').message };
+  ocrRemoveLanguage(code: string): Promise<{ ok: boolean; error?: string }> {
+    return removeLanguage(jobQueue, code, { dataDir: ocrContext().dataDir });
   },
 
-  async ocrInstallLanguageFromFile(_code: string, _path: string): Promise<{ ok: boolean; error?: string }> {
-    return { ok: false, error: notImplemented('Installing OCR languages from a file').message };
+  ocrInstallLanguageFromFile(code: string, path: string): Promise<{ ok: boolean; error?: string }> {
+    return installFromFile(jobQueue, code, path, { dataDir: ocrContext().dataDir });
   },
 
   async listJobs(): Promise<JobInfo[]> {

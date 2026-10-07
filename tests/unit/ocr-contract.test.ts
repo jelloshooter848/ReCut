@@ -165,7 +165,7 @@ describe('installed OCR languages', () => {
     expect(() => ocrLanguagePath(dir, '../x')).toThrow();
   });
 
-  it('mediaHandlers.ocrLanguages reads <userData>/ocr/tessdata; the other OCR handlers are not implemented yet', async () => {
+  it('mediaHandlers.ocrLanguages reads <userData>/ocr/tessdata; install needs an HTTP client; remove deletes the file', async () => {
     const userData = path.join(tmpRoot, 'ud2');
     const dir = ocrDataDir(userData);
     fs.mkdirSync(dir, { recursive: true });
@@ -173,10 +173,11 @@ describe('installed OCR languages', () => {
     mediaHandlers.init?.({ userData, cacheDir: path.join(tmpRoot, 'cache'), ffmpegPath: null, ffprobePath: null, broadcast: () => undefined });
     const list = await mediaHandlers.ocrLanguages();
     expect(list.filter((l) => l.installed).map((l) => l.code)).toEqual(['eng']);
-    await expect(mediaHandlers.ocrInstallLanguage('eng')).rejects.toThrow(/not implemented yet/);
+    await expect(mediaHandlers.ocrInstallLanguage('eng')).rejects.toThrow(/not available/); // init was given no fetch
     await expect(mediaHandlers.startOcr({ mediaId: 'm', path: path.join(tmpRoot, 'a.mkv'), streamIndex: 2, language: 'eng' })).rejects.toThrow(/not implemented yet/);
-    expect(await mediaHandlers.ocrRemoveLanguage('eng')).toMatchObject({ ok: false, error: expect.stringMatching(/not implemented yet/) });
     expect(await mediaHandlers.ocrInstallLanguageFromFile('eng', path.join(tmpRoot, 'x'))).toMatchObject({ ok: false });
+    expect(await mediaHandlers.ocrRemoveLanguage('eng')).toEqual({ ok: true });
+    expect((await mediaHandlers.ocrLanguages()).some((l) => l.installed)).toBe(false);
   });
 });
 
