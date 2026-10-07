@@ -80,6 +80,8 @@ export interface ClipLaneProps {
   /** LOD canvas placement (content px of the viewport's left edge, viewport width). */
   lodOriginPx: number;
   lodWidthPx: number;
+  /** Device pixel ratio (waveform canvases are sized in device pixels). */
+  dpr?: number;
 }
 
 /**
@@ -132,7 +134,7 @@ export const ClipLane = memo(function ClipLane(p: ClipLaneProps) {
       <ClipView key={keys[j]} clip={clip} trackId={track.id} trackKind={track.kind} trackLocked={track.locked} height={p.height} zoom={zoom}
         selected={p.selected.has(clip.id)} filter={p.look(clip)} media={p.media[clip.mediaId]} fps={p.fps} showSourceTc={p.showSourceTc}
         visFrom={visFrom} visTo={visTo} cutAtStart={!!prev && clipEnd(prev) === clip.start} cutAtEnd={!!next && next.start === clipEnd(clip)}
-        syncOffset={p.syncOffsets?.get(clip.id)} />
+        syncOffset={p.syncOffsets?.get(clip.id)} dpr={p.dpr} />
     );
   });
   if (track.transitions.length) {

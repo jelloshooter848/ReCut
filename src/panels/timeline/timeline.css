@@ -137,7 +137,8 @@
 .tl-clip-body { position: absolute; top: 16px; left: 0; right: 0; bottom: 0; overflow: hidden; }
 .tl-clip.compact .tl-clip-body { top: 0; }
 .tl-thumb { position: absolute; top: 0; height: 100%; object-fit: cover; opacity: 0.92; pointer-events: none; }
-.tl-wave { position: absolute; top: 0; pointer-events: none; }
+/* max-width: none: the canvas maps 1:1 onto device pixels (ClipView); the clip body clips it at the clip borders. */
+.tl-wave { position: absolute; top: 0; pointer-events: none; max-width: none; }
 .tl-wave-line { position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: rgba(255,255,255,0.18); }
 .tl-fade { position: absolute; top: 16px; bottom: 0; pointer-events: none; z-index: 1; }
 .tl-clip.compact .tl-fade { top: 0; }
@@ -180,8 +181,11 @@
   position: absolute; z-index: 30; background: var(--bg-3); border: 1px solid var(--border-strong); border-radius: 3px; padding: 2px 6px;
   font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--text-bright); pointer-events: none; white-space: nowrap; box-shadow: var(--shadow-pop);
 }
-.tl-playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--danger); z-index: 12; pointer-events: none; box-shadow: 0 0 0 0.5px rgba(224,82,82,0.4); }
-.tl-playhead-head { position: absolute; top: 0; width: 13px; height: 15px; transform: translateX(-6px); background: var(--danger); clip-path: polygon(0 0, 100% 0, 100% 50%, 50% 100%, 0 50%); z-index: 13; pointer-events: none; }
+/* Playhead: one composited layer (line + head) moved by transform only (Playhead.tsx). Same stacking as the former
+   separate line (z 12) and head (z 13): above the clips, ruler and overlays, below popovers, menus and dialogs. */
+.tl-playhead-layer { position: absolute; left: 0; top: 0; bottom: 0; width: 1px; z-index: 12; pointer-events: none; will-change: transform; }
+.tl-playhead { position: absolute; left: 0; top: 0; bottom: 0; width: 1px; background: var(--danger); pointer-events: none; box-shadow: 0 0 0 0.5px rgba(224,82,82,0.4); }
+.tl-playhead-head { position: absolute; left: -6px; top: 0; width: 13px; height: 15px; background: var(--danger); clip-path: polygon(0 0, 100% 0, 100% 50%, 50% 100%, 0 50%); z-index: 1; pointer-events: none; }
 .tl-hscroll { height: 10px; overflow-x: scroll; overflow-y: hidden; flex: 0 0 auto; background: var(--bg-2); border-top: 1px solid var(--border); }
 .tl-hscroll::-webkit-scrollbar { height: 9px; }
 .tl-hscroll > div { height: 1px; }

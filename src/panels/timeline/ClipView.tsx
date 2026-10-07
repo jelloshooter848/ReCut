@@ -13,6 +13,7 @@ import { labelColorHex } from '@/components/ui/ColorSwatch';
 import { CLIP_BAR_H, COMPACT_ROW_H } from './types';
 import { MEDIA_MIN_CLIP_PX } from './viewMath';
 import { afterMediaSettle } from './mediaSettle';
+import { drawWaveBars, snappedBorderPx, validDpr, waveBarExtents, waveCanvasSize } from './waveBars';
 import { formatSyncOffset, mediaNeedsProxy } from './clipBadges';
 
 export type FilterLook = 'none' | 'dim' | 'hide';
@@ -37,11 +38,15 @@ export interface ClipViewProps {
   cutAtEnd: boolean;
   /** Frames this clip is out of sync with its linked partner (0 / undefined = in sync). */
   syncOffset?: number;
+  /** Device pixel ratio: the waveform canvas is sized and drawn in device pixels (default 1). */
+  dpr?: number;
 }
 
 const MAX_TILES_PER_REQUEST = 48;
 const NO_TILES: Record<number, string> = {};
 const MAX_WAVE_CANVAS_PX = 4096;
+/** .tl-clip border width (px): the clip body (and the waveform canvas in it) starts this far inside the clip box. */
+const CLIP_BORDER_PX = 1;
 
 function quantizeTime(t: number): number { return Math.round(t * 10) / 10; }
 
@@ -156,32 +161,36 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   }, [wantMedia, isVideo, offline, path, media]); // eslint-disable-line react-hooks/exhaustive-deps
   const waveX = visFrom;
   const waveW = wantMedia ? Math.min(MAX_WAVE_CANVAS_PX, Math.max(0, visTo - visFrom)) : 0;
+  const dpr = validDpr(p.dpr ?? 1);
+  // Backing store in device pixels; the CSS size maps it 1:1 onto them (<= 0.5 device px wider than waveW). Canvas
+  // column 0 sits at clip px waveX (the body starts inside the clip's left border, as rendered at this dpr), so the
+  // waveform lines up with the timeline; the body clips what falls under the borders. Not squeezed by the global
+  // `canvas { max-width: 100% }` (timeline.css), which would resample the bars.
+  const waveSize = waveCanvasSize(waveW, bodyH, dpr);
   useEffect(() => {
     const cv = canvasRef.current;
     if (!cv || isVideo) return;
-    const cw = Math.max(1, Math.round(waveW)); const ch = Math.max(1, Math.round(bodyH));
+    const { w: cw, h: ch } = waveSize;
     if (cv.width !== cw) cv.width = cw;
     if (cv.height !== ch) cv.height = ch;
     const ctx = cv.getContext('2d');
     if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
     if (!wave) return;
+    // Source time range of the canvas box (its CSS width, = cw device columns).
     const t0 = clip.sourceIn + (waveX / zoom) * frameSec * clip.speed;
-    const t1 = clip.sourceIn + ((waveX + cw) / zoom) * frameSec * clip.speed;
+    const t1 = clip.sourceIn + ((waveX + waveSize.cssW) / zoom) * frameSec * clip.speed;
+    // One peak per device column: the max of every sample overlapping the column (no decimation).
     const peaks = peaksForRange(wave, t0, t1, cw);
-    const mid = ch / 2;
     // Display normalisation: quiet sources are boosted (up to ~6x) so the shape stays readable, like most NLEs.
     const scale = 1 / Math.max(0.16, waveMax(wave) / 255);
     const gain = Math.max(0, Math.min(2, clip.audio.volume)) * (clip.audio.muted ? 0.25 : 1) * scale;
     ctx.fillStyle = p.selected ? 'rgba(230, 245, 236, 0.95)' : 'rgba(175, 232, 200, 0.85)';
-    // One path filled once (the 1 px columns never overlap, so the pixels match one fillRect per column).
-    ctx.beginPath();
-    for (let i = 0; i < cw; i++) {
-      const v = Math.max(0.5, Math.min(mid, (peaks[i] / 255) * mid * gain));
-      ctx.rect(i, mid - v, 1, v * 2);
-    }
-    ctx.fill();
-  }, [wave, waveX, waveW, bodyH, zoom, clip.sourceIn, clip.speed, clip.audio.volume, clip.audio.muted, frameSec, isVideo, p.selected]);
+    // Filled device-pixel bars (waveBars.ts): integer fillRects, runs of equal columns merged; the silent baseline
+    // is 1 CSS px (0.5 px half height), at least 1 device px.
+    drawWaveBars(ctx, waveBarExtents(peaks, ch, gain, 0.5 * dpr), cw);
+  }, [wave, waveX, waveSize.w, waveSize.h, waveSize.cssW, bodyH, zoom, clip.sourceIn, clip.speed, clip.audio.volume, clip.audio.muted, frameSec, isVideo, p.selected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- labels ----------------------------------------------------------------------------
   const mediaFps = validFpsOr(media?.probe?.video?.fps, fps);
@@ -228,7 +237,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
         {isVideo ? tileEls : (
           <>
             {WAVE_LINE}
-            {waveW > 0 ? <canvas ref={canvasRef} className="tl-wave" style={{ left: waveX, width: waveW, height: bodyH }} /> : null}
+            {waveW > 0 ? <canvas ref={canvasRef} className="tl-wave" style={{ left: waveX - snappedBorderPx(CLIP_BORDER_PX, dpr), width: waveSize.cssW, height: waveSize.cssH }} /> : null}
           </>
         )}
       </div>
