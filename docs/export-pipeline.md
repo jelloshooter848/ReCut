@@ -1,6 +1,6 @@
 # Export pipeline
 
-The export turns a `Sequence` into one file (MP4, MOV, WAV or FLAC; or one WAV / FLAC per audio track) with a single
+The export turns a `Sequence` into one file (MP4, MKV, MOV, WAV or FLAC; or one WAV / FLAC per audio track) with a single
 ffmpeg invocation per file (or, for very large sequences, a series of bounded chunk renders joined losslessly; see
 "Chunked rendering"). The acceptance bar is that
 **the file reflects the timeline exactly**: every frame of the output corresponds to the frame the editor
@@ -21,11 +21,16 @@ Files:
   project source file?" checks, shared with the Subtitles panel's SRT/VTT export.
 - `shared/exportFormat.ts` — pure. Containers (`CONTAINERS`: extension, muxer, muxer args, chapters, audio-only),
   the video encoder (`videoEncoder`: H.264 / H.265, ProRes profiles, DNxHR profiles, pixel format) and audio encoder
-  (`audioEncoder`: AAC / AC-3, PCM 16 / 24, FLAC) of the settings, size-estimate rates, and the per-track audio plan
-  (`perTrackAudioPlan`, `perTrackFileName`). The render graph and the Export dialog both use it.
+  (`audioEncoder`: AAC / AC-3, PCM 16 / 24, FLAC) of the settings, size-estimate rates, the per-track audio plan
+  (`perTrackAudioPlan`, `perTrackFileName`), and the MKV packaging plan: output audio tracks as mix definitions
+  (`resolveAudioOutputs`, `audioOutputPlan`, presets, `workingLayout`) and soft subtitle streams
+  (`subtitleOutputPlan`). The render graph and the Export dialog both use it.
 - `shared/media.ts` — sample aspect ratio validation (`saneSar`, 1/16..16) and `videoDisplaySize`, shared with
   the preview compositor.
-- `src/panels/export/request.ts` — builds the `ExportRequest` in the dialog, including `protectedPaths`.
+- `src/panels/export/request.ts` — builds the `ExportRequest` in the dialog, including `protectedPaths` and, for an
+  MKV with soft subtitles, `subtitleTracks` (each chosen track's cues in seconds, `softSubtitleTracks`).
+- `src/panels/export/packaging.ts` / `PackagingEditors.tsx` — the dialog's edits of the MKV audio tracks and subtitle
+  streams (pure) and their editors.
 - `tests/unit/export.test.ts` — generates synthetic media with ffmpeg and checks durations, frame counts,
   pixel colors and audio levels of real exports.
 
@@ -187,11 +192,35 @@ Tracks are mixed with `amix=inputs=N:normalize=0:duration=longest`, then `aresam
 output layout; `-ac 2|6` is also passed. A silent stream is produced when there is no audio at all, so the
 MP4 always has an audio track.
 
+**Output audio tracks (MKV, ROADMAP §7).** The mix end of the graph is generalised to a list of mixes, one per output
+audio track (`audioOutputPlan`): each names the sequence audio tracks it mixes (`mixed`: its sources that the export
+renders; no `sources` = every rendered track) and its layout (stereo, 5.1, mono). The per-clip and per-track chains
+are unchanged and built once per sequence track at the **working layout**, the widest output layout (`5.1` when any
+output is 5.1, else stereo; `ctx.layout`). A track that feeds `k > 1` outputs is split, `[taN]asplit=k[asM]...`; a
+track that feeds none is not rendered at all. Output `i` is then exactly the main-mix chain above with its own
+layout and label:
+
+```
+[ta..][ta..] amix=inputs=N:normalize=0:duration=longest, aresample=SR, aformat=sample_fmts=fltp:channel_layouts=<layout>,
+             [atrim=start_sample..end_sample (widened range),] apad=whole_len=S, atrim=end_sample=S  [aout] / [aout1] / [aout2] ...
+```
+
+(one source: no `amix`; no source rendered: `anullsrc=cl=<layout>`), with `S = round(frames · SR · den / num)` for every
+output, so all audio tracks are sample-exact and the same length. The first output is `[aout]`, so a one-track
+graph is the MP4 one plus the exact-length tail. Without `audioOutputs` an MKV has one output with the settings'
+codec, bitrate and channels (`resolveAudioOutputs`). The per-track WAV option (`audioTrackId`) is the special case of
+one output with one source track.
+
 ### Encoding
 
 MP4: `-c:v libx264|libx265 -preset P (-crf C | -b:v Nk -maxrate Nk -bufsize 2Nk) -pix_fmt yuv420p -r OUT_FPS
 -fps_mode cfr -c:a aac|ac3 -b:a Nk -ar SR -ac N -movflags +faststart -t <duration> -f mp4 <outputDir>/<fileName>.mp4`.
 `-shortest` is never used: durations are controlled in the graph; `-t` is only a safety clamp.
+
+MKV: the MP4 video args without `-tag:v hvc1`, then one stream-addressed encoder per output track,
+`-c:a:i aac|ac3|flac|pcm_s16le|pcm_s24le [-b:a:i Nk | -sample_fmt:a:i .. -bits_per_raw_sample:a:i 24] -ac:a:i 1|2|6`,
+one `-ar SR`, `-map [aout] -map [aout1] ...`, the soft subtitle maps and `-c:s subrip`, the stream tags (below), and
+`-t <duration> -f matroska`.
 
 MOV: `-c:v prores_ks -profile:v 0..4 -vendor apl0` or `-c:v dnxhd -profile:v dnxhr_lb|sq|hq|hqx|444`, then
 `-pix_fmt <profile's format> -r OUT_FPS -fps_mode cfr -c:a pcm_s16le|pcm_s24le -ar SR -ac N -t <duration> -f mov`.
@@ -216,6 +245,12 @@ otherwise, so every export process (single pass, each chunk, the chunk join) pas
 the streams carry FFmpeg's defaults (`language=und`, `VideoHandler` / `SoundHandler`). `-map_metadata -1` is not
 used: it also drops the chapter titles that `-map_chapters` copies.
 
+MKV stream tags (`RenderGraph.streamArgs`): `-disposition:v:0 default`; per audio output `-metadata:s:a:i
+language=<ISO 639-2 or und>`, `-metadata:s:a:i title=<title>` (when set) and `-disposition:a:i default|0` (the first
+output is the default); per soft subtitle stream `-metadata:s:s:i language=..`, `title=..` and `-disposition:s:i
+default|forced|default+forced|0`. Language tags are normalised by `exportLanguageCode` (3 letters as is, ISO 639-1 and
+regional tags mapped to the bibliographic 639-2 code Matroska uses, anything else `und`).
+
 Chapters (`exportChapters`) are the sequence's markers of kind `chapter` in `[startF, endF)` (kinds `marker` and
 `continuity` are editor notes): times in sequence seconds from the range start, so an output frame-rate conversion
 does not move them; the latest chapter marker at or before `startF` covers the range start; two on one frame, the
@@ -227,8 +262,8 @@ from 0 to the first marker, so that marker's break is kept. `buildRenderGraph` r
 `\` and line breaks get a backslash; a trailing backslash is dropped, since FFmpeg 6.1–9.0 read a line break after
 an escaped backslash as escaped). With `chaptersFilePath` the file is the last input, `-f ffmetadata -i <file>`, and
 `-map_chapters` names it (`inputCount` does not count it). The MP4 muxer stores them as a `chpl` atom plus a chapter
-text track (ffprobe lists it as a `data` stream; the probe ignores it). Chunk graphs carry no chapters; the chunked
-join adds the same file as its third input.
+text track (ffprobe lists it as a `data` stream; the probe ignores it); the Matroska muxer stores them as native
+chapters. Chunk graphs carry no chapters; the chunked join adds the same file as an input after the audio lists.
 
 ## Running it
 
@@ -246,6 +281,11 @@ join adds the same file as its third input.
   exact frame times showed or hid about half the cue edges one frame off. Burn-in runs on the sequence-rate frames,
   before any frame-rate conversion. With `exportSubtitleSidecar`, a sidecar SRT with the exact cue times
   (`buildSubtitleSrt`) is written next to the MP4.
+- Soft subtitles (MKV, `settings.subtitleOutputs`): `buildRenderGraph` returns one range-relative SRT per chosen
+  sequence subtitle track in `softSubtitles` (exact cue times like the sidecar, from `req.subtitleTracks`; a track
+  with no cue in the range is left out with a warning). With `softSubtitleFilePaths` each file is an input after the
+  chapters file, `-f srt -i <file>`, mapped as `<input>:s:0` and encoded `-c:s subrip`. The exporter writes them to
+  `subtitles-<n>.srt` in its temp folder; the command preview names `os.tmpdir()/recut-export/subtitles-<n>.srt`.
 - The output folder is created with `ensureDirSafe` (`electron/safeMkdir.ts`), never with a blocking or
   recursive mkdir: recursive mkdir never returns under `/proc` and froze the main process (BUG-1). It walks up
   to the first existing ancestor, refuses non-folders and `/proc`, `/sys`, `/dev` (also through symlinks),
@@ -324,9 +364,13 @@ clips. Known limit: when a boundary splits a clip whose source sample grid does 
 boundary (e.g. a 44.1 kHz source in a 48 kHz export, or 29.97 fps where a frame is 1601.6 samples), the rest
 of that clip in the next chunk can be offset by less than one source sample (≤ 11 µs); inaudible.
 
-**Join**: one ffmpeg reads both lists with the concat demuxer (`ffconcat`, relative names) — video
-`-c:v copy`, the PCM through one final AAC/AC-3 encode with the export's audio args, the chapters file (when the
-range has chapter markers) as a third input with `-map_chapters 2`, no metadata from the chunk files —
+An MKV with several output audio tracks renders all of them in each audio chunk process (one `-map [aoutK] ...
+chunk-NNNN-aK.wav` output per track, the tracks decoded once).
+
+**Join**: one ffmpeg reads the lists with the concat demuxer (`ffconcat`, relative names) — video
+`-c:v copy`, the PCM of each output audio track through its final encode with the export's audio args, the chapters
+file (when the range has chapter markers) as an input after the audio lists with `-map_chapters`, the soft subtitle
+files (MKV) after it with the export's stream tags, no metadata from the chunk files —
 `-movflags +faststart -t <duration>` → `<name>.recut-part-<random>.mp4`, moved into place as usual. The chapters are
 those of the single pass.
 

@@ -272,6 +272,15 @@ commentary), each with its own language and title. Subtitle tracks are muxed as 
 in or written as a sidecar. Use FFmpeg's Matroska muxer, not `mkvmerge`, so there is no new dependency. It must work
 with a user-installed FFmpeg: FFmpeg is bundled only in the Windows builds (see
 [LIMITATIONS](LIMITATIONS.md#platform-and-packaging)).
+**Status: done (7 October 2026, release 0.9.0).** Export › Format › **MKV** (FFmpeg's Matroska muxer) writes H.264 /
+H.265 with any number of audio tracks, each a mix definition (which sequence audio tracks, stereo / 5.1 / mono, AAC /
+AC-3 / FLAC / PCM, language, title; the first is the default; presets "Main mix only", "5.1 + stereo downmix", "Main
++ commentary"), all sample-exact and the same length; the sequence's subtitle tracks as soft SubRip streams with
+language, title and Default / Forced flags; chapters as in MP4; no metadata from the sources. Settings without the
+new fields export one main mix, as before. Plan and arguments in `shared/exportFormat.ts` (`audioOutputPlan`,
+`subtitleOutputPlan`), the mixes in `electron/export/renderGraph.ts`. Not done: several audio tracks or soft
+subtitles in MP4 (FFmpeg's MP4 muxer drops the titles), ProRes / DNxHR in MKV, ASS styling, audio passthrough (see
+[LIMITATIONS](LIMITATIONS.md#export)).
 
 ## 8. Nested sequences and compound clips
 
