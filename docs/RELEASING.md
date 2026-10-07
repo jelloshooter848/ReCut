@@ -26,6 +26,8 @@ Only a **release PR** changes the version. Feature and bug PRs never touch `pack
 1. The version bump: `npm version <x.y.z> --no-git-tag-version` (updates `package.json` and `package-lock.json`).
 2. A new dated section at the top of `CHANGELOG.md`: `## [x.y.z] - YYYY-MM-DD`.
 3. Doc lines that name the current version, if any (prefer wording that does not name a version).
+4. The saved-project fixture of the new version, `tests/fixtures/projects/recut-<x.y.z>.recut`, made with
+   `node scripts/make-project-fixture.mjs` after the bump (see [the fixtures' README](../tests/fixtures/projects/README.md)).
 
 ## How to cut a release
 
@@ -36,7 +38,11 @@ hand: agents cannot push tags (their git proxy drops tag pushes), and the owner 
    `npm version 0.3.0 --no-git-tag-version` and add the `## [0.3.0] - YYYY-MM-DD` section to `CHANGELOG.md` (see
    below). Check `docs/ROADMAP.md`: every roadmap entry this release ships has its **Status** line and its row in the
    Progress table marked done with this version (the feature PR sets them; the release PR fixes any that are
-   missing or still name an older version). Run `npm run typecheck` and `npm test`. Open the PR.
+   missing or still name an older version). Add the version's saved-project fixture:
+   `node scripts/make-project-fixture.mjs` writes `tests/fixtures/projects/recut-0.3.0.recut` with this checkout's own
+   code (the unit suite fails while the fixture of a stable version in `package.json` is missing; a pre-release such
+   as `1.0.0-rc.1` needs none). Never edit or regenerate an older fixture. Run `npm run typecheck` and `npm test`.
+   Open the PR.
 2. **Merge it.** That is the whole release step.
 3. **CI publishes.** The merge is a push to `main`, so `.github/workflows/windows.yml` runs. Its first step sees that
    the `package.json` version (`0.3.0`) has a `## [0.3.0]` section in `CHANGELOG.md` and that no tag `v0.3.0` exists
