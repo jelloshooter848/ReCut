@@ -1,7 +1,7 @@
 /**
- * Stereo peak meter for the Program monitor (E-10 / UX-08). Taps the sequence player's master gain with a
- * ChannelSplitter → 2 AnalyserNodes (the tap does not alter the output). Draws dBFS bars with tick marks and a
- * clip LED; the rAF loop runs only while playing. If the player exposes no master gain, it renders disabled.
+ * Stereo peak meter for the Program monitor (E-10 / UX-08). Taps the sequence player's master gain with a stereo
+ * up-mix gain → ChannelSplitter → 2 AnalyserNodes (the tap does not alter the output). Draws dBFS bars with tick marks
+ * and a clip LED; the rAF loop runs only while playing. If the player exposes no master gain, it renders disabled.
  */
 import React, { useEffect, useRef, useState } from 'react';
 
@@ -16,28 +16,33 @@ export function dbToPos(db: number): number {
   return Math.min(1, Math.max(0, (db - METER_FLOOR_DB) / -METER_FLOOR_DB));
 }
 
-interface Tap { splitter: ChannelSplitterNode; analysers: [AnalyserNode, AnalyserNode]; source: AudioNode }
+interface Tap { upmix: GainNode; splitter: ChannelSplitterNode; analysers: [AnalyserNode, AnalyserNode]; source: AudioNode }
 
 type GainSource = { getMasterGain?: () => AudioNode | null | undefined };
 
 function createTap(node: AudioNode): Tap | null {
   try {
     const ctx = node.context;
+    // A ChannelSplitter's input is fixed to 'discrete' (setting 'speakers' throws, and mono would reach L only): mix
+    // to stereo the way the destination does in a unity gain first (mono up-mixes to L+R, 5.1 down-mixes).
+    const upmix = ctx.createGain();
+    upmix.channelCount = 2;
+    upmix.channelCountMode = 'explicit';
+    upmix.channelInterpretation = 'speakers';
     const splitter = ctx.createChannelSplitter(2);
-    splitter.channelCount = 2;
-    splitter.channelCountMode = 'explicit';
-    splitter.channelInterpretation = 'speakers'; // mono up-mixes to L+R, 5.1 down-mixes
     const mk = () => { const a = ctx.createAnalyser(); a.fftSize = 1024; a.smoothingTimeConstant = 0; return a; };
     const analysers: [AnalyserNode, AnalyserNode] = [mk(), mk()];
-    node.connect(splitter);
+    node.connect(upmix);
+    upmix.connect(splitter);
     splitter.connect(analysers[0], 0);
     splitter.connect(analysers[1], 1);
-    return { splitter, analysers, source: node };
+    return { upmix, splitter, analysers, source: node };
   } catch { return null; }
 }
 
 function destroyTap(t: Tap): void {
-  try { t.source.disconnect(t.splitter); } catch { /* already gone */ }
+  try { t.source.disconnect(t.upmix); } catch { /* already gone */ }
+  try { t.upmix.disconnect(); } catch { /* ignore */ }
   try { t.splitter.disconnect(); } catch { /* ignore */ }
 }
 
