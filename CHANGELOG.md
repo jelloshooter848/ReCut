@@ -5,6 +5,48 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
+## [0.5.0] - 2026-10-07
+
+Pre-export warnings ([Roadmap](docs/ROADMAP.md) §3): the Export dialog points out, before a long export, the mistakes
+that otherwise only show up when the result is watched. Project files are unchanged (`formatVersion` 1).
+
+### Added
+
+- **Pre-export warnings** in the Export dialog's Checks list:
+  - video at a different frame rate from the sequence (frames are repeated or dropped);
+  - variable-frame-rate (VFR) media;
+  - linked picture and sound out of sync, with the offset in frames;
+  - transitions that will be dropped or shortened, with the set and rendered lengths and the reason (for example,
+    not enough source media past the cut);
+  - clips that run past the end of their media.
+
+  Each warning names the clips or media involved and has a **Show** link that selects them on the timeline. Warnings
+  never block the export. The dialog uses the same transition calculation as the export, so it predicts exactly what
+  the export renders.
+
+### Fixed
+
+- Window size and position are saved through the same one-at-a-time preferences queue as everything else, instead of a
+  separate write on close that could collide with another preferences write.
+- On Windows, saving a project or the preferences retries briefly when another program (for example an antivirus scan)
+  holds the file and the final rename is refused.
+
+### Development
+
+- The performance gate (`npm run perf:check`) measures the machine's speed before each run (JavaScript, FFmpeg and
+  rendering) and, when it differs from the reference machine by more than 10 %, judges time and frame-rate results on
+  the reference machine's scale. It still prints the raw results, and shows the machine and its speed next to the
+  baseline's. The same code now gets the same verdict on faster and slower hosts
+  ([report](bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md)). `tests/perf/baseline.json` (format 2) records
+  the reference machine's speed and was re-seeded.
+- New `npm run perf:compare -- <refA> <refB>`: compares two versions on the same machine, runs interleaved, and flags
+  results that are worse beyond the noise.
+
+### Known issues
+
+- Unchanged: moved media rebuilds its cache ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned
+  builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
+
 ## [0.4.1] - 2026-10-07
 
 Licences: the Windows build now ships ReCut's licence and the bundled FFmpeg's licence and source information.
