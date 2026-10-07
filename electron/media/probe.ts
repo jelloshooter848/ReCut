@@ -346,7 +346,36 @@ export async function probeMedia(filePath: string): Promise<MediaProbe> {
   });
   const raw = await runFfprobeJson<FfprobeOutput>(['-show_format', '-show_streams', ffmpegFileArg(filePath)], { timeoutMs: 60_000 });
   if (!raw.format && !(raw.streams && raw.streams.length)) throw new Error(`ffprobe found no streams in ${filePath}`);
-  return probeFromFfprobe(raw, filePath, st.size);
+  const probe = probeFromFfprobe(raw, filePath, st.size);
+  const v = probe.video as ProbedVideoStreamInfo | undefined;
+  if (probe.playabilityReason === 'still image' && v && !v.rotation) {
+    // EXIF orientation (JPEG) is a property of the decoded frame, not of the stream: ffprobe's stream size is the
+    // stored one. FFmpeg (export, proxy, thumbnails) and Chromium (<img>) both turn the picture upright, so the probe
+    // reports the upright size too (the Source monitor's zoom, the export's crop maths).
+    const frames = await runFfprobeJson<{ frames?: { side_data_list?: FfprobeStream['side_data_list'] }[] }>(
+      ['-select_streams', 'v:0', '-read_intervals', '%+#1', '-show_entries', 'frame=width,height:frame_side_data=side_data_type,rotation', ffmpegFileArg(filePath)],
+      { timeoutMs: 60_000 },
+    ).catch(() => undefined);
+    applyStillOrientation(probe, frames?.frames?.[0]?.side_data_list);
+  }
+  return probe;
+}
+
+/**
+ * Record the first decoded frame's display rotation (EXIF orientation of a JPEG, as FFmpeg exports it) on a still's
+ * probe: `rotation`, and the display size with the axes swapped for a quarter turn. Exported for tests.
+ */
+export function applyStillOrientation(probe: MediaProbe, sideData: FfprobeStream['side_data_list'] | undefined): void {
+  const v = probe.video as ProbedVideoStreamInfo | undefined;
+  if (!v || !sideData?.length) return;
+  const rotation = streamRotation({ index: v.index, side_data_list: sideData });
+  if (!rotation) return;
+  v.rotation = rotation;
+  if (rotation === 90 || rotation === 270) {
+    const w = v.codedWidth || v.width, h = v.codedHeight || v.height;
+    v.width = h;
+    v.height = w;
+  }
 }
 
 /**
