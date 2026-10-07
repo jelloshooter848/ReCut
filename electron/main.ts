@@ -22,6 +22,7 @@ import os from 'node:os';
 import { getFfmpegPath, getFfprobePath, getFfmpegVersion, runFfmpeg } from './media/ffmpeg';
 import { probeMedia } from './media/probe';
 import { LICENCE_FILES, licenceDirs, listLicenceFiles } from './licences';
+import { ocrWorkerPath, probeOcrCore } from './ocr/engine';
 
 const isDev = Boolean(process.env.RECUT_DEV_URL) || !app.isPackaged;
 const smoke = process.env.RECUT_SMOKE === '1';
@@ -281,6 +282,14 @@ async function runSmoke(): Promise<void> {
     log(`smoke: licences shipped=${found.join(',') || 'none'} absent=${missing.join(',') || 'none'}`);
   } catch (e) {
     log(`smoke: licences check error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  // OCR: start a worker thread from dist/electron/ocr (app.asar.unpacked when packaged) and load the Tesseract core.
+  // No language data needed. "ocr core=FAILED" fails the CI smoke check (.github/workflows/windows.yml).
+  try {
+    const { core } = await probeOcrCore();
+    log(`smoke: ocr core=${core} ok worker=${ocrWorkerPath()}`);
+  } catch (e) {
+    log(`smoke: ocr core=FAILED ${e instanceof Error ? e.message : String(e)}`);
   }
   // Renderer: did the React app mount its layout?
   try {

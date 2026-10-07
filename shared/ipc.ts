@@ -90,7 +90,7 @@ export interface AppInfo {
 }
 
 /** Licence files Help › About can open (see electron/licences.ts). The renderer opens them by id, never by path. */
-export type LicenceFileId = 'recut' | 'notices' | 'ffmpegBuild' | 'ffmpegLicense' | 'ffmpegReadme' | 'electron' | 'chromium';
+export type LicenceFileId = 'recut' | 'notices' | 'ffmpegBuild' | 'ffmpegLicense' | 'ffmpegReadme' | 'electron' | 'chromium' | 'tesseract';
 export interface LicenceFile { id: LicenceFileId; label: string; fileName: string }
 export type OpenLicenceResult = { ok: true } | { ok: false; error: string };
 
