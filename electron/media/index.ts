@@ -8,7 +8,7 @@
 import type { ID, JobInfo, MediaProbe } from '@shared/model';
 import {
   pathToMediaUrl, ffmpegMissingMessage,
-  type ExportRequest, type ExportStartResult, type FilmstripRequest, type ProxyRequest,
+  type ExportRequest, type ExportStartResult, type FilmstripRequest, type ProxyRequest, type ChannelProxyRequest,
   type SceneDetectRequest, type ThumbnailRequest, type WaveformData,
 } from '@shared/ipc';
 import type { OcrLanguageState, OcrRequest } from '@shared/ocr';
@@ -26,6 +26,7 @@ import { probeMedia } from './probe';
 import { cancelThumbRequests, getFilmstrip, getThumbnail } from './thumbs';
 import { getWaveform } from './waveform';
 import { startProxyJob } from './proxy';
+import { startChannelProxyJob } from './channelProxy';
 import { startSceneDetectJob } from './sceneDetect';
 import { extractSubtitles } from './subtitlesExtract';
 
@@ -100,6 +101,11 @@ export const mediaHandlers: MediaHandlers = {
     if (!getFfmpegPath()) throw new Error(ffmpegMissingMessage('ffmpeg'));
     const { job } = await startProxyJob(jobQueue, req);
     return job;
+  },
+
+  async startChannelProxy(req: ChannelProxyRequest): Promise<JobInfo> {
+    if (!getFfmpegPath()) throw new Error(ffmpegMissingMessage('ffmpeg'));
+    return startChannelProxyJob(jobQueue, req);
   },
 
   async startSceneDetect(req: SceneDetectRequest): Promise<JobInfo> {

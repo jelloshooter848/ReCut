@@ -12,7 +12,7 @@
 import { create } from 'zustand';
 import { produce, current, freeze, isDraftable } from 'immer';
 import type {
-  Bin, Clip, DetectedScene, ID, Marker, MediaItem, MediaKind, MediaProbe, Project, SceneRecord, Sequence,
+  Bin, Clip, DetectedScene, ID, Marker, MediaItem, MediaKind, MediaProbe, Project, ProxyInfo, SceneRecord, Sequence,
   SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock, SubtitleTrack, Track, Transition, TransitionType, TagVocabulary, SequenceView,
 } from '../../shared/model';
 import { uid } from '../../shared/ids';
@@ -26,7 +26,9 @@ import {
   addTransition as tlAddTransition, removeTransition as tlRemoveTransition, addTrack as tlAddTrack,
   removeTrack as tlRemoveTrack, reconcileTransitions, reconcileAll, rippleShift, addMarker as tlAddMarker,
   followClipMarkers, transitionLimit, setClipAudioStream as tlSetClipAudioStream, type NewClipSpec, type MediaDurationLookup,
+  setClipChannelSelection as tlSetClipChannelSelection, addChannelClip,
 } from '../../shared/timeline';
+import { centreClipName, centreExtraction } from '../../shared/audioChannels';
 import { emptyHistory, pushHistory, undoHistory, redoHistory, changedSequenceIds, undoLabel, redoLabel } from './history';
 import { proxyStreamStale } from '../playback/mediaSource';
 import type {
@@ -705,6 +707,15 @@ export const useStore = create<RecutStore>()((set, get) => {
       // A "ready" proxy whose file is gone/unreadable: forget it so playback falls back to the original.
       quiet((d) => { const m = d.media[id]; if (m && m.proxy.status !== 'none') m.proxy = { status: 'none' }; }, { dirty: true });
     },
+    setChannelProxies(id, patch) {
+      quiet((d) => {
+        const m = d.media[id];
+        if (!m) return;
+        const next: Record<string, ProxyInfo> = { ...(m.channelProxies ?? {}) };
+        for (const [k, v] of Object.entries(patch)) { if (v) next[k] = v; else delete next[k]; }
+        if (Object.keys(next).length) m.channelProxies = next; else delete m.channelProxies;
+      }, { dirty: true });
+    },
     setSceneDetectStatus(id, status) { quiet((d) => { const m = d.media[id]; if (m) m.sceneDetectStatus = status; }, { dirty: true }); },
     setDetectedScenes(id, boundaries, duration) {
       // Detection results also arrive from a background job; edits to the scenes (rename/merge/split) stay undoable.
@@ -1146,6 +1157,29 @@ export const useStore = create<RecutStore>()((set, get) => {
           if (m && proxyStreamStale(m, changed.filter((c) => c.mediaId === mediaId).map((c) => c.audioStream ?? m.preferredAudioStream))) m.proxy = { status: 'none' };
         }
       });
+    },
+    setClipChannelSelection(seqId, clipIds, selection) {
+      commit(selection ? 'Audio channels' : 'Normal mix', (d) => { const seq = d.sequences[seqId]; if (seq) tlSetClipChannelSelection(seq, clipIds, selection); });
+    },
+    extractCentreChannel(seqId, clipId) {
+      const { project } = get();
+      const seq = project.sequences[seqId];
+      if (!seq) return { ok: false, reason: 'No sequence.' };
+      const loc = findClip(seq, clipId);
+      if (!loc) return { ok: false, reason: 'Select a clip first.' };
+      if (loc.track.locked) return { ok: false, reason: 'The clip is on a locked track.' };
+      const ex = centreExtraction(seq, project.media, clipId);
+      if (!ex.ok) return ex;
+      let added: { clipId: ID; trackId: ID } | null = null;
+      commit('Extract Centre Channel', (d) => {
+        const s = d.sequences[seqId];
+        const r = s ? addChannelClip(s, clipId, { name: centreClipName(ex.source.name), audioStream: ex.stream.index, selection: { mode: 'channel', channel: 'FC' } }) : null;
+        if (r) added = { clipId: r.clip.id, trackId: r.trackId };
+      });
+      if (!added) return { ok: false, reason: 'The clip could not be extracted.' };
+      const a: { clipId: ID; trackId: ID } = added;
+      get().select([a.clipId]);
+      return { ok: true, ...a };
     },
     setClipSpeed(seqId, clipId, speed, opts = {}) {
       if (!(speed > 0) || !Number.isFinite(speed)) return;

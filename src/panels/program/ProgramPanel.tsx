@@ -350,7 +350,7 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
       const media = st.project.media[m.mediaId];
       items.push({ label: `${media?.name ?? clip?.name ?? m.mediaId} — ${m.reason}`, disabled: true });
     }
-    const mediaIds = [...new Set(status.missing.map((m) => m.mediaId))].filter((id) => {
+    const mediaIds = [...new Set(status.missing.filter((m) => !m.channelProxy).map((m) => m.mediaId))].filter((id) => {
       const m = st.project.media[id];
       return m && !m.offline && m.probe && !(m.proxy.status === 'ready' || m.proxy.status === 'running' || m.proxy.status === 'queued');
     });

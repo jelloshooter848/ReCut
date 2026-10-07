@@ -17,7 +17,7 @@
  */
 import type { Clip, ClipTransform, ID, MediaItem, Rational, Sequence, Track, Transition } from '../../shared/model';
 import { clipEnd, sourceTimeAt } from '../../shared/timeline';
-import { audioTrackOrdinal, mediaFps, mediaSize, mediaTimeOffset, proxyAudioStreams, resolveAudioStream, resolvePlaybackPath } from './mediaSource';
+import { audioTrackOrdinal, channelProxyPendingReason, clipChannelProxy, mediaFps, mediaSize, mediaTimeOffset, proxyAudioStreams, resolveAudioStream, resolvePlaybackPath } from './mediaSource';
 
 export interface LayerPlan {
   clipId: ID;
@@ -69,7 +69,11 @@ export interface AudioPlan {
   handle: boolean;
 }
 
-export interface MissingMedia { clipId: ID; mediaId: ID; reason: string }
+export interface MissingMedia {
+  clipId: ID; mediaId: ID; reason: string;
+  /** The clip's channel selection waits for its preview audio (a channel proxy, Roadmap §9). */
+  channelProxy?: boolean;
+}
 
 export interface FramePlan {
   frame: number;
@@ -268,6 +272,23 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
       if (clip.audio.muted) continue;
       const m = media[clip.mediaId];
       if (!m) { report(clip, 'media not in project'); continue; }
+      // A channel selection (one channel, or a controlled downmix) plays its channel proxy, made from the original
+      // with the export's pan filter, whatever the media proxy is; silent until it is ready, like a pending proxy.
+      const ch = clip.audio.channelSelection ? clipChannelProxy(m, clip) : null;
+      if (ch) {
+        if (m.offline) { report(clip, 'media offline'); continue; }
+        if (ch.info?.status !== 'ready' || !ch.info.path) {
+          if (!reported.has(clip.id)) { reported.add(clip.id); missing.push({ clipId: clip.id, mediaId: clip.mediaId, reason: channelProxyPendingReason(ch), channelProxy: true }); }
+          continue;
+        }
+        audio.push({
+          clipId: clip.id, mediaId: clip.mediaId, trackId: track.id, path: ch.info.path, usingProxy: true,
+          sourceTime: sourceTimeAt(clip, frame, fps), timeOffset: 0,
+          gain: dbToLinear(clip.audio.gain) * Math.max(0, clip.audio.volume) * fadeEnvelope(clip, frame) * weight,
+          trackVolume: Math.max(0, track.volume), speed: clip.speed, audioStream: ch.stream, audioTrack: -1, handle,
+        });
+        continue;
+      }
       const res = resolvePlaybackPath(m, useProxies);
       if (res.isImage) continue; // still images are silent
       if (!res.path) { report(clip, res.reason ?? 'not playable'); continue; }

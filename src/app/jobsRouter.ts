@@ -5,6 +5,7 @@
  *  - export: toasts
  *  - download (OCR language installs): toasts + refresh of the OCR language list (src/state/ocrStatus.ts)
  *  - ocr: done → the OCR subtitle track of that media + stream (added, or the earlier one replaced); toasts
+ *  - channelProxy: → media.channelProxies (preview audio of clips' channel selections; ./channelProxies.ts)
  * This is the ONLY job→project mirror (jobsStore → store): each terminal result is applied once (by job id) and
  * every write is additionally guarded by the media's current state, so results survive a project reload without
  * double-applying. Jobs are also mirrored into store.jobs so panels may read either store consistently.
@@ -23,6 +24,7 @@ import { useOcrStatus } from '@/state/ocrStatus';
 import { OCR_TITLE_TAIL, ocrTrackName } from '@/ocr/ocrUi';
 import { iso6392ForOcr, ocrLanguage, type OcrResult } from '@shared/ocr';
 import { uid } from '@shared/ids';
+import { routeChannelProxyJob } from './channelProxies';
 
 interface ProxyResultLike { path: string; width?: number; height?: number; cached?: boolean; audioStreams?: number[] }
 interface ExportResultLike { outputPath?: string; sidecarPath?: string; warnings?: string[] }
@@ -190,6 +192,7 @@ export function routeJobs(jobs: JobInfo[]): void {
       else if (job.kind === 'export') routeExport(job);
       else if (job.kind === 'download') routeDownload(job);
       else if (job.kind === 'ocr') routeOcr(job);
+      else if (job.kind === 'channelProxy') routeChannelProxyJob(job);
     } catch (e) {
       console.error('[jobsRouter] failed to route job', job.id, e);
     }

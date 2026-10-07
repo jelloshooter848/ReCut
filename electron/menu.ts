@@ -8,6 +8,7 @@
  *  file.importSubtitles, file.export
  *  edit.undo, edit.redo, edit.cut, edit.copy, edit.paste, edit.delete, edit.rippleDelete, edit.selectAll
  *  sequence.new, sequence.duplicate, sequence.addEdit, (Render & Export → file.export)
+ *  clip.speedDuration, edit.linkUnlink, edit.toggleClipEnabled, clip.extractCentreChannel
  *  view.zoomIn, view.zoomOut, view.zoomFit
  *  help.shortcuts, help.about
  * Open Recent entries send `ev:openProjectPath` with the file path instead.
@@ -93,6 +94,17 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
     ],
   };
 
+  const clipMenu: MenuItemConstructorOptions = {
+    label: 'Clip',
+    submenu: [
+      cmd('Speed / Duration…', 'clip.speedDuration'),
+      cmd('Link / Unlink', 'edit.linkUnlink'),
+      cmd('Enable / Disable', 'edit.toggleClipEnabled'),
+      { type: 'separator' },
+      cmd('Extract Centre Channel (Dialogue)', 'clip.extractCentreChannel'),
+    ],
+  };
+
   const viewMenu: MenuItemConstructorOptions = {
     label: 'View',
     submenu: [
@@ -147,7 +159,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       ],
     });
   }
-  template.push(fileMenu, editMenu, sequenceMenu, viewMenu, windowMenu, helpMenu);
+  template.push(fileMenu, editMenu, sequenceMenu, clipMenu, viewMenu, windowMenu, helpMenu);
   return template;
 }
 

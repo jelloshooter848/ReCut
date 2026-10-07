@@ -18,6 +18,7 @@ import type { ToastKind as StoreToastKind } from '@/state/types';
 import { registerEditingCommands } from '@/app/commands';
 import { initProjectLifecycle } from '@/app/project';
 import { initJobsRouter } from '@/app/jobsRouter';
+import { initChannelProxies } from '@/app/channelProxies';
 import { DialogHost } from '@/app/dialogs/ConfirmDialog';
 import { NewSequenceDialog } from '@/app/dialogs/NewSequenceDialog';
 import { PreferencesDialog } from '@/app/dialogs/PreferencesDialog';
@@ -56,6 +57,7 @@ function initApp(): void {
   registerEditingCommands();
   initProjectLifecycle();
   initJobsRouter();
+  initChannelProxies();
   bridgeStoreToasts();
   recutApi()?.appInfo().then(setFfmpegAvailability).catch(() => undefined);
 }
