@@ -4,6 +4,7 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import type { AudioStreamInfo, MediaKind, MediaProbe, Rational, SubtitleStreamInfo, VideoStreamInfo } from '@shared/model';
+import { STILL_IMAGE_CODECS, STILL_IMAGE_EXTS } from '@shared/media';
 import { assertAbsoluteMediaPath, ffmpegFileArg, runFfprobeJson } from './ffmpeg';
 
 // ------------------------------------------------------------------
@@ -93,19 +94,10 @@ export function streamRotation(s: FfprobeStream): number {
 
 // ------------------------------------------------------------------
 
-/**
- * Still-image extensions (FFmpeg decodes all of these; Chromium only some, see src/playback/mediaSource.ts). Keep in
- * step with STILL_IMAGE_EXTS in src/state/store.ts (tests/unit/stills.test.ts checks that the two agree).
- */
-export const IMAGE_EXT = new Set([
-  '.png', '.apng', '.jpg', '.jpeg', '.jpe', '.jfif', '.webp', '.bmp', '.tif', '.tiff', '.gif', '.heic', '.heif', '.avif',
-  '.jxl', '.tga', '.exr', '.psd', '.dpx', '.sgi', '.pcx', '.ppm', '.pgm', '.pbm', '.pam', '.qoi', '.hdr', '.jp2', '.j2k',
-]);
+/** Still-image extensions with the dot (shared/media.ts STILL_IMAGE_EXTS, shared with the renderer's classifiers). */
+export const IMAGE_EXT: ReadonlySet<string> = new Set(STILL_IMAGE_EXTS.map((e) => `.${e}`));
 /** Codecs that only ever carry stills; av1/hevc count only without duration (AVIF / HEIC items in a mov container). */
-const IMAGE_CODECS = new Set([
-  'png', 'apng', 'mjpeg', 'jpegls', 'webp', 'bmp', 'tiff', 'gif', 'jpegxl', 'targa', 'exr', 'psd', 'dpx', 'sgi', 'pcx',
-  'ppm', 'pgm', 'pgmyuv', 'pbm', 'pam', 'qoi', 'hdr', 'jpeg2000', 'av1', 'hevc',
-]);
+const IMAGE_CODECS: ReadonlySet<string> = new Set(STILL_IMAGE_CODECS);
 const SUBTITLE_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub', '.sbv']);
 
 function gcd(a: number, b: number): number {

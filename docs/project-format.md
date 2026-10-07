@@ -63,13 +63,18 @@ which writes it as-is.
   "probe": { "container": "matroska", "duration": 7620.1, "startTime": 0, "video": { "codec": "h264", "width": 1920, "height": 1080, "fps": {"num": 24000, "den": 1001}, "isVfr": false },
              "audio": [{ "index": 1, "codec": "ac3", "channels": 6, "layout": "5.1", "sampleRate": 48000, "language": "eng" }],
              "subtitles": [], "browserPlayable": false, "playabilityReason": "audio codec ac3 not supported by Chromium" },
-  "proxy": { "status": "ready", "path": "/…/cache/proxies/<key>_540p.mp4", "width": 960, "height": 540 },
+  "proxy": { "status": "ready", "path": "/…/cache/proxies/<key>_540p_all.mp4", "width": 960, "height": 540, "audioStreams": [1] },
   "detectedScenes": [{ "id": "…", "start": 0, "end": 83.2, "name": "Scene 001", "tags": [], "characters": [] }],
   "subtitleTrackIds": ["st…"], "preferredAudioStream": 1, "tags": [], "notes": ""
 }
 ```
 
-`path` must be absolute: FFmpeg receives it as `file:<path>`, and a relative path is refused. `probe.video.sar`
+`path` must be absolute: FFmpeg receives it as `file:<path>`, and a relative path is refused. `proxy.audioStreams`
+lists the source audio streams the proxy carries (absolute ffprobe indexes, in its track order): every stream for a
+`*_all.mp4` proxy, fewer when FFmpeg could not proxy one of them. It is optional: proxies from older builds have none
+and are read by their file name: `*_all.mp4` carries every stream, `*_a<N>.mp4` stream N, any other proxy the stream
+in its optional `audioStream`, else the first one. A still image's proxy is `<key>_still.png`. An invalid
+`audioStreams` (not a list of non-negative integers) is dropped on load. `probe.video.sar`
 (`{num, den}`) is the sample aspect ratio; it is kept only when both terms are positive safe integers and the ratio
 is within 1/16–16, otherwise it is dropped (square pixels). Probes from older builds have none.
 

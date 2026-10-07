@@ -51,7 +51,7 @@ export interface MediaHandlers {
   thumbnail(req: ThumbnailRequest): Promise<string>;
   filmstrip(req: FilmstripRequest): Promise<string[]>;
   cancelThumbnails(requestIds: string[]): Promise<void>;
-  waveform(path: string, mediaId?: ID): Promise<WaveformData>;
+  waveform(path: string, mediaId?: ID, streamIndex?: number): Promise<WaveformData>;
   startProxy(req: ProxyRequest): Promise<JobInfo>;
   startSceneDetect(req: SceneDetectRequest): Promise<JobInfo>;
   extractSubtitles(path: string, streamIndex: number): Promise<string>;
@@ -80,7 +80,8 @@ export function registerMediaIpc(h: MediaHandlers): void {
   ipcMain.handle(IPC.mediaThumbnail, (_e, req: ThumbnailRequest) => h.thumbnail(req));
   ipcMain.handle(IPC.mediaFilmstrip, (_e, req: FilmstripRequest) => h.filmstrip(req));
   ipcMain.handle(IPC.mediaThumbCancel, (_e, ids: unknown) => h.cancelThumbnails(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : []));
-  ipcMain.handle(IPC.mediaWaveform, (_e, p: string, mediaId?: ID) => h.waveform(assertString(p, 'path'), mediaId));
+  ipcMain.handle(IPC.mediaWaveform, (_e, p: string, mediaId?: ID, streamIndex?: unknown) =>
+    h.waveform(assertString(p, 'path'), mediaId, typeof streamIndex === 'number' && Number.isInteger(streamIndex) && streamIndex >= 0 ? streamIndex : undefined));
   ipcMain.handle(IPC.mediaProxyStart, (_e, req: ProxyRequest) => h.startProxy(req));
   ipcMain.handle(IPC.mediaSceneDetectStart, (_e, req: SceneDetectRequest) => h.startSceneDetect(req));
   ipcMain.handle(IPC.mediaExtractSubtitles, (_e, p: string, streamIndex: number) => h.extractSubtitles(assertString(p, 'path'), Number(streamIndex)));
@@ -248,10 +249,22 @@ export function registerIpc(deps: IpcDeps): void {
   });
 
   // --- project ---
+  /**
+   * Put a project at the top of the recent list. Best effort: the project was opened or saved whatever happens to
+   * prefs.json, so a failed write (a rename refused on Windows, a read-only profile) is logged, never reported as a
+   * failed open or save.
+   */
+  const noteRecent = async (projectPath: string): Promise<void> => {
+    try {
+      await io.addRecentProject(userData, projectPath);
+      deps.onRecentChanged?.();
+    } catch (err) {
+      console.warn(`could not add ${projectPath} to the recent projects:`, err);
+    }
+  };
   /** After a successful save: recent list, and the untitled autosave of the same project is dropped. */
   const afterSave = async (savedPath: string, projectId: unknown) => {
-    await Promise.all([io.addRecentProject(userData, savedPath), io.clearUntitledAutosaveForId(projectId, userData)]);
-    deps.onRecentChanged?.();
+    await Promise.all([noteRecent(savedPath), io.clearUntitledAutosaveForId(projectId, userData)]);
   };
   // A string is the project already serialized by the renderer (saveProjectJson): written as-is. An object
   // (saveProject, older renderers) is serialized here.
@@ -323,12 +336,11 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.projectLoad, async (_e, p: string): Promise<LoadReply> => {
     const res = await io.loadProjectFile(assertString(p, 'path'));
     if (!res.ok) return res;
-    const recent = io.addRecentProject(userData, res.path); // prefs I/O overlaps the encoding below
+    const recent = noteRecent(res.path); // prefs I/O overlaps the encoding below; never fails the open
     const { project, ...rest } = res;
     let reply: LoadReply;
-    try { reply = { ...rest, projectWire: encodeProjectWire(project) }; } catch (e) { await recent.catch(() => undefined); throw e; }
+    try { reply = { ...rest, projectWire: encodeProjectWire(project) }; } catch (e) { await recent; throw e; }
     await recent;
-    deps.onRecentChanged?.();
     return reply;
   });
   ipcMain.handle(IPC.projectAutosave, (_e, p: string | null, project: Project) => io.writeAutosave(typeof p === 'string' && p ? p : null, project, userData));

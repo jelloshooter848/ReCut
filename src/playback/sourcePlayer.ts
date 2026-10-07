@@ -9,7 +9,8 @@ import type { MediaItem, Rational } from '../../shared/model';
 import { frameCenterSeconds, secondsToFramesFloor } from '../../shared/time';
 import { pathToMediaUrl } from '../../shared/ipc';
 import { PlaybackClock } from './clock';
-import { resolvePlaybackPath, mediaFps, mediaDurationSeconds, toElementTime, fromElementTime, type PlaybackPathResolution } from './mediaSource';
+import { audioTrackOrdinal, resolvePlaybackPath, mediaFps, mediaDurationSeconds, toElementTime, fromElementTime, type PlaybackPathResolution } from './mediaSource';
+import { enabledAudioTrack, selectAudioTrack } from './audioTracks';
 
 const loadErrorListeners = new Set<(path: string) => void>();
 /** Subscribe to load/decode errors of any SourcePlayer element (path = the file that failed). */
@@ -52,6 +53,8 @@ export class SourcePlayer {
   private endedCbs = new Set<() => void>();
   private stateCbs = new Set<(s: SourcePlayerStatus) => void>();
   private disposers: (() => void)[] = [];
+  /** Audio track of the loaded file that plays media.preferredAudioStream (-1: the default track). */
+  private audioTrack = -1;
 
   constructor() {
     const el = document.createElement('video');
@@ -77,6 +80,8 @@ export class SourcePlayer {
       this.emitTime();
     });
     on('loadedmetadata', () => {
+      // The preferred stream, chosen before any seek of this load completes (see audioTracks.ts).
+      selectAudioTrack(el, this.audioTrack);
       if (this.state === 'loading') this.setState('ready');
       this.emitTime();
     });
@@ -134,7 +139,13 @@ export class SourcePlayer {
       return this.resolution;
     }
     const url = pathToMediaUrl(this.resolution.path);
-    if (this.el.src !== url) {
+    // Play the stream new clips take (media.preferredAudioStream), as the export renders it.
+    this.audioTrack = audioTrackOrdinal(media, this.resolution.usingProxy, media.preferredAudioStream);
+    // Another stream of the file already loaded: reload it, because switching the track of an element that has been
+    // sought stalls Chromium. The caller seeks back after load().
+    const otherTrack = this.audioTrack >= 0 && this.el.readyState >= 1 && this.el.audioTracks !== undefined
+      && this.audioTrack < this.el.audioTracks.length && enabledAudioTrack(this.el) !== this.audioTrack;
+    if (this.el.src !== url || otherTrack) {
       this.el.src = url;
       this.el.load();
       this.setState('loading');

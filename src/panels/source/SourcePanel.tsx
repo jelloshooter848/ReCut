@@ -36,11 +36,14 @@ function selectMedia(s: StoreState): MediaItem | undefined {
   return id ? s.project.media[id] : undefined;
 }
 
-/** Primitive key capturing everything that changes which file the player should load. */
-function selectLoadKey(s: StoreState): string {
+/**
+ * Primitive key capturing everything that changes what the player should load: the file, and the audio stream it
+ * plays (`preferredAudioStream`; changing it reloads the item so the Source Monitor switches track).
+ */
+export function selectLoadKey(s: StoreState): string {
   const m = selectMedia(s);
   if (!m) return '';
-  return [m.id, m.path, m.kind, m.offline ? 1 : 0, m.probe ? 1 : 0, m.probe?.browserPlayable ? 1 : 0, m.proxy.status, m.proxy.path ?? '', s.project.settings.useProxies ? 1 : 0].join('|');
+  return [m.id, m.path, m.kind, m.offline ? 1 : 0, m.probe ? 1 : 0, m.probe?.browserPlayable ? 1 : 0, m.proxy.status, m.proxy.path ?? '', s.project.settings.useProxies ? 1 : 0, m.preferredAudioStream ?? ''].join('|');
 }
 
 /**

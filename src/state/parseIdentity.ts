@@ -9,6 +9,8 @@
  *   "Show Name E05.mkv"                  → series "Show Name", episode 5
  *   "Movie Name (1999).mkv"              → title "Movie Name", year 1999
  */
+import { STILL_IMAGE_EXTS } from '../../shared/media';
+
 export interface EpisodeInfo {
   series?: string;
   season?: number;
@@ -140,7 +142,8 @@ export function episodeLabel(info: { season?: number; episode?: number; episodeE
 
 export const VIDEO_EXTS = ['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'ts', 'm2ts', 'mts', 'mpg', 'mpeg', 'flv', 'ogv', '3gp'];
 export const AUDIO_EXTS = ['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'ac3', 'eac3', 'dts', 'wma', 'opus', 'aiff', 'aif'];
-export const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tif', 'tiff'];
+/** Every still format FFmpeg decodes (shared/media.ts, the same list as the main-process classifier). */
+export const IMAGE_EXTS: string[] = [...STILL_IMAGE_EXTS];
 /** Text subtitle formats; these are never media items (they attach to one). */
 export const SUBTITLE_EXTS = ['srt', 'vtt', 'ass', 'ssa'];
 

@@ -81,8 +81,18 @@ export interface ProxyInfo {
   error?: string;
   width?: number;
   height?: number;
-  /** Audio stream index baked into the proxy (undefined: the source's first audio stream / unknown). */
+  /**
+   * Older single-stream proxies only: the audio stream baked into it (undefined: its `_a<N>` file suffix, else the
+   * source's first audio stream). Proxies named `*_all.mp4` carry every audio stream (src/playback/mediaSource.ts
+   * proxyAudioStreams).
+   */
   audioStream?: number;
+  /**
+   * The source audio streams the proxy carries (absolute ffprobe indexes, in its track order), as the proxy job
+   * recorded them (electron/media/proxy.ts ProxyResult.audioStreams): every stream, or a fallback's subset when one
+   * stream could not be decoded or encoded. Proxies from before 0.4 have none.
+   */
+  audioStreams?: number[];
 }
 
 export interface DetectedScene {

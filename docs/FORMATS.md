@@ -16,10 +16,15 @@ The **Import Media** dialog (Ctrl+I, or **Import…** in the Project panel) filt
 
 | Group | Extensions |
 |---|---|
-| Video | mp4, mkv, mov, avi, webm, m4v, mpg, mpeg, ts, m2ts, wmv, flv |
-| Audio | mp3, wav, aac, m4a, flac, ogg, ac3 |
-| Images | png, jpg, jpeg, gif, bmp, webp |
-| All Files | * (any file FFprobe can read, e.g. tif, avif, heic, jxl stills, mka, ...) |
+| All media | every extension below |
+| Video | mp4, m4v, mov, mkv, webm, avi, wmv, ts, m2ts, mts, mpg, mpeg, flv, ogv, 3gp |
+| Audio | mp3, m4a, aac, wav, flac, ogg, oga, ac3, eac3, dts, wma, opus, aiff, aif |
+| Images | png, apng, jpg, jpeg, jpe, jfif, webp, bmp, tif, tiff, gif, heic, heif, avif, jxl, tga, exr, psd, dpx, sgi, pcx, ppm, pgm, pbm, pam, qoi, hdr, jp2, j2k |
+| Subtitles | srt, vtt |
+| All files | * (any file FFprobe can read, e.g. mka) |
+
+The Images list is the one list ReCut uses to recognise still images (`shared/media.ts`): an image file goes into the
+**Graphics** bin, and the probe treats a picture without duration from one of these files as a still.
 
 You can also drag files from the OS onto the Project panel. Subtitle files (`.srt`, `.vtt`) included in a media
 import are attached as sidecars when they match a video (see below). Otherwise they are skipped with a hint to use
@@ -49,18 +54,40 @@ not supported by Chromium"). Typical cases:
 - AC-3, E-AC-3, DTS or TrueHD audio, even when the video is H.264
 - MPEG-TS / M2TS, AVI, WMV, FLV containers
 
-**Still images** are shown in the Source monitor. They are not drawn in the Program monitor (see
-[LIMITATIONS](LIMITATIONS.md)), but they export correctly.
+**Still images** show in the Source and Program monitors and export as stills:
+
+- PNG, JPEG (`jpg`, `jpeg`, `jpe`, `jfif`), WebP, GIF and BMP are drawn directly from the original.
+- Every other still FFmpeg decodes (TIFF, TGA, EXR, PSD, JPEG XL, AVIF, HEIC, DPX, ...) is previewed from a **PNG
+  proxy** that FFmpeg makes on import (`<cache>/proxies/<key>_still.png`): the first picture, upright (FFmpeg applies
+  the EXIF / display-matrix orientation), un-squeezed to square pixels, RGBA when the source has alpha, the long side
+  capped at 3840 px. It is queued even with **Use proxies** off, because without it the preview has nothing to draw.
+  AVIF goes through the proxy although Chromium could draw it, so the preview shows FFmpeg's decode, the one the
+  export uses. Until the PNG exists, the Source monitor says "<EXT> image needs a preview proxy" and the Program
+  monitor counts it under **Needs proxy**.
+- An **animated GIF** (more than one frame) is a video: it gets an MP4 proxy like any file Chromium cannot play. A
+  one-frame GIF is a still.
+- What your FFmpeg build decodes decides which stills import at all. See [LIMITATIONS](LIMITATIONS.md#preview-chromium-and-proxies)
+  (HEIC needs FFmpeg 7.1 or later).
 
 ### Proxies
 
 - With **Use proxies** on (the default, in the Project panel toolbar, Jobs › Proxies, or Preferences), importing a
   video or audio file that Chromium cannot decode **queues a proxy automatically**. A toast says
-  "Generating proxies for N files the preview can't decode".
+  "Generating proxies for N files the preview can't decode". Still images get their PNG proxy whatever the setting
+  (see above).
 - Proxy format: MP4, H.264 (`veryfast`, CRF 23, 12-frame GOP for snappy seeking), scaled to the proxy height (540p
   by default; 720p and 1080p can be chosen in Jobs › Proxies › Size, never larger than the source), and AAC 160 kb/s
-  with at most 2 channels. A 5.1 source therefore gets a stereo proxy. The proxy carries **one** audio stream: the
-  media's selected **Audio stream** in the Media Inspector, or the first one.
+  with at most 2 channels per track. A 5.1 source therefore gets a stereo proxy.
+- The proxy carries **every** audio stream of the source, in source order, one AAC track each
+  (`<key>_<height>p_all.mp4`). The preview picks the track of each clip's stream, so changing a stream never needs a
+  new proxy.
+- If FFmpeg cannot decode or encode one of the streams, that run fails, and the proxy is retried with only the
+  streams FFmpeg can decode (`<key>_<height>p_a<N>_a<M>….mp4`), then with the media's selected stream alone
+  (`<key>_<height>p_a<N>.mp4`; the first decodable stream when that one cannot be decoded). The project records which streams the proxy carries. A clip whose stream is not in it
+  previews the proxy's first track.
+- Proxies from before 0.4 carry one stream (`<key>_<height>p_a<N>.mp4`, or `<key>_<height>p.mp4` for the first).
+  They stay in use while every clip plays that stream; when a clip or the media needs another one, the proxy is
+  marked stale and, with proxies on, rebuilt with every stream.
 - Proxies are cached under `<cache>/proxies/` and keyed by path + size + mtime, so a re-import reuses them.
 - You can also generate a proxy manually: right-click › **Generate Proxy**, Media Inspector › **Generate**, the
   Program chip **Generate proxies**, or the bulk buttons in Jobs › Proxies.
@@ -94,9 +121,12 @@ not supported by Chromium"). Typical cases:
   channels). That sets the export defaults. Mixing itself is level / gain / fades per clip and volume per track.
   There is no panning or surround positioning.
 - **Multi-stream files** (e.g. an English stereo track and a Japanese 5.1 track): choose the stream in Media
-  Inspector › **Audio stream** (used for new clips) or per clip in the Clip Inspector. Export renders that exact
-  stream. The preview plays the proxy's stream (the media's selected stream) for proxied files, and Chromium's
-  default (first) track for directly playable files.
+  Inspector › **Audio stream** (used for new clips and by the Source monitor) or per clip in Clip Inspector › Audio ›
+  **Stream** (**Media default** follows the media's choice). Export renders that exact stream, and so does the
+  preview: the Program monitor plays, and the timeline draws, each clip's stream, from the original or from the
+  proxy, which carries every stream. The Source monitor plays and draws the media's selected stream. A stream the file does not have falls back to the first audio stream, as in
+  the export. The preview selects the track through Chromium's `audioTracks` (see
+  [LIMITATIONS](LIMITATIONS.md#audio)).
 
 ## Subtitles
 

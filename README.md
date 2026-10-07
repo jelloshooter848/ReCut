@@ -51,8 +51,10 @@ Electron + React + TypeScript. FFmpeg does all media work. See [CHANGELOG.md](CH
 
 ### Media
 - **Proxies.** Media that Chromium cannot decode (HEVC, AC-3, DTS, MPEG-TS, ...) gets a 540p H.264 proxy
-  automatically. Proxies are used only for preview: export always reads the originals. Still images (PNG, JPEG, WebP,
-  GIF, BMP) are drawn directly and never need one.
+  automatically. It carries every audio stream, so the preview plays each clip's selected stream, as the export does.
+  Proxies are used only for preview: export always reads the originals. Still images in PNG, JPEG, WebP, GIF and BMP
+  are drawn directly; every other still FFmpeg decodes (TIFF, TGA, EXR, PSD, JPEG XL, AVIF, HEIC, ...) is previewed
+  from a PNG made on import.
 - **Relink.** Offline detection, a folder search that matches by name + size, and per-file Locate.
 - **5.1.** 5.1 sources can be exported as 5.1 AC-3, or as a stereo downmix.
 - **Export presets.** 1080p High Quality, 1080p Smaller File, 4K High Quality, 720p Preview, 1080p 5.1 Surround,

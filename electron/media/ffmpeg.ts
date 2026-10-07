@@ -115,6 +115,42 @@ export function getFfmpegVersion(): Promise<string | null> {
 }
 
 /**
+ * Audio codecs a `ffmpeg -codecs` listing says this build decodes (flags `D` and `A`), by codec name: the names
+ * ffprobe reports as `codec_name` (MediaProbe audio `codec`).
+ */
+export function parseAudioDecoders(codecsListing: string): Set<string> {
+  const out = new Set<string>();
+  for (const line of codecsListing.split(/\r?\n/)) {
+    const m = /^\s*D[.E]A[.I][.L][.S]\s+(\S+)/.exec(line);
+    if (m) out.add(m[1]);
+  }
+  return out;
+}
+
+const audioDecoders = new Map<string, Promise<ReadonlySet<string> | null>>();
+
+/**
+ * Audio codecs the resolved ffmpeg decodes (see parseAudioDecoders), read once per binary. Null when unknown (no
+ * ffmpeg, or the listing failed or was empty; a failure is not cached).
+ */
+export function ffmpegAudioDecoders(): Promise<ReadonlySet<string> | null> {
+  const bin = getFfmpegPath();
+  if (!bin) return Promise.resolve(null);
+  let p = audioDecoders.get(bin);
+  if (!p) {
+    p = new Promise((resolve) => {
+      execFile(bin, ['-hide_banner', '-codecs'], { timeout: 20_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout) => {
+        const set = err ? null : parseAudioDecoders(String(stdout));
+        if (!set || set.size === 0) { audioDecoders.delete(bin); return resolve(null); }
+        resolve(set);
+      });
+    });
+    audioDecoders.set(bin, p);
+  }
+  return p;
+}
+
+/**
  * Major version from an `ffmpeg -version` banner: "6.1.1-3ubuntu5" -> 6, "9.0.2-essentials_build" -> 9,
  * "n7.1-12-g…" -> 7. Git master builds ("N-118000-g…", "git-2025-…") are treated as current (99). Unknown -> 0.
  */

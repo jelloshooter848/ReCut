@@ -47,6 +47,14 @@ stream than the export renders. Still images other than PNG / JPEG / WebP / GIF 
 monitor. These are correctness gaps, so they come before large new features.
 **Plan:** honour per-clip audio stream selection in the preview by proxying every audio stream or selecting
 `audioTracks`. Show TIFF, HEIC, AVIF, JPEG XL and similar stills through a short image proxy (PNG) built on import.
+**Status: done (7 October 2026, release 0.4.0).** The preview plays each clip's selected audio stream, as the export
+does: Chromium's `audioTracks` (the `AudioVideoTracks` Blink feature) picks the track of a directly played file, and
+proxies carry every audio stream (`<key>_<h>p_all.mp4`; when FFmpeg cannot proxy one stream, the decodable ones, then
+the selected one alone). Clip Inspector › Audio › **Stream** picks a clip's stream; the Source monitor and the
+waveforms follow the selected stream. Every still FFmpeg decodes previews in the Source and Program monitors, from a
+PNG proxy made on import when Chromium cannot draw it (TIFF, TGA, EXR, PSD, JPEG XL, AVIF, HEIC, ...). What remains
+depends on the FFmpeg build (HEIC needs 7.1 or later) and is listed in [LIMITATIONS](LIMITATIONS.md). Finding M-05 of
+the media attack is resolved.
 
 ## 3. Pre-export warnings
 

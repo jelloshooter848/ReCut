@@ -1,6 +1,7 @@
 /**
- * Waveform peaks: decode the first audio stream to mono u8 PCM at a low sample rate and keep the
- * peak absolute amplitude per bucket (50 buckets/sec). Cached as `waves/<key>.pk` (+ `<key>.json`).
+ * Waveform peaks: decode one audio stream (the first, or `streamIndex`) to mono u8 PCM at a low sample rate and keep
+ * the peak absolute amplitude per bucket (50 buckets/sec). Cached as `waves/<key>.pk` (+ `<key>.json`) for the first
+ * stream and `waves/<key>_s<index>.pk` for another one.
  *
  * The decode is streamed; memory stays O(peaks) even for multi-hour movies.
  */

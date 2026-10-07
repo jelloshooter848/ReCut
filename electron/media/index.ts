@@ -60,9 +60,9 @@ export const mediaHandlers: MediaHandlers = {
     cancelThumbRequests(requestIds);
   },
 
-  async waveform(path: string, _mediaId?: ID): Promise<WaveformData> {
+  async waveform(path: string, _mediaId?: ID, streamIndex?: number): Promise<WaveformData> {
     const key = await cacheKeyForPath(path);
-    return getWaveform(path, key);
+    return getWaveform(path, key, { streamIndex });
   },
 
   async startProxy(req: ProxyRequest): Promise<JobInfo> {

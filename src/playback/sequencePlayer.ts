@@ -22,6 +22,7 @@ import { PlaybackClock } from './clock';
 import { MediaElementPool, poolKey } from './elementPool';
 import { planFrame, type FramePlan, type LayerPlan, type AudioPlan, type MissingMedia } from './planner';
 import { clampElementTime, toElementTime } from './mediaSource';
+import { selectAudioTrack } from './audioTracks';
 import { pathToMediaUrl } from '../../shared/ipc';
 import { videoDisplaySize } from '../../shared/media';
 
@@ -97,6 +98,15 @@ const RESOLUTION_FACTOR: Record<SequencePlayerSettings['playbackResolution'], nu
 let playerCounter = 0;
 
 /**
+ * Role prefix of a pooled element: the kind, plus the audio track for an element that plays a chosen track of a
+ * multi-stream file (`audio:s<N>`). An element is dedicated to its track: a clip on another stream of the same file
+ * gets another element rather than switching this one mid-play (see audioTracks.ts).
+ */
+export function slotBase(kind: 'video' | 'audio', audioTrack?: number): string {
+  return kind === 'audio' && audioTrack !== undefined && audioTrack >= 0 ? `audio:s${audioTrack}` : kind;
+}
+
+/**
  * A pooled element lent to one clip. Elements are pooled per (path, kind, slot), not per clip: when a clip leaves the
  * plan its slot is free, and the next clip on the same file reuses the already-loaded element (one seek instead of a
  * new <video>, a new decoder and, for audio, a new MediaElementAudioSourceNode). Slot `k` is the k-th element of that
@@ -106,6 +116,8 @@ interface Slot<E extends HTMLMediaElement = HTMLMediaElement> {
   el: E;
   path: string;
   role: string;
+  /** Role prefix: 'video', 'audio', or 'audio:s<N>' for an element dedicated to audio track N (see slotBase). */
+  base: string;
   /**
    * False from the moment the element is lent to a clip until it has landed on that clip's source time. A reused
    * element still shows (and plays) the previous clip's position meanwhile, so it is not drawn and stays silent.
@@ -702,13 +714,14 @@ export class SequencePlayer {
    * (or whose file changed) are unpinned and passed to `onFree` (pause / silence); their elements stay pooled for the
    * next clip on that file.
    */
-  private assignSlots<E extends HTMLMediaElement>(kind: 'video' | 'audio', items: readonly { clipId: ID; path: string }[], active: Map<ID, Slot<E>>,
+  private assignSlots<E extends HTMLMediaElement>(kind: 'video' | 'audio', items: readonly { clipId: ID; path: string; audioTrack?: number }[], active: Map<ID, Slot<E>>,
     acquire: (path: string, role: string) => E, onFree: (slot: Slot<E>) => void): void {
-    const wanted = new Map<ID, string>();
-    for (const it of items) wanted.set(it.clipId, it.path);
+    const wanted = new Map<ID, { path: string; base: string }>();
+    for (const it of items) wanted.set(it.clipId, { path: it.path, base: slotBase(kind, it.audioTrack) });
     const claimed = new Set<string>();
     for (const [clipId, slot] of active) {
-      if (wanted.get(clipId) === slot.path && this.pool.has(slot.path, slot.role)) {
+      const w = wanted.get(clipId);
+      if (w && w.path === slot.path && w.base === slot.base && this.pool.has(slot.path, slot.role)) {
         claimed.add(poolKey(slot.path, slot.role));
         this.pool.touch(slot.path, slot.role);
         continue;
@@ -718,15 +731,16 @@ export class SequencePlayer {
     }
     for (const it of items) {
       if (active.has(it.clipId)) continue;
+      const base = slotBase(kind, it.audioTrack);
       let k = 0;
-      let role = `${kind}:${k}#${this.id}`;
-      while (claimed.has(poolKey(it.path, role))) role = `${kind}:${++k}#${this.id}`;
+      let role = `${base}:${k}#${this.id}`;
+      while (claimed.has(poolKey(it.path, role))) role = `${base}:${++k}#${this.id}`;
       claimed.add(poolKey(it.path, role));
       const el = acquire(it.path, role);
       this.pool.pin(it.path, role); // never evicted while lent, even with more files in view than the pool holds
       this.acquired.set(poolKey(it.path, role), { path: it.path, role });
       this.ensureListeners(el);
-      active.set(it.clipId, { el, path: it.path, role, settled: false, sought: false });
+      active.set(it.clipId, { el, path: it.path, role, base, settled: false, sought: false });
     }
   }
 
@@ -799,10 +813,22 @@ export class SequencePlayer {
       const slot = this.activeAudio.get(a.clipId);
       if (!slot) continue;
       if (slot.el.muted) slot.el.muted = false;
+      // The clip's audio stream (the one export renders): chosen once per element, before its first seek (a switch
+      // after a seek stalls Chromium; see audioTracks.ts). Until then the element is neither sought nor played.
+      const track = selectAudioTrack(slot.el, a.audioTrack);
+      if (track === 'waiting') { slot.settled = false; this.audioNodes.get(slot.el)?.gain.gain.setTargetAtTime(0, now, 0.01); continue; }
       const nodes = this.audioNodesFor(slot.el);
       if (!nodes) continue;
+      const target = this.clampToMedia(slot.el, a.sourceTime, a.timeOffset);
+      if (track === 'switched') {
+        // Silent until it has landed on the new track: seek now (select -> seek -> play is the clean order).
+        slot.settled = false;
+        if (!slot.el.paused) slot.el.pause();
+        slot.el.currentTime = target;
+        slot.sought = true;
+      }
       // Scrubbing / reverse / fast shuttle (not native): silent, but keep the element parked near the frame.
-      this.syncElement(slot, this.clampToMedia(slot.el, a.sourceTime, a.timeOffset), a.speed, native, native ? DRIFT_TOLERANCE : 0.25);
+      this.syncElement(slot, target, a.speed, native, native ? DRIFT_TOLERANCE : 0.25);
       // Track volume is folded into the element's gain: one GainNode per pooled element, none per track (P-12).
       nodes.gain.gain.setTargetAtTime(slot.settled ? a.gain * a.trackVolume : 0, now, 0.01);
     }

@@ -41,9 +41,11 @@ field to type a value; see [SHORTCUTS](SHORTCUTS.md#timecode-entry) for what it 
    - Audio goes into **Audio** and images into **Graphics**.
 3. Subtitle files next to a video (`Episode.srt`, `Episode.en.srt`, `.vtt`) are attached automatically.
 4. Files Chromium cannot decode (HEVC, AC-3/DTS audio, TS, ...) get a **proxy** automatically while **Use proxies** is
-   on. Watch progress in the top-bar jobs indicator or in **Jobs › Proxies**. Still images (PNG, JPEG, WebP, GIF,
-   BMP) never need a proxy: the monitors draw them directly. Other image formats (TIFF, HEIC, ...) export correctly but
-   do not show in the Program monitor; convert them to PNG or JPEG for preview.
+   on. Watch progress in the top-bar jobs indicator or in **Jobs › Proxies**. Still images in PNG, JPEG, WebP, GIF and
+   BMP are drawn directly. Other stills (TIFF, TGA, EXR, PSD, JPEG XL, AVIF, HEIC, ...) get a PNG preview made by
+   FFmpeg on import, even with **Use proxies** off; until it is ready the monitors show that the image needs a preview
+   proxy. Which formats work depends on your FFmpeg (HEIC needs FFmpeg 7.1 or later; see
+   [LIMITATIONS](LIMITATIONS.md#preview-chromium-and-proxies)).
 5. If a yellow banner says **FFmpeg was not found**, install FFmpeg (see [INSTALL](INSTALL.md)) and restart ReCut.
    Import, proxies and export do not work without it.
 
@@ -55,10 +57,13 @@ field to type a value; see [SHORTCUTS](SHORTCUTS.md#timecode-entry) for what it 
   season/episode table, then **Organize**. For films, right-click › **Set Collection / Franchise…** (e.g. Franchise
   "Galaxy Saga", Collection "Original Trilogy"). The Media Inspector › **Identity** section edits one item.
 - Right-click › **Set Category**, **Rename** (F2), or **Tag…**. Use the colour labels in the Inspector.
-- The **Inspector** shows media info (codecs, fps, audio streams, VFR), the **Audio stream** to use for new clips,
-  proxy and scene status, and attached subtitle tracks. Changing the **Audio stream** of a file whose proxy carries
-  another stream marks that proxy stale. With proxies on, a file that needs one gets a new proxy for the chosen
-  stream.
+- The **Inspector** shows media info (codecs, fps, audio streams, VFR), the **Audio stream** for new clips and the
+  Source monitor, proxy and scene status, and attached subtitle tracks.
+- **Several audio streams** (e.g. an English and a Japanese track): select a clip and pick its stream in Clip
+  Inspector › Audio › **Stream**. **Media default** follows the media's **Audio stream**. The Program monitor plays,
+  the timeline waveform shows, and the export renders the clip's stream. A proxy carries every stream, so switching
+  needs no new proxy; a proxy made by ReCut before 0.4 carries one stream and is rebuilt (with proxies on) when a clip
+  needs another.
 
 ## 3. Detect scenes
 

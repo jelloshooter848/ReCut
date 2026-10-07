@@ -726,7 +726,22 @@ export function normalizePrefs(raw: unknown): AppPreferences {
   return out;
 }
 
-export async function readPrefs(userData: string): Promise<AppPreferences> {
+/**
+ * prefs.json is read and replaced (temp file + rename) by several callers at once: the window bounds, the recent
+ * list on every open and save, the renderer's prefs and AppInfo (cache folder) requests. On Windows a rename over a
+ * file another handle has open fails with EPERM, so a read of prefs.json in flight made a concurrent write fail,
+ * and with it the project open that updates the recent list (bugs/closed/2026-10-07-startup-open-fails-prefs-rename-windows.md).
+ * Every prefs operation of this process runs here, one at a time; a read-modify-write is one operation, so
+ * concurrent updates no longer drop each other's changes either.
+ */
+let prefsQueue: Promise<unknown> = Promise.resolve();
+function prefsOp<T>(fn: () => Promise<T>): Promise<T> {
+  const run = prefsQueue.then(fn, fn);
+  prefsQueue = run.catch(() => undefined);
+  return run;
+}
+
+async function readPrefsNow(userData: string): Promise<AppPreferences> {
   try {
     const text = await fsp.readFile(prefsPath(userData), 'utf8');
     return normalizePrefs(JSON.parse(text));
@@ -735,15 +750,30 @@ export async function readPrefs(userData: string): Promise<AppPreferences> {
   }
 }
 
-export async function writePrefs(userData: string, prefs: AppPreferences): Promise<void> {
+export function readPrefs(userData: string): Promise<AppPreferences> {
+  return prefsOp(() => readPrefsNow(userData));
+}
+
+async function writePrefsNow(userData: string, prefs: AppPreferences): Promise<void> {
   await atomicWriteFile(prefsPath(userData), JSON.stringify(prefs, null, 2), { backup: false });
 }
 
-export async function updatePrefs(userData: string, patch: Partial<AppPreferences>): Promise<AppPreferences> {
-  const cur = await readPrefs(userData);
-  const next = normalizePrefs({ ...cur, ...patch });
-  await writePrefs(userData, next);
-  return next;
+export function writePrefs(userData: string, prefs: AppPreferences): Promise<void> {
+  return prefsOp(() => writePrefsNow(userData, prefs));
+}
+
+/** Read prefs.json, apply `change` and write the result, as one prefs operation. */
+function changePrefs(userData: string, change: (cur: AppPreferences) => Partial<AppPreferences>): Promise<AppPreferences> {
+  return prefsOp(async () => {
+    const cur = await readPrefsNow(userData);
+    const next = normalizePrefs({ ...cur, ...change(cur) });
+    await writePrefsNow(userData, next);
+    return next;
+  });
+}
+
+export function updatePrefs(userData: string, patch: Partial<AppPreferences>): Promise<AppPreferences> {
+  return changePrefs(userData, () => patch);
 }
 
 /** Pure: insert `p` at the front of a recent list, deduped, capped at MAX_RECENT. */
@@ -754,15 +784,13 @@ export function pushRecent(list: string[], p: string): string[] {
 }
 
 export async function addRecentProject(userData: string, p: string): Promise<string[]> {
-  const cur = await readPrefs(userData);
-  const next = await updatePrefs(userData, { recentProjects: pushRecent(cur.recentProjects, p) });
+  const next = await changePrefs(userData, (cur) => ({ recentProjects: pushRecent(cur.recentProjects, p) }));
   return next.recentProjects;
 }
 
 export async function removeRecentProject(userData: string, p: string): Promise<string[]> {
-  const cur = await readPrefs(userData);
   const resolved = path.resolve(p);
-  const next = await updatePrefs(userData, { recentProjects: cur.recentProjects.filter((x) => path.resolve(x) !== resolved) });
+  const next = await changePrefs(userData, (cur) => ({ recentProjects: cur.recentProjects.filter((x) => path.resolve(x) !== resolved) }));
   return next.recentProjects;
 }
 
