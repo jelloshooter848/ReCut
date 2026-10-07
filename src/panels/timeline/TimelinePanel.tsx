@@ -108,6 +108,12 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const suppressFlip = useRef(false);
   const headerStart = useRef(headerWidth);
   const [width, setWidth] = useState(0);
+  /**
+   * Viewport x (CSS px) of the tracks column's left edge, the playhead layer's containing block: the playhead snaps
+   * to the window's device pixel grid, which a zone split can put at a fractional device offset (e.g. x.5 at dpr 1.5).
+   * Re-measured whenever the column is resized (which also covers header-width and zone-split changes) or dpr changes.
+   */
+  const [colLeft, setColLeft] = useState(0);
   /** Client width of the tracks content (the tracks column minus a vertical scrollbar). */
   const [viewW, setViewW] = useState(0);
   const mountRef = useRef<MountRange | null>(null);
@@ -121,13 +127,14 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   // ---- geometry -----------------------------------------------------------------------------
   useLayoutEffect(() => {
     const el = tracksColRef.current; const sc = areaRef.current; if (!el || !sc) return;
-    const measure = () => { setWidth(el.clientWidth); setViewW(sc.clientWidth); syncScrollLeft(); syncHScroll(); };
+    const measure = () => { setWidth(el.clientWidth); setViewW(sc.clientWidth); setColLeft(el.getBoundingClientRect().left); syncScrollLeft(); syncHScroll(); };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el); ro.observe(sc);
     return () => ro.disconnect();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (active) { setWidth(tracksColRef.current?.clientWidth ?? 0); setViewW(areaRef.current?.clientWidth ?? 0); syncScrollLeft(); syncHScroll(); } }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => { const el = tracksColRef.current; if (el) setColLeft(el.getBoundingClientRect().left); }, [dpr, active, width]);
   // Let the global View › Zoom commands use the real viewport width.
   useEffect(() => { if (width > 0) setTimelineViewportWidth(width); }, [width]);
 
@@ -712,7 +719,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
               </div>
             </div>
           </div>
-          <Playhead seqId={seqId} zoom={zoom} scroll={scroll} width={width} dpr={dpr} suppressFlip={suppressFlip} />
+          <Playhead seqId={seqId} zoom={zoom} scroll={scroll} width={width} dpr={dpr} originPx={colLeft} suppressFlip={suppressFlip} />
           <div className="tl-hscroll" ref={hscrollRef} onScroll={hScroll.onScroll}><div style={{ width: contentPx }} /></div>
         </div>
       </div>

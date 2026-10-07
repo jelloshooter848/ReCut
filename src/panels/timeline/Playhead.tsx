@@ -3,8 +3,8 @@
  * and page-flips the view when the playhead leaves it (playback, keyboard stepping).
  *
  * Deliberate rendering trade-off (roadmap §1, A4; docs/attack/performance.md): the line and its head are one
- * composited layer (will-change: transform) moved by transform only, at playheadX (frameToX snapped to a device
- * pixel). The transform is held by a paused Web Animation whose two keyframes are both the target transform (see
+ * composited layer (will-change: transform) moved by transform only, by whole device pixels (playheadLayerPos: the
+ * line lands on the window's device pixel nearest frameToX). The transform is held by a paused Web Animation whose two keyframes are both the target transform (see
  * holdTransform): Chromium applies a change of an animated transform to the compositor directly, while a plain
  * style.transform change, even on a will-change layer, re-layerizes the whole page every frame. A paused animation
  * produces no frames while the playhead is still. The position is set in a layout effect of the same React commit
@@ -13,7 +13,7 @@
  */
 import React, { useLayoutEffect, useRef } from 'react';
 import { useStore, usePlayhead } from '@/state';
-import { frameToX, pageFlipScroll, playheadX } from './viewMath';
+import { frameToX, pageFlipScroll, playheadLayerPos } from './viewMath';
 import { RULER_H } from './types';
 import { snappedBorderPx } from './waveBars';
 
@@ -24,11 +24,13 @@ export interface PlayheadProps {
   width: number;
   /** Device pixel ratio (the line snaps to device pixels). */
   dpr: number;
+  /** Viewport x (CSS px) of the lane's left edge, so the line snaps to the window's device pixel grid (playheadX). */
+  originPx?: number;
   /** When true (e.g. during a ruler scrub or clip drag) the view is not auto-flipped. */
   suppressFlip: React.MutableRefObject<boolean>;
 }
 
-export function Playhead({ seqId, zoom, scroll, width, dpr, suppressFlip }: PlayheadProps) {
+export function Playhead({ seqId, zoom, scroll, width, dpr, originPx = 0, suppressFlip }: PlayheadProps) {
   const playhead = usePlayhead(seqId);
   const widthRef = useRef(width);
   widthRef.current = width;
@@ -61,7 +63,8 @@ export function Playhead({ seqId, zoom, scroll, width, dpr, suppressFlip }: Play
 
   const x = frameToX(playhead, zoom, scroll);
   if (x < -8 || x > width + 8) return null;
-  return <PlayheadLayer x={playheadX(playhead, zoom, scroll, dpr)} dpr={dpr} />;
+  const pos = playheadLayerPos(playhead, zoom, scroll, dpr, originPx);
+  return <PlayheadLayer x={pos.tx} shift={pos.shift} dpr={dpr} />;
 }
 
 const HEAD_STYLE = { height: RULER_H * 0.55 };
@@ -97,14 +100,27 @@ export function holdTransform(el: TransformTarget, transform: string, held: { cu
 /** Web Animations available (renderer): the layer's transform is held by holdTransform, not by the style attribute. */
 const HOLD = typeof Element !== 'undefined' && typeof Element.prototype.animate === 'function';
 
-/** The playhead's layer at `x` (CSS px from the lane's left edge, on a device pixel: playheadX). */
-export function PlayheadLayer({ x, dpr = 1 }: { x: number; dpr?: number }) {
+const SHIFT_STYLES = new Map<number, React.CSSProperties | undefined>();
+/** Layout offset of the layer (`left: -shift`, see playheadLayerPos); undefined (the CSS left: 0) when 0. */
+function shiftStyle(shift: number): React.CSSProperties | undefined {
+  if (!shift) return undefined;
+  let st = SHIFT_STYLES.get(shift);
+  if (!st) { st = { left: -shift }; SHIFT_STYLES.set(shift, st); }
+  return st;
+}
+
+/**
+ * The playhead's layer, translated by `x` (whole device px) from `left: -shift` (playheadLayerPos): the line sits at
+ * x - shift CSS px from the lane's left edge, on a device pixel of the window.
+ */
+export function PlayheadLayer({ x, shift = 0, dpr = 1 }: { x: number; shift?: number; dpr?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const held = useRef<Animation | null>(null);
   useLayoutEffect(() => { if (HOLD && ref.current) holdTransform(ref.current, `translateX(${x}px)`, held); }, [x]);
   useLayoutEffect(() => () => { held.current?.cancel(); held.current = null; }, []);
+  const st = shiftStyle(shift);
   return (
-    <div ref={ref} className="tl-playhead-layer" style={HOLD ? undefined : { transform: `translateX(${x}px)` }}>
+    <div ref={ref} className="tl-playhead-layer" style={HOLD ? st : { ...st, transform: `translateX(${x}px)` }}>
       <div className="tl-playhead" data-playhead style={lineStyle(dpr)} />
       <div className="tl-playhead-head" style={HEAD_STYLE} />
     </div>

@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { frameToX, playheadX } from '../../src/panels/timeline/viewMath';
+import { frameToX, playheadLayerPos, playheadX } from '../../src/panels/timeline/viewMath';
 import { PlayheadLayer, holdTransform } from '../../src/panels/timeline/Playhead';
 
 const DPRS = [1, 1.25, 1.5, 2, 3];
@@ -56,6 +56,39 @@ describe('playheadX', () => {
     }
   });
 
+  it('snaps on the window grid when the lane starts at a fractional device pixel (originPx)', () => {
+    // Lane edges as layout places them: on the 1/64 device px grid.
+    for (const dpr of DPRS) for (const o of [0, 0.5, 505.6667, 333.3333, 12.25, 757.75, 98.1]) for (const zoom of ZOOMS) {
+      const origin = Math.round(o * dpr * 64) / (64 * dpr);
+      const scroll = 17.4;
+      for (let k = 0; k < 20; k++) {
+        const frame = Math.round(scroll + rnd() * (1600 / zoom));
+        const x = playheadX(frame, zoom, scroll, dpr, origin);
+        const abs = origin + x, exact = origin + frameToX(frame, zoom, scroll);
+        // The layer's absolute position is a whole device pixel of the window, the one nearest the exact position.
+        expect(Math.abs(abs * dpr - Math.round(abs * dpr))).toBeLessThan(1e-6);
+        // (The nearest one; an exact half-pixel tie may go either way in floating point.)
+        expect(Math.abs(abs - exact)).toBeLessThanOrEqual(0.5 / dpr + 1e-6);
+        // Split: the layout offset puts the layer's origin on a device pixel (shift < 1 device px, in 1/64 steps), and
+        // the per-frame transform is a whole number of device pixels (a fractional transform would be resampled).
+        const { shift, tx } = playheadLayerPos(frame, zoom, scroll, dpr, origin);
+        expect(shift).toBeGreaterThanOrEqual(0);
+        expect(shift * dpr).toBeLessThan(1);
+        expect(Number.isInteger(Math.round(shift * dpr * 64 * 1e6) / 1e6)).toBe(true);
+        expect(Math.abs((origin - shift) * dpr - Math.round((origin - shift) * dpr))).toBeLessThan(1 / 64 + 1e-9);
+        expect(Math.abs(tx * dpr - Math.round(tx * dpr))).toBeLessThan(1e-9);
+        expect(tx - shift).toBeCloseTo(x, 9);
+      }
+    }
+    // A whole-pixel origin at dpr 1 changes nothing.
+    expect(playheadX(37, 1.5, 3.2, 1, 240)).toBe(Math.round((37 - 3.2) * 1.5));
+    expect(playheadLayerPos(37, 1.5, 3.2, 1, 240)).toEqual({ shift: 0, tx: Math.round((37 - 3.2) * 1.5) });
+    // getBoundingClientRect noise around a device boundary (758.5000305 / 1.5 at dpr 1.5) reads as the boundary.
+    expect(playheadLayerPos(333, 1.37, 100.5, 1.5, 758.5000305175781 / 1.5).shift * 1.5).toBeCloseTo(0.5, 9);
+    expect(playheadLayerPos(333, 1.37, 100.5, 1.5, 757.99999 / 1.5).shift).toBe(0);
+    expect(playheadX(37, 1.5, 3.2, 2, Number.NaN)).toBe(playheadX(37, 1.5, 3.2, 2));
+  });
+
   it('treats an unusable dpr as 1', () => {
     for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) expect(playheadX(37, 1.5, 3.2, bad)).toBe(Math.round((37 - 3.2) * 1.5));
   });
@@ -74,6 +107,9 @@ describe('Playhead layer element', () => {
       // Positioned by the layer's transform only.
       expect(html).not.toMatch(/left:/);
       expect(html).toContain('class="tl-playhead-head" style="height:')
+      // A lane at a fractional device offset: the layer is laid out at -shift, the transform stays whole device px.
+      const shifted = renderToStaticMarkup(createElement(PlayheadLayer, { x, shift: 0.5 / dpr, dpr }));
+      expect(shifted.startsWith(`<div class="tl-playhead-layer" style="left:${-0.5 / dpr}px;transform:translateX(${x}px)">`)).toBe(true);
       // The CSS string round-trips to the same device pixel.
       const parsed = Number(/translateX\(([^p]+)px\)/.exec(html)![1]);
       expect(Math.round(parsed * dpr)).toBe(Math.round(frameToX(ph, zoom, scroll) * dpr));

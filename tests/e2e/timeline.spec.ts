@@ -141,14 +141,22 @@ test.describe('timeline panel', () => {
       expect(seq.view.playhead).toBe(Math.round(seq.view.scroll + 100 / ZOOM));
       await expect(page.locator('[data-playhead]')).toBeVisible();
       // The playhead line (a composited layer moved by transform, A4) sits exactly on frameToX(playhead), snapped to the
-      // device pixel grid: at dpr 1 the former Math.round(x). Strict geometry, no tolerance.
+      // window's device pixel grid (the nearest device pixel; at dpr 1 with the lane on a whole pixel, the former
+      // Math.round(x)). Strict geometry, no tolerance.
       const g = await page.evaluate(() => {
         const l = document.querySelector('[data-playhead]')!.getBoundingClientRect(); const h = document.querySelector('.tl-playhead-head')!.getBoundingClientRect();
-        return { lx: l.left, lw: l.width, hx: h.left, hw: h.width, dpr: window.devicePixelRatio };
+        const col = document.querySelector('.tl-tracks-col')!.getBoundingClientRect();
+        return { lx: l.left, lw: l.width, hx: h.left, hw: h.width, colX: col.left, dpr: window.devicePixelRatio };
       });
-      const exactX = (seq.view.playhead - seq.view.scroll) * ZOOM;
-      expect(g.lx - r.x).toBeCloseTo(Math.round(exactX * g.dpr) / g.dpr, 6);
-      expect(g.lw).toBe(1);
+      expect(g.colX).toBeCloseTo(r.x, 6); // the ruler starts at the lane's left edge, where frameToX is 0
+      const exactX = g.colX + (seq.view.playhead - seq.view.scroll) * ZOOM;
+      // Within one layout unit (1/64 device px): a lane at a fractional device offset is compensated by a layout
+      // offset (playheadLayerPos), which layout stores in 1/64 px units.
+      const lu = 1 / (64 * g.dpr) + 1e-6;
+      expect(Math.abs(g.lx - Math.round(exactX * g.dpr) / g.dpr)).toBeLessThanOrEqual(lu);
+      expect(Math.abs(g.lx - exactX)).toBeLessThanOrEqual(0.5 / g.dpr + lu);
+      // 1 CSS px at dpr 1; at other ratios whole device pixels, like a 1px border (1 device px at 1.5, 2 at 2).
+      expect(g.lw).toBeCloseTo(Math.max(1, Math.floor(g.dpr)) / g.dpr, 6);
       // The head is centred on the line (13 px wide, from x - 6).
       expect(g.hx - g.lx).toBeCloseTo(-6, 6);
       expect(g.hw).toBe(13);

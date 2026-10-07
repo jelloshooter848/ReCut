@@ -133,6 +133,73 @@ Thresholds are the budgets the scripts assert: 60 fps interactions → ≤16 ms 
 * `main.perf.test.ts` reads ffmpeg RSS with `pgrep -x ffmpeg` system-wide, so concurrent agents can inflate it.
   The 3.9 GB "waveform child" value in one run was contamination. The Electron run measured 124 MB.
 
+## Deliberate rendering trade-offs
+
+Two changes to timeline UI chrome (roadmap §1, A4) trade exact pixel parity with the old rendering for cheaper
+scrubbing and playback. They are intentional and not visual regressions. Functional geometry, timing and hit testing
+are unchanged and covered by strict tests. The Program monitor and export do not use this code.
+
+* **Waveforms are filled device-pixel bars** (`src/panels/timeline/waveBars.ts`, `ClipView.tsx`). Before, each clip
+  drew one anti-aliased path of 1 CSS px rects, and the browser then resampled the canvas to the screen. Now the canvas
+  backing store maps 1:1 onto device pixels, and each device column gets one bar drawn with integer `fillRect` calls.
+  Adjacent columns of the same height merge into one rect. A column's bar spans ±(the maximum of every waveform sample
+  that overlaps the column), so a one-sample transient still shows at full height. Every column draws at least
+  1 device px. Bar ends are rounded to the nearest device row, so the edges are hard instead of anti-aliased.
+* **The playhead is one composited layer** (`Playhead.tsx`). Before, the line and head were two absolutely positioned
+  divs, and every `left` change repainted the page and re-layerized it. Now the line and head move together with
+  `transform` only. A paused Web Animation holds the transform. Chromium can update the transform of an
+  animated layer without re-layerizing the page, which it cannot do for a plain `style.transform` change. The
+  transform is set in a layout effect in the same commit as the store update, so it is never a frame late. The
+  transform is always a whole number of device pixels. When the lane starts at a fractional device pixel (a zone
+  split at dpr 1.5), a static layout offset absorbs the fraction. Otherwise the compositor would resample the line
+  into a blurred 2-px stripe.
+  The layer keeps `pointer-events: none` and the z-index of the old line (12): it sits above clips, the ruler and
+  overlays, and below popovers, menus and dialogs.
+
+Measured on the 3 h sequence (6,725 clips). Before is `origin/main` `a4a456f` and after is this branch. Runs alternated
+before/after, 5 runs each: 3 on `06a62e8` and 2 on the final code, which changes the playhead's layout offset only and
+measured the same. The figures are medians of per-run values from Chromium traces of the main thread. The machine was
+shared and xvfb used software GL. Load average was 1.9–4.0 during the runs, mostly from the bench's own Electron
+processes.
+
+| 3 h sequence @ 1 px/frame | before | after |
+|---|---|---|
+| Scrub within the visible page: main thread per frame | 7.20 ms | 6.17 ms (−14 %) |
+| … of which Layerize | 2.31 ms | 1.08 ms (−53 %) |
+| … of which Paint | 0.67 ms | 0.68 ms |
+| Page-flip scrub (all lanes re-rendered every frame): main thread per frame | 18.14 ms | 17.69 ms |
+| … of which Paint | 2.61 ms | 1.73 ms (−34 %) |
+| … of which Layerize | 2.38 ms | 2.51 ms (+0.13) |
+| Program playback (24 fps): main thread per frame | 4.33 ms | 4.05 ms |
+| … Layerize per second | 71.8 ms | 41.8 ms (−42 %) |
+
+The bench rows did not change. Scrub fps stays at 60 within the page and 53–59 with page flips. Program playback
+stays at 24 fps. Long tasks stay at 0, except on the page-flip rows, which run first after the profiling traces.
+Those rows had 1–3 long tasks in 3 of the 5 before runs and in 2 of the 5 after runs.
+
+Visual and geometry validation was done at dpr 1, 1.5 and 2, comparing before and after screenshots at five zoom and
+scroll views:
+
+* Each drawn waveform column matches a brute-force recomputation from the waveform data (top and bottom row =
+  ±max of all samples in the column). At dpr 1 and 2 every column matches, and no canvas is resampled (before, most
+  canvases were stretched to a fractional CSS width, and at dpr > 1 also scaled up). At dpr 1.5, 0–7 of 5,000–10,000 columns per view differ
+  in the check. All of them match once the checker allows for the 1/64 px rounding of the canvas offset it reads
+  back from layout.
+* Outside the waveforms and the playhead, 0–152 device pixels per view differ, by at most 30/255. These are glyph
+  and icon anti-aliasing differences in clip headers. Clip bounds, labels and colours are unchanged.
+* The presented playhead was checked in compositor output: 260–610 CDP screencast frames per ratio, at dpr 1,
+  1.25, 1.5 and 2. The frames covered scrub, zoom, scroll, playback with pause and resume, window hide and show
+  (under xvfb the page stayed visible), and page freeze and resume. In every frame the line was a crisp line on the
+  device pixel nearest `frameToX`. It was also in the same frame as a marker that the store moved on the main thread,
+  so no frame was late or blurred.
+* Hit tests on the head and ruler (click and drag), and a context menu covering the playhead, gave the same results
+  before and after.
+
+Strict tests: `tests/unit/timeline-waveBars.test.ts`, `tests/unit/timeline-playhead.test.ts`, and the waveform-canvas
+and playhead-geometry steps of `tests/e2e/timeline.spec.ts`. The only tolerance is one layout unit (1/64 device px) on
+the playhead's x. No test compares timeline pixels, so no test had to tolerate anti-aliasing differences. There is
+no "high-quality waveform" preference and no debug flag: the optimized path is the only one.
+
 ## How to run
 
 All scripts write JSON to `$RECUT_PERF_OUT` (default `test-results/perf/`) and print a table.

@@ -41,13 +41,31 @@ export function frameToX(frame: number, zoom: number, scroll: number): number {
 }
 
 /**
- * Playhead line x (CSS px from the lane's left edge): frameToX snapped to the nearest device pixel, so the line's
- * composited layer (translated by this value) sits on whole device pixels at any zoom, scroll and dpr. At dpr 1 it
- * is Math.round(frameToX(...)), the line's former `left`.
+ * Where the playhead's composited layer goes (CSS px, relative to the lane's left edge, its containing block), so the
+ * line lands on the window's device pixel nearest frameToX at any zoom, scroll and dpr. `originPx` is the viewport x
+ * of the lane's left edge: a zone split can put it at a fractional device offset (e.g. x.5 at dpr 1.5), and the snap
+ * must be on the window's grid (where clip edges are drawn), not the lane's.
+ * - `shift`: the lane's offset past the device pixel boundary below it (CSS px, >= 0, in layout units of 1/64 device
+ *   px). The layer is laid out at `left: -shift`, i.e. on a whole device pixel: Blink snaps a fractional *layout*
+ *   offset into the layer's painting (crisp), but a fractional *transform* is resampled (a blurred 2-device-px line).
+ * - `tx`: the layer's translation, always a whole number of device pixels (only this changes per frame).
+ * The line's x from the lane's edge is tx - shift (playheadX). With a whole-pixel lane at dpr 1: shift 0 and
+ * tx = Math.round(frameToX(...)), the line's former `left`.
  */
-export function playheadX(frame: number, zoom: number, scroll: number, dpr: number): number {
+export function playheadLayerPos(frame: number, zoom: number, scroll: number, dpr: number, originPx = 0): { shift: number; tx: number } {
   const d = dpr > 0 && Number.isFinite(dpr) ? dpr : 1;
-  return Math.round(frameToX(frame, zoom, scroll) * d) / d;
+  const od = (Number.isFinite(originPx) ? originPx : 0) * d;
+  // Device px of the boundary at or below the lane's edge (tolerant of float noise in getBoundingClientRect).
+  const base = Math.floor(od + 1 / 128);
+  const phase = Math.max(0, Math.round((od - base) * 64) / 64);
+  const target = Math.round(od + frameToX(frame, zoom, scroll) * d);
+  return { shift: phase / d, tx: (target - base) / d };
+}
+
+/** Playhead line x (CSS px from the lane's left edge): playheadLayerPos's tx - shift. */
+export function playheadX(frame: number, zoom: number, scroll: number, dpr: number, originPx = 0): number {
+  const p = playheadLayerPos(frame, zoom, scroll, dpr, originPx);
+  return p.tx - p.shift;
 }
 
 /** Fractional frame under a pixel offset. */
