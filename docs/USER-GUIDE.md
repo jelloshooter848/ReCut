@@ -65,6 +65,36 @@ field to type a value; see [SHORTCUTS](SHORTCUTS.md#timecode-entry) for what it 
   needs no new proxy; a proxy made by ReCut before 0.4 carries one stream and is rebuilt (with proxies on) when a clip
   needs another.
 
+### Surround audio: channels per clip and the centre channel
+
+When a clip's stream has two or more channels (stereo, 5.1, 7.1, ...), Clip Inspector › Audio › **Channels** chooses
+what the clip plays of it:
+
+- **Normal mix** (the default): the stream as FFmpeg mixes it to the sequence, as before.
+- **One channel only**, as mono: for example **Centre (FC)**, **Front left (FL)**, **LFE (subwoofer)**, **Side left
+  (SL)**. Channels are named from the stream's real layout; a stream whose layout is unknown lists **Channel 1, 2,
+  ...** instead. In a stereo export the channel sits in the middle at −3 dB on each side (the level the centre has in
+  the standard downmix); in a 5.1 export it plays from the centre speaker at full level.
+- **Stereo downmix (set levels)**: a controlled downmix instead of FFmpeg's default. **Centre** and **Surround** set
+  the levels in dB (defaults −3 dB and −3 dB, as in ITU-R BS.775); the LFE channel is left out. Offered for streams
+  with more than two channels in a known layout.
+
+**Extract Centre Channel (Dialogue)** (right-click a clip in the timeline, or **Clip › Extract Centre Channel
+(Dialogue)**) adds the centre channel of a 5.1 (or 7.1, ...) source as its own audio clip: same source range and
+timeline position, linked to the clip's group, named "*clip name* (centre)", on the first free audio track below
+(or a new track at the bottom). It is one undo step. The item is disabled, with the reason, when the clip's stream has
+no centre channel (stereo or mono sources).
+
+The centre channel is where films put most of the dialogue, but it is **not** a dialogue stem: it still carries
+music and effects that were mixed to the centre. It is useful to raise or lower the dialogue against the rest, or to
+cut it separately; it does not isolate the voices (see [LIMITATIONS](LIMITATIONS.md)).
+
+The preview plays a channel selection from a small audio file made from the original with the same filter as the
+export (most surround codecs, such as AC-3 and DTS, cannot be decoded by the preview at all). It is made
+automatically, whatever **Use proxies** says, usually in seconds to a minute; until it is ready the clip is silent in
+the Program monitor and the **Needs proxy** chip says "preview audio … in progress". The Inspector's **Preview** row
+shows its state, with **Rebuild** if it failed.
+
 ## 3. Detect scenes
 
 1. Right-click a video › **Detect Scenes…**. Set the **Threshold** (higher means fewer, stronger cuts) and click

@@ -30,9 +30,19 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **No mixer, panning or per-track meters.** You get clip gain, level and fades, track volume, mute and solo, and one
   stereo peak meter on the Program monitor. The **Audio** workspace is only a different layout of the same panels.
 - **Surround:** 5.1 is pass-through or downmix only. Export can produce 5.1 AC-3 (offered when a source has ≥ 6
-  channels) or downmix to stereo through FFmpeg's resampler. There is no surround positioning, and 7.1 output is
-  not available.
+  channels) or downmix to stereo through FFmpeg's resampler. Per clip, Clip Inspector › Audio › **Channels** can play
+  one source channel as mono or a stereo downmix with set centre and surround levels instead (Roadmap §9 quick
+  utility). There is no surround mixer, panner or per-channel routing (a mono channel goes to the centre), and 7.1
+  output is not available.
+- **The centre channel is not a dialogue stem.** **Extract Centre Channel (Dialogue)** copies the source's centre
+  channel (FC), which carries most of a film's dialogue but also the music and effects mixed to the centre. It does
+  not separate voices from the rest; that is stem separation (Roadmap §12), which ReCut does not have. Off-centre
+  dialogue (panned voices, dialogue in the surrounds) stays in the other channels.
 - **Preview of surround:** proxies are stereo, and the browser downmixes directly-played 5.1 to your output device.
+  A clip's channel selection previews from its own stereo audio file (made with the export's filter), so it needs
+  a short FFmpeg job before it is heard; the clip is silent in the Program monitor until then. Each distinct
+  selection (stream, channel or downmix levels) of a file gets its own file in the cache.
+- **Channel-selected clips draw the whole stream's waveform** on the timeline, not the selected channel's.
 - **Multi-stream originals** preview the stream the export renders for each clip. This relies on Chromium's
   `HTMLMediaElement.audioTracks`, which sits behind the `AudioVideoTracks` Blink feature; ReCut turns it on at
   startup (`electron/main.ts`). If a future Electron drops that feature, the preview would fall back to each file's
