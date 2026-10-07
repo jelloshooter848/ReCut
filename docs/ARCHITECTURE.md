@@ -66,6 +66,7 @@ flowchart LR
 | `media/thumbs.ts` | Thumbnails and filmstrips, un-squeezed to the display shape for non-square pixels. They run outside the job queue on a small **LIFO, cancellable** semaphore, so the current viewport wins and abandoned requests never start ffmpeg. |
 | `media/waveform.ts` | Streams the audio to u8 mono peaks (O(peaks) memory, even for multi-hour files). Late-starting audio is padded. |
 | `media/proxy.ts` | H.264 / AAC proxy transcode carrying every audio stream, one AAC track each in source order: `<cache>/proxies/<key>_<h>p_all.mp4`. If that run fails (a stream FFmpeg cannot decode or encode), it retries with the decodable streams (`<key>_<h>p_a<N>_a<M>….mp4`), then the media's selected stream alone (`_a<N>`), and returns the streams it carries (`ProxyResult.audioStreams`, recorded in `ProxyInfo.audioStreams`). Older single-stream proxies (`<key>_<h>p_a<N>.mp4`, `<key>_<h>p.mp4` = first stream) stay valid for their stream. Still images get `<key>_still.png` (first picture, upright, long side ≤ 3840). Writes a per-job `.part` file first, then renames it. |
+| `media/channelProxy.ts` | Channel proxies (Roadmap §9): the preview audio of a clip's channel selection. One audio-only stereo AAC file per (source file, audio stream, selection), `<cache>/proxies/<key>_ch<stream>.<selection>_v1.m4a`, made from the original with the export's own `pan` filter (`shared/audioChannels.ts`), padded to the container start. Job kind `channelProxy` (media lane), de-duplicated per output, `.part` + rename. |
 | `media/sceneDetect.ts` | `select='gt(scene,T)'` + `showinfo` on a downscaled stream. Results are cached per threshold. |
 | `media/subtitlesExtract.ts` | Embedded text subtitle stream → SRT. Bitmap codecs ReCut can OCR (PGS, VobSub, DVB, XSUB) are refused with a pointer to **Read with OCR…**; teletext and ARIB captions are refused as unsupported. |
 | `media/cache.ts` + `identity.ts` | Cache root and keys. `cacheKeyForPath` is a **content key**: size + a SHA-1 of nine sampled 64 KiB blocks (first, last, evenly between; small files whole), with no path or mtime, so derived media survive moves, renames, copies and Collect. It is computed once per path + size + mtime (memory, then `<cache>/ids/<legacy key>`). Entries written by older versions under the legacy `sha1(path + size + mtime)` key are found by `findCachedFile` and adopted under the content key with a hard link. Thumbnails, waveforms, proxies, scene detection and OCR use it; new media caches should too. |
@@ -102,6 +103,7 @@ flowchart LR
 | `media.ts` | Sample aspect ratio rules (`saneSar`: positive safe integers, 1/16–16) and `videoDisplaySize` for the export graph and the preview compositor. |
 | `collect.ts` | Collect Project plan: which files (scope, subtitles, proxies), the name-collision scheme (own name; same names from different folders get the fewest distinguishing parent folders as subfolders; numbers last), missing files, and the path rewrite of the collected project. |
 | `exportPlan.ts` | Export planning shared by the render graph and the Export dialog's checklist: per-track segments, transition handles (`transitionHandles`: rendered length, or why a transition is shortened or dropped), the range widened so no transition is cut, clips that run past their media. The dialog's pre-export warnings predict exactly what the export renders. |
+| `audioChannels.ts` | Per-clip channel selection (Roadmap §9): channel names from FFmpeg layouts (numbered when unknown), the `pan` filter both the render graph and the channel proxy use (one channel as mono, controlled BS.775 downmix), proxy keys, normalisation, and whether Extract Centre Channel can run on a clip. |
 | `exportFormat.ts` | Export file formats: containers, encoder arguments (H.264 / H.265, ProRes, DNxHR, AAC / AC-3, PCM, FLAC), extensions, size-estimate rates and the per-track audio file plan, shared by the render graph and the Export dialog. |
 | `linkSync.ts` | Linked-clip sync offsets (`linkedSyncOffsets`), used by the timeline's out-of-sync badge and the Export dialog's warning. |
 | `pathKey.ts` | Lexical `path.resolve` + case folding for the renderer's early "is this a project source?" check (subtitle export). The main process repeats the check with realpath and inode (`electron/pathSafety.ts`). |
@@ -232,6 +234,10 @@ Export dialog → window.recut.startExport({ sequence, media, settings, subtitle
 2. `jobsRouter.ts` mirrors queued / running / ready / failed into `media.proxy` (quiet writes) and invalidates pooled
    elements, so the monitors switch to the proxy.
 3. The preview uses the proxy. **Export always uses originals** (the render graph never sees a proxy path).
+   A clip with a channel selection (`ClipAudio.channelSelection`) plays its **channel proxy** instead, whatever the
+   media proxy: `src/app/channelProxies.ts` watches the project, requests the ones clips need (`startChannelProxy`,
+   job kind `channelProxy`), mirrors them into `media.channelProxies` and prunes unused entries; until one is ready
+   the planner reports the clip as missing ("preview audio … in progress"), like a pending proxy.
 4. On open, `verifyMediaOnline` re-checks originals (offline flags) and drops `ready` proxies whose file has gone.
 
 ## Relink

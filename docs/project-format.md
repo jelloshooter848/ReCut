@@ -81,6 +81,11 @@ by **Collect Project** with proxies included, `proxy.path` points into the colle
 `audioStreams` (not a list of non-negative integers) is dropped on load. `probe.video.sar`
 (`{num, den}`) is the sample aspect ratio; it is kept only when both terms are positive safe integers and the ratio
 is within 1/16–16, otherwise it is dropped (square pixels). Probes from older builds have none.
+`probe.audio[].layoutGuessed: true` marks a stream for which ffprobe reported no channel layout (the `layout` shown
+is a guess from the channel count, so its channels are numbered, not named). Optional `channelProxies` holds the
+preview files of clips' channel selections (see Clip), keyed `<stream>.ch-<channel>` or
+`<stream>.dm-c<centre dB>-s<surround dB>`, each a proxy record like `proxy`. On load, entries with other keys and
+entries whose job had not finished are dropped; the app removes entries no clip uses.
 
 TV identity uses `identity.series`, `identity.season`, `identity.episode`. The hierarchy is optional; media
 without identity simply lives in bins.
@@ -117,6 +122,14 @@ without identity simply lives in bins.
   "notes": "", "color": "#4d7cfe", "sceneRecordId": "scn…", "originLabel": "transcript"
 }
 ```
+
+`audio.channelSelection` (optional, audio clips; absent = the stream's normal mix) picks what the clip plays of its
+multichannel stream: `{ "mode": "channel", "channel": "FC" }` (one channel as mono: an FFmpeg channel name of the
+stream's layout, or `"c<N>"`, 0-based, when the layout is unknown) or
+`{ "mode": "downmix", "centreDb": -3, "surroundDb": -3 }` (a stereo downmix; levels −60…+6 dB in 0.1 dB steps, LFE
+left out). On load an unusable selection is removed (the normal mix) and out-of-range levels are clamped; both are
+reported as repairs. A selection the clip's stream cannot honour is kept and plays the normal mix, with a pre-export
+warning. Added in 0.8.0; `formatVersion` stays 1.
 
 ### Transition
 

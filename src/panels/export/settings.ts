@@ -8,6 +8,7 @@ import { FPS_PRESETS, fpsEquals, fpsLabel, fpsValue, framesToSeconds, isValidFps
 import { allTracks, clipEnd, sequenceDuration } from '@shared/timeline';
 import { activeTracks, planTrackSegments, widenRangeForTransitions, type ClipSeg, type PastEndIssue, type TransitionIssueReason, type TransitionOutcome } from '@shared/exportPlan';
 import { formatSyncOffset, linkedSyncOffsets } from '@shared/linkSync';
+import { channelSelectionLabel, channelSelectionProblem, clipAudioStream, resolveChannelSelection } from '@shared/audioChannels';
 import {
   CONTAINERS, DNXHR_MIN_HEIGHT, DNXHR_MIN_WIDTH, PER_TRACK_SKIP_REASON, audioEncoder, exportContainer, intermediateVideoBitsPerSecond, isAudioOnly,
   isPerTrackAudio, pcmBitsPerSecond, perTrackAudioPlan, usesAc3, videoEncoder, withExportExtension,
@@ -673,6 +674,20 @@ function computeSequenceWarnings(seq: Sequence, media: Record<ID, MediaItem>, st
     items.push({
       level: 'warning', target: { frame: list[0].clip.start, clipIds: list.flatMap((e) => e.ids) },
       text: `Clips run past the end of their media: ${namesWithMore(list.map((e) => `"${e.clip.name}" (by ${e.over.toFixed(2)} s)`))}. The last frame is held and the sound is silent there.`,
+    });
+  }
+
+  // Channel selections (Roadmap §9) the clip's stream cannot honour (another stream picked, a relinked file): the
+  // export plays the stream's normal mix instead (renderGraph.ts clipChannelPan).
+  const badChannels = rendered.filter((c) => {
+    const sel = c.kind === 'audio' ? c.audio.channelSelection : undefined;
+    const m = sel ? media[c.mediaId] : undefined;
+    return !!m?.probe && !resolveChannelSelection(sel, clipAudioStream(m, c));
+  }).sort((a, b) => a.start - b.start);
+  if (badChannels.length) {
+    items.push({
+      level: 'warning', target: { frame: badChannels[0].start, clipIds: badChannels.map((c) => c.id) },
+      text: `Channel selection not available in the clip's audio stream: ${namesWithMore(badChannels.map((c) => `"${c.name}" (${channelSelectionLabel(c.audio.channelSelection)}: ${channelSelectionProblem(c.audio.channelSelection, clipAudioStream(media[c.mediaId], c))})`))}. These clips export the stream's normal mix.`,
     });
   }
   return items;

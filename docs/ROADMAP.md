@@ -22,7 +22,8 @@ in every release PR (docs/RELEASING.md).
 | 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS dmg built as a CI test build, waiting for signing | 0.6.1 (Linux), macOS once signed |
 | 16 | Collect / Consolidate Project (with the moved-media cache fix) | Done | 0.7.0 |
 | 6 | Intermediate and audio-only export | Done | next release |
-| 5, 7–15, 17, 18 | Everything else | Not started | — |
+| 9 | Surround: centre-channel and channel-selection utility (the mixer comes after 1.0) | Quick utility done | next release |
+| 5, 7, 8, 10–15, 17, 18 | Everything else | Not started | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
 the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
@@ -315,6 +316,14 @@ master meter), stereo/5.1 panning per clip, and multichannel proxies.
 as its own audio clip, choose which source channel a mono clip uses, and set a controlled stereo downmix (centre and
 surround levels) instead of FFmpeg's default. It is cheap (FFmpeg `pan` / `channelsplit`) and useful on its own, but it
 is not a substitute for stem separation (§12): the centre channel still carries music and effects.
+**Status: quick utility done (7 October 2026, for release 0.8.0); the mixer is not started and is planned after 1.0.**
+Clip Inspector › Audio › **Channels** plays a multichannel clip's normal mix, one source channel as mono (named from
+the ffprobe layout, numbered when it is unknown) or a stereo downmix with centre and surround levels (BS.775
+defaults, LFE left out); **Extract Centre Channel (Dialogue)** (clip context menu, **Clip** menu) adds a linked
+"(centre)" clip on a free track below, one undo step. The export applies a FFmpeg `pan` filter first in the clip's
+audio chain (`shared/audioChannels.ts`); the preview plays the same filter's output from a per-(stream, selection)
+audio file made from the original (`electron/media/channelProxy.ts`), so AC-3 / DTS sources preview correctly. What
+remains of this entry: the Audio Mixer panel, per-track meters, panning and multichannel proxies.
 
 ## 10. Interchange: EDL, FCPXML, OpenTimelineIO
 

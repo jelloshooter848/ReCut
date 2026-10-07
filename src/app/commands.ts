@@ -57,6 +57,7 @@ export const EXTRA_COMMAND_IDS = {
   renameSequence: 'sequence.rename',
   sequenceSettings: 'sequence.settings',
   about: 'help.about',
+  extractCentreChannel: 'clip.extractCentreChannel',
 } as const;
 
 const EXTRA_META: Record<string, { title: string; category: string; keys: string[] }> = {
@@ -81,6 +82,7 @@ const EXTRA_META: Record<string, { title: string; category: string; keys: string
   [EXTRA_COMMAND_IDS.renameSequence]: { title: 'Rename Sequence…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.sequenceSettings]: { title: 'Sequence Settings…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.about]: { title: 'About ReCut', category: 'Help', keys: [] },
+  [EXTRA_COMMAND_IDS.extractCentreChannel]: { title: 'Extract Centre Channel (Dialogue)', category: 'Editing', keys: [] },
 };
 
 const MEDIA_FILTERS = [
@@ -97,6 +99,20 @@ const SUBTITLE_FILTERS = [{ name: 'Subtitles', extensions: ['srt', 'vtt'] }, { n
 // ------------------------------------------------------------------
 
 const S = () => useStore.getState();
+
+/**
+ * Extract Centre Channel (Dialogue) on `clipId` (Roadmap §9): a toast says what happened, or why it cannot run (no
+ * centre channel). Shared by the command (Clip menu) and the timeline's clip context menu.
+ */
+export function runExtractCentreChannel(seqId: ID, clipId: ID | undefined): boolean {
+  if (!clipId) { toast('info', 'Select a clip linked to a 5.1 source first'); return false; }
+  const r = S().extractCentreChannel(seqId, clipId);
+  if (!r.ok) { toast('warn', r.reason); return false; }
+  const seq = S().project.sequences[seqId];
+  const track = seq?.audioTracks.find((t) => t.id === r.trackId);
+  toast('ok', `Centre channel extracted to ${track?.name ?? 'a new audio track'}. It still carries music and effects mixed with the dialogue.`);
+  return true;
+}
 const seqNow = (): Sequence | null => activeSequence(S());
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -480,6 +496,7 @@ export function buildEditingCommands(): CommandInput[] {
       if (ids.length) S().select(ids); else toast('warn', 'Could not paste here (target tracks locked?)');
     }, hasSeq),
     cmd(X.speedDuration, () => openSpeedDialog(), () => hasSeq() && hasClipSelection()),
+    cmd(X.extractCentreChannel, () => { const seq = seqNow(); if (seq) runExtractCentreChannel(seq.id, selectedClips(S())[0]?.id); }, () => hasSeq() && hasClipSelection()),
 
     // ---- tools ----
     toolCmd(C.toolSelect, 'select'),

@@ -14,6 +14,8 @@ export interface MenuItem {
   onSelect?: () => void;
   /** Keep the menu open after selection (e.g. toggles). */
   keepOpen?: boolean;
+  /** Tooltip (e.g. why a disabled item is disabled). */
+  title?: string;
 }
 
 interface MenuState { open: boolean; x: number; y: number; items: MenuItem[]; anchorRect?: DOMRect | null }
@@ -98,7 +100,7 @@ function MenuList({ items, x, y, depth, onClose }: { items: MenuItem[]; x: numbe
           const Icon = it.icon;
           return (
             <div
-              key={i} role="menuitem" aria-disabled={it.disabled}
+              key={i} role="menuitem" aria-disabled={it.disabled} title={it.title}
               className={['menu-item', it.disabled ? 'disabled' : '', sub?.index === i || hi === i ? 'open' : ''].filter(Boolean).join(' ')}
               onMouseEnter={(e) => { setHi(i); if (it.submenu) openSub(i, e.currentTarget); else setSub(null); }}
               onClick={(e) => activate(it, i, e.currentTarget)}

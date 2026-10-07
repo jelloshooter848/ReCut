@@ -2,7 +2,7 @@
  * Pure timeline operations. These functions mutate the Sequence passed in (intended to be an immer draft)
  * and never touch anything outside of it. All positions are integer frames.
  */
-import type { Clip, ClipAudio, ClipTransform, Sequence, SequenceSubtitleCue, StoryBlock, Track, Transition, TransitionType, ID, Rational, Marker } from './model';
+import type { AudioChannelSelection, Clip, ClipAudio, ClipTransform, Sequence, SequenceSubtitleCue, StoryBlock, Track, Transition, TransitionType, ID, Rational, Marker } from './model';
 import { isDraft } from 'immer';
 import { uid } from './ids';
 import { secondsToFrames } from './time';
@@ -246,6 +246,93 @@ export function setClipAudioStream(seq: Sequence, clipIds: Iterable<ID>, index: 
     }
   }
   return out;
+}
+
+/**
+ * Set the channel selection (Roadmap §9) of the audio clips among `clipIds`: one channel as mono, a controlled stereo
+ * downmix, or undefined for the stream's normal mix. Video clips and clips on locked tracks never change. Returns the
+ * changed clips (writable inside a recipe).
+ */
+export function setClipChannelSelection(seq: Sequence, clipIds: Iterable<ID>, sel: AudioChannelSelection | undefined): Clip[] {
+  const out: Clip[] = [];
+  const ids = clipIds instanceof Set ? clipIds as Set<ID> : new Set(clipIds);
+  const same = (a: AudioChannelSelection | undefined): boolean => {
+    if (!a || !sel) return a === sel;
+    return a.mode === 'channel' ? sel.mode === 'channel' && a.channel === sel.channel
+      : sel.mode === 'downmix' && a.centreDb === sel.centreDb && a.surroundDb === sel.surroundDb;
+  };
+  for (const t of seq.audioTracks) {
+    if (t.locked) continue;
+    const items = readItems(t.clips);
+    for (let i = 0; i < items.length; i++) {
+      const c = items[i];
+      if (!ids.has(c.id) || c.kind !== 'audio' || same(c.audio.channelSelection)) continue;
+      const w = writableClip(t, i);
+      if (sel) w.audio.channelSelection = { ...sel }; else delete w.audio.channelSelection;
+      out.push(w);
+    }
+  }
+  return out;
+}
+
+/**
+ * The clip a channel extraction copies its range from: `clipId` itself when it is an audio clip, else the first audio
+ * clip of its link group on the same media (the sound of a linked picture), else the clip itself (a picture without
+ * sound on the timeline). Read-only.
+ */
+export function channelSourceClip(seq: Sequence, clipId: ID): Clip | undefined {
+  const loc = locateClip(seq, clipId);
+  if (!loc) return undefined;
+  const clip = loc.clip;
+  if (clip.kind === 'audio' || !clip.linkId) return clip;
+  for (const t of seq.audioTracks) {
+    for (const c of readItems(t.clips)) if (c.linkId === clip.linkId && c.kind === 'audio' && c.mediaId === clip.mediaId) return c;
+  }
+  return clip;
+}
+
+export interface AddChannelClipResult { clip: Clip; trackId: ID; newTrack: boolean }
+
+/**
+ * Extract a channel as its own clip (Roadmap §9, Extract Centre Channel): a new audio clip with the range, position,
+ * speed and level of `channelSourceClip(clipId)`, playing `selection` of `audioStream`, linked to the same group (a
+ * new link joins the two when the clip had none). It goes on the first unlocked audio track below the source's audio
+ * track that is free over the clip's range (from the top for a picture without sound), else on a new audio track at
+ * the bottom. Nothing else moves. Null when the clip does not exist.
+ */
+export function addChannelClip(seq: Sequence, clipId: ID, spec: { name: string; audioStream?: number; selection: AudioChannelSelection }): AddChannelClipResult | null {
+  const src = channelSourceClip(seq, clipId);
+  if (!src) return null;
+  const start = src.start, end = clipEnd(src);
+  let from = 0;
+  if (src.kind === 'audio') from = seq.audioTracks.findIndex((t) => readItems(t.clips).some((c) => c.id === src.id)) + 1;
+  let track: Track | undefined;
+  for (let i = Math.max(0, from); i < seq.audioTracks.length && !track; i++) {
+    const t = seq.audioTracks[i];
+    if (!t.locked && !readItems(t.clips).some((c) => c.start < end && clipEnd(c) > start)) track = t;
+  }
+  const newTrack = !track;
+  if (!track) track = addTrack(seq, 'audio');
+  let linkId = src.linkId;
+  if (!linkId) {
+    linkId = uid('link');
+    const w = findClip(seq, src.id);
+    if (w) w.clip.linkId = linkId;
+  }
+  const clip = makeClip({
+    mediaId: src.mediaId, name: spec.name, sourceIn: src.sourceIn, duration: src.duration, speed: src.speed,
+    kind: 'audio', audioStream: spec.audioStream, linkId,
+  }, start);
+  if (spec.audioStream === undefined) delete clip.audioStream;
+  if (src.kind === 'audio') {
+    const a = src.audio;
+    clip.audio = { gain: a.gain, volume: a.volume, fadeIn: a.fadeIn, fadeOut: a.fadeOut, muted: false };
+  }
+  clip.audio.channelSelection = { ...spec.selection };
+  clip.enabled = src.enabled;
+  addClipSorted(track, clip);
+  reconcileTransitions(track);
+  return { clip, trackId: track.id, newTrack };
 }
 
 export function clipsInRange(track: Track, start: number, end: number, except: Set<ID> = new Set()): Clip[] {

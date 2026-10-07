@@ -30,7 +30,8 @@ import { useTimelineDrag, snapTargets, type InteractionCtx } from './interaction
 import { useTimelineUi } from './timelineStore';
 import { useViewScrollLeft } from './scrollSync';
 import { clipboardHasClips, copyClipsToClipboard, pasteClipboardAt } from '@/app/clipboard';
-import { setTimelineViewportWidth } from '@/app/commands';
+import { runExtractCentreChannel, setTimelineViewportWidth } from '@/app/commands';
+import { centreExtraction } from '@shared/audioChannels';
 import { setActiveTransport } from '@/app/transport';
 import { getShortcutLabel, runCommand } from '@/keyboard/shortcuts';
 import { COMMAND_IDS } from '@/keyboard/commandIds';
@@ -395,6 +396,16 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
       })(),
       { label: clip.linkId ? 'Unlink' : 'Link', shortcut: 'Ctrl+L', disabled: !clip.linkId && sel.length < 2, onSelect: () => (clip.linkId ? st.unlinkSelected(seqId) : st.linkSelected(seqId)) },
       { label: 'Speed / Duration…', shortcut: getShortcutLabel('clip.speedDuration') || undefined, onSelect: () => setDialog({ kind: 'speed', clipId: clip.id }) },
+      ...(() => {
+        // Roadmap §9: shown for clips with sound; disabled (with the reason) when the source has no centre channel.
+        const ex = centreExtraction(s, st.project.media, clip.id);
+        if (!ex.ok && !st.project.media[clip.mediaId]?.probe?.audio.length) return [];
+        return [{
+          label: 'Extract Centre Channel (Dialogue)', disabled: !ex.ok || track.locked, shortcut: ex.ok ? undefined : 'no centre channel',
+          title: ex.ok ? 'Adds the centre channel (FC) as its own linked mono clip below. It still carries music and effects, not only dialogue.' : ex.reason,
+          onSelect: () => { runExtractCentreChannel(seqId, clip.id); },
+        }];
+      })(),
       { label: 'Rename…', onSelect: () => setDialog({ kind: 'rename', clipId: clip.id }) },
       { label: 'Color Label', submenu: colorItems },
       { label: 'Tag…', onSelect: () => setDialog({ kind: 'tags', clipId: clip.id }) },

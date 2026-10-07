@@ -21,7 +21,7 @@ export function pushHistory(h: HistoryState, previous: Project, label: string): 
   return { ...h, past, pastLabels, future: [], futureLabels: [] };
 }
 
-const MEDIA_MIRROR_FIELDS = ['probe', 'probeError', 'kind', 'proxy', 'offline', 'path', 'fileSize', 'fileMtime', 'sceneDetectStatus', 'waveformStatus'] as const satisfies readonly (keyof MediaItem)[];
+const MEDIA_MIRROR_FIELDS = ['probe', 'probeError', 'kind', 'proxy', 'offline', 'path', 'fileSize', 'fileMtime', 'sceneDetectStatus', 'waveformStatus', 'channelProxies'] as const satisfies readonly (keyof MediaItem)[];
 
 /**
  * Carry the *current* non-undoable editor state into the project being restored:

@@ -9,6 +9,7 @@ import { uid } from './ids';
 import { makeTrack, defaultTransform, defaultAudio, reconcileTransitions, SPEED_PERCENT_MIN, SPEED_PERCENT_MAX } from './timeline';
 import { isValidFps, parseFps } from './time';
 import { saneSar } from './media';
+import { CHANNEL_PROXY_KEY, normalizeChannelSelection } from './audioChannels';
 import { formatProjectJson } from './projectJson';
 import {
   MAX_TIMELINE_FRAMES, MAX_SOURCE_SECONDS, MAX_PROJECT_DEPTH, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX, PROXY_HEIGHTS,
@@ -589,11 +590,18 @@ function repairClipAudio(v: unknown): ClipAudio {
   const d = defaultAudio();
   if (v !== undefined && !isObj(v)) note(FIELD_RESET);
   const a = isObj(v) ? v : {};
-  return {
+  const out = {
     ...a,
     gain: num(a.gain, d.gain), volume: num(a.volume, d.volume, nonNeg),
     fadeIn: num(a.fadeIn, d.fadeIn, frameLength), fadeOut: num(a.fadeOut, d.fadeOut, frameLength), muted: bool(a.muted, d.muted),
   } as ClipAudio;
+  // Channel selection (Roadmap §9): optional; an unusable one plays the stream's normal mix (absent).
+  if ('channelSelection' in out) {
+    const sel = normalizeChannelSelection(out.channelSelection);
+    if (sel.repaired) note(FIELD_RESET);
+    if (sel.value) out.channelSelection = sel.value; else delete out.channelSelection;
+  }
+  return out;
 }
 
 function repairSequenceSubtitleTrack(t: Obj): SequenceSubtitleTrack {
@@ -797,6 +805,8 @@ function repairMedia(m: Obj, id: ID): MediaItem {
   optional(m, 'fileSize', (v) => isFiniteNum(v) && v >= 0);
   optional(m, 'fileMtime', isFiniteNum);
   if ('probe' in m) { if (isObj(m.probe)) m.probe = repairProbe(m.probe); else { delete m.probe; note(FIELD_RESET); } }
+  if ('channelProxies' in m) m.channelProxies = repairChannelProxies(m.channelProxies);
+  if (m.channelProxies === undefined) delete m.channelProxies;
   return m as unknown as MediaItem;
 }
 
@@ -819,6 +829,21 @@ function repairProxy(v: unknown): ProxyInfo {
   for (const k of ['progress', 'width', 'height', 'audioStream']) optional(v, k, isFiniteNum);
   optional(v, 'audioStreams', (x: unknown) => Array.isArray(x) && x.every((n) => Number.isSafeInteger(n) && (n as number) >= 0));
   return v as unknown as ProxyInfo;
+}
+
+/**
+ * Channel-selection preview proxies (MediaItem.channelProxies): well-formed keys with a proxy record each. Entries with
+ * nothing on disk (none, or a job that did not survive the restart) are dropped, not kept as 'none'.
+ */
+function repairChannelProxies(v: unknown): Record<string, ProxyInfo> | undefined {
+  if (!isObj(v)) { note(FIELD_RESET); return undefined; }
+  const out: Record<string, ProxyInfo> = {};
+  for (const k of Object.keys(v)) {
+    if (!CHANNEL_PROXY_KEY.test(k)) { note(FIELD_RESET); continue; }
+    const p = repairProxy(v[k]);
+    if (p.status !== 'none') out[k] = p;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 function repairDetectedScene(d: Obj): DetectedScene | null {

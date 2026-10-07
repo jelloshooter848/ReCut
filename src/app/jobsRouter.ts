@@ -5,6 +5,7 @@
  *  - export: toasts
  *  - download (OCR language installs): toasts + refresh of the OCR language list (src/state/ocrStatus.ts)
  *  - ocr: done → the OCR subtitle track of that media + stream (added, or the earlier one replaced); toasts
+ *  - channelProxy: → media.channelProxies (preview audio of clips' channel selections; ./channelProxies.ts)
  *  - transcribe: done → the Whisper subtitle track of that media + audio stream + language (added, or replaced); toasts
  *  - download of a Whisper model: toasts + refresh of the model list (src/state/whisperStatus.ts)
  *  - collect (Collect Project): toasts
@@ -26,6 +27,7 @@ import { useOcrStatus } from '@/state/ocrStatus';
 import { OCR_TITLE_TAIL, ocrTrackName } from '@/ocr/ocrUi';
 import { iso6392ForOcr, ocrLanguage, type OcrResult } from '@shared/ocr';
 import { uid } from '@shared/ids';
+import { routeChannelProxyJob } from './channelProxies';
 import { useWhisperStatus } from '@/state/whisperStatus';
 import { isWhisperDownload, whisperDownloadName } from '@/whisper/whisperUi';
 import { whisperLanguage, whisperModel, whisperTrackName, type TranscribeResult } from '@shared/whisper';
@@ -250,6 +252,7 @@ export function routeJobs(jobs: JobInfo[]): void {
       else if (job.kind === 'export') routeExport(job);
       else if (job.kind === 'download') routeDownload(job);
       else if (job.kind === 'ocr') routeOcr(job);
+      else if (job.kind === 'channelProxy') routeChannelProxyJob(job);
       else if (job.kind === 'transcribe') routeTranscribe(job);
       else if (job.kind === 'collect') routeCollect(job);
     } catch (e) {

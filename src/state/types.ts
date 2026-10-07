@@ -3,7 +3,7 @@
  * can import types without pulling in zustand.
  */
 import type {
-  Bin, Clip, ClipAudio, ClipTransform, DetectedScene, ID, JobInfo, Marker, MediaItem, MediaProbe, Project,
+  AudioChannelSelection, Bin, Clip, ClipAudio, ClipTransform, DetectedScene, ID, JobInfo, Marker, MediaItem, MediaProbe, Project,
   ProjectSettings, ProxyInfo, SceneRecord, Sequence, SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock,
   SubtitleTrack, TagVocabulary, Track, Transition, TransitionType,
 } from '../../shared/model';
@@ -170,6 +170,11 @@ export interface StoreActions {
   setProxy(id: ID, proxy: ProxyInfo): void;
   /** Quiet (non-undoable, marks dirty): forget a proxy whose file failed to load → `{status:'none'}`. */
   invalidateProxy(id: ID): void;
+  /**
+   * Quiet (non-undoable, marks dirty): the channel proxies of a media item (MediaItem.channelProxies), by key; null
+   * removes an entry. Mirrors of the 'channelProxy' jobs (src/state/channelProxies.ts).
+   */
+  setChannelProxies(id: ID, patch: Record<string, ProxyInfo | null>): void;
   setSceneDetectStatus(id: ID, status: NonNullable<MediaItem['sceneDetectStatus']>): void;
   setDetectedScenes(id: ID, boundaries: number[], duration: number): void;
   renameDetectedScene(mediaId: ID, sceneId: ID, name: string): void;
@@ -236,6 +241,14 @@ export interface StoreActions {
    */
   setClipAudioStream(seqId: ID, clipIds: ID[], index: number | undefined): void;
   setClipSpeed(seqId: ID, clipId: ID, speed: number, opts?: { ripple?: boolean }): void;
+  /** Channel selection of audio clips (undefined = the stream's normal mix). One undo step. Roadmap §9. */
+  setClipChannelSelection(seqId: ID, clipIds: ID[], selection: AudioChannelSelection | undefined): void;
+  /**
+   * Extract Centre Channel (Dialogue): a new audio clip playing the centre channel (FC) of `clipId`'s sound, linked
+   * to its group, on a free audio track below (or a new one). One undo step; the new clip is selected. Refused with
+   * the reason when the source has no centre channel (shared/audioChannels.ts centreExtraction).
+   */
+  extractCentreChannel(seqId: ID, clipId: ID): { ok: true; clipId: ID; trackId: ID } | { ok: false; reason: string };
   setClipTags(seqId: ID, clipId: ID, patch: ClipTagsPatch): void;
   addTransitionAtCut(seqId: ID, trackId: ID, frame: number, type: TransitionType, frames?: number): Transition | null;
   addDefaultTransitionAtSelection(seqId?: ID): void;
