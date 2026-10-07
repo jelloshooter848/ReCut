@@ -138,8 +138,9 @@ test('proxy requests for an image and an audio-only file settle (fail with a rea
   const [img, aud] = await importMedia(app.page, [path.join(mediaDir, MEDIA.title), path.join(mediaDir, MEDIA.score)]);
   const ji = await startProxy(img); const ja = await startProxy(aud);
   const ri = await waitJob(ji.id); const ra = await waitJob(ja.id);
-  expect(ri.status).toBe('failed');
-  expect(ri.error).toMatch(/neither video nor audio|image/i);
+  // A still's proxy job writes a PNG still proxy (Roadmap §2 B); it used to fail with "neither video nor audio".
+  expect(ri.status).toBe('done');
+  expect((ri.result as { path?: string } | undefined)?.path ?? '').toMatch(/_still\.png$/);
   expect(ra.status).toBe('done');
   const am = await media(aud);
   await expect.poll(async () => (await media(aud)).proxy.status, { timeout: 10_000 }).toBe('ready');

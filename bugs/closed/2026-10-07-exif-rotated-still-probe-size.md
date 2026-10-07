@@ -84,7 +84,10 @@ Without the fix: `1 failed` (`expected [ 320, 240 ] to deeply equal [ 240, 320 ]
 (unit), 5/5 (e2e stills).
 
 ### Tests run
-See the branch report.
+- `npm run typecheck`: clean. `npm test`: 62 files, 1181/1181 passed.
+- Attack (`ATTACK_SCRATCH=…/s2b/attack npx vitest run -c tests/attack/vitest.config.ts`): codecs, proxy, exportgraph,
+  stills: 43/43 passed (HEIC cases skip on FFmpeg 6.1: no HEIF demuxer).
+- Attack-QA `tests/attack-qa/media-proxy-export.spec.ts`: 10/10. E2E program, source, project, stills: 22/22.
 
 ### Changed existing assertions
 None.

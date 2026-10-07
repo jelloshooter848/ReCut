@@ -97,11 +97,17 @@ stills are `image` in both, AVIF is not browser-playable, an animated GIF is `vi
 origin/main probe.ts + store.ts: `Tests 14 failed | 6 passed | 10 skipped`. Fixed: 31/31 in stills.test.ts.
 
 ### Tests run
-`npm test` (all unit tests), `npm run typecheck`, attack stills/codecs/proxy/exportgraph, e2e program/source/project/
-stills (see the branch report).
+- `npm run typecheck`: clean. `npm test`: 62 files, 1181/1181 passed.
+- Attack (`ATTACK_SCRATCH=…/s2b/attack npx vitest run -c tests/attack/vitest.config.ts`): codecs, proxy, exportgraph,
+  stills: 43/43 passed (HEIC cases skip on FFmpeg 6.1: no HEIF demuxer).
+- Attack-QA `tests/attack-qa/media-proxy-export.spec.ts`: 10/10. E2E program, source, project, stills: 22/22.
 
 ### Changed existing assertions
-None. (tests/unit/store.test.ts' hand-made `png_pipe` probe with duration 0.04 still classifies as image: an image
+- tests/unit/playback.test.ts: "an image Chromium cannot show reports a conversion hint" became "…needs a PNG proxy, and
+  draws it once ready": the old assertion encoded the missing preview.
+- tests/attack/proxy.test.ts and tests/attack-qa/media-proxy-export.spec.ts expected a proxy job for an image to fail
+  ("neither video nor audio"); it now writes the PNG still proxy, and the tests assert that.
+(tests/unit/store.test.ts' hand-made `png_pipe` probe with duration 0.04 still classifies as image: an image
 demuxer is a still in both classifiers.)
 
 ### Compatibility risks

@@ -91,11 +91,13 @@ clip matches the PNG preview proxy of the same file: mean |export − proxy| per
 avif 0.39, exr 0.56, psd 0.40, dpx 0.40 (0–255). The one-frame GIF exports 12 frames with the right colours.
 
 ### Regression test proof
-Old renderGraph: `2 failed` (`Option loop not found` for pattern.avif and one.gif). New: `9 passed`.
+Old renderGraph: `2 failed` (`Option loop not found` for pattern.avif and one.gif). New: all stills tests pass (10/10).
 
 ### Tests run
-`npm test`, `npm run typecheck`, attack: `tests/attack/stills.test.ts` 9/9, `exportgraph`, `codecs`, `proxy` (see
-the branch report).
+- `npm run typecheck`: clean. `npm test`: 62 files, 1181/1181 passed.
+- Attack (`ATTACK_SCRATCH=…/s2b/attack npx vitest run -c tests/attack/vitest.config.ts`): codecs, proxy, exportgraph,
+  stills: 43/43 passed (HEIC cases skip on FFmpeg 6.1: no HEIF demuxer).
+- Attack-QA `tests/attack-qa/media-proxy-export.spec.ts`: 10/10. E2E program, source, project, stills: 22/22.
 
 ### Changed existing assertions
 None.
