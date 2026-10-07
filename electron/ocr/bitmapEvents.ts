@@ -15,17 +15,15 @@
  * `extractBitmapEvents` runs the passes and hands each event to the caller with stdout backpressure, so memory stays
  * flat on a feature film: one raw frame (two, for the duplicate check) plus a bounded queue of cropped images.
  */
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  adaptFfmpegArgs, FfmpegError, ffmpegFileArg, ffmpegMajorVersionSync, getFfmpegPath, getFfprobePath, lineSplitter, runFfmpeg,
+  adaptFfmpegArgs, FfmpegError, ffmpegFileArg, ffmpegMajorVersionSync, getFfmpegPath, runFfmpeg, runFfprobeJson,
   type FfmpegRun,
 } from '../media/ffmpeg';
-import { ffmpegMissingMessage } from '../../shared/ipc';
 import { isOcrCodec } from '../../shared/ocr';
 import { upscaleYa8 } from './preprocess';
 
@@ -486,32 +484,14 @@ function canceledError(): FfmpegError {
   return new FfmpegError('bitmap subtitle extraction canceled', { canceled: true });
 }
 
-/** ffprobe → JSON with abort support (runFfprobeJson has none). */
-function ffprobeJson<T>(args: string[], signal?: AbortSignal): Promise<T> {
-  const bin = getFfprobePath();
-  if (!bin) return Promise.reject(new FfmpegError(ffmpegMissingMessage('ffprobe'), {}));
-  if (signal?.aborted) return Promise.reject(canceledError());
-  return new Promise<T>((resolve, reject) => {
-    const child = spawn(bin, ['-v', 'error', '-print_format', 'json', ...args], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-    const out: Buffer[] = [];
-    const errLines: string[] = [];
-    const errSplit = lineSplitter((l) => { errLines.push(l); if (errLines.length > 30) errLines.shift(); });
-    let aborted = false;
-    const onAbort = () => { aborted = true; try { child.kill('SIGKILL'); } catch { /* gone */ } };
-    signal?.addEventListener('abort', onAbort, { once: true });
-    child.stdout.on('data', (c: Buffer) => out.push(c));
-    child.stderr.on('data', (c: Buffer) => errSplit.push(c));
-    let spawnError: Error | null = null;
-    child.on('error', (e) => { spawnError = e; });
-    child.on('close', (code) => {
-      signal?.removeEventListener('abort', onAbort);
-      errSplit.flush();
-      if (aborted) return reject(canceledError());
-      if (spawnError) return reject(new FfmpegError(`failed to run ffprobe: ${(spawnError as Error).message}`, {}));
-      if (code !== 0) return reject(new FfmpegError(`ffprobe exited with code ${code}: ${errLines.slice(-10).join('\n')}`, { code, stderr: errLines.join('\n') }));
-      try { resolve(JSON.parse(Buffer.concat(out).toString('utf8') || '{}') as T); } catch (e) { reject(new FfmpegError(`ffprobe produced invalid JSON: ${(e as Error).message}`, {})); }
-    });
-  });
+/** ffprobe → JSON; abort kills it and rejects with canceledError(). */
+async function ffprobeJson<T>(args: string[], signal?: AbortSignal): Promise<T> {
+  try {
+    return await runFfprobeJson<T>(args, { signal });
+  } catch (e) {
+    if ((e instanceof FfmpegError && e.canceled) || signal?.aborted) throw canceledError();
+    throw e;
+  }
 }
 
 interface ProbeStream { index?: number; codec_type?: string; codec_name?: string; width?: number; height?: number; time_base?: string }

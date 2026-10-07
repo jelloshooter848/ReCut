@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import type { OcrRequest, OcrResult } from '../../shared/ocr';
 import { JobQueue } from '../../electron/jobs/jobQueue';
 import { setCacheDir } from '../../electron/media/cache';
+import { FfmpegError, runFfprobeJson } from '../../electron/media/ffmpeg';
 import type { OcrPool } from '../../electron/ocr/engine';
 import {
   buildCues, ocrJobTitle, startOcrJob, _resetOcrJobState, type OcrJobContext,
@@ -139,6 +140,24 @@ describe('buildCues', () => {
 
   it('titles the job with file, stream and language', () => {
     expect(ocrJobTitle({ mediaId: 'm', path: '/x/Film Night.mkv', streamIndex: 3, language: 'fra' })).toBe('Read subtitles with OCR: Film Night.mkv #3 (French)');
+  });
+});
+
+describe('runFfprobeJson abort', () => {
+  it('rejects at once for an aborted signal, and kills ffprobe when aborted while it runs', async () => {
+    const pre = new AbortController();
+    pre.abort();
+    await expect(runFfprobeJson(['-version'], { signal: pre.signal })).rejects.toMatchObject({ canceled: true });
+    const ac = new AbortController();
+    const t0 = performance.now();
+    // Decoding 10 minutes of generated video frame by frame takes far longer than the abort below.
+    const run = runFfprobeJson(['-f', 'lavfi', '-show_frames', 'testsrc=d=600:s=1280x720'], { signal: ac.signal });
+    setTimeout(() => ac.abort(), 200);
+    const err = await run.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(FfmpegError);
+    expect((err as FfmpegError).canceled).toBe(true);
+    expect(performance.now() - t0).toBeLessThan(5000);
+    expect(processesMentioning('testsrc=d=600')).toEqual([]);
   });
 });
 
