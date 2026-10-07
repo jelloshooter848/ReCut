@@ -4,12 +4,12 @@
  * carry accelerators here so they do not steal keys from the renderer.
  *
  * Commands sent:
- *  file.new, file.open, file.clearRecent, file.save, file.saveAs, file.importMedia,
+ *  file.new, file.open, file.clearRecent, file.save, file.saveAs, file.collect, file.importMedia,
  *  file.importSubtitles, file.export
  *  edit.undo, edit.redo, edit.cut, edit.copy, edit.paste, edit.delete, edit.rippleDelete, edit.selectAll
  *  sequence.new, sequence.duplicate, sequence.addEdit, (Render & Export → file.export)
  *  view.zoomIn, view.zoomOut, view.zoomFit
- *  help.shortcuts, help.about
+ *  help.shortcuts, help.checkForUpdates, help.about
  * Open Recent entries send `ev:openProjectPath` with the file path instead.
  */
 import { app, Menu, MenuItemConstructorOptions, shell } from 'electron';
@@ -50,6 +50,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       { type: 'separator' },
       cmd('Save', 'file.save', 'CmdOrCtrl+S'),
       cmd('Save As…', 'file.saveAs', 'CmdOrCtrl+Shift+S'),
+      cmd('Collect Project…', 'file.collect'),
       { type: 'separator' },
       cmd('Import Media…', 'file.importMedia'),
       cmd('Import Subtitles…', 'file.importSubtitles'),
@@ -127,6 +128,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       cmd('Keyboard Shortcuts', 'help.shortcuts'),
       { label: 'FFmpeg Documentation', click: () => { void shell.openExternal('https://ffmpeg.org/documentation.html'); } },
       { type: 'separator' },
+      cmd('Check for Updates…', 'help.checkForUpdates'),
       cmd(`About ${app.getName()}`, 'help.about'),
     ],
   };

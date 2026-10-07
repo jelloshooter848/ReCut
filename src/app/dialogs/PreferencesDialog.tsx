@@ -18,6 +18,8 @@ import { installedSummary, useOcrStatus } from '@/state/ocrStatus';
 import { openOcrLanguages } from '@/ocr/ocrUi';
 import { installedModelsSummary, useWhisperStatus } from '@/state/whisperStatus';
 import { openWhisperModels } from '@/whisper/whisperUi';
+import { checkForUpdatesNow, refreshUpdateStatus, setUpdateCheckSetting, useUpdateStore } from '@/app/updates';
+import type { UpdateCheckSetting, UpdateStatus } from '@shared/update';
 import {
   AUTOSAVE_INTERVAL_MAX_SEC, AUTOSAVE_INTERVAL_MIN_SEC, DEFAULT_TRANSITION_FRAMES_MAX, DEFAULT_TRANSITION_FRAMES_MIN, PROXY_HEIGHTS,
 } from '@shared/limits';
@@ -27,6 +29,19 @@ const PROXY_HEIGHT_OPTIONS = PROXY_HEIGHTS.map((h) => ({ value: String(h), label
 const PLAYBACK_RES = [{ value: 'full', label: 'Full' }, { value: '1/2', label: '1/2' }, { value: '1/4', label: '1/4' }];
 
 const clampInt = (v: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(v)));
+
+const UPDATE_CHECK_OPTIONS: { value: UpdateCheckSetting; label: string }[] = [
+  { value: 'ask', label: 'Ask me' }, { value: 'on', label: 'Once a day' }, { value: 'off', label: 'Off' },
+];
+
+/** "Last checked …" line of Preferences › Updates. */
+export function lastCheckText(s: UpdateStatus | null): string {
+  if (!s) return '…';
+  if (s.lastCheckAt === null) return 'Never checked';
+  const when = new Date(s.lastCheckAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  if (s.lastCheckOk === false) return `Last checked ${when} (GitHub could not be reached)`;
+  return `Last checked ${when}${s.available ? ` — ReCut ${s.available.version} is available` : ' — up to date'}`;
+}
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -57,6 +72,9 @@ export function PreferencesDialog() {
   const whisperModels = useWhisperStatus((s) => s.models);
   const whisperEngine = useWhisperStatus((s) => s.engine);
   useEffect(() => { if (open) void useWhisperStatus.getState().refresh(); }, [open]);
+  const update = useUpdateStore((s) => s.status);
+  const checkingUpdates = useUpdateStore((s) => s.checking);
+  useEffect(() => { if (open) void refreshUpdateStatus(); }, [open]);
   useEffect(() => {
     if (!open || info) return;
     recutApi()?.appInfo().then(setInfo).catch(() => setInfo(null));
@@ -132,6 +150,15 @@ export function PreferencesDialog() {
             <Button size="sm" onClick={() => openWhisperModels()} aria-label="Manage transcription models…" data-testid="prefs-whisper-manage">Manage…</Button>
           </Row>
           <Row label="Version"><span className="text-sm">{info ? `ReCut ${info.version} · ${info.platform}${info.isDev ? ' · dev' : ''}` : '…'}</span></Row>
+          <Row label="Check for updates" hint="Asks GitHub for the latest ReCut release once a day and says when a newer one exists. Only that request is sent; nothing is downloaded or installed.">
+            {update?.managed ? (
+              <span className="text-sm text-dim" data-testid="prefs-update-check">Turned off for this installation</span>
+            ) : (
+              <Select value={update?.setting ?? 'ask'} options={UPDATE_CHECK_OPTIONS} disabled={!update} onChange={(v) => void setUpdateCheckSetting(v)} data-testid="prefs-update-check" />
+            )}
+            <span className="text-sm text-dim ellipsis grow" data-testid="prefs-update-last" title={lastCheckText(update)}>{update ? lastCheckText(update) : (recutApi() ? '…' : 'unavailable outside the desktop app')}</span>
+            <Button size="sm" disabled={!update || checkingUpdates} onClick={() => void checkForUpdatesNow()}>{checkingUpdates ? 'Checking…' : 'Check now'}</Button>
+          </Row>
           <Row label="Layout">
             <Button size="sm" onClick={() => { resetAllLayouts(); toast('info', 'All workspaces reset'); }}>Reset layout</Button>
             <Button size="sm" onClick={() => { close(); runCommand(COMMAND_IDS.openShortcuts); }}>Keyboard shortcuts…</Button>

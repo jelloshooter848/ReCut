@@ -3,7 +3,7 @@
  * 'transcribe' (its own lane, one at a time; the engine uses every core but one).
  *
  *  1. Check the model (size + SHA-256 against the manifest, once per session) and the engine.
- *  2. Cache: `whisper/<file key>_s<stream>_<model>-<settings hash>.json`, keyed on the media's identity
+ *  2. Cache: `whisper/<file key>_s<stream>_<model>-<settings hash>.json`, keyed on the media's content key
  *     (transcriptionMediaKey), the stream, the model and its SHA-256, the language / translate settings, the engine
  *     version and WHISPER_PIPELINE_VERSION. A hit returns at once with `cached: true`.
  *  3. FFmpeg extracts the stream as 16 kHz mono 16-bit PCM into a temp WAV (progress 0–10 %).
@@ -59,8 +59,9 @@ export interface TranscribeJobContext {
 }
 
 /**
- * The media part of the cache key. One function on purpose: when media identity moves to a move-proof fingerprint
- * (the Collect Project work), only this changes. Today: the path + size + mtime key every media cache uses.
+ * The media part of the cache key, in one function so it can follow the media cache's identity rules. It is the
+ * move-proof content key every media cache uses (cacheKeyForPath: size + sampled blocks), so a transcription survives
+ * moving or renaming the file.
  */
 export function transcriptionMediaKey(mediaPath: string): Promise<string> {
   return cacheKeyForPath(mediaPath);

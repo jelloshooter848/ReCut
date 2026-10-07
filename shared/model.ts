@@ -388,13 +388,23 @@ export interface AppPreferences {
   ocrLastLanguage?: string;
   /** Whisper model id (shared/whisper.ts) last used to transcribe, the Transcribe dialog's default while installed. */
   whisperLastModel?: string;
+  /** Update notice (shared/update.ts): Preferences › Check for updates. Absent means 'ask'. */
+  updateCheck?: 'ask' | 'on' | 'off';
+  /** When the last update check was made (ms since the epoch), and whether GitHub answered it. */
+  updateLastCheckAt?: number;
+  updateLastCheckOk?: boolean;
+  /** The release the last answered check found, when it was newer than the version running then. */
+  updateLatest?: { version: string; url: string };
+  /** "Skip this version": the release whose notice the user turned off. */
+  updateSkipVersion?: string;
 }
 
 // ------------------------------------------------------------------
 // Jobs (background work in the main process)
 // ------------------------------------------------------------------
-/** 'ocr': bitmap subtitles to text; 'download': OCR language or Whisper model install; 'transcribe': speech-to-text (Whisper). */
-export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download';
+/** 'ocr': bitmap subtitles to text; 'download': OCR language or Whisper model install; 'transcribe': speech-to-text
+ * (Whisper); 'collect': Collect Project (copy the project and its media to one folder). */
+export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download' | 'collect';
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled';
 
 export interface JobInfo {

@@ -281,6 +281,45 @@ Scenes in the library are reusable, tagged source ranges.
   folder…** (matches by name + size) › **Apply N matches**, or **Locate…** per file. **Check files** re-verifies.
 - If a relinked file is shorter than before, clips that now run past its end are trimmed to it and clips that start
   after its end are removed, in every sequence (one undo step, with a warning that gives the counts).
+- Thumbnails, waveforms, proxies, detected scenes and OCR results follow the file, not its folder: they are cached by
+  the file's content (its size and a sample of its bytes), so a moved, renamed or copied file reuses them after Relink
+  instead of building them again.
+
+### Collect Project
+
+**File › Collect Project…** copies the project and the media it uses into one new folder, to archive a finished edit,
+move it to another drive or hand it to someone else.
+
+1. **Choose…** a destination folder. ReCut creates a folder named after the project inside it; that folder must not
+   exist yet, or be empty.
+2. Pick **Media used in sequences only** (every file a clip or a sequence snapshot uses) or **All project media**.
+   Turn on **Include subtitle files** to copy the subtitle files the project imported, and **Include proxies** to copy
+   ready proxies so the copy previews without rebuilding them on another computer.
+3. Check the summary: the folder it creates, the total size and the free space on the destination. Media that are
+   offline are listed and skipped. **Collect** stays disabled when the folder is not empty or the space is short.
+4. **Collect** runs as a job: the dialog (and **Jobs**) shows the bytes copied, and **Cancel collect** stops it.
+   Close the dialog with **Hide** to keep working while it copies.
+
+The result looks like this:
+
+```
+Saga Fan Cut/
+  Saga Fan Cut.recut
+  Media/        title_t00.mkv, Disc 1/title_t01.mkv, Disc 2/title_t01.mkv, …
+  Subtitles/    the subtitle files (option)
+  Proxies/      the proxies (option)
+```
+
+- Each file keeps its own name. Files with the same name from different folders go into subfolders named after the
+  folders that tell them apart (`Disc 1/title_t01.mkv`, `Disc 2/title_t01.mkv`), so nothing is overwritten.
+- Every copy is checked against its original (size and a fingerprint of its start, middle and end) before the
+  project file is written. The collected project's paths point at the copies; media that were not copied keep their
+  original paths. Paths stay absolute, so after moving the collected folder itself use **Relink › Search folder…**.
+- Your open project and the original files are not changed. **Open collected project** (when it finishes) opens
+  the copy.
+- If the collect fails (a full disk, an unreadable file) or you cancel it, the folder keeps what was copied, has no
+  project file, and holds `COLLECT-INCOMPLETE.txt` saying why. Delete the folder and collect again.
+- The copied media keep their thumbnails, waveforms and proxies on this computer: the cache recognises them.
 
 ## 15. Export
 
@@ -355,3 +394,28 @@ so, so you do not have to render again.
   A file saved by a newer ReCut is refused, never replaced by the `.bak`.
 - Opening or creating a project closes open dialogs (Export, Relink, ...) that belonged to the previous one.
 - **Quit** (Ctrl+Q) asks to save unsaved changes.
+- Projects saved by any earlier stable release (0.3.0 onwards) open without losing anything; a project saved by a
+  newer ReCut is refused with a message that says so (see
+  [the compatibility promise](project-format.md#compatibility-promise)).
+
+## Updates
+
+ReCut works offline and never updates itself. It can tell you when a newer release is out:
+
+- The first time you start this version, a bar at the top asks **Check for new ReCut versions on GitHub once a
+  day? [Yes] [No]**. Nothing is checked until you answer **Yes**.
+- With checking on, ReCut asks GitHub for the latest release a few seconds after it starts, at most once a day. When
+  a newer version exists, a bar says **ReCut X.Y.Z is available — Release notes**. **Release notes** opens the
+  release page in your browser, where you download and install the new version yourself (your projects and
+  preferences are kept). **Skip this version** hides the bar until a later release; **×** hides it until the next
+  start.
+- **Help › Check for Updates…** checks once, now, whatever the setting, and tells you whether you are up to date, a
+  new version exists, or the check failed.
+- **Preferences › Check for updates** changes the setting (**Ask me**, **Once a day**, **Off**) and shows when the
+  last check was made. **Check now** does the same as the Help menu item.
+
+**Privacy:** the check is one request to `api.github.com` for the latest ReCut release. It sends nothing about you,
+your projects or your media: no identifier, no cookies, no telemetry. The only header ReCut adds is
+`User-Agent: ReCut/<version>`; your network stack adds its usual ones (for example the accepted languages), and GitHub
+sees your IP address as for any web request. Pre-releases are never offered. Administrators can turn the prompt and
+the daily check off for an installation with the environment variable `RECUT_UPDATE_CHECK=0`.

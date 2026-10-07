@@ -65,6 +65,7 @@ export const menuCommandMap: Record<string, string> = {
   'app.ocrLanguages': 'app.ocrLanguages',
   'app.whisperModels': 'app.whisperModels',
   'help.about': 'help.about',
+  'help.checkForUpdates': 'help.checkForUpdates',
 };
 
 /** Dispatch a menu command string. Returns true when a command ran. */

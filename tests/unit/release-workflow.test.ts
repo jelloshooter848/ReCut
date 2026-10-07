@@ -213,3 +213,147 @@ describe('speech-to-text engine in CI (Roadmap §5)', () => {
     expect(wf).not.toMatch(/ggml-(base|small|medium|large)[a-z0-9.-]*\.bin/);
   });
 });
+
+// The macOS dmg (docs/ROADMAP.md §19, release 0.7.0): during bring-up the macos and macos-e2e jobs are ADVISORY. They
+// run on every run, but publish does not need them and does not attach the dmg (docs/MACOS-SIGNING.md for signing).
+describe('Windows workflow: the macOS dmg job (advisory during bring-up)', () => {
+  const macos = code(job('macos'));
+  const macosE2e = code(job('macos-e2e'));
+  const publish = code(job('publish'));
+  const pkg = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8'));
+  const script = fs.readFileSync(path.join(repo, 'scripts/mac/get-ffmpeg.sh'), 'utf8').replace(/\r\n/g, '\n'); // CRLF on a Windows checkout
+
+  it('runs on every run on an Apple Silicon runner, and the e2e suite runs in its own job', () => {
+    expect(jobIf(macos)).toBeUndefined();
+    expect(macos).toMatch(/^ {4}runs-on: macos-14$/m);
+    expect(jobIf(macosE2e)).toBeUndefined();
+    expect(macosE2e).toMatch(/^ {4}runs-on: macos-14$/m);
+    expect(macosE2e).toContain('./scripts/mac/get-ffmpeg.sh --dest "$RUNNER_TEMP/ff"');
+    expect(macosE2e).toContain('npx playwright test -c tests/e2e/playwright.config.ts');
+  });
+
+  it('is not a release gate yet: publish neither needs it nor attaches the dmg, and a TODO says how to change that', () => {
+    expect(publish).toMatch(/^ {4}needs: \[installer, tests, e2e, launcher, linux\]$/m);
+    expect(publish).not.toContain('ReCut-macos');
+    expect(publish).not.toContain('.dmg');
+    expect(workflow).toContain('# TODO(0.7.0, when macOS becomes official');
+    expect(workflow).toContain('#   1. needs: [installer, tests, e2e, launcher, linux, macos, macos-e2e]');
+    expect(workflow).toMatch(/^\s+#.*\brelease\/ReCut-\*-macos-arm64\.dmg/m);
+    expect(workflow).toMatch(/^\s+#\s+name: ReCut-macos$/m);
+    // The Windows and Linux summaries say which jobs must be green: the five gates, not the advisory macOS jobs.
+    for (const block of [code(job('installer')), code(job('linux'))]) {
+      expect(block).toContain('the required jobs of this run (installer, tests, e2e, launcher, linux) are green');
+      expect(block).not.toContain('every job in this run is green');
+    }
+  });
+
+  it('tests with the bundled arm64 FFmpeg, then packages the arm64 dmg, signed only when all secrets are set', () => {
+    expect(macos).toContain('./scripts/mac/get-ffmpeg.sh --dest resources/ffmpeg');
+    expect(macos).toContain('npx vitest run');
+    expect(macos.indexOf('get-ffmpeg.sh')).toBeLessThan(macos.indexOf('npx vitest run'));
+    expect(macos.indexOf('npx vitest run')).toBeLessThan(macos.indexOf('electron-builder --mac'));
+    // Signed: electron-builder signs, notarizes (APPLE_API_KEY = path of the decoded .p8) and staples.
+    expect(macos).toContain('APPLE_API_KEY="$APPLE_API_KEY_PATH" npx electron-builder --mac dmg --arm64 --publish never');
+    // Unsigned: no identity discovery, ad-hoc signature, hardened runtime off (a real boolean false).
+    expect(macos).toMatch(/CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg --arm64 --publish never \\\n\s+-c\.mac\.identity=- -c\.mac\.timestamp=none --no-config\.mac\.hardenedRuntime/);
+    expect(macos).not.toMatch(/hardenedRuntime=false/);
+    expect(macos).toContain("echo 'signed=false' >> \"$GITHUB_OUTPUT\"");
+    expect(macos).toContain('if [ "$have" -ne 5 ]; then');
+  });
+
+  it('takes the five signing secrets only through env, and never prints them', () => {
+    for (const s of ['CSC_LINK', 'CSC_KEY_PASSWORD', 'APPLE_API_KEY', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER']) {
+      expect(macos).toContain(`secrets.${s} }}`);
+    }
+    const secretLines = macos.split('\n').filter((l) => l.includes('secrets.'));
+    for (const l of secretLines) expect(l, l).toMatch(/^\s+[A-Z][A-Z0-9_]*: \$\{\{ .*secrets\.[A-Z_]+.* \}\}$/);
+    expect(macos).not.toMatch(/(echo|printf)[^\n]*\$\{?(CSC_LINK|CSC_KEY_PASSWORD|APPLE_API_KEY_ID|APPLE_API_ISSUER)\b/);
+    expect(macos).not.toMatch(/set -x|::add-mask::/);
+    // The decoded key lives in a private temp folder that is removed after packaging.
+    expect(macos).toContain('rm -rf "$RUNNER_TEMP/recut-notary"');
+    // No other job sees them.
+    expect(code(workflow).match(/secrets\.(CSC_|APPLE_)/g)?.length).toBe(macos.match(/secrets\.(CSC_|APPLE_)/g)?.length);
+  });
+
+  it('checks every Mach-O signature, and Gatekeeper and the stapled ticket when signed', () => {
+    expect(macos).toContain('codesign --verify --deep --strict --verbose=2 "$APP"');
+    expect(macos).toContain("grep -q '^Authority=Developer ID Application: '");
+    expect(macos).toContain('runtime');
+    expect(macos).toContain("grep -q '^Timestamp='");
+    expect(macos).toContain("grep -q '^Signature=adhoc'");
+    expect(macos).toContain('spctl -a -vv -t exec "$APP"');
+    expect(macos).toContain('source=Notarized Developer ID');
+    expect(macos).toContain('xcrun stapler validate "$APP"');
+  });
+
+  it('smoke-tests the app inside the mounted dmg and fails on any missing line', () => {
+    expect(macos).toContain('hdiutil attach -nobrowse -readonly');
+    expect(macos).toContain('RECUT_SMOKE=1');
+    expect(macos).toContain('"$APP/Contents/MacOS/ReCut" &');
+    for (const want of [
+      'smoke: protocol status=206 ',
+      'smoke: ffmpeg encode\\+probe ok ',
+      '/recut-dmg/ReCut\\.app/Contents/Resources/ffmpeg/ffmpeg ',
+      'FFMPEG-BUILD\\.txt,FFMPEG-LICENSE\\.txt',
+      'smoke: ocr core=(relaxedsimd-lstm|lstm) ok worker=.*app\\.asar\\.unpacked',
+      'layout=mounted',
+    ]) {
+      expect(macos, want).toContain(want);
+    }
+    expect(macos).toContain("grep -E 'FAILED|layout=MISSING'");
+    expect(macos).toContain('exit "$bad"');
+    expect(macos).toContain("grep -q '^Platform: *arm64 macOS$'");
+  });
+
+  it('keeps the dmg as the ReCut-macos artifact on every run, with a job summary', () => {
+    const upload = /- uses: actions\/upload-artifact@v4\n((?:\s{8,}.*\n)+)/g;
+    const artifact = [...macos.matchAll(upload)].map((m) => m[0]).find((a) => /name: ReCut-macos\n/.test(a));
+    expect(artifact).toBeDefined();
+    expect(artifact).not.toMatch(/^\s+if:/m);
+    expect(artifact).toContain('path: release/ReCut-*-macos-arm64.dmg');
+    expect(artifact).toMatch(/retention-days: 14/);
+    expect(macos).toContain('GITHUB_STEP_SUMMARY');
+  });
+
+  it('package.json builds an arm64 dmg with the hardened runtime and a minimal entitlement set', () => {
+    const mac = pkg.build.mac;
+    expect(mac.target).toEqual([{ target: 'dmg', arch: ['arm64'] }]);
+    expect(mac.artifactName).toBe('ReCut-${version}-macos-arm64.${ext}');
+    expect(pkg.build.dmg.artifactName).toBe(mac.artifactName);
+    expect(mac.category).toBe('public.app-category.video');
+    expect(mac.hardenedRuntime).toBe(true);
+    expect(mac.publish).toBeNull();
+    expect(mac).not.toHaveProperty('identity');
+    // The minimum macOS is the bundled FFmpeg's (scripts/mac/get-ffmpeg.sh checks the binaries against it).
+    expect(script).toContain(`min_macos='${mac.minimumSystemVersion}'`);
+    // Electron's and Chromium's licences ship inside the app (electron-builder leaves them out on macOS).
+    expect(mac.extraResources).toEqual(expect.arrayContaining([
+      { from: 'node_modules/electron/dist/LICENSE', to: 'LICENSE.electron.txt' },
+      { from: 'node_modules/electron/dist/LICENSES.chromium.html', to: 'LICENSES.chromium.html' },
+    ]));
+    for (const f of [mac.entitlements, mac.entitlementsInherit]) {
+      const plist = fs.readFileSync(path.join(repo, f), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+      expect(plist, f).toContain('<key>com.apple.security.cs.allow-jit</key>');
+      expect(plist.match(/<key>/g), f).toHaveLength(1);
+    }
+    expect(pkg.build.fileAssociations.map((a: { ext: string }) => a.ext)).toContain('recut');
+  });
+
+  it('get-ffmpeg.sh for macOS pins its downloads and writes the same licence, readme and build files', () => {
+    expect(script.startsWith('#!/usr/bin/env bash\n')).toBe(true);
+    expect(script).toContain('set -euo pipefail');
+    for (const f of ['FFMPEG-LICENSE.txt', 'FFMPEG-README.txt', 'FFMPEG-BUILD.txt']) expect(script).toContain(`'${f}'`);
+    expect(script).toContain("echo 'Platform:        arm64 macOS'");
+    expect(script).toContain("echo 'Corresponding source'");
+    expect(script).toContain('--skip-run');
+    expect(script).not.toMatch(/master-latest|\/latest\//);
+    // Every source: a versioned release URL, the archive's SHA-256, a licence URL at the same tag and its SHA-256.
+    const entries = [...script.matchAll(/^ {2}"(\$jf\/releases\/download\/(v[\d.]+-\d+)\/[^|"]+)\|([0-9a-f]{64})\|(\$jf_raw\/(v[\d.]+-\d+)\/COPYING\.GPLv3)\|([0-9a-f]{64})\|(v[\d.]+-\d+)"$/gm)];
+    expect(entries.length).toBeGreaterThanOrEqual(1);
+    for (const e of entries) {
+      expect(e[2]).toBe(e[5]);
+      expect(e[2]).toBe(e[7]);
+      expect(e[1]).toMatch(/_portable_macarm64-gpl\.tar\.xz$/);
+    }
+  });
+});

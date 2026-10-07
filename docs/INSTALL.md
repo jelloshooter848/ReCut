@@ -5,7 +5,9 @@ exe** (built on Windows by CI with FFmpeg bundled; the unpacked app they are mad
 is silently installed and the installed app smoke-tested; the unit and end-to-end suites run on Windows on every
 build and must pass before anything is published) and the **Linux x86-64 AppImage** (built on Ubuntu 22.04 by CI with
 FFmpeg bundled; the unit and end-to-end suites run on Linux on every build, and the AppImage itself is launched and
-smoke-tested before anything is published). macOS (dmg) is configured but untested. Nothing is code-signed.
+smoke-tested before anything is published). The **macOS dmg for Apple Silicon** is in bring-up: CI builds it with
+FFmpeg bundled and launches it from the mounted dmg on every build, but it is not attached to releases yet and is
+not signed until the signing secrets are set up ([MACOS-SIGNING.md](MACOS-SIGNING.md)). Nothing else is code-signed.
 
 ## Windows in one step
 
@@ -59,6 +61,37 @@ end-to-end suites with it, builds the AppImage and launches it with FUSE and wit
 protocol, FFmpeg encode + probe with the bundled FFmpeg, licence files, OCR, UI mounted). The AppImage is attached to
 each release next to the Windows files; every other run keeps it as the run's `ReCut-linux` artifact (see
 [RELEASING.md](RELEASING.md#test-builds)).
+
+## macOS (Apple Silicon) test builds
+
+macOS is not an official platform yet (it is planned for ReCut 0.7.0, [ROADMAP.md](ROADMAP.md) §19). Until then the
+dmg is a **test build**: it is not on the Releases page, only in CI.
+
+- **Requirements:** a Mac with Apple Silicon (M1 or newer) and macOS 12 Monterey or newer. There is no Intel build.
+- **Download:** open the repository's **Actions** tab › **Windows build** › a run whose `macos` job is green › **Artifacts**
+  › **ReCut-macos** (you must be signed in to GitHub). Unzip it to get `ReCut-<version>-macos-arm64.dmg`.
+- **Install:** open the dmg and drag **ReCut** into **Applications**. FFmpeg and FFprobe are bundled inside the app
+  (GPL; see [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)), so you do not need Homebrew or a system FFmpeg.
+- **First launch of an unsigned test build:** macOS refuses to open it ("Apple could not verify "ReCut" is free of
+  malware…") because it is not signed with a Developer ID. Click **Done**, then open **System Settings › Privacy &
+  Security**, scroll to the message about ReCut and click **Open Anyway**, then confirm with your password. On macOS
+  14 Sonoma and earlier you can instead right-click (Control-click) ReCut in Applications and choose **Open**, then
+  **Open** again. This is needed once. If macOS instead says the app "is damaged and can't be opened" (a build
+  whose signature was broken in transit), run `xattr -dr com.apple.quarantine /Applications/ReCut.app` in Terminal
+  and open it again.
+- **Signed builds:** once the project's Developer ID signing is set up ([MACOS-SIGNING.md](MACOS-SIGNING.md)), CI
+  signs and notarizes the dmg. A signed build opens after the usual "downloaded from the Internet" question, with no
+  "could not verify" or "unidentified developer" warning. The CI job summary says which kind a build is.
+- **`.recut` files** open in ReCut (double-click, or drag onto the Dock icon). Settings live in
+  `~/Library/Application Support/ReCut`. To remove ReCut, move it from Applications to the Trash.
+
+macOS builds come from the advisory `macos` job of `.github/workflows/windows.yml` on a `macos-14` (Apple Silicon)
+runner: `scripts/mac/get-ffmpeg.sh` downloads a pinned, checksum-verified arm64 FFmpeg build (jellyfin-ffmpeg,
+FFmpeg 8.1 release branch with libx264, libx265 and libass), checks that it loads only macOS's own libraries and runs
+on macOS 12 or newer, and writes `FFMPEG-LICENSE.txt` and `FFMPEG-BUILD.txt` next to it; the job runs the unit tests,
+builds the dmg, checks the code signature of every binary in the app, mounts the dmg and smoke-tests the app inside it
+(media protocol, FFmpeg encode + probe with the bundled FFmpeg, licence files, OCR, UI mounted). A second advisory job
+runs the end-to-end suite on macOS. Neither gates a release yet.
 
 ## Prerequisites
 
@@ -137,8 +170,12 @@ npm run dist       # build + electron-builder         → AppImage (Linux), dmg 
   (`get-whisper.sh` compiles the speech-to-text engine from its pinned source: it needs cmake and a C++ compiler and
   takes a few minutes; without `resources/whisper/` the package has no transcription).
   `npm run package` produces `release/linux-unpacked/` with the `recut` executable.
-- **Not verified:** the macOS dmg. It is configured in `package.json` → `build` but has not been built or tested.
-  Code signing (Windows) and notarisation (macOS) are not set up.
+- **Built and smoke-tested on macOS, in CI, not released yet:** the Apple Silicon dmg (`package.json` →
+  `build.mac`, file name `ReCut-<version>-macos-arm64.dmg`, macOS 12 or newer). See
+  [macOS (Apple Silicon) test builds](#macos-apple-silicon-test-builds). To build it yourself on an Apple Silicon Mac:
+  `./scripts/mac/get-ffmpeg.sh && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg --arm64 --publish never -c.mac.identity=- -c.mac.timestamp=none --no-config.mac.hardenedRuntime`
+  (an ad-hoc signed build; with a Developer ID in your keychain, leave out everything after `--publish never`).
+  Signing and notarization in CI: [MACOS-SIGNING.md](MACOS-SIGNING.md). Windows code signing is not set up.
 - A package you build yourself does **not** include FFmpeg unless `resources/ffmpeg/` exists when you build it, so
   its users install FFmpeg themselves as described above (on Windows, `Start ReCut.cmd` may already have downloaded
   it there). The Windows builds and the Linux AppImage from CI are the published builds that bundle FFmpeg: the
@@ -152,9 +189,11 @@ npm run dist       # build + electron-builder         → AppImage (Linux), dmg 
 built without FFmpeg. To bundle FFmpeg:
 
 1. Download **static** builds of `ffmpeg` and `ffprobe` for the target platform, for example from BtbN (Linux and
-   Windows), evermeet.cx (macOS) or gyan.dev (Windows). Use builds that include libx264. On Windows,
-   `scripts/windows/get-ffmpeg.ps1` does this step and steps 2 and 3 for you, including the licence files below; on
-   x86-64 Linux, `scripts/linux/get-ffmpeg.sh` does (it also checks that the binaries need nothing but glibc).
+   Windows), jellyfin-ffmpeg (macOS, Apple Silicon and Intel) or gyan.dev (Windows). Use builds that include libx264.
+   On Windows, `scripts/windows/get-ffmpeg.ps1` does this step and steps 2 and 3 for you, including the licence files
+   below; on x86-64 Linux, `scripts/linux/get-ffmpeg.sh` does (it also checks that the binaries need nothing but
+   glibc); on an Apple Silicon Mac, `scripts/mac/get-ffmpeg.sh` does (it also checks that the binaries load only
+   macOS's own libraries and run on macOS 12).
 2. Put them in `resources/ffmpeg/` at the repository root, named exactly `ffmpeg` and `ffprobe` (`ffmpeg.exe` and
    `ffprobe.exe` on Windows). On Linux and macOS, run `chmod +x resources/ffmpeg/*`.
 3. Put the FFmpeg licence and source information next to them in `resources/ffmpeg/` (see the licensing note below):
@@ -172,7 +211,7 @@ with libx264 are GPL (the gyan.dev and BtbN builds above are GPL-3.0-or-later), 
 such a build bundled must, like any redistributor of GPL binaries, ship the GPL licence text with it and make the
 corresponding source of that exact FFmpeg build (FFmpeg and the GPL libraries compiled into it) available, for
 example with links in `FFMPEG-BUILD.txt` to the exact source release and the build provider's scripts, or by
-publishing the source next to the package. `THIRD_PARTY_NOTICES.md` describes what the Windows and Linux releases
+publishing the source next to the package. `THIRD_PARTY_NOTICES.md` describes what the Windows and Linux releases and the macOS test builds
 ship. This is
 a description of common practice, not legal advice.
 
@@ -211,6 +250,8 @@ All are optional. They are read by the main process (`electron/`).
 | `RECUT_DEV_URL` | Loads the renderer from this URL instead of `dist/renderer` (set by `npm run dev` to the Vite server) and allows in-window navigation to its origin. |
 | `RECUT_EXPORT_STALL_MS` | How long an export may go without FFmpeg progress before it is stopped with an error (default 120000, two minutes). Guards against FFmpeg builds that hang. |
 | `RECUT_OCR_LANG_URL` | Test-only base URL for OCR language downloads (for example `http://127.0.0.1:8080/`). Accepted only for a loopback `http(s)://127.0.0.1`, `localhost` or `[::1]` address; any other value is ignored. |
+| `RECUT_UPDATE_CHECK=0` | No "Check for new ReCut versions?" prompt and no daily update check for this installation (Preferences shows the setting as turned off). **Help › Check for Updates…** still works. The end-to-end tests set it. |
+| `RECUT_UPDATE_URL` | Test-only URL asked instead of GitHub's latest-release API (for example `http://127.0.0.1:8080/latest`). Accepted only for a loopback `http(s)://127.0.0.1`, `localhost` or `[::1]` address; any other value is ignored. |
 | `RECUT_SMOKE=1` | Smoke test: disables the GPU, checks that the `recut-media://` protocol serves byte ranges / HEAD / 404 / 416, prints `smoke:` lines to stdout and quits after about 2 s. |
 | `RECUT_SMOKE_FILE` | The file the smoke test fetches (default `/usr/bin/ffmpeg`, or the Electron executable on Windows; the Linux CI job passes the AppImage itself). |
 

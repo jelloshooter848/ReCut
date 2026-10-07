@@ -6,6 +6,7 @@
  *  RECUT_USER_DATA — override the userData directory (tests)
  *  RECUT_SMOKE=1   — headless smoke test: probe the media protocol, log, quit after 2s
  *  RECUT_DISABLE_GPU=1 — software rendering (xvfb)
+ *  RECUT_UPDATE_CHECK=0 / RECUT_UPDATE_URL — update notice (see electron/updateIpc.ts)
  */
 import { app, BrowserWindow, net, protocol, screen, shell } from 'electron';
 import fs from 'node:fs';
@@ -25,6 +26,8 @@ import { LICENCE_FILES, licenceDirs, listLicenceFiles } from './licences';
 import { ocrWorkerPath, probeOcrCore } from './ocr/engine';
 import { getWhisperCliPath, whisperCliVersion } from './whisper/engine';
 import { manualRedirectFetch, type NetClientRequest } from './net/electronFetch';
+import { registerUpdateIpc } from './updateIpc';
+import type { UpdateChecker } from './updateCheck';
 
 const isDev = Boolean(process.env.RECUT_DEV_URL) || !app.isPackaged;
 const smoke = process.env.RECUT_SMOKE === '1';
@@ -59,6 +62,7 @@ let pendingProjectPath: string | null = projectPathFromArgv(process.argv.slice(1
 let quitConfirmed = false;
 let quitTimer: NodeJS.Timeout | null = null;
 let menu: { refresh(): void } | null = null;
+let updates: UpdateChecker | null = null;
 
 const userData = () => app.getPath('userData');
 
@@ -346,6 +350,7 @@ if (!gotLock) {
       void Promise.race([windowPrefs.flush(), new Promise((r) => setTimeout(r, BOUNDS_FLUSH_MS))]).then(() => app.quit());
       return;
     }
+    updates?.dispose();
     void mediaHandlers.shutdown?.();
   });
 
@@ -374,6 +379,8 @@ if (!gotLock) {
       isDev,
       onRecentChanged: () => menu?.refresh(),
     });
+    // Update notice (opt-in daily check of the latest GitHub release; nothing is downloaded): electron/updateIpc.ts.
+    updates = registerUpdateIpc({ userData: ud, broadcast });
 
     const cacheDir = await resolveCacheDir(ud);
     const ff = resolveFfmpeg();
@@ -405,6 +412,8 @@ if (!gotLock) {
     await createWindow();
 
     if (smoke) void runSmoke();
+    else updates?.scheduleAutoCheck(); // a few seconds after startup, only when the user turned it on
+
   });
 }
 

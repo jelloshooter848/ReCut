@@ -5,18 +5,18 @@ that keeps its own licence. This file lists that software, its licence and where
 
 In a packaged build, `LICENSE` and this file are in the `resources` folder of the installation (for the Windows
 installer, by default `%LOCALAPPDATA%\Programs\ReCut\resources`; in the Linux AppImage, `resources/` inside the
-AppImage, which `--appimage-extract` unpacks). In the app, **Help › About › Licences** opens them and the other
+AppImage, which `--appimage-extract` unpacks; in the macOS app, `ReCut.app/Contents/Resources`). In the app, **Help › About › Licences** opens them and the other
 licence files listed below.
 
-## FFmpeg (bundled with the Windows builds and the Linux AppImage)
+## FFmpeg (bundled with the Windows builds, the Linux AppImage and the macOS dmg)
 
 | | |
 |---|---|
-| Files | Windows: `resources\ffmpeg\ffmpeg.exe`, `resources\ffmpeg\ffprobe.exe`; Linux AppImage: `resources/ffmpeg/ffmpeg`, `resources/ffmpeg/ffprobe` |
+| Files | Windows: `resources\ffmpeg\ffmpeg.exe`, `resources\ffmpeg\ffprobe.exe`; Linux AppImage: `resources/ffmpeg/ffmpeg`, `resources/ffmpeg/ffprobe`; macOS: `ReCut.app/Contents/Resources/ffmpeg/ffmpeg`, `.../ffprobe` |
 | Licence | GNU General Public License, version 3 or later (GPL-3.0-or-later), for the builds ReCut bundles |
-| Licence text | `resources/ffmpeg/FFMPEG-LICENSE.txt` (copied unchanged from the downloaded FFmpeg archive) |
+| Licence text | `resources/ffmpeg/FFMPEG-LICENSE.txt` (copied unchanged from the downloaded FFmpeg archive; for macOS, the build's own `COPYING.GPLv3`, because its archive holds only the two programs) |
 | Exact build and source | `resources/ffmpeg/FFMPEG-BUILD.txt` |
-| Build readme | `resources/ffmpeg/FFMPEG-README.txt`, when the build has one (gyan.dev builds list their libraries and versions there; the BtbN Linux builds have none) |
+| Build readme | `resources/ffmpeg/FFMPEG-README.txt`, when the build has one (gyan.dev builds list their libraries and versions there; the BtbN Linux builds and the macOS builds have none) |
 | Project | <https://ffmpeg.org/> |
 
 FFmpeg is a separate program. ReCut does not link to it: ReCut starts `ffmpeg` and `ffprobe` (`ffmpeg.exe` and
@@ -38,6 +38,16 @@ named in its `configuration:` line) and is licensed under the GPL version 3 or l
 linked into the two programs, which depend only on the system's C library (glibc); `FFMPEG-BUILD.txt` records the
 platform and the linking.
 
+The macOS (Apple Silicon) dmg downloads FFmpeg with `scripts/mac/get-ffmpeg.sh`: a
+[jellyfin-ffmpeg](https://github.com/jellyfin/jellyfin-ffmpeg) `portable_macarm64-gpl` release (8.1.3-1, or 8.1.2-5
+as a fallback), pinned by version and SHA-256. It is FFmpeg 8.1.3 (a release, not a development build) with the
+Jellyfin project's patches, built from source by Jellyfin's CI on a macOS runner and configured with
+`--enable-gpl --enable-version3` (no `--enable-nonfree`), with libx264, libx265, libass and the other libraries named in
+its `configuration:` line linked in statically, so it too is licensed under the GPL version 3 or later as a whole. The
+two programs load only macOS's own libraries and frameworks and need macOS 12 or newer; `FFMPEG-BUILD.txt` records
+the platform, the minimum macOS, the linking and the archive's SHA-256. Its licence file is `COPYING.GPLv3` from the
+same jellyfin-ffmpeg release tag. Until macOS is an official platform the dmg is only a CI test build, not a release.
+
 **Corresponding source.** `FFMPEG-BUILD.txt` is written by the download script when the build is downloaded. It records
 the URL the build came from, the build name, the full `ffmpeg -version` output (version and configuration), the
 download date, and where to get the corresponding source:
@@ -46,24 +56,30 @@ download date, and where to get the corresponding source:
   page <https://www.gyan.dev/ffmpeg/builds/>, which documents the build and its libraries;
 - BtbN builds (the Linux AppImage, and the Windows fallback): the FFmpeg commit the build was made from
   (`https://github.com/FFmpeg/FFmpeg/commit/<hash>` and its source archive, from the version string) and the build
-  scripts at <https://github.com/BtbN/FFmpeg-Builds>, which pin the source revision of every library.
+  scripts at <https://github.com/BtbN/FFmpeg-Builds>, which pin the source revision of every library;
+- jellyfin-ffmpeg builds (macOS): the jellyfin-ffmpeg release tag the build was made from
+  (`https://github.com/jellyfin/jellyfin-ffmpeg/tree/<tag>` and its source archive), which holds the FFmpeg source,
+  Jellyfin's patches (`debian/patches`) and the macOS build scripts (`builder/buildmac.sh`, `builder/scripts.d/`)
+  that pin the source commit of every library, plus the upstream FFmpeg release it is based on.
 
 If you cannot get the corresponding source for the FFmpeg build in a ReCut release from those links, open an issue at
 <https://github.com/jelloshooter848/ReCut/issues> naming the ReCut version, and the project will provide it.
 
 FFmpeg that you download yourself, including the copy `Start ReCut.cmd` downloads into `resources\ffmpeg` of a cloned
-repository, is not redistributed by ReCut; the same licence files are written next to it. macOS packages, and Linux
-packages you build yourself, do not bundle FFmpeg unless you add it (see `docs/INSTALL.md`, "Bundling FFmpeg", for
-what to include; on Linux, `scripts/linux/get-ffmpeg.sh` does it).
+repository, is not redistributed by ReCut; the same licence files are written next to it. Packages you build
+yourself do not bundle FFmpeg unless you add it (see `docs/INSTALL.md`, "Bundling FFmpeg", for what to include;
+`scripts/linux/get-ffmpeg.sh` and `scripts/mac/get-ffmpeg.sh` do it on Linux and on an Apple Silicon Mac).
 
 ## Electron and Chromium
 
 ReCut runs on [Electron](https://www.electronjs.org/) (MIT License), which contains Chromium, Node.js, V8 and many
 other components under their own licences (mostly BSD-style; also LGPL, MPL and others). Electron's copy of Chromium
-includes Chromium's own media library (`ffmpeg.dll` on Windows, `libffmpeg.so` on Linux), an LGPL build that is
-separate from the GPL FFmpeg programs above.
+includes Chromium's own media library (`ffmpeg.dll` on Windows, `libffmpeg.so` on Linux, inside
+`Electron Framework.framework` on macOS), an LGPL build that is separate from the GPL FFmpeg programs above.
 
-electron-builder ships their licences next to the executable (for example next to `ReCut.exe`):
+electron-builder ships their licences next to the executable (for example next to `ReCut.exe`); on macOS, where it
+leaves them out, `package.json` → `build.mac.extraResources` copies them from Electron's distribution into
+`ReCut.app/Contents/Resources`:
 
 - `LICENSE.electron.txt`: Electron's licence;
 - `LICENSES.chromium.html`: the licences of Chromium and every third-party component it includes.

@@ -1,12 +1,12 @@
 /**
  * Background job queue for the main process.
  *
- * - Five lanes: 'export' jobs run one at a time; 'sceneDetect' and 'ocr' (long, CPU-heavy full-file work) run
- *   one at a time in their own 'background' lane; 'transcribe' (speech-to-text, which uses every core but one for
- *   up to hours) runs one at a time in the 'transcribe' lane, so it never holds up scene detection or OCR;
- *   'download' (OCR language and Whisper model installs, network-bound) runs two at a time in the 'network' lane;
- *   every other kind (proxies, waveforms, subtitle extraction...) shares the 'media' lane with concurrency 2, so a
- *   long scene detection, OCR or transcription run never starves a proxy (P-07).
+ * - Five lanes: 'export' and 'collect' jobs (the heavy writers) run one at a time; 'sceneDetect' and 'ocr' (long,
+ *   CPU-heavy full-file work) run one at a time in their own 'background' lane; 'transcribe' (speech-to-text, which
+ *   uses every core but one for up to hours) runs one at a time in the 'transcribe' lane, so it never holds up scene
+ *   detection or OCR; 'download' (OCR language and Whisper model installs, network-bound) runs two at a time in the
+ *   'network' lane; every other kind (proxies, waveforms, subtitle extraction...) shares the 'media' lane with
+ *   concurrency 2, so a long scene detection, OCR or transcription run never starves a proxy (P-07).
  * - Jobs expose a run context with progress reporting, cancellation callbacks and an AbortSignal.
  * - Subscribers receive JobInfo[] snapshots, throttled to at most 10 updates/sec.
  *
@@ -48,7 +48,7 @@ export type Lane = 'export' | 'media' | 'background' | 'network' | 'transcribe';
 
 /** Lane a job kind runs in. */
 export function laneFor(kind: JobKind): Lane {
-  if (kind === 'export') return 'export';
+  if (kind === 'export' || kind === 'collect') return 'export'; // the heavy writers: one at a time
   if (kind === 'sceneDetect' || kind === 'ocr') return 'background';
   if (kind === 'download') return 'network';
   if (kind === 'transcribe') return 'transcribe';

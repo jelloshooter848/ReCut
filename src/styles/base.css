@@ -418,3 +418,8 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; }
 .ffmpeg-banner { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: color-mix(in srgb, var(--warn) 18%, var(--bg-0)); color: var(--text); border-bottom: 1px solid var(--warn); font-size: 12px; }
 .ffmpeg-banner svg { color: var(--warn); flex: none; }
 .ffmpeg-banner .grow { flex: 1; min-width: 0; }
+/* Update prompt / notice (src/app/UpdateBanner.tsx): the same banner in the accent colour. */
+.update-banner { background: color-mix(in srgb, var(--accent) 14%, var(--bg-0)); border-bottom-color: var(--accent); }
+.update-banner svg { color: var(--accent); }
+.update-banner .update-banner-close svg { color: var(--text-dim); }
+.link-button { background: none; border: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }

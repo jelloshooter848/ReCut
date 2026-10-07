@@ -17,6 +17,7 @@ import path from 'node:path';
 import { ensureDirSafe } from '../safeMkdir';
 import { normalizeProjectWithReport, serializeProject, ProjectIncompatibleError } from '../../shared/project';
 import type { AppPreferences, Project } from '../../shared/model';
+import { isReleasePageUrl, isUpdateCheckSetting, parseSemver } from '../../shared/update';
 import type { LoadResult, RecoveryInfo, SaveResult } from '../../shared/ipc';
 
 export const PROJECT_EXT = '.recut';
@@ -765,7 +766,21 @@ export function normalizePrefs(raw: unknown): AppPreferences {
   if ('ocrLastLanguage' in out && !(typeof out.ocrLastLanguage === 'string' && /^[a-z_]{3,12}$/.test(out.ocrLastLanguage))) delete out.ocrLastLanguage;
   // A Whisper model id (shared/whisper.ts); anything else is dropped.
   if ('whisperLastModel' in out && !(typeof out.whisperLastModel === 'string' && /^[a-z0-9.-]{2,32}$/.test(out.whisperLastModel))) delete out.whisperLastModel;
+  normalizeUpdatePrefs(out);
   return out;
+}
+
+/** The update-notice fields of prefs.json (shared/update.ts): anything malformed is dropped (its default applies). */
+function normalizeUpdatePrefs(out: AppPreferences): void {
+  if ('updateCheck' in out && !isUpdateCheckSetting(out.updateCheck)) delete out.updateCheck;
+  if ('updateLastCheckAt' in out && !(typeof out.updateLastCheckAt === 'number' && Number.isFinite(out.updateLastCheckAt) && out.updateLastCheckAt >= 0)) delete out.updateLastCheckAt;
+  if ('updateLastCheckOk' in out && typeof out.updateLastCheckOk !== 'boolean') delete out.updateLastCheckOk;
+  if ('updateLatest' in out) {
+    const l = out.updateLatest as unknown as Record<string, unknown> | undefined;
+    if (l && typeof l === 'object' && parseSemver(l.version) && isReleasePageUrl(l.url)) out.updateLatest = { version: String(l.version), url: String(l.url) };
+    else delete out.updateLatest;
+  }
+  if ('updateSkipVersion' in out && !parseSemver(out.updateSkipVersion)) delete out.updateSkipVersion;
 }
 
 /**
