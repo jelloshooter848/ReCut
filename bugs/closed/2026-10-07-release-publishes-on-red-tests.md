@@ -73,7 +73,7 @@ Confirmed from the workflow file at f99a967 and from run #72's job timings (abov
 | Field | Value |
 |---|---|
 | Closed by / date | Claude agent, 2026-10-07 |
-| Fix | branch `claude/release-gate` (PR pending) |
+| Fix | branch `claude/release-gate` (this PR) |
 | Files changed | `.github/workflows/windows.yml`, `docs/RELEASING.md`, `docs/INSTALL.md`, `docs/LIMITATIONS.md`, this report |
 | Regression test | gate-proof run: `workflow_dispatch` of `.github/workflows/windows.yml` on throwaway branch `claude/gate-proof` (a deliberately failing e2e test, `tests/e2e/program.spec.ts` "gate proof: must fail") |
 
@@ -106,8 +106,14 @@ This gates dev prereleases too (owner's decision): any red required job means no
   `installer`) fails the run and skips `publish`: no release, no prerelease, no tag.
 
 ### Regression test proof
-Pending coordinator's gate-proof run (`workflow_dispatch` on `claude/gate-proof`; expected: `e2e` red, `publish`
-skipped, no `v<version>-dev.<run>` release or tag created).
+Negative case: run #73 (id 37556952025), `workflow_dispatch` on `claude/gate-proof` (commit 38b52dd: this branch plus
+one deliberately failing e2e test). `installer`, `tests` and `launcher` passed; `e2e` failed; **`publish` was skipped**
+and the run concluded `failure`. No `v0.3.0-dev.73` release or tag exists.
+
+Positive case: run #74 (id 37557931999), `workflow_dispatch` on `claude/gate-verify` (this branch merged with
+`claude/fix-win-program-e2e`). All four gates passed (e2e 52/52 on Windows), then `publish` ran last (started
+01:40:44 UTC, after the last gate finished at 01:40:42) and published the dev prerelease `v0.3.0-dev.74` with both
+`.exe` files. The stable `v0.3.0` stayed Latest.
 
 ### Tests run
 - `actionlint` 1.7.12 on `.github/workflows/windows.yml`: no findings (it type-checks the `needs.installer.outputs.*`
