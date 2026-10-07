@@ -69,7 +69,10 @@ try {
 } catch (e) {
   console.log(`[perf:compare] PROBLEM: ${e.message}`);
 } finally {
-  if (!keep) for (const d of made) { try { git(['worktree', 'remove', '--force', d]); } catch (e) { console.log(`[perf:compare] could not remove ${d}: ${e.message}`); } }
+  if (!keep) {
+    for (const d of made) { try { git(['worktree', 'remove', '--force', d]); } catch (e) { console.log(`[perf:compare] could not remove ${d}: ${e.message}`); } }
+    try { fs.rmdirSync(SCRATCH); } catch { /* not empty, or not ours */ }
+  }
   else if (made.length) console.log(`[perf:compare] kept: ${made.join(', ')} (git worktree remove --force <dir> when done)`);
 }
 process.exit(code);

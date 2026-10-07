@@ -192,7 +192,8 @@ rows on the scale of the **reference machine**, the machine the baseline was see
   host does not hide one (a 25 ms commit on a host 1.6× faster is 40 ms on the reference machine). **Diagnostics**:
   the trend of the normalized value.
 - **Limits**: normalization models a host that is uniformly faster or slower. Waits that do not scale (the next
-  vsync inside a `… -> paint` row) are scaled too, a little generous on a slow host. A faster host cannot show a
+  vsync inside a `… -> paint` row) are scaled too, a little generous on a slow host, and a rate that drops to every
+  other vsync (about 30 fps) on a slow host normalizes to its cap: rates are judged approximately. A faster host cannot show a
   regression hidden under a capped rate or a long task under 50 ms; use the reference machine or the same-host A/B
   below for those.
 
