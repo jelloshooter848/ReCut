@@ -1,0 +1,2 @@
+# Saved-project fixtures are byte-exact copies of what each release wrote: never convert line endings.
+*.recut -text

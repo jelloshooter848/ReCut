@@ -5,6 +5,7 @@
 import { contextBridge, ipcRenderer, webUtils, IpcRendererEvent } from 'electron';
 import type { AppPreferences, ID, JobInfo, Project } from '../shared/model';
 import type { OcrRequest } from '../shared/ocr';
+import type { UpdateCheckSetting, UpdateStatus } from '../shared/update';
 import type { CollectRequest } from '../shared/collect';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import { SAVE_STREAM_IPC, type ProjectAutosaveStreamApi, type ProjectSaveStreamApi } from '../shared/projectWire';
@@ -113,6 +114,13 @@ const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
     return () => { openPathSubscribers = Math.max(0, openPathSubscribers - 1); off(); };
   },
   onBeforeQuit: (cb: () => void) => subscribe<[]>(IPC.evBeforeQuit, cb),
+
+  updateStatus: () => ipcRenderer.invoke(IPC.updateStatus),
+  checkForUpdates: () => ipcRenderer.invoke(IPC.updateCheck),
+  setUpdateCheck: (setting: UpdateCheckSetting) => ipcRenderer.invoke(IPC.updateSetSetting, setting),
+  skipUpdateVersion: (version: string) => ipcRenderer.invoke(IPC.updateSkip, version),
+  openReleasePage: (url: string) => ipcRenderer.invoke(IPC.updateOpenRelease, url),
+  onUpdateStatus: (cb: (status: UpdateStatus) => void) => subscribe<[UpdateStatus]>(IPC.evUpdateStatus, cb),
 };
 
 contextBridge.exposeInMainWorld('recut', api);

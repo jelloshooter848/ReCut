@@ -17,7 +17,7 @@
  */
 import type { Clip, ClipTransform, ID, MediaItem, Rational, Sequence, Track, Transition } from '../../shared/model';
 import { clipEnd, sourceTimeAt } from '../../shared/timeline';
-import { audioTrackOrdinal, channelProxyPendingReason, clipChannelProxy, mediaFps, mediaSize, mediaTimeOffset, proxyAudioStreams, resolveAudioStream, resolvePlaybackPath } from './mediaSource';
+import { audioTrackOrdinal, channelProxyPendingReason, clipChannelProxy, mediaFps, mediaSize, mediaTimeOffset, previewUpmixGain, proxyAudioStreams, resolveAudioStream, resolvePlaybackPath } from './mediaSource';
 
 export interface LayerPlan {
   clipId: ID;
@@ -54,7 +54,10 @@ export interface AudioPlan {
   sourceTime: number;
   /** Seconds added to sourceTime to get the element's currentTime (container start of an original; 0 for proxies). */
   timeOffset: number;
-  /** Linear gain: 10^(gain/20) * volume * fade envelope * transition gain (track volume NOT included). */
+  /**
+   * Linear gain: 10^(gain/20) * volume * fade envelope * transition gain * previewUpmixGain (1/sqrt(2) for a mono
+   * stream played directly, as the export up-mixes it) (track volume NOT included).
+   */
   gain: number;
   /** Track volume (linear) so the player can keep a per-track GainNode. */
   trackVolume: number;
@@ -299,7 +302,9 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
       if (usingProxy && stream !== null && m.probe?.browserPlayable && m.probe.audio.length > 1 && !proxyAudioStreams(m).includes(stream)) {
         path = m.path; usingProxy = false; timeOffset = mediaTimeOffset(m, false);
       }
-      const gain = dbToLinear(clip.audio.gain) * Math.max(0, clip.audio.volume) * fadeEnvelope(clip, frame) * weight;
+      // A mono stream played directly is up-mixed to stereo at unity by Web Audio, at -3 dB by the export: match it.
+      const gain = dbToLinear(clip.audio.gain) * Math.max(0, clip.audio.volume) * fadeEnvelope(clip, frame) * weight
+        * previewUpmixGain(m, usingProxy, stream);
       audio.push({
         clipId: clip.id,
         mediaId: clip.mediaId,

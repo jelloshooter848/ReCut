@@ -110,7 +110,7 @@ not supported by Chromium"). Typical cases:
 
 | Source | Preview | Export (stereo) | Export (5.1) |
 |---|---|---|---|
-| Mono | plays through WebAudio | upmixed to both channels | mapped into 5.1 by FFmpeg's resampler |
+| Mono | on both channels at −3 dB, as the stereo export (a proxy is already stereo) | upmixed to both channels at −3 dB each (equal power) | the centre channel |
 | Stereo | plays as is | as is | mapped into 5.1 by FFmpeg's resampler (front L/R) |
 | 5.1 | the browser downmixes to your output device (a proxy is already stereo) | downmixed by FFmpeg (`aformat` / `-ac 2`) | 6 channels, AC-3 |
 | 7.1 and other layouts | as above | downmixed | converted to 5.1 |
