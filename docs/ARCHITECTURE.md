@@ -150,6 +150,9 @@ SyncGroup: two SequencePlayers on one clock with a frame offset (Compare)
   browser-playable, else a ready proxy, else nothing (reported as missing with a reason). It also applies the
   container start-time offset for originals.
 - The canvas renders at the sequence size × **playback resolution** (Full, 1/2, 1/4).
+- While paused, the Program redraws when a pooled `<video>` presents a new frame (`requestVideoFrameCallback`), not
+  only on `seeked` / `loadeddata`: Chromium can fire those before the landed frame is drawable, and a draw then paints
+  the previous frame.
 - The Program monitor's "Offline / Needs proxy / Can't play" chips come from the planner's `missing` list.
 
 ### Data flow: an insert edit
