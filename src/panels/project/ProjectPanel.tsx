@@ -3,7 +3,7 @@ import { AlertTriangle, FolderPlus, Import, Layers as LayersIcon, LayoutGrid, Li
 import type { ID, Project, Sequence } from '@shared/model';
 import { Button, EmptyState, IconButton, SearchField, Select, Toggle, useContextMenu } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
-import { pathOfDroppedFile, setClipDrag, type ClipDragPayload } from '@/app/dnd';
+import { pathOfDroppedFile, setClipDrag, SEQUENCE_DND_TYPE, type ClipDragPayload } from '@/app/dnd';
 import { isEditableTarget } from '@/keyboard/useShortcuts';
 import { useStore, seriesTree, verifyMediaOnline, onMediaImported } from '@/state';
 import type { PanelProps } from '../registry';
@@ -300,6 +300,10 @@ export function ProjectPanel(_props: PanelProps) {
         setClipDrag(e.dataTransfer, list);
       } else if (row.kind === 'scene') {
         setClipDrag(e.dataTransfer, { mediaId: row.media.id, in: row.scene.start, out: row.scene.end, name: row.scene.name, origin: 'scene', characters: row.scene.characters, tags: row.scene.tags });
+      } else if (row.kind === 'sequence') {
+        // Dropped on a timeline, the sequence is nested there (Roadmap §8); dropped on a bin, it moves.
+        e.dataTransfer.setData(SEQUENCE_DND_TYPE, row.seq.id);
+        e.dataTransfer.effectAllowed = 'copyMove';
       } else e.dataTransfer.effectAllowed = 'move';
     },
     onDragEnd() { setDropKey(null); },
