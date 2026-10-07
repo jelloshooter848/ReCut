@@ -25,7 +25,7 @@ Fixes chapter export. Project files are unchanged (`formatVersion` 1).
 ### Known issues
 
 - Unchanged from 0.2.1: 2,500-clip performance budgets
-  ([open report](bugs/open/2026-10-05-perf-budgets-2500-clips.md)), moved media rebuilds its cache
+  ([open report](bugs/closed/2026-10-05-perf-budgets-2500-clips.md)), moved media rebuilds its cache
   ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned builds, NSIS 3.0.4 (CVE-2025-43715,
   only when an installer runs as SYSTEM).
 
@@ -52,7 +52,7 @@ Fixes the Windows installer crash in 0.2.0. Project files are unchanged (`format
 ### Known issues
 
 - Unchanged from 0.2.0: 2,500-clip performance budgets
-  ([open report](bugs/open/2026-10-05-perf-budgets-2500-clips.md)), moved media rebuilds its cache
+  ([open report](bugs/closed/2026-10-05-perf-budgets-2500-clips.md)), moved media rebuilds its cache
   ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned builds. The installer is built with NSIS
   3.0.4, which has CVE-2025-43715 (privilege escalation only when an installer runs as SYSTEM; ReCut's per-user
   installer normally does not).
@@ -149,7 +149,7 @@ and damaged or hostile files are now repaired on load (see Changed).
 
 - A 2,500-clip project still misses the edit, scrub, open/save and serialization budgets: edits lag 80-120 ms,
   scrubbing at working zoom runs at 32-35 fps, and opening freezes the window for about 3 s
-  ([open report](bugs/open/2026-10-05-perf-budgets-2500-clips.md)).
+  ([open report](bugs/closed/2026-10-05-perf-budgets-2500-clips.md)).
 - Moving a media file to another folder or drive rebuilds its thumbnails, waveform and proxy
   ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)).
 - Builds are not code-signed; Windows SmartScreen asks for confirmation. macOS and Linux packages are not tested.

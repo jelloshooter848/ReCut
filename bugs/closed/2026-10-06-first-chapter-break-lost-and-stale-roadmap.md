@@ -248,7 +248,7 @@ single-vs-chunked, no-markers and graph/args tests pass unmodified.
   "The first chapter starts at 0, because an MP4 chapter track cannot leave a gap before it". Still true, but it
   should add: "When no chapter marker is at or before `startF`, an untitled leading chapter runs from 0 to the first
   marker, so that break is kept."
-- Not worked here; already rows in [the perf budgets report](../open/2026-10-05-perf-budgets-2500-clips.md), flagged
+- Not worked here; already rows in [the perf budgets report](2026-10-05-perf-budgets-2500-clips.md), flagged
   by this report for whoever works that one:
   - `serializeProject` measured 704 ms against 344 ms on `92eb1f1` earlier the same day: possibly a regression
     rather than noise; bisect before working the save budget.

@@ -1,7 +1,7 @@
 /**
  * SequencePlayer element pooling and audio graph lifetime, with a fake DOM / WebAudio (node has neither).
  *
- * Regression for the 2,500-clip perf report (bugs/open/2026-10-05-perf-budgets-2500-clips.md, "Also recorded"):
+ * Regression for the 2,500-clip perf report (bugs/closed/2026-10-05-perf-budgets-2500-clips.md, "Also recorded"):
  * elements were pooled per clip, so every clip boundary crossed while scrubbing or playing created a new <video>,
  * a new MediaElementAudioSourceNode and a new GainNode (7,471 elements after 10 s of playback, sources and gains
  * growing on every sequence switch; P-12). Elements are now lent per (file, kind, slot) and reused.
