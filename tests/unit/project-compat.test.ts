@@ -25,6 +25,11 @@ const fixtures = fs.readdirSync(FIXTURE_DIR)
 
 /** The fixture's release is `min` or later. */
 const atLeast = (v: readonly number[], min: [number, number, number]) => (v[0] - min[0] || v[1] - min[1] || v[2] - min[2]) >= 0;
+/**
+ * The release that ships nested sequences (Roadmap §8): its fixture nests a compound clip and the PAL recap in the alt
+ * cut (scripts/project-fixture-scenario.mjs). The release PR moves this if the milestone ships under another number.
+ */
+const NESTING_FROM: [number, number, number] = [0, 12, 0];
 
 let tmp: string;
 beforeEach(async () => { tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'recut-compat-')); });
@@ -188,8 +193,10 @@ describe('saved-project fixtures', () => {
     it('keeps sequences: clip positions in frames, links, transitions, markers, story blocks, subtitles, snapshots', async () => {
       const { project } = await openFixture(file);
       const seqs = project.sequenceOrder.map((id) => project.sequences[id]);
-      expect(seqs.map((s) => s.name)).toEqual(['Episode V – Despecialized', 'Episode V – Alt cut', 'Clone Wars recap']);
-      const [main, alt, pal] = seqs;
+      const nesting = atLeast(v, NESTING_FROM);
+      expect(seqs.map((s) => s.name)).toEqual(['Episode V – Despecialized', 'Episode V – Alt cut', ...(nesting ? ['Reel 1'] : []), 'Clone Wars recap']);
+      const [main, alt] = seqs;
+      const pal = byName(seqs, 'Clone Wars recap');
       expect(project.activeSequenceId).toBe(main.id);
       expect(main.fps).toEqual({ num: 24000, den: 1001 });
 
@@ -255,17 +262,33 @@ describe('saved-project fixtures', () => {
 
       expect(alt.parentSequenceId).toBe(main.id);
       expect(alt.versionLabel).toBe('v2');
-      expect(track(alt, 'audio', 0).clips.map(span)).toEqual([[0, 240], [240, 360]]);
-      expect(track(alt, 'video', 0).clips.map(span)).toEqual([[0, 240], [240, 360], [600, 228]]);
+      if (nesting) {
+        // The first two pairs are a compound clip ("Reel 1"); the 25 fps recap is nested after the third clip.
+        const reel = byName(seqs, 'Reel 1');
+        const nestedOf = (t: Track) => t.clips.map((c) => [c.start, c.duration, c.sequenceId ?? null]);
+        expect(nestedOf(track(alt, 'video', 0))).toEqual([[0, 600, reel.id], [600, 228, null], [828, 300, pal.id]]);
+        expect(nestedOf(track(alt, 'audio', 0))).toEqual([[0, 600, reel.id], [828, 300, pal.id]]);
+        for (const c of [...track(alt, 'video', 0).clips, ...track(alt, 'audio', 0).clips]) if (c.sequenceId) expect([c.mediaId, c.speed]).toEqual([c.sequenceId, 1]);
+        expect(track(alt, 'video', 0).clips[0].linkId).toBe(track(alt, 'audio', 0).clips[0].linkId);
+        expect(reel.fps).toEqual({ num: 24000, den: 1001 });
+        expect(track(reel, 'video', 0).clips.map(span)).toEqual([[0, 240], [240, 360]]);
+        expect(track(reel, 'audio', 0).clips.map(span)).toEqual([[0, 240], [240, 360]]);
+        expect(track(reel, 'video', 0).transitions.map((t) => [t.type, t.duration])).toEqual([['crossDissolve', 12]]);
+      } else {
+        expect(track(alt, 'audio', 0).clips.map(span)).toEqual([[0, 240], [240, 360]]);
+        expect(track(alt, 'video', 0).clips.map(span)).toEqual([[0, 240], [240, 360], [600, 228]]);
+      }
 
       expect(pal.fps).toEqual({ num: 25, den: 1 });
       expect([pal.width, pal.height, pal.channels]).toEqual([1280, 720, 6]);
       expect(track(pal, 'video', 0).clips.map((c) => [c.start, c.duration, c.sourceIn])).toEqual([[0, 313, 100]]);
       expect(pal.markers.map((m) => [m.kind, m.time, m.name])).toEqual([['chapter', 25, 'Recap']]);
 
-      // Every clip still points at an existing media item.
+      // Every clip still points at an existing media item (a nested clip: at an existing sequence).
       const mediaIds = new Set(Object.keys(project.media));
-      for (const s of seqs) for (const t of [...s.videoTracks, ...s.audioTracks]) for (const c of t.clips) expect(mediaIds.has(c.mediaId)).toBe(true);
+      for (const s of seqs) for (const t of [...s.videoTracks, ...s.audioTracks]) for (const c of t.clips) {
+        expect(c.sequenceId ? Object.hasOwn(project.sequences, c.sequenceId) : mediaIds.has(c.mediaId)).toBe(true);
+      }
     });
 
     it('save → reopen is stable (idempotent)', async () => {
