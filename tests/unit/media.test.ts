@@ -390,7 +390,7 @@ describe('jobs', () => {
   }, 60_000);
 
   it('scene helpers', () => {
-    expect(parseShowinfoPts('[Parsed_showinfo_2 @ 0x1] n:   0 pts:  73728 pts_time:3.00000 duration: 512')).toBeCloseTo(3);
+    expect(parseShowinfoPts('[Parsed_showinfo_2 @ 0x1] n:   0 pts:  73728 pts_time:3.00000 duration: 512', { num: 1, den: 24576 })).toBeCloseTo(3);
     expect(parseShowinfoPts('frame=  10 fps=0.0')).toBeNull();
     expect(enforceMinSceneGap([0.2, 1.0, 1.5, 2.1, 5], 1)).toEqual([1.0, 2.1, 5]);
   });
