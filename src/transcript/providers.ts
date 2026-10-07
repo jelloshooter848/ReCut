@@ -8,11 +8,13 @@
  * panel lists every provider under "Transcribe…", calls `available()` to enable/disable the entry and runs
  * `transcribe()` with a progress callback, then attaches the returned cues to the media as a SubtitleTrack
  * whose `origin` is the provider id. Long-running providers should report progress in [0, 1] and honour
- * `opts.signal` for cancellation. A real local provider would go through a main-process job
- * (`JobKind: 'transcribe'`) rather than running in the renderer.
+ * `opts.signal` for cancellation. A provider whose work runs as a main-process job (Local Whisper:
+ * `JobKind: 'transcribe'`) implements `openDialog()` instead: the panel opens its dialog, and the jobs router attaches
+ * the cues when the job finishes.
  */
 import type { SubtitleCue } from '../../shared/model';
 import { parseSubtitles } from '../../shared/subtitles';
+import { openTranscribeDialog } from '@/whisper/whisperUi';
 
 export interface TranscribeOptions {
   /** BCP-47 / ISO-639 language hint, 'auto' to detect. */
@@ -33,6 +35,11 @@ export interface TranscriptProvider {
   /** Reason shown when `available()` is false. */
   unavailableReason?(): Promise<string>;
   transcribe(mediaPath: string, opts: TranscribeOptions, onProgress?: ProgressFn): Promise<SubtitleCue[]>;
+  /**
+   * For providers that run as a main-process job: open the provider's dialog for these media instead of calling
+   * `transcribe()` (the result arrives through the jobs router).
+   */
+  openDialog?(mediaIds: string[]): void;
 }
 
 function api() { return typeof window !== 'undefined' ? window.recut ?? null : null; }
@@ -92,18 +99,40 @@ export class SubtitleFileProvider implements TranscriptProvider {
 }
 
 /**
- * Placeholder for on-device speech recognition. Not bundled: `available()` is always false and `transcribe`
- * throws. A real implementation would ask the main process (appInfo / a `transcribe` job) whether a `whisper`
- * binary + model are installed, extract audio with FFmpeg and stream progress back.
+ * On-device speech recognition with the whisper.cpp engine built into ReCut (Roadmap §5). Available when the engine
+ * runs (`whisperEngine()` reports a version); a model is chosen, and installed if needed, in the Transcribe dialog.
+ * Transcription is a main-process job ('transcribe'), so the panel calls `openDialog()`; the jobs router attaches each
+ * result as a SubtitleTrack with `origin: 'whisper'` (src/app/jobsRouter.ts).
  */
 export class LocalWhisperProvider implements TranscriptProvider {
   id = 'whisper-local';
   name = 'Local Whisper';
-  description = 'On-device speech recognition';
+  description = 'On-device speech recognition (whisper.cpp)';
 
-  async available(): Promise<boolean> { return false; }
-  async unavailableReason(): Promise<string> { return 'Local transcription not installed'; }
-  async transcribe(): Promise<SubtitleCue[]> { throw new Error('Local transcription not installed'); }
+  private engineError: string | null = null;
+
+  async available(): Promise<boolean> {
+    const a = api();
+    if (!a?.whisperEngine) { this.engineError = 'needs the desktop app'; return false; }
+    try {
+      const info = await a.whisperEngine();
+      this.engineError = info.version ? null : (info.path ? 'engine does not start' : 'engine not included in this build');
+      return !!info.version;
+    } catch (e) {
+      this.engineError = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
+  async unavailableReason(): Promise<string> { return this.engineError ?? 'not available'; }
+
+  async transcribe(): Promise<SubtitleCue[]> {
+    throw new Error('Local Whisper runs as a background job: use the Transcribe dialog');
+  }
+
+  openDialog(mediaIds: string[]): void {
+    openTranscribeDialog(mediaIds);
+  }
 }
 
 const PROVIDERS: TranscriptProvider[] = [new SubtitleFileProvider(), new LocalWhisperProvider()];

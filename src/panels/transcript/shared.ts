@@ -109,6 +109,13 @@ export async function transcribeWith(provider: TranscriptProvider, mediaId: ID):
   const st = useStore.getState();
   const media = st.project.media[mediaId];
   if (!media) return;
+  if (provider.openDialog) {
+    // Runs as a main-process job (Local Whisper): the dialog starts it, the jobs router attaches the result. Every
+    // selected media is offered, the target first.
+    const ids = [mediaId, ...st.ui.selectedMediaIds.filter((id) => id !== mediaId)];
+    provider.openDialog(ids);
+    return;
+  }
   const id = toast('info', `${provider.name}: transcribing ${media.name}…`, 0);
   try {
     const sourcePath = provider instanceof SubtitleFileProvider ? await provider.findSidecar(media.path) : null;
