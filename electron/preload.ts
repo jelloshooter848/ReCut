@@ -5,6 +5,7 @@
 import { contextBridge, ipcRenderer, webUtils, IpcRendererEvent } from 'electron';
 import type { AppPreferences, ID, JobInfo, Project } from '../shared/model';
 import type { OcrRequest } from '../shared/ocr';
+import type { CollectRequest } from '../shared/collect';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import { SAVE_STREAM_IPC, type ProjectAutosaveStreamApi, type ProjectSaveStreamApi } from '../shared/projectWire';
 import type {
@@ -96,6 +97,8 @@ const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
   startExport: (req: ExportRequest) => ipcRenderer.invoke(IPC.exportStart, req),
   cancelExport: (jobId: ID) => ipcRenderer.invoke(IPC.exportCancel, jobId),
   previewExportCommand: (req: ExportRequest) => ipcRenderer.invoke(IPC.exportPreviewCommand, req),
+  collectPreflight: (req: CollectRequest) => ipcRenderer.invoke(IPC.collectPreflight, req),
+  startCollect: (req: CollectRequest) => ipcRenderer.invoke(IPC.collectStart, req),
 
   onJobs: (cb: (jobs: JobInfo[]) => void) => subscribe<[JobInfo[]]>(IPC.evJobs, cb),
   onMenu: (cb: (command: MenuCommand) => void) => subscribe<[MenuCommand]>(IPC.evMenu, cb),
