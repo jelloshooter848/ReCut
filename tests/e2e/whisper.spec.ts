@@ -104,6 +104,16 @@ test('installs a model from Transcription Models with progress', async () => {
   if (SHOT_DIR) await page.locator('.wm-dialog').screenshot({ path: path.join(SHOT_DIR, 'whisper-models.png') });
   await page.locator('.wm-dialog').getByRole('button', { name: 'Done' }).click();
   await expect(dialog).toBeHidden();
+
+  // Preferences shows the engine and the installed models, and opens the same dialog.
+  await page.evaluate(() => (window as unknown as { __recut: { runCommand(id: string): boolean } }).__recut.runCommand('app.preferences'));
+  await expect(page.getByTestId('prefs-whisper-engine')).toHaveText('whisper.cpp 1.9.5 (built in)');
+  await expect(page.getByTestId('prefs-whisper-models')).toHaveText('Test (tiny) (8 MB)');
+  await page.getByTestId('prefs-whisper-manage').click();
+  await expect(dialog).toBeVisible();
+  await page.locator('.wm-dialog').getByRole('button', { name: 'Done' }).click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('preferences-dialog')).toBeHidden();
 });
 
 test('transcribes the media into a searchable Whisper track', async () => {

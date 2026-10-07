@@ -129,7 +129,7 @@ export function PreferencesDialog() {
             <span className="text-sm ellipsis grow" data-testid="prefs-whisper-models" title={installedModelsSummary(whisperModels)}>
               {whisperModels ? installedModelsSummary(whisperModels) : (recutApi() ? '…' : 'unavailable outside the desktop app')}
             </span>
-            <Button size="sm" onClick={() => openWhisperModels()}>Manage…</Button>
+            <Button size="sm" onClick={() => openWhisperModels()} aria-label="Manage transcription models…" data-testid="prefs-whisper-manage">Manage…</Button>
           </Row>
           <Row label="Version"><span className="text-sm">{info ? `ReCut ${info.version} · ${info.platform}${info.isDev ? ' · dev' : ''}` : '…'}</span></Row>
           <Row label="Layout">
