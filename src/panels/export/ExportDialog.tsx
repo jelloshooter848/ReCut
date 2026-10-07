@@ -9,6 +9,7 @@ import type { ExportRequest } from '@shared/ipc';
 import { FPS_PRESETS, fpsEquals, fpsLabel, formatSequenceTimecode } from '@shared/time';
 import { allTracks } from '@shared/timeline';
 import { useStore, activeSequence, recutApi, ffmpegUnavailable } from '@/state';
+import { getTransport } from '@/app/transport';
 import { useJob } from '@/app/jobsStore';
 import { Button, Dialog, NumberField, ProgressBar, Select, Slider, TextField, Toggle } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
@@ -18,7 +19,7 @@ import { buildExportRequest } from './request';
 import {
   AC3_SAMPLE_RATES, CRF_MAX, CRF_MIN, CUSTOM, ENCODER_PRESETS, MAX_DIMENSION, MIN_DIMENSION, applyPreset, checklistBlocks, crfLabel,
   effectiveExportFps, estimateEtaSeconds, estimateFileSize, exportChecklist, exportOutputFrames, exportRange, formatBytes,
-  formatDuration, fpsConversionNote, fpsFromOptionValue,
+  formatDuration, fpsConversionNote, fpsFromOptionValue, type ChecklistTarget,
   fpsOptionValue, hasInOut, initialExportSettings, loadSavedExportSettings, maxSourceChannels, outputPathFor,
   clampSampleRateForCodec, presetNameFor, presetsFor, sampleRateSupported, saveExportSettings, sanitizeFileName, sequenceHasSubtitles, validateExportSettings, withMp4,
 } from './settings';
@@ -45,6 +46,8 @@ const CSS = `
 .xd-check-item { display: flex; gap: 6px; align-items: flex-start; font-size: var(--font-size-sm); line-height: 1.35; }
 .xd-check-item > svg { width: 12px; height: 12px; flex-shrink: 0; margin-top: 2px; }
 .xd-check-item.error { color: var(--danger); } .xd-check-item.warning { color: var(--accent-2); } .xd-check-item.info { color: var(--text-dim); }
+.xd-check-show { background: none; border: none; padding: 0; margin-left: 4px; font: inherit; color: var(--accent); text-decoration: underline; cursor: pointer; }
+.xd-check-show:hover { color: var(--text); }
 .xd-path { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--text-dim); word-break: break-all; user-select: text; -webkit-user-select: text; }
 .xd-cmd { position: relative; background: var(--bg-0); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 8px 8px; font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--text); white-space: pre-wrap; word-break: break-all; max-height: 180px; overflow: auto; user-select: text; -webkit-user-select: text; line-height: 1.45; }
 .xd-cmd-wrap { display: flex; flex-direction: column; gap: 4px; }
@@ -140,6 +143,14 @@ export function ExportDialog() {
   }, [open]);
 
   const onClose = useCallback(() => closeDialog('export'), [closeDialog]);
+  /** A checklist item's "Show": select its clips (or transition), move the playhead there and close the dialog. */
+  const onShowTarget = useCallback((seqId: string, t: ChecklistTarget) => {
+    const st = useStore.getState();
+    if (t.transitionId) st.selectTransition(t.transitionId); else st.select(t.clipIds);
+    const transport = getTransport('program');
+    if (transport) transport.seekFrame(t.frame); else st.setView(seqId, { playhead: t.frame });
+    closeDialog('export');
+  }, [closeDialog]);
   const update = useCallback((patch: Partial<ExportSettings>) => {
     setSettings((s) => (s ? patchExportSettings(s, patch) : s));
     setCommand(null); setCommandError(null);
@@ -167,6 +178,7 @@ export function ExportDialog() {
   return (
     <SettingsView
       seq={seq} settings={settings} media={media} projectUsesProxies={projectUsesProxies} update={update}
+      onShowTarget={(t) => onShowTarget(seq.id, t)}
       command={command} commandError={commandError} starting={starting} startError={startError}
       onShowCommand={async () => {
         const api = recutApi();
@@ -231,6 +243,7 @@ interface SettingsViewProps {
   media: ExportRequest['media'];
   projectUsesProxies: boolean;
   update: (patch: Partial<ExportSettings>) => void;
+  onShowTarget: (target: ChecklistTarget) => void;
   command: string | null;
   commandError: string | null;
   starting: boolean;
@@ -323,9 +336,11 @@ function SettingsView(p: SettingsViewProps) {
             <div className="xd-check" data-testid="export-checklist">
               {checklist.length === 0 ? <div className="xd-check-item info"><CheckCircle2 style={{ color: 'var(--ok)' }} />Ready to export.</div> : null}
               {checklist.map((c, i) => (
-                <div key={i} className={`xd-check-item ${c.level}`}>
+                <div key={i} className={`xd-check-item ${c.level}`} data-level={c.level}>
                   {c.level === 'error' ? <XCircle /> : c.level === 'warning' ? <AlertTriangle /> : <Info />}
-                  <span>{c.text}</span>
+                  <span>{c.text}{c.target ? (
+                    <button type="button" className="xd-check-show" data-testid="export-check-show" title="Select on the timeline and close the dialog" onClick={() => p.onShowTarget(c.target!)}>Show</button>
+                  ) : null}</span>
                 </div>
               ))}
             </div>
@@ -336,7 +351,8 @@ function SettingsView(p: SettingsViewProps) {
           <div className="xd-row">
             <label>Preset</label>
             <div className="ctl">
-              <Select value={presetName} options={presetOptions} data-testid="export-preset" style={{ minWidth: 220 }}
+              {/* First focus: the preset, not a checklist item's "Show" (which comes first in the DOM). */}
+              <Select value={presetName} options={presetOptions} data-testid="export-preset" data-autofocus="" style={{ minWidth: 220 }}
                 onChange={(name) => { const pr = presets.find((x) => x.name === name); if (pr) { setChosenPreset(pr.name); update(applyPreset(settings, pr)); } }} />
             </div>
           </div>

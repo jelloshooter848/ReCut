@@ -84,6 +84,13 @@ media involved:
 
 Not in the first version: abrupt level jumps at cuts and subtitle timing drift. Both need analysis passes over the
 media.
+**Status: done (7 October 2026, release 0.5.0).** The Export dialog's Checks list warns, for the clips the export
+renders in the chosen range, about video at another frame rate than the sequence, VFR media, out-of-sync linked
+clips, transitions dropped or shortened for lack of source handles (with the set and rendered lengths) and clips past
+the end of their media; each names the first three media or clips and has a **Show** link to the timeline. The
+segment and handle planning moved from `buildRenderGraph` into `shared/exportPlan.ts`, which both call, so the dialog
+predicts what the export renders (its output is unchanged; a 1,500-sequence parity test checks the prediction
+against the filter graph).
 
 ## 4. Bitmap subtitle OCR (PGS / VobSub / DVB)
 
