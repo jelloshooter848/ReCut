@@ -208,7 +208,7 @@ describe('Windows workflow: the macOS dmg job (advisory during bring-up)', () =>
     // Signed: electron-builder signs, notarizes (APPLE_API_KEY = path of the decoded .p8) and staples.
     expect(macos).toContain('APPLE_API_KEY="$APPLE_API_KEY_PATH" npx electron-builder --mac dmg --arm64 --publish never');
     // Unsigned: no identity discovery, ad-hoc signature, hardened runtime off (a real boolean false).
-    expect(macos).toMatch(/CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg --arm64 --publish never \\\n\s+-c\.mac\.identity=- --no-config\.mac\.hardenedRuntime/);
+    expect(macos).toMatch(/CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg --arm64 --publish never \\\n\s+-c\.mac\.identity=- -c\.mac\.timestamp=none --no-config\.mac\.hardenedRuntime/);
     expect(macos).not.toMatch(/hardenedRuntime=false/);
     expect(macos).toContain("echo 'signed=false' >> \"$GITHUB_OUTPUT\"");
     expect(macos).toContain('if [ "$have" -ne 5 ]; then');

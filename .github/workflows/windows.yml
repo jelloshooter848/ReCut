@@ -619,10 +619,11 @@ jobs:
             APPLE_API_KEY="$APPLE_API_KEY_PATH" npx electron-builder --mac dmg --arm64 --publish never
           else
             unset CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_ID APPLE_API_ISSUER
-            # Ad-hoc signature (identity "-"), hardened runtime off. --no-config.mac.hardenedRuntime is how the CLI sets
-            # a boolean false (-c.mac.hardenedRuntime=false would pass the string "false", which counts as on).
+            # Ad-hoc signature (identity "-"), no secure timestamp (Apple's timestamp server only stamps Developer ID
+            # signatures), hardened runtime off. --no-config.mac.hardenedRuntime is how the CLI sets a boolean false
+            # (-c.mac.hardenedRuntime=false would pass the string "false", which counts as on).
             CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg --arm64 --publish never \
-              -c.mac.identity=- --no-config.mac.hardenedRuntime
+              -c.mac.identity=- -c.mac.timestamp=none --no-config.mac.hardenedRuntime
           fi
           rm -rf "$RUNNER_TEMP/recut-notary"
           ls -la release

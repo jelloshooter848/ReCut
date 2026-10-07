@@ -171,7 +171,7 @@ npm run dist       # build + electron-builder         → AppImage (Linux), dmg 
 - **Built and smoke-tested on macOS, in CI, not released yet:** the Apple Silicon dmg (`package.json` →
   `build.mac`, file name `ReCut-<version>-macos-arm64.dmg`, macOS 12 or newer). See
   [macOS (Apple Silicon) test builds](#macos-apple-silicon-test-builds). To build it yourself on an Apple Silicon Mac:
-  `./scripts/mac/get-ffmpeg.sh && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg --arm64 --publish never -c.mac.identity=- --no-config.mac.hardenedRuntime`
+  `./scripts/mac/get-ffmpeg.sh && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg --arm64 --publish never -c.mac.identity=- -c.mac.timestamp=none --no-config.mac.hardenedRuntime`
   (an ad-hoc signed build; with a Developer ID in your keychain, leave out everything after `--publish never`).
   Signing and notarization in CI: [MACOS-SIGNING.md](MACOS-SIGNING.md). Windows code signing is not set up.
 - A package you build yourself does **not** include FFmpeg unless `resources/ffmpeg/` exists when you build it, so
