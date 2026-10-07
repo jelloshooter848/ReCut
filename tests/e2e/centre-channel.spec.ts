@@ -87,7 +87,9 @@ async function clipBox(id: string) {
 
 async function rightClickClip(id: string): Promise<void> {
   const b = await clipBox(id);
-  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2, { button: 'right' });
+  // Near the clip's left edge (a long clip runs past the visible timeline), clear of the trim handles.
+  await page.mouse.click(b.x + Math.min(b.width / 2, 40), b.y + b.height / 2, { button: 'right' });
+  await expect(page.locator('.menu-item').first()).toBeVisible();
 }
 
 test.beforeAll(async () => {
@@ -118,7 +120,7 @@ test('timeline context menu › Extract Centre Channel adds a linked centre clip
   const ids = await evalStore<string[]>(page, `(st, mediaId) => {
     const seqId = st.project.activeSequenceId;
     st.updateSequenceSettings(seqId, { fps: { num: 24, den: 1 } });
-    st.setView(seqId, { zoom: 8, scroll: 0, playhead: 0 });
+    st.setView(seqId, { zoom: 2, scroll: 0, playhead: 0 });
     return st.insertFromSource(seqId, { mediaId, in: 1, out: 9, atFrame: 0, mode: 'insert' });
   }`, surroundId);
   const kinds = await evalStore<Record<string, string>>(page,
@@ -169,7 +171,10 @@ test('its preview audio is built, and the Program monitor plays the centre chann
     const w = window as unknown as { __recut: { store: { getState(): { project: { media: Record<string, { channelProxies?: Record<string, { status: string }> }> } } } } };
     return w.__recut.store.getState().project.media[id].channelProxies?.['1.ch-FC']?.status === 'ready';
   }, surroundId, { timeout: 90_000 });
-  await expect(page.getByTestId('inspector').getByTestId('clip-channel-preview')).toHaveText('ready');
+  await evalStore(page, '(st, id) => st.select([id])', centreClipId); // undo / redo cleared the selection
+  const status = page.getByTestId('inspector').getByTestId('clip-channel-preview');
+  await status.scrollIntoViewIfNeeded();
+  await expect(status).toHaveText('ready');
   // Hear only the centre clip: mute A1 (the normal mix, from the media proxy or nothing).
   await evalStore(page, '(st) => { const seq = st.project.sequences[st.project.activeSequenceId]; st.setTrackFlags(seq.id, seq.audioTracks[0].id, { muted: true }); }');
   await page.click('[data-testid="program-go-start"]');
@@ -186,7 +191,7 @@ test('its preview audio is built, and the Program monitor plays the centre chann
 test('on a stereo source the item is disabled with the reason; the Clip menu command refuses with a toast', async () => {
   const ids = await evalStore<string[]>(page, `(st, mediaId) => {
     const seqId = st.project.activeSequenceId;
-    return st.insertFromSource(seqId, { mediaId, in: 0, out: 2, atFrame: 300, mode: 'overwrite' });
+    return st.insertFromSource(seqId, { mediaId, in: 0, out: 2, atFrame: 0, mode: 'overwrite' });
   }`, stereoId);
   const kinds = await evalStore<Record<string, string>>(page,
     '(st) => { const seq = st.project.sequences[st.project.activeSequenceId]; const out = {}; for (const t of [...seq.videoTracks, ...seq.audioTracks]) for (const c of t.clips) out[c.id] = c.kind; return out; }');
