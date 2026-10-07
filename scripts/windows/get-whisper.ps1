@@ -11,7 +11,9 @@
   Windows zip so the three platforms share one pinned, hash-checked source and the same CPU dispatch (the prebuilt
   zips are built for a fixed CPU level, and their contents and flags are not pinned by a checksum ReCut controls).
 
-  Build: Visual Studio 2022 (MSVC, x64), shared ggml with the CPU kernels as loadable backends (GGML_BACKEND_DL +
+  Build: MSVC x64 from the newest Visual Studio with the C++ tools (found with vswhere, any version: 2022, 2026, ...),
+  in its developer environment (Enter-VsDevShell) with the Ninja generator (Visual Studio's own copy; NMake when there
+  is no Ninja), so no Visual Studio generator name is hard-coded. Shared ggml with the CPU kernels as loadable backends (GGML_BACKEND_DL +
   GGML_CPU_ALL_VARIANTS, GGML_NATIVE=OFF): ggml loads the best variant the CPU supports at start. The same five
   variants as on Linux ship: x64, sse42, sandybridge (AVX), haswell (AVX2) and skylakex (AVX-512). No OpenMP. The
   Visual C++ runtime DLLs (vcruntime140*.dll, msvcp140.dll) are copied next to the engine (app-local deployment, allowed
@@ -19,7 +21,7 @@
 
   Writes into -Dest: whisper-cli.exe, whisper.dll, ggml.dll, ggml-base.dll, ggml-cpu-*.dll, the VC++ runtime DLLs,
   WHISPER-LICENSE.txt (MIT) and WHISPER-BUILD.txt (tag, commit, source hash, flags, files, `whisper-cli --version`).
-  Needs Visual Studio 2022 with the C++ workload, cmake, node, tar and git (fallback).
+  Needs Visual Studio (2022 or newer) with the C++ workload, cmake, node, tar and git (fallback).
 #>
 param(
   [string]$Dest = (Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path 'resources\whisper'),
@@ -56,25 +58,39 @@ try {
     if ($LASTEXITCODE -ne 0) { throw '[ReCut] could not fetch the whisper.cpp source' }
   }
 
+  # The newest Visual Studio with the x64 C++ tools, and its developer environment (cl, link, the redist path, and
+  # Visual Studio's own CMake / Ninja on PATH) in this process.
+  $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+  if (-not (Test-Path $vswhere)) { throw "[ReCut] vswhere.exe not found ($vswhere): install Visual Studio with the C++ workload" }
+  $vs = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1)
+  $vsName = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property displayName | Select-Object -First 1)
+  $vsVersion = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion | Select-Object -First 1)
+  if (-not $vs) { throw '[ReCut] no Visual Studio with the C++ x64 tools found (vswhere)' }
+  Write-Host "[ReCut] Using $vsName $vsVersion at $vs"
+  Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+  Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+  if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) { throw '[ReCut] cl.exe is not on PATH after Enter-VsDevShell' }
+  $generator = if (Get-Command ninja -ErrorAction SilentlyContinue) { 'Ninja' } else { 'NMake Makefiles' }
+
   $build = Join-Path $work 'build'
   $flags = @(
-    '-DBUILD_SHARED_LIBS=ON', '-DGGML_BACKEND_DL=ON', '-DGGML_CPU_ALL_VARIANTS=ON', '-DGGML_NATIVE=OFF', '-DGGML_OPENMP=OFF',
+    '-DCMAKE_BUILD_TYPE=Release', '-DBUILD_SHARED_LIBS=ON', '-DGGML_BACKEND_DL=ON', '-DGGML_CPU_ALL_VARIANTS=ON', '-DGGML_NATIVE=OFF', '-DGGML_OPENMP=OFF',
     '-DGGML_CCACHE=OFF', '-DWHISPER_BUILD_IS_DEV=OFF', '-DWHISPER_BUILD_TESTS=OFF', '-DWHISPER_BUILD_SERVER=OFF',
     '-DWHISPER_BUILD_EXAMPLES=ON', '-DWHISPER_SDL2=OFF', '-DWHISPER_CURL=OFF', '-DWHISPER_ALL_WARNINGS=OFF'
   )
-  Write-Host "[ReCut] Configuring whisper.cpp $($pin.tag) (Visual Studio 2022, x64)"
-  cmake -S $src -B $build -G 'Visual Studio 17 2022' -A x64 @flags | Out-File (Join-Path $work 'configure.log')
+  Write-Host "[ReCut] Configuring whisper.cpp $($pin.tag) ($generator, MSVC x64)"
+  cmake -S $src -B $build -G $generator '-DCMAKE_C_COMPILER=cl' '-DCMAKE_CXX_COMPILER=cl' @flags | Out-File (Join-Path $work 'configure.log')
   if ($LASTEXITCODE -ne 0) { Get-Content (Join-Path $work 'configure.log') -Tail 40; throw '[ReCut] cmake configure failed' }
   $targets = @('whisper-cli') + ($variants | ForEach-Object { "ggml-cpu-$_" })
   Write-Host "[ReCut] Building $($targets -join ', ') with $Jobs jobs"
   cmake --build $build --config Release --parallel $Jobs --target @targets | Out-File (Join-Path $work 'build.log')
   if ($LASTEXITCODE -ne 0) { Get-Content (Join-Path $work 'build.log') -Tail 60; throw '[ReCut] build failed' }
 
-  $bin = Join-Path $build 'bin\Release'
-  if (-not (Test-Path (Join-Path $bin 'whisper-cli.exe'))) { throw "[ReCut] build produced no $bin\whisper-cli.exe" }
+  $cli = Get-ChildItem -Recurse -File -Path $build -Filter 'whisper-cli.exe' | Select-Object -First 1
+  if (-not $cli) { throw "[ReCut] the build produced no whisper-cli.exe (see $work\build.log)" }
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Dest
   New-Item -ItemType Directory -Force -Path $Dest | Out-Null
-  Copy-Item (Join-Path $bin 'whisper-cli.exe') $Dest
+  Copy-Item $cli.FullName $Dest
   foreach ($dll in @('whisper.dll', 'ggml.dll', 'ggml-base.dll')) {
     $f = Get-ChildItem -Recurse -File -Path $build -Filter $dll | Select-Object -First 1
     if (-not $f) { throw "[ReCut] build produced no $dll" }
@@ -86,12 +102,14 @@ try {
     Copy-Item $f.FullName $Dest
   }
 
-  # Visual C++ runtime, app-local (the newest MSVC redist folder of the newest Visual Studio).
-  $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-  $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-  $crt = Get-ChildItem -Directory -Path (Join-Path $vs 'VC\Redist\MSVC') | Sort-Object Name -Descending |
-    ForEach-Object { Get-ChildItem -Directory -Path (Join-Path $_.FullName 'x64') -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue } |
-    Select-Object -First 1
+  # Visual C++ runtime, app-local: the redist folder of the toolset that built it (VCToolsRedistDir, set by the developer
+  # environment), else the newest numbered folder under VC\Redist\MSVC of that Visual Studio.
+  $redistDirs = @()
+  if ($env:VCToolsRedistDir) { $redistDirs += $env:VCToolsRedistDir }
+  $redistDirs += Get-ChildItem -Directory -Path (Join-Path $vs 'VC\Redist\MSVC') -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '^\d+(\.\d+)+$' } | Sort-Object { [version]$_.Name } -Descending | ForEach-Object { $_.FullName }
+  $crt = $redistDirs | ForEach-Object { Get-ChildItem -Directory -Path (Join-Path $_ 'x64') -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue } |
+    Where-Object { Test-Path (Join-Path $_.FullName 'vcruntime140.dll') } | Select-Object -First 1
   if (-not $crt) { throw '[ReCut] Visual C++ runtime (VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT) not found' }
   $runtime = @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll')
   foreach ($dll in $runtime) { Copy-Item (Join-Path $crt.FullName $dll) $Dest }
@@ -108,7 +126,7 @@ try {
   Copy-Item (Join-Path $src 'LICENSE') (Join-Path $Dest 'WHISPER-LICENSE.txt')
   $fetched = (Get-Content (Join-Path $src '.recut-source.txt') | Select-Object -First 1)
   $files = Get-ChildItem -File $Dest | Where-Object { $_.Name -notlike 'WHISPER-*' } | ForEach-Object { '  {0,10}  {1}' -f $_.Length, $_.Name }
-  $cl = (Get-ChildItem -Recurse -File -Path (Join-Path $vs 'VC\Tools\MSVC') -Filter 'cl.exe' | Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -First 1).FullName
+  $cl = (Get-Command cl.exe).Source
   @(
     'whisper.cpp speech-to-text engine bundled with ReCut',
     '',
@@ -117,9 +135,9 @@ try {
     "Source:      $($pin.tarball)",
     "             (the same files as the tag in git; source-tree SHA-256 $($pin.treeSha256), see scripts/whisper-source.mjs)",
     "Fetched:     $fetched",
-    "Built:       $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')) on Windows x64, Visual Studio 2022 ($cl), $((cmake --version | Select-Object -First 1))",
+    "Built:       $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')) on Windows x64, $vsName $vsVersion ($cl), $((cmake --version | Select-Object -First 1))",
     'Script:      scripts/windows/get-whisper.ps1',
-    "CMake flags: -G `"Visual Studio 17 2022`" -A x64 --config Release $($flags -join ' ')",
+    "CMake flags: -G `"$generator`" $($flags -join ' ')",
     "CPU variants: $($variants -join ' ')",
     "VC++ runtime: $($runtime -join ', ') from $($crt.FullName) (app-local)",
     "Engine:      $version",

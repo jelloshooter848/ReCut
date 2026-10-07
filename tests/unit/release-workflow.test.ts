@@ -193,6 +193,13 @@ describe('speech-to-text engine in CI (Roadmap §5)', () => {
     }
     expect(jobText('linux')).toContain('./scripts/linux/get-whisper.sh --dest resources/whisper');
     expect(jobText('linux')).toContain("hashFiles('scripts/whisper-source.mjs', 'scripts/linux/get-whisper.sh')");
+    for (const job of ['macos', 'macos-e2e']) {
+      expect(jobText(job), job).toContain('./scripts/mac/get-whisper.sh --dest resources/whisper');
+      expect(jobText(job), job).toContain("hashFiles('scripts/whisper-source.mjs', 'scripts/mac/get-whisper.sh')");
+    }
+    // The macOS dmg ships the engine: checked inside the mounted app, and its smoke line is required.
+    expect(jobText('macos')).toContain('- name: Bundled speech-to-text engine');
+    expect(jobText('macos')).toContain("'smoke: whisper engine=[0-9.]+ ok path=[^ ]*/recut-dmg/ReCut\\.app/Contents/Resources/whisper/whisper-cli$'");
   });
 
   it('the smoke tests require the engine line, and the packages stay within the budget with no model', () => {
@@ -204,6 +211,14 @@ describe('speech-to-text engine in CI (Roadmap §5)', () => {
     }
     const check = fs.readFileSync(path.join(repo, 'scripts', 'windows', 'install-check.ps1'), 'utf8');
     expect(check.match(/whisper engine=\[0-9\.\]\+ ok/g)).toHaveLength(2);
+  });
+
+  it('the Windows engine build finds Visual Studio with vswhere instead of naming a generator', () => {
+    const ps1 = fs.readFileSync(path.join(repo, 'scripts', 'windows', 'get-whisper.ps1'), 'utf8');
+    expect(ps1).toContain('vswhere.exe');
+    expect(ps1).toContain('Enter-VsDevShell');
+    expect(ps1).not.toMatch(/-G\s+'Visual Studio/);
+    expect(ps1).toContain('$env:VCToolsRedistDir');
   });
 
   it('CI downloads only the pinned tiny model, checked against its SHA-256 and cached', () => {

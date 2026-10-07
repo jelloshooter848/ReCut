@@ -298,11 +298,15 @@ async function runSmoke(): Promise<void> {
     log(`smoke: ocr core=FAILED ${e instanceof Error ? e.message : String(e)}`);
   }
   // Speech-to-text: the bundled whisper-cli (resources/whisper) runs and reports its version; no model needed.
-  // "whisper engine=FAILED" fails the CI smoke checks (.github/workflows/windows.yml, scripts/windows/install-check.ps1).
-  try {
-    const bin = getWhisperCliPath();
-    const version = await whisperCliVersion(bin);
-    log(`smoke: whisper engine=${version} ok path=${bin}`);
+  // "whisper engine=FAILED" fails the CI smoke checks (.github/workflows/windows.yml, scripts/windows/install-check.ps1),
+  // which require "whisper engine=<version> ok" from every package. A run from source ("Start ReCut.cmd", npm start)
+  // has no engine unless scripts/<platform>/get-whisper.* was run, which is not a failure there.
+  const whisperBin = getWhisperCliPath();
+  if (!whisperBin && !app.isPackaged) {
+    log('smoke: whisper engine=absent (not bundled in a source run)');
+  } else try {
+    const version = await whisperCliVersion(whisperBin);
+    log(`smoke: whisper engine=${version} ok path=${whisperBin}`);
   } catch (e) {
     log(`smoke: whisper engine=FAILED ${e instanceof Error ? e.message : String(e)}`);
   }

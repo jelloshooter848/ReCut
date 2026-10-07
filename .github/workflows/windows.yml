@@ -17,7 +17,8 @@ name: Windows build
 #              scripts/linux/get-whisper.sh builds whisper.cpp), an AppImage smoke test (FUSE-mounted and
 #              --appimage-extract-and-run), and the ReCut-linux artifact (every run)
 #   macos      ADVISORY (not a gate yet, docs/ROADMAP.md §19): on macos-14 (Apple Silicon): typecheck, unit tests with
-#              the bundled arm64 FFmpeg (scripts/mac/get-ffmpeg.sh), the arm64 dmg (Developer ID signed and notarized
+#              the bundled arm64 FFmpeg (scripts/mac/get-ffmpeg.sh) and speech-to-text engine (scripts/mac/get-whisper.sh),
+#              the arm64 dmg (Developer ID signed and notarized
 #              when the signing secrets are set, ad-hoc signed otherwise), code-signature checks, a smoke test of the
 #              app inside the mounted dmg, and the ReCut-macos artifact (every run)
 #   macos-e2e  ADVISORY: the end-to-end suite on macos-14
@@ -700,6 +701,21 @@ jobs:
           ./scripts/mac/get-ffmpeg.sh --dest resources/ffmpeg
           echo "$GITHUB_WORKSPACE/resources/ffmpeg" >> "$GITHUB_PATH"
 
+      # The speech-to-text engine (whisper.cpp, Metal, one static arm64 binary), bundled into ReCut.app
+      # (resources/whisper -> Contents/Resources/whisper) and signed with it. Built from the pinned, hash-checked source;
+      # cached per pinned source and build script, so a cache hit skips the compile.
+      - name: Speech-to-text engine cache
+        id: whisper-cache
+        uses: actions/cache@v4
+        with:
+          path: resources/whisper
+          key: whisper-macos-arm64-${{ hashFiles('scripts/whisper-source.mjs', 'scripts/mac/get-whisper.sh') }}
+      - name: Build the speech-to-text engine (whisper.cpp)
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
+        run: |
+          command -v cmake >/dev/null 2>&1 || brew install cmake
+          JOBS="$(sysctl -n hw.ncpu)" NICE=0 ./scripts/mac/get-whisper.sh --dest resources/whisper
+
       - name: Unit tests
         run: npx vitest run
 
@@ -823,6 +839,25 @@ jobs:
           if grep -q 'NOT RUN' "$ff/FFMPEG-BUILD.txt"; then echo '::error::the bundled FFmpeg was fetched with --skip-run'; exit 1; fi
           sed -n '1,/^ffmpeg -version$/p' "$ff/FFMPEG-BUILD.txt"
 
+      # The speech-to-text engine inside the app: an arm64 whisper-cli with the Metal library embedded, its licence and
+      # build record, within the 16 MB budget, and no model.
+      - name: Bundled speech-to-text engine
+        env:
+          APP: ${{ steps.dmg.outputs.app }}
+        run: |
+          set -euo pipefail
+          w="$APP/Contents/Resources/whisper"
+          ls -la "$w"
+          test -x "$w/whisper-cli" || { echo "::error::$w/whisper-cli is missing or not executable"; exit 1; }
+          lipo -archs "$w/whisper-cli" | tr ' ' '\n' | grep -qx arm64 || { echo "::error::$w/whisper-cli is not arm64"; exit 1; }
+          for f in WHISPER-LICENSE.txt WHISPER-BUILD.txt; do test -s "$w/$f" || { echo "::error::$w/$f is missing or empty"; exit 1; }; done
+          grep -q 'GGML_METAL_EMBED_LIBRARY=ON' "$w/WHISPER-BUILD.txt" || { echo '::error::the Metal library is not embedded'; exit 1; }
+          if ls "$w"/*.bin >/dev/null 2>&1; then echo '::error::a model file is in the package'; exit 1; fi
+          bytes=$(find "$w" -type f -exec stat -f '%z' {} + | awk '{ s += $1 } END { print s + 0 }')
+          echo "Speech-to-text engine: $bytes bytes (budget 16 MB)"
+          if [ "$bytes" -gt $((16 * 1024 * 1024)) ]; then echo "::error::the speech-to-text engine is $bytes bytes, over the 16 MB budget"; exit 1; fi
+          sed -n '1,12p' "$w/WHISPER-BUILD.txt"
+
       # Every Mach-O file in the app must carry a valid signature: ad-hoc for a test build; for a signed build the
       # Developer ID, the hardened runtime and a secure timestamp (notarization rejects anything else), plus
       # Gatekeeper's verdict and the stapled notarization ticket.
@@ -889,6 +924,7 @@ jobs:
             'smoke: ffmpeg encode\+probe ok ' \
             'smoke: licences shipped=[^ ]*FFMPEG-BUILD\.txt,FFMPEG-LICENSE\.txt' \
             'smoke: ocr core=(relaxedsimd-lstm|lstm) ok worker=.*app\.asar\.unpacked' \
+            'smoke: whisper engine=[0-9.]+ ok path=[^ ]*/recut-dmg/ReCut\.app/Contents/Resources/whisper/whisper-cli$' \
             'smoke: window loaded=.* layout=mounted'; do
             grep -qE "$want" "$out" || { echo "::error::macOS smoke test: no line matching: $want"; bad=1; }
           done
@@ -941,6 +977,21 @@ jobs:
         run: |
           ./scripts/mac/get-ffmpeg.sh --dest "$RUNNER_TEMP/ff"
           echo "$RUNNER_TEMP/ff" >> "$GITHUB_PATH"
+      # tests/e2e/whisper.spec.ts transcribes with the engine the app finds in resources/whisper.
+      # The speech-to-text engine (whisper.cpp, Metal, one static arm64 binary), bundled into ReCut.app
+      # (resources/whisper -> Contents/Resources/whisper) and signed with it. Built from the pinned, hash-checked source;
+      # cached per pinned source and build script, so a cache hit skips the compile.
+      - name: Speech-to-text engine cache
+        id: whisper-cache
+        uses: actions/cache@v4
+        with:
+          path: resources/whisper
+          key: whisper-macos-arm64-${{ hashFiles('scripts/whisper-source.mjs', 'scripts/mac/get-whisper.sh') }}
+      - name: Build the speech-to-text engine (whisper.cpp)
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
+        run: |
+          command -v cmake >/dev/null 2>&1 || brew install cmake
+          JOBS="$(sysctl -n hw.ncpu)" NICE=0 ./scripts/mac/get-whisper.sh --dest resources/whisper
       - run: npm run build
       - run: npx playwright test -c tests/e2e/playwright.config.ts
       - uses: actions/upload-artifact@v4
