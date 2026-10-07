@@ -243,6 +243,21 @@ server.
 - Snapshots stored as diffs, to keep project files small.
 - Titles / text generator.
 
+## 19. macOS build (.dmg) with each 0.X.0 release
+
+**Status:** parked at the bottom by the project owner (7 October 2026) until they decide where it goes.
+**Why:** ReCut ships only Windows builds. `package.json` → `build.mac` already targets `dmg`, and the app has macOS
+menu and quit handling, but no Mac build has ever been made or tested.
+**Plan (unsigned first, about 3–5 h):** a `macos-latest` job in `.github/workflows/windows.yml` (or a sibling
+workflow) for releases only, not dev builds, since GitHub bills macOS minutes at 10× on private repos. It builds a
+universal or arm64 + x64 dmg, bundles static `ffmpeg` / `ffprobe` for both architectures, smoke-tests the app
+(launch, FFmpeg encode and probe; ideally the e2e suite) and joins the publish job's `needs`, so a red Mac build
+blocks the release like any other gate. Unsigned apps need right-click › **Open** on first launch; Apple Silicon
+also needs the ad-hoc signature electron-builder applies by default.
+**Later, optional:** signing and notarisation (an Apple Developer account at $99 a year, certificates and an
+app-specific password as GitHub secrets, about 2–3 h more), only if the Mac build is for other people. This
+overlaps the code-signing line in §18.
+
 ## Ordering decisions
 
 Recorded so they are not re-proposed without new information.
