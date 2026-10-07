@@ -9,7 +9,7 @@
  * exact frame counts, compositing, audio mixing).
  */
 import path from 'node:path';
-import type { ExportContainer, ExportSettings, ID, MediaItem, Rational, Sequence, VideoStreamInfo } from '@shared/model';
+import type { ExportContainer, ExportSettings, ID, Keyframe, MediaItem, Rational, Sequence, VideoStreamInfo } from '@shared/model';
 import type { ExportRequest } from '@shared/ipc';
 import { clipEnd, sequenceDuration } from '@shared/timeline';
 import { activeTracks, planTrackSegments, widenRangeForTransitions, type ClipSeg, type TrackPlan } from '@shared/exportPlan';
@@ -17,6 +17,7 @@ import { framesToSeconds, isValidFps } from '@shared/time';
 import { serializeSrt } from '@shared/subtitles';
 import { videoDisplaySize } from '@shared/media';
 import { audioStreamInfo, channelPanFilter, channelSelectionLabel, channelSelectionProblem } from '@shared/audioChannels';
+import { evaluateKeyframes, exprNum, hasMotionKeyframes, keyframeRange, keyframesExpr, keyframesOf, MIN_KEYFRAME_SCALE } from '@shared/keyframes';
 import {
   audioEncoder, audioOutputPlan, audioStreamArgs, CONTAINERS, dispositionValue, DNXHR_MIN_HEIGHT, DNXHR_MIN_WIDTH, exportContainer, isPerTrackAudio,
   PER_TRACK_SKIP_REASON, perTrackAudioPlan, subtitleOutputPlan, supportsPackaging, usesAc3, videoEncoder, withExportExtension, workingLayout,
@@ -487,15 +488,156 @@ function videoSegment(ctx: Ctx, seg: ClipSeg): string {
     }
   }
   f.push(...fitFilters(ctx));
-  f.push(...transformFilters(ctx, seg));
+  // Keyframes (Roadmap §11): a clip with keyframed position / scale is placed per frame after the exact-length
+  // trim (motionFilters), keyframed opacity is set per frame there too (opacityFilters); otherwise the static chain.
+  const motion = hasMotionKeyframes(seg.clip);
+  const opacityKeys = keyframesOf(seg.clip, 'opacity');
+  const k0 = segmentClipFrame(ctx, seg);
+  if (motion) f.push(...motionCanvasFilters(ctx, seg, k0, totalFrames));
+  else f.push(...transformFilters(ctx, seg));
   const op = seg.clip.transform.opacity;
-  if (Number.isFinite(op) && op < 1) f.push(`lut=a='val*${num(Math.max(0, op))}'`);
+  if (!opacityKeys && Number.isFinite(op) && op < 1) f.push(`lut=a='val*${num(Math.max(0, op))}'`);
   f.push(`tpad=stop=${totalFrames}:stop_mode=clone`, `trim=end_frame=${totalFrames}`, 'setpts=PTS-STARTPTS');
+  if (motion) f.push(...motionFilters(ctx, seg, k0, totalFrames));
+  if (opacityKeys) f.push(...opacityFilters(ctx, opacityKeys, k0, totalFrames));
   if (seg.fadeIn) f.push(`fade=t=in:st=0:d=${sec(seg.fadeIn * ctx.fd)}`);
   if (seg.fadeOut) f.push(`fade=t=out:st=${sec((totalFrames - seg.fadeOut) * ctx.fd)}:d=${sec(seg.fadeOut * ctx.fd)}`);
   const label = newLabel(ctx, 'v');
   ctx.chains.push(`[${index}:v:0]${f.join(',')}${label}`);
   return label;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Keyframes (Roadmap §11): values per frame from shared/keyframes.ts, the same evaluation as the preview
+// ---------------------------------------------------------------------------------------------------
+
+/** Clip frame (shared/keyframes.ts) of the segment's first rendered frame (transition handle included). */
+function segmentClipFrame(ctx: Ctx, seg: ClipSeg): number {
+  return seg.start + ctx.rangeStartF - seg.clip.start - seg.extBefore;
+}
+
+/** Margin (pixels) the motion canvas keeps around the frame, so the picture's edge resamples to transparent. */
+const MOTION_MARGIN = 4;
+
+/**
+ * Before the exact-length trim: the static crop, a down-scale to the largest scale the segment uses (when it is below
+ * 100 %, so a small moving picture is filtered with bicubic, not resampled from full size), and a transparent canvas at
+ * least the frame size plus a margin, with the picture exactly in its centre (its offsets are even, so 4:2:0 chroma
+ * stays aligned). motionFilters then moves and scales it per frame.
+ */
+function motionCanvasFilters(ctx: Ctx, seg: ClipSeg, k0: number, totalFrames: number): string[] {
+  const t = seg.clip.transform;
+  const crop = t.crop ?? { left: 0, top: 0, right: 0, bottom: 0 };
+  const cl = clamp01(crop.left), cr = clamp01(crop.right), ct = clamp01(crop.top), cb = clamp01(crop.bottom);
+  const f: string[] = [];
+  if (cl + cr > 0 || ct + cb > 0) {
+    if (cl + cr >= 1 || ct + cb >= 1) ctx.warnings.push(`Clip "${seg.clip.name}": crop removes the whole image.`);
+    f.push(`crop=w='max(2,trunc(iw*${num(1 - cl - cr)}/2)*2)':h='max(2,trunc(ih*${num(1 - ct - cb)}/2)*2)':x='iw*${num(cl)}':y='ih*${num(ct)}'`);
+  }
+  const k = motionPrescale(seg, k0, totalFrames);
+  if (k < 1) f.push(`scale=w='max(2,trunc(iw*${exprNum(k)}/2)*2)':h='max(2,trunc(ih*${exprNum(k)}/2)*2)':flags=bicubic`, 'setsar=1');
+  const padW = ctx.W + 2 * MOTION_MARGIN, padH = ctx.H + 2 * MOTION_MARGIN;
+  f.push(`pad=w='iw+4*ceil((${padW}-iw)/4)':h='ih+4*ceil((${padH}-ih)/4)':x='2*ceil((${padW}-iw)/4)':y='2*ceil((${padH}-ih)/4)':color=black@0`);
+  return f;
+}
+
+/** The pre-scale motionCanvasFilters applies: the largest animated scale over the segment, when below 1 (else 1). */
+function motionPrescale(seg: ClipSeg, k0: number, totalFrames: number): number {
+  const { max } = keyframeRange(seg.clip, 'scale', k0, k0 + totalFrames - 1);
+  return Number.isFinite(max) && max > 0 && max < 0.999 ? Math.max(MIN_KEYFRAME_SCALE, max) : 1;
+}
+
+/**
+ * After the exact-length trim: place the canvas per frame with `perspective` (sense=destination: the canvas corners
+ * go to the given points; eval=frame), then cut the frame out of it. Sub-pixel exact (bilinear), like the canvas
+ * preview, and frame-exact: perspective's frame counter `in` is 1 on the segment's first frame, so the clip frame is
+ * `in-1+k0`. The corners follow the preview's geometry: the uncropped picture's centre at the frame centre plus
+ * (x, y), scaled by `scale` and rotated by the (static) rotation about it, the crop keeping its place.
+ */
+function motionFilters(ctx: Ctx, seg: ClipSeg, k0: number, totalFrames: number): string[] {
+  const clip = seg.clip;
+  const t = clip.transform;
+  const K = `(in-1${k0 >= 0 ? '+' : ''}${k0})`;
+  const prop = (p: 'x' | 'y' | 'scale'): string => {
+    const keys = keyframesOf(clip, p);
+    if (keys) return `(${keyframesExpr(keys, K)})`;
+    const v = t[p];
+    if (p === 'scale') return exprNum(Number.isFinite(v) && v > 0 ? v : 1);
+    return exprNum(Number.isFinite(v) ? v : 0);
+  };
+  const X = prop('x'), Y = prop('y'), S = prop('scale');
+  // Crop offset: the cropped region's centre relative to the picture centre, in fitted pixels (as transformFilters).
+  const crop = t.crop ?? { left: 0, top: 0, right: 0, bottom: 0 };
+  const cl = clamp01(crop.left), cr = clamp01(crop.right), ct = clamp01(crop.top), cb = clamp01(crop.bottom);
+  let ox = 0, oy = 0;
+  const d = fitInputSize(seg.media.probe?.video);
+  if (d && (cl + cr > 0 || ct + cb > 0)) {
+    const kf = Math.min(ctx.W / d.w, ctx.H / d.h);
+    ox = d.w * kf * (cl - cr) / 2;
+    oy = d.h * kf * (ct - cb) / 2;
+  }
+  const rot = ((Number.isFinite(t.rotation) ? t.rotation : 0) % 360 + 360) % 360;
+  const a = rot * Math.PI / 180;
+  const cos = Math.cos(a), sin = Math.sin(a);
+  const rox = ox * cos - oy * sin, roy = ox * sin + oy * cos;
+  // A canvas point p (from the canvas centre) lands at F + (X, Y) + S·(R·o + R·p / k), in area coordinates (a
+  // pixel's centre at +0.5, as the canvas preview draws). perspective maps pixel indexes (a pixel at its index), so
+  // the corner it is given for canvas corner c is that map at c + 0.5, minus 0.5: c ± W/2 becomes (±W + 1) / 2.
+  const k = motionPrescale(seg, k0, totalFrames);
+  const A = cos / (2 * k), B = sin / (2 * k);
+  const fx = `(2*floor((W-${ctx.W})/4)+${(ctx.W - 1) / 2})`, fy = `(2*floor((H-${ctx.H})/4)+${(ctx.H - 1) / 2})`;
+  const corner = (sx: number, sy: number): [string, string] => [
+    `${fx}+${X}+${S}*(${exprNum(rox)}+${exprNum(A)}*(${sx}*W+1)-${exprNum(B)}*(${sy}*H+1))`,
+    `${fy}+${Y}+${S}*(${exprNum(roy)}+${exprNum(B)}*(${sx}*W+1)+${exprNum(A)}*(${sy}*H+1))`,
+  ];
+  const [x0, y0] = corner(-1, -1), [x1, y1] = corner(1, -1), [x2, y2] = corner(-1, 1), [x3, y3] = corner(1, 1);
+  return [
+    `perspective=x0='${x0}':y0='${y0}':x1='${x1}':y1='${y1}':x2='${x2}':y2='${y2}':x3='${x3}':y3='${y3}':interpolation=linear:sense=destination:eval=frame`,
+    `crop=w=${ctx.W}:h=${ctx.H}:x='2*floor((iw-${ctx.W})/4)':y='2*floor((ih-${ctx.H})/4)'`,
+    'setsar=1',
+  ];
+}
+
+/**
+ * Keyframed opacity: `lut` multiplies the alpha by the opacity of each frame, set per frame by `sendcmd` from values
+ * computed here with the preview's evaluation (no FFmpeg formula to keep in step). A value is sent only when it
+ * changes by at least 1/1024 (the alpha is 8-bit), so a long fade sends at most about a thousand commands.
+ */
+function opacityFilters(ctx: Ctx, keys: readonly Keyframe[], k0: number, totalFrames: number): string[] {
+  const name = `lut@kfo${ctx.labelCounter++}`;
+  const q = (v: number) => Math.round(clamp01(v) * 1024) / 1024;
+  const first = q(evaluateKeyframes(keys, k0));
+  const cmds: string[] = [];
+  let last = first, startN = 0;
+  // Interval [start, end) in segment seconds, half a frame early so a frame's own timestamp is inside it.
+  const flush = (endN: number) => {
+    if (startN > 0) cmds.push(`${sec((startN - 0.5) * ctx.fd)}-${sec((endN - 0.5) * ctx.fd)} ${name} a val*${exprNum(last)}`);
+  };
+  for (let n = 1; n < totalFrames; n++) {
+    const v = q(evaluateKeyframes(keys, k0 + n));
+    if (v === last) continue;
+    flush(n);
+    startN = n; last = v;
+  }
+  flush(totalFrames + 1);
+  const out: string[] = [];
+  if (cmds.length) out.push(`sendcmd=c='${cmds.join(';')}'`);
+  out.push(`${name}=a='val*${exprNum(first)}'`);
+  return out;
+}
+
+/** Samples per evaluation of keyframed level (5.3 ms at 48 kHz). */
+export const LEVEL_BLOCK_SAMPLES = 256;
+
+/**
+ * Keyframed level: `volume` evaluated per block of LEVEL_BLOCK_SAMPLES samples (asetnsamples) at the block's middle,
+ * from the keyframes' FFmpeg expression (shared/keyframes.ts keyframesExpr: the preview's formula). `t` is the
+ * segment's time from its first sample (the chain re-stamps it just before), so the clip frame is t·fps + k0.
+ * (`volume` has no usable `nb_samples` per frame, and `t` is NaN when it evaluates once at start-up: 0 then.)
+ */
+function levelFilters(ctx: Ctx, keys: readonly Keyframe[], k0: number): string[] {
+  const k = `(if(isnan(t),0,t)+${LEVEL_BLOCK_SAMPLES / 2}/sample_rate)*${ctx.fps.num}/${ctx.fps.den}${k0 >= 0 ? '+' : ''}${k0}`;
+  return [`asetnsamples=n=${LEVEL_BLOCK_SAMPLES}:p=0`, `volume=volume='st(0,${k});${keyframesExpr(keys, 'ld(0)')}':eval=frame`];
 }
 
 function videoGap(ctx: Ctx, frames: number): string {
@@ -598,8 +740,9 @@ function audioSegment(ctx: Ctx, seg: ClipSeg): string {
   if (Math.abs(seg.speed - 1) > 1e-9) f.push(...atempoChain(seg.speed));
   f.push(`aresample=${ctx.SR}`, `aformat=sample_fmts=fltp:channel_layouts=${ctx.layout}`);
   const a = seg.clip.audio;
+  const levelKeys = keyframesOf(seg.clip, 'volume');
   if (Number.isFinite(a.gain) && a.gain !== 0) f.push(`volume=${num(a.gain)}dB`);
-  if (Number.isFinite(a.volume) && a.volume !== 1) f.push(`volume=${num(Math.max(0, a.volume))}`);
+  if (!levelKeys && Number.isFinite(a.volume) && a.volume !== 1) f.push(`volume=${num(Math.max(0, a.volume))}`);
   // Fades are authored relative to the clip; the visible part is kept when the range clips the clip.
   const headCut = seg.start + ctx.rangeStartF - seg.clip.start; // frames of the clip hidden before the segment
   const tailCut = clipEnd(seg.clip) - (seg.start + seg.frames + ctx.rangeStartF);
@@ -610,6 +753,7 @@ function audioSegment(ctx: Ctx, seg: ClipSeg): string {
   if (seg.fadeIn) f.push(`afade=t=in:st=0:d=${sec(seg.fadeIn * ctx.fd)}`);
   if (seg.fadeOut) f.push(`afade=t=out:st=${sec(lenSec - seg.fadeOut * ctx.fd)}:d=${sec(seg.fadeOut * ctx.fd)}`);
   f.push(`apad=whole_dur=${sec(lenSec)}`, `atrim=duration=${sec(lenSec)}`, 'asetpts=PTS-STARTPTS');
+  if (levelKeys) f.push(...levelFilters(ctx, levelKeys, segmentClipFrame(ctx, seg)));
   const label = newLabel(ctx, 'a');
   ctx.chains.push(`${inLabel}${f.join(',')}${label}`);
   return label;
