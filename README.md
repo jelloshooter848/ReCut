@@ -90,6 +90,17 @@ Electron + React + TypeScript. FFmpeg does all media work. See [CHANGELOG.md](CH
 Both are built and smoke-tested on a Windows machine by [`.github/workflows/windows.yml`](.github/workflows/windows.yml)
 on every push.
 
+## Linux: download and run
+
+- **AppImage (x86-64):** download `ReCut-<version>-linux-x86_64.AppImage` from the release marked **Latest** on the
+  [Releases](https://github.com/jelloshooter848/ReCut/releases) page, then
+  `chmod +x ReCut-<version>-linux-x86_64.AppImage` and `./ReCut-<version>-linux-x86_64.AppImage`. FFmpeg is bundled,
+  so nothing else is needed. If it says FUSE is missing, install `libfuse2` (`libfuse2t64` on Ubuntu 24.04 and later)
+  or run it with `--appimage-extract-and-run`. See [docs/INSTALL.md](docs/INSTALL.md#linux-in-one-step).
+- **From source:** see the quick start below.
+
+The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow on every push.
+
 ## Quick start (from source, any OS)
 
 Requires Node.js 20+ (22 recommended) and FFmpeg 6+ (`ffmpeg` and `ffprobe` on `PATH`, or set `RECUT_FFMPEG` /
@@ -138,7 +149,7 @@ are responsible for having the rights to the material you edit and for how you s
 
 ReCut is licensed under the [MIT License](LICENSE).
 
-The Windows releases bundle FFmpeg (`ffmpeg.exe`, `ffprobe.exe`), which ReCut runs as a separate program. The bundled
+The Windows releases and the Linux AppImage bundle FFmpeg (`ffmpeg` and `ffprobe`), which ReCut runs as a separate program. The bundled
 builds include libx264 and are licensed under the GPL version 3 or later, not under ReCut's licence; each release
 ships the FFmpeg licence and a record of the exact build with where to get its source. ReCut also ships Electron,
 Chromium and a few npm packages under their own licences. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), or
