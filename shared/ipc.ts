@@ -3,9 +3,11 @@
  * The preload script exposes `window.recut` implementing `RecutApi`.
  * Main-process handlers are registered under the channel names in `IPC`.
  */
-import type { AppPreferences, ExportSettings, ID, JobInfo, MediaProbe, Project, Sequence, MediaItem } from './model';
+import type { AppPreferences, AudioChannelSelection, ExportSettings, ID, JobInfo, MediaProbe, Project, Sequence, MediaItem } from './model';
 import type { OcrLanguageState, OcrRequest } from './ocr';
+import type { CollectRequest, CollectStartResult, CollectSummary } from './collect';
 import type { ProjectWire } from './projectWire';
+import type { UpdateCheckResult, UpdateCheckSetting, UpdateStatus } from './update';
 
 export const IPC = {
   // app
@@ -48,6 +50,7 @@ export const IPC = {
   mediaThumbCancel: 'media:thumbCancel',
   mediaWaveform: 'media:waveform',
   mediaProxyStart: 'media:proxyStart',
+  mediaChannelProxyStart: 'media:channelProxyStart',
   mediaSceneDetectStart: 'media:sceneDetectStart',
   mediaExtractSubtitles: 'media:extractSubtitles',
   mediaUrl: 'media:url',
@@ -65,11 +68,21 @@ export const IPC = {
   exportStart: 'export:start',
   exportCancel: 'export:cancel',
   exportPreviewCommand: 'export:previewCommand',
+  // update notice (shared/update.ts, electron/updateIpc.ts)
+  updateStatus: 'update:status',
+  updateCheck: 'update:check',
+  updateSetSetting: 'update:setSetting',
+  updateSkip: 'update:skip',
+  updateOpenRelease: 'update:openRelease',
+  // Collect Project (shared/collect.ts)
+  collectPreflight: 'collect:preflight',
+  collectStart: 'collect:start',
   // events (main -> renderer)
   evJobs: 'ev:jobs',
   evMenu: 'ev:menu',
   evOpenProjectPath: 'ev:openProjectPath',
   evBeforeQuit: 'ev:beforeQuit',
+  evUpdateStatus: 'ev:updateStatus',
 } as const;
 
 /** How to fix a missing FFmpeg (shown in the startup banner and in import / export / proxy errors). */
@@ -170,6 +183,12 @@ export interface ProxyRequest {
    */
   audioStream?: number;
 }
+/**
+ * Preview audio for a clip's channel selection (Roadmap §9): stream `stream` (absolute index) of the original at
+ * `path`, through the export's stereo `pan` filter (electron/media/channelProxy.ts). A job of kind 'channelProxy'
+ * whose result is `{ path, key, cached }` (key: shared/audioChannels.ts channelProxyKey).
+ */
+export interface ChannelProxyRequest { mediaId: ID; path: string; stream: number; selection: AudioChannelSelection }
 export interface SceneDetectRequest { mediaId: ID; path: string; threshold: number; duration: number; minSceneSeconds?: number }
 export interface SceneDetectResult { boundaries: number[]; duration: number }
 
@@ -269,6 +288,8 @@ export interface RecutApi {
   /** Peaks of one audio stream (`streamIndex`: absolute ffprobe index; default the first audio stream). */
   waveform(path: string, mediaId?: ID, streamIndex?: number): Promise<WaveformData>;
   startProxy(req: ProxyRequest): Promise<JobInfo>;
+  /** Queue (or join) the channel proxy job of a clip's channel selection. */
+  startChannelProxy(req: ChannelProxyRequest): Promise<JobInfo>;
   startSceneDetect(req: SceneDetectRequest): Promise<JobInfo>;
   /** Extracts embedded text subtitle stream to SRT text. */
   extractSubtitles(path: string, streamIndex: number): Promise<string>;
@@ -294,10 +315,28 @@ export interface RecutApi {
   cancelExport(jobId: ID): Promise<void>;
   previewExportCommand(req: ExportRequest): Promise<string[]>;
 
+  /** Collect Project: what a collect with these options would copy, and whether it can start (shared/collect.ts). */
+  collectPreflight(req: CollectRequest): Promise<CollectSummary>;
+  /** Start Collect Project: a job of kind 'collect' (cancel with cancelJob); its result is a CollectResult. */
+  startCollect(req: CollectRequest): Promise<CollectStartResult>;
+
   onJobs(cb: (jobs: JobInfo[]) => void): () => void;
   onMenu(cb: (command: MenuCommand) => void): () => void;
   onOpenProjectPath(cb: (path: string) => void): () => void;
   onBeforeQuit(cb: () => void): () => void;
+
+  // ---- update notice (shared/update.ts); nothing is downloaded or installed ----
+  /** The update setting, the last check and the newer release to tell the user about (if any). */
+  updateStatus(): Promise<UpdateStatus>;
+  /** Check GitHub now, whatever the setting (Help › Check for Updates…). Never rejects for network errors. */
+  checkForUpdates(): Promise<UpdateCheckResult>;
+  /** Preferences › Check for updates (also the answer to the first-launch prompt). */
+  setUpdateCheck(setting: UpdateCheckSetting): Promise<UpdateStatus>;
+  /** "Skip this version". */
+  skipUpdateVersion(version: string): Promise<UpdateStatus>;
+  /** Open a release page in the browser; refused (false) unless it is this repository's releases page. */
+  openReleasePage(url: string): Promise<boolean>;
+  onUpdateStatus(cb: (status: UpdateStatus) => void): () => void;
 }
 
 declare global {

@@ -275,7 +275,7 @@ test.describe('Program Monitor', () => {
     await page.evaluate(({ seqId }) => { (window as any).__recut.store.getState().setView(seqId, { playhead: 0, inPoint: 24, outPoint: 48 }); }, { seqId });
     if ((await page.getByTestId('program-loop-toggle').getAttribute('aria-pressed')) === 'true') await page.click('[data-testid="program-loop-toggle"]');
     await page.focus('[data-testid="program-panel"]');
-    await page.keyboard.press('Control+Shift+Space');
+    await page.keyboard.press('ControlOrMeta+Shift+Space');
     await expect.poll(() => getState<boolean>(page, '(s) => s.playback.playing')).toBe(true);
     await expect.poll(() => getState<boolean>(page, '(s) => s.playback.playing'), { timeout: 10_000 }).toBe(false);
     const ph = await playhead(page);

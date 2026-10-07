@@ -18,14 +18,18 @@ import type { ToastKind as StoreToastKind } from '@/state/types';
 import { registerEditingCommands } from '@/app/commands';
 import { initProjectLifecycle } from '@/app/project';
 import { initJobsRouter } from '@/app/jobsRouter';
+import { initChannelProxies } from '@/app/channelProxies';
 import { DialogHost } from '@/app/dialogs/ConfirmDialog';
 import { NewSequenceDialog } from '@/app/dialogs/NewSequenceDialog';
 import { PreferencesDialog } from '@/app/dialogs/PreferencesDialog';
 import { SpeedDialog } from '@/app/dialogs/SpeedDialog';
 import { RelinkDialog } from '@/panels/project/RelinkDialog';
 import { FfmpegBanner } from '@/app/FfmpegBanner';
+import { UpdateBanner } from '@/app/UpdateBanner';
+import { initUpdates } from '@/app/updates';
 import { ExportDialog } from '@/panels/export/ExportDialog';
 import { OcrLanguagesDialog } from '@/panels/ocr/OcrLanguagesDialog';
+import { CollectDialog } from '@/panels/collect/CollectDialog';
 import { OcrDialog } from '@/panels/ocr/OcrDialog';
 import { recutApi, setFfmpegAvailability } from '@/state';
 import '@/panels';
@@ -56,8 +60,10 @@ function initApp(): void {
   registerEditingCommands();
   initProjectLifecycle();
   initJobsRouter();
+  initChannelProxies();
   bridgeStoreToasts();
   recutApi()?.appInfo().then(setFfmpegAvailability).catch(() => undefined);
+  initUpdates();
 }
 
 function ProjectTitle() {
@@ -104,7 +110,7 @@ export function App() {
   useEffect(() => { initApp(); }, []);
   return (
     <>
-      <Layout projectSlot={<ProjectTitle />} rightSlot={<GlobalButtons />} toolbar={<FfmpegBanner />} />
+      <Layout projectSlot={<ProjectTitle />} rightSlot={<GlobalButtons />} toolbar={<><FfmpegBanner /><UpdateBanner /></>} />
       <ContextMenuHost />
       <ToastHost />
       <ShortcutsDialog />
@@ -116,6 +122,7 @@ export function App() {
       <ExportDialog />
       <OcrDialog />
       <OcrLanguagesDialog />
+      <CollectDialog />
       <DialogHost />
     </>
   );

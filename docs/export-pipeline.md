@@ -179,13 +179,20 @@ Audio comes only from audio-track clips (linked video/audio are separate clips).
 with a warning). Chain:
 
 ```
-atrim=start=S:duration=L, asetpts=PTS-S/TB, aresample=async=1:first_pts=0, [atempo... (stages within 0.5..2)],
+[pan=... (channel selection),] atrim=start=S:duration=L, asetpts=PTS-S/TB, aresample=async=1:first_pts=0, [atempo... (stages within 0.5..2)],
 aresample=SR, aformat=sample_fmts=fltp:channel_layouts=stereo|5.1,
 [volume=<gain>dB,] [volume=<volume>,] [afade in/out,] apad=whole_dur=len, atrim=duration=len
 ```
 
 Audio is rebased to the in-point `S` (not to its own first sample) and `aresample=async=1:first_pts=0` fills
 a late-starting stream with silence, so a file whose audio starts after its video keeps that offset.
+
+A clip's channel selection (`ClipAudio.channelSelection`, Roadmap §9) is applied first, by
+`shared/audioChannels.ts channelPanFilter` for the output layout: one channel as mono
+(`pan=stereo|c0=0.707107*cN|c1=0.707107*cN` for a stereo export, `pan=5.1|c2=1*cN` for 5.1), or a stereo downmix
+`pan=stereo|c0=1*cFL+c*cFC+s*cSL...|c1=...` with the clip's centre and surround levels (LFE left out; `=`, so the
+gains are exact). `pan` does not touch timing, so the chain stays sample-exact. A selection the stream cannot
+honour is left out with a warning (the normal mix). The preview's channel proxy is made with the same stereo filter.
 
 Muted clips are silence; gaps are `anullsrc`. Per track: `concat`, then `volume=<track.volume>`.
 Tracks are mixed with `amix=inputs=N:normalize=0:duration=longest`, then `aresample`/`aformat` to the

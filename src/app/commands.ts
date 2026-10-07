@@ -30,6 +30,7 @@ import { confirm, promptText } from './dialogs/ConfirmDialog';
 import { openSpeedDialog } from './dialogs/SpeedDialog';
 import { openSequenceDialog } from './dialogs/NewSequenceDialog';
 import { openOcrLanguages } from '@/ocr/ocrUi';
+import { openCollectDialog } from '@/panels/collect/collectUi';
 import type { Tool } from '@/state/types';
 
 /** Command ids implemented here that are not part of the shell's COMMAND_IDS (menu names match electron/menu.ts). */
@@ -45,6 +46,7 @@ export const EXTRA_COMMAND_IDS = {
   importSubtitles: 'file.importSubtitles',
   preferences: 'app.preferences',
   ocrLanguages: 'app.ocrLanguages',
+  collectProject: 'file.collect',
   quit: 'file.quit',
   duplicateSequence: 'sequence.duplicate',
   removeDisabledClips: 'sequence.removeDisabledClips',
@@ -53,6 +55,7 @@ export const EXTRA_COMMAND_IDS = {
   renameSequence: 'sequence.rename',
   sequenceSettings: 'sequence.settings',
   about: 'help.about',
+  extractCentreChannel: 'clip.extractCentreChannel',
 } as const;
 
 const EXTRA_META: Record<string, { title: string; category: string; keys: string[] }> = {
@@ -67,6 +70,7 @@ const EXTRA_META: Record<string, { title: string; category: string; keys: string
   [EXTRA_COMMAND_IDS.importSubtitles]: { title: 'Import Subtitles…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.preferences]: { title: 'Preferences…', category: 'File', keys: ['Ctrl+,'] },
   [EXTRA_COMMAND_IDS.ocrLanguages]: { title: 'OCR Languages…', category: 'File', keys: [] },
+  [EXTRA_COMMAND_IDS.collectProject]: { title: 'Collect Project…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.quit]: { title: 'Quit', category: 'File', keys: ['Ctrl+Q'] },
   [EXTRA_COMMAND_IDS.duplicateSequence]: { title: 'Duplicate Sequence…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.removeDisabledClips]: { title: 'Remove Disabled Clips…', category: 'Editing', keys: [] },
@@ -75,6 +79,7 @@ const EXTRA_META: Record<string, { title: string; category: string; keys: string
   [EXTRA_COMMAND_IDS.renameSequence]: { title: 'Rename Sequence…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.sequenceSettings]: { title: 'Sequence Settings…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.about]: { title: 'About ReCut', category: 'Help', keys: [] },
+  [EXTRA_COMMAND_IDS.extractCentreChannel]: { title: 'Extract Centre Channel (Dialogue)', category: 'Editing', keys: [] },
 };
 
 const MEDIA_FILTERS = [
@@ -91,6 +96,20 @@ const SUBTITLE_FILTERS = [{ name: 'Subtitles', extensions: ['srt', 'vtt'] }, { n
 // ------------------------------------------------------------------
 
 const S = () => useStore.getState();
+
+/**
+ * Extract Centre Channel (Dialogue) on `clipId` (Roadmap §9): a toast says what happened, or why it cannot run (no
+ * centre channel). Shared by the command (Clip menu) and the timeline's clip context menu.
+ */
+export function runExtractCentreChannel(seqId: ID, clipId: ID | undefined): boolean {
+  if (!clipId) { toast('info', 'Select a clip linked to a 5.1 source first'); return false; }
+  const r = S().extractCentreChannel(seqId, clipId);
+  if (!r.ok) { toast('warn', r.reason); return false; }
+  const seq = S().project.sequences[seqId];
+  const track = seq?.audioTracks.find((t) => t.id === r.trackId);
+  toast('ok', `Centre channel extracted to ${track?.name ?? 'a new audio track'}. It still carries music and effects mixed with the dialogue.`);
+  return true;
+}
 const seqNow = (): Sequence | null => activeSequence(S());
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -474,6 +493,7 @@ export function buildEditingCommands(): CommandInput[] {
       if (ids.length) S().select(ids); else toast('warn', 'Could not paste here (target tracks locked?)');
     }, hasSeq),
     cmd(X.speedDuration, () => openSpeedDialog(), () => hasSeq() && hasClipSelection()),
+    cmd(X.extractCentreChannel, () => { const seq = seqNow(); if (seq) runExtractCentreChannel(seq.id, selectedClips(S())[0]?.id); }, () => hasSeq() && hasClipSelection()),
 
     // ---- tools ----
     toolCmd(C.toolSelect, 'select'),
@@ -508,6 +528,7 @@ export function buildEditingCommands(): CommandInput[] {
     cmd(C.export, () => S().openDialog('export'), hasSeq),
     cmd(X.preferences, () => S().openDialog('preferences')),
     cmd(X.ocrLanguages, () => openOcrLanguages()),
+    cmd(X.collectProject, () => openCollectDialog()),
     cmd(X.quit, () => { const api = recutApi(); if (api) void api.quit(false); }),
 
     // ---- sequence ----

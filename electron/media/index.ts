@@ -8,7 +8,7 @@
 import type { ID, JobInfo, MediaProbe } from '@shared/model';
 import {
   pathToMediaUrl, ffmpegMissingMessage,
-  type ExportRequest, type ExportStartResult, type FilmstripRequest, type ProxyRequest,
+  type ExportRequest, type ExportStartResult, type FilmstripRequest, type ProxyRequest, type ChannelProxyRequest,
   type SceneDetectRequest, type ThumbnailRequest, type WaveformData,
 } from '@shared/ipc';
 import type { OcrLanguageState, OcrRequest } from '@shared/ocr';
@@ -20,12 +20,15 @@ import { startOcrJob } from '../ocr/ocrJob';
 import { JobQueue } from '../jobs/jobQueue';
 import { ensureDirSafe } from '../safeMkdir';
 import { buildExportCommand, cancelExportJob, startExportJob } from '../export/exporter';
-import { cacheKeyForPath, setCacheDir } from './cache';
+import { collectPreflight, startCollectJob } from '../project/collect';
+import type { CollectRequest, CollectStartResult, CollectSummary } from '@shared/collect';
+import { cacheKeysForPath, setCacheDir } from './cache';
 import { getFfmpegPath, getFfprobePath, setFfmpegPaths } from './ffmpeg';
 import { probeMedia } from './probe';
 import { cancelThumbRequests, getFilmstrip, getThumbnail } from './thumbs';
 import { getWaveform } from './waveform';
 import { startProxyJob } from './proxy';
+import { startChannelProxyJob } from './channelProxy';
 import { startSceneDetectJob } from './sceneDetect';
 import { extractSubtitles } from './subtitlesExtract';
 
@@ -92,14 +95,19 @@ export const mediaHandlers: MediaHandlers = {
   },
 
   async waveform(path: string, _mediaId?: ID, streamIndex?: number): Promise<WaveformData> {
-    const key = await cacheKeyForPath(path);
-    return getWaveform(path, key, { streamIndex });
+    const { key, legacyKey } = await cacheKeysForPath(path);
+    return getWaveform(path, key, { streamIndex, legacyKey });
   },
 
   async startProxy(req: ProxyRequest): Promise<JobInfo> {
     if (!getFfmpegPath()) throw new Error(ffmpegMissingMessage('ffmpeg'));
     const { job } = await startProxyJob(jobQueue, req);
     return job;
+  },
+
+  async startChannelProxy(req: ChannelProxyRequest): Promise<JobInfo> {
+    if (!getFfmpegPath()) throw new Error(ffmpegMissingMessage('ffmpeg'));
+    return startChannelProxyJob(jobQueue, req);
   },
 
   async startSceneDetect(req: SceneDetectRequest): Promise<JobInfo> {
@@ -157,6 +165,14 @@ export const mediaHandlers: MediaHandlers = {
 
   async previewExportCommand(req: ExportRequest): Promise<string[]> {
     return buildExportCommand(req);
+  },
+
+  collectPreflight(req: CollectRequest): Promise<CollectSummary> {
+    return collectPreflight(req);
+  },
+
+  startCollect(req: CollectRequest): Promise<CollectStartResult> {
+    return startCollectJob(jobQueue, req);
   },
 
   onJobsUpdate(cb: (jobs: JobInfo[]) => void): () => void {

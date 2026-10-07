@@ -2,8 +2,10 @@
 
 A ReCut project is a single UTF-8 JSON document. It references source media by absolute path and never
 copies media. Derived data (thumbnails, waveforms, proxies, scene-detection caches) lives in the cache
-directory (`<userData>/cache` or `$RECUT_CACHE_DIR`) keyed by file path + size + mtime, so a project file
-stays small (typically well under 10 MB even for long-form work) and can be put under version control.
+directory (`<userData>/cache` or `$RECUT_CACHE_DIR`) keyed by the media file's content (its size and a
+fingerprint of nine sampled 64 KiB blocks, `electron/media/identity.ts`; not its path or modification time, so
+derived data survives moving, renaming and copying the file; entries from before 0.10, keyed by path + size + mtime,
+are still read), so a project file stays small (typically well under 10 MB even for long-form work) and can be put under version control.
 
 The authoritative TypeScript definitions are in `shared/model.ts`; `shared/project.ts` contains
 `normalizeProject()`, which repairs/migrates older or partially damaged files on load.
@@ -73,10 +75,17 @@ which writes it as-is.
 lists the source audio streams the proxy carries (absolute ffprobe indexes, in its track order): every stream for a
 `*_all.mp4` proxy, fewer when FFmpeg could not proxy one of them. It is optional: proxies from older builds have none
 and are read by their file name: `*_all.mp4` carries every stream, `*_a<N>.mp4` stream N, any other proxy the stream
-in its optional `audioStream`, else the first one. A still image's proxy is `<key>_still.png`. An invalid
+in its optional `audioStream`, else the first one. A still image's proxy is `<key>_still.png`. In a project made
+by **Collect Project** with proxies included, `proxy.path` points into the collected folder
+(`<folder>/Proxies/<media file name>_540p_all.mp4`), the suffix kept so the name still says which streams it carries. An invalid
 `audioStreams` (not a list of non-negative integers) is dropped on load. `probe.video.sar`
 (`{num, den}`) is the sample aspect ratio; it is kept only when both terms are positive safe integers and the ratio
 is within 1/16–16, otherwise it is dropped (square pixels). Probes from older builds have none.
+`probe.audio[].layoutGuessed: true` marks a stream for which ffprobe reported no channel layout (the `layout` shown
+is a guess from the channel count, so its channels are numbered, not named). Optional `channelProxies` holds the
+preview files of clips' channel selections (see Clip), keyed `<stream>.ch-<channel>` or
+`<stream>.dm-c<centre dB>-s<surround dB>`, each a proxy record like `proxy`. On load, entries with other keys and
+entries whose job had not finished are dropped; the app removes entries no clip uses.
 
 TV identity uses `identity.series`, `identity.season`, `identity.episode`. The hierarchy is optional; media
 without identity simply lives in bins.
@@ -113,6 +122,14 @@ without identity simply lives in bins.
   "notes": "", "color": "#4d7cfe", "sceneRecordId": "scn…", "originLabel": "transcript"
 }
 ```
+
+`audio.channelSelection` (optional, audio clips; absent = the stream's normal mix) picks what the clip plays of its
+multichannel stream: `{ "mode": "channel", "channel": "FC" }` (one channel as mono: an FFmpeg channel name of the
+stream's layout, or `"c<N>"`, 0-based, when the layout is unknown) or
+`{ "mode": "downmix", "centreDb": -3, "surroundDb": -3 }` (a stereo downmix; levels −60…+6 dB in 0.1 dB steps, LFE
+left out). On load an unusable selection is removed (the normal mix) and out-of-range levels are clamped; both are
+reported as repairs. A selection the clip's stream cannot honour is kept and plays the normal mix, with a pre-export
+warning. Added in 0.8.0; `formatVersion` stays 1.
 
 ### Transition
 
@@ -183,3 +200,24 @@ again reports nothing.
 
 Unknown fields are preserved on load where possible and dropped on normalisation only when they would make
 the file invalid. Future versions bump `formatVersion` and migrate in `normalizeProject()`.
+
+### Compatibility promise
+
+* **Every 1.x release opens projects saved by every earlier stable release (0.3.0 onwards), or refuses them with a
+  clear message.** A refused file is left exactly as it was: a project saved by a newer ReCut (a higher
+  `formatVersion`) is refused with "Project was saved by a newer ReCut (format N); this build reads M", and its
+  `.bak` is never opened in its place.
+* **ReCut never silently damages a project.** Opening a project from an older release keeps everything that release
+  saved. When a file needs repairs, the app says so and keeps the original as `<file>.pre-repair-<timestamp>` (see
+  [Repair on load](#repair-on-load)); the first save keeps the previous file as `.bak`.
+* **Format changes come with migrations.** New optional fields keep `formatVersion` at 1 and default in
+  `normalizeProject()`. When a change cannot be expressed that way, `formatVersion` goes up and `normalizeProject()`
+  migrates every older version to the new shape on load (a MINOR release at least, named in the changelog).
+* **Every stable release adds a fixture.** `tests/fixtures/projects/recut-<version>.recut` is a project saved by that
+  release with its own code (`scripts/make-project-fixture.mjs`; see the fixtures'
+  [README](../tests/fixtures/projects/README.md)). `tests/unit/project-compat.test.ts` opens every fixture through
+  the real open path on every build and checks that nothing is lost (media and paths, probe data, clip positions in
+  frames, links, transitions, markers and chapters, story blocks, subtitle tracks and cues, snapshots, scenes, bins,
+  tags and project settings), that saving and reopening is stable, and that a newer `formatVersion` is refused. The
+  fixtures are never edited or regenerated. Export dialog settings are not part of the project file (they are kept
+  per project in the app's local storage), so they are not covered.

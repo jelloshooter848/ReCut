@@ -5,11 +5,17 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { FolderOpen, Link2, Plus, RotateCcw, Unlink2, X } from 'lucide-react';
-import type { Clip, ClipAudio, ClipTransform, ID, MediaItem, Rational, TagVocabulary, Track, Transition, TransitionType } from '@shared/model';
+import type { AudioChannelSelection, Clip, ClipAudio, ClipTransform, ID, MediaItem, Rational, TagVocabulary, Track, Transition, TransitionType } from '@shared/model';
+import {
+  canDownmix, channelLabel, channelSelectionLabel, channelSelectionProblem, clampDownmixDb, clipAudioStream, DEFAULT_CENTRE_DB, DEFAULT_SURROUND_DB,
+  DOWNMIX_DB_MAX, DOWNMIX_DB_MIN, isMultichannel, streamChannelIds,
+} from '@shared/audioChannels';
 import { clampSpeedPercent, clipEnd, clipSourceOut, defaultAudio, defaultTransform, findClip, linkedClips, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN, transitionsForClip } from '@shared/timeline';
 import { formatSequenceSecondsTimecode, fpsEquals, fpsLabel, validFpsOr } from '@shared/time';
 import { activeSequence, identityLabel, originalTimecode, selectedAudioTargets, selectedClips, selectedClipTracks, selectedLinkedCount, setClipsAudioStream, useStore } from '@/state';
-import { resolveAudioStream } from '@/playback/mediaSource';
+import { clipChannelProxy, resolveAudioStream } from '@/playback/mediaSource';
+import { channelProxyJobId, rebuildChannelProxy } from '@/app/channelProxies';
+import { useJobsStore } from '@/app/jobsStore';
 import { Button, ColorSwatchPicker, IconButton, NumberField, Select, Slider, TagInput, TextField, Toggle, labelColorHex } from '@/components/ui';
 import { MIXED, Range, Row, Section, Value, allSame, audioStreamOptions, copyText, finish, framesLabel, openInFolder, secondsLabel, tc, transient } from './primitives';
 
@@ -304,7 +310,91 @@ function AudioSection({ seqId, fps, targets, selectedIds }: { seqId: ID; fps: Ra
         {!same((a) => a.muted) ? <span className="text-faint text-xs">mixed</span> : null}
       </Row>
       <AudioStreamRow seqId={seqId} targets={targets} />
+      <ChannelSelectionRows seqId={seqId} targets={targets} />
     </Section>
+  );
+}
+
+const CH_MIX = 'mix';
+const CH_DOWNMIX = 'downmix';
+const chValue = (sel: AudioChannelSelection | undefined) => (!sel ? CH_MIX : sel.mode === 'downmix' ? CH_DOWNMIX : `ch:${sel.channel}`);
+
+/**
+ * Channel selection (Roadmap §9), shown when every target clip plays the same multichannel stream (stereo, 5.1,
+ * 7.1, ...): the stream's normal mix, one channel as mono, or a controlled stereo downmix with centre and surround
+ * levels. The preview plays it from a channel proxy (src/app/channelProxies.ts); its state shows below.
+ */
+function ChannelSelectionRows({ seqId, targets }: { seqId: ID; targets: Clip[] }) {
+  const media = useStore((s) => s.project.media[targets[0].mediaId]);
+  const stream = clipAudioStream(media, targets[0]);
+  const sameStream = targets.every((c) => c.mediaId === targets[0].mediaId && clipAudioStream(media, c)?.index === stream?.index);
+  if (!stream || !sameStream || !isMultichannel(stream)) return null;
+  const mixed = !allSame(targets, (c) => chValue(c.audio.channelSelection));
+  const sel = targets[0].audio.channelSelection;
+  const value = mixed ? 'mixed' : chValue(sel);
+  const ids = targets.map((c) => c.id);
+  const opts = [
+    ...(mixed ? [{ value: 'mixed', label: MIXED, disabled: true }] : []),
+    { value: CH_MIX, label: `Normal mix (${stream.layout || `${stream.channels} ch`})` },
+    ...(canDownmix(stream) ? [{ value: CH_DOWNMIX, label: 'Stereo downmix (set levels)' }] : []),
+    ...streamChannelIds(stream).map((id) => ({ value: `ch:${id}`, label: `${channelLabel(id)} only` })),
+  ];
+  // A selection this stream cannot honour (another stream picked, a relinked file): listed so it shows, disabled.
+  const problem = !mixed ? channelSelectionProblem(sel, stream) : null;
+  if (problem && !opts.some((o) => o.value === value)) opts.push({ value, label: `${channelSelectionLabel(sel)} (not in this stream)`, disabled: true });
+  const pick = (v: string) => {
+    if (v === 'mixed') return;
+    const next: AudioChannelSelection | undefined = v === CH_MIX ? undefined
+      : v === CH_DOWNMIX ? { mode: 'downmix', centreDb: DEFAULT_CENTRE_DB, surroundDb: DEFAULT_SURROUND_DB }
+        : { mode: 'channel', channel: v.slice(3) };
+    useStore.getState().setClipChannelSelection(seqId, ids, next);
+  };
+  const setLevel = (k: 'centreDb' | 'surroundDb', v: number) => editClips(seqId, ids, (c) => {
+    const s = c.audio.channelSelection;
+    if (s?.mode === 'downmix') c.audio.channelSelection = { ...s, [k]: clampDownmixDb(v, k === 'centreDb' ? DEFAULT_CENTRE_DB : DEFAULT_SURROUND_DB) };
+  });
+  const downmix = !mixed && sel?.mode === 'downmix' && !problem ? sel : null;
+  const sameLevel = (k: 'centreDb' | 'surroundDb') => allSame(targets, (c) => (c.audio.channelSelection?.mode === 'downmix' ? c.audio.channelSelection[k] : null));
+  return (
+    <>
+      <Row label="Channels" prop="audio-channels" title="What this clip plays of its source stream: the normal mix, one channel as mono, or a stereo downmix with set levels">
+        <Select size="sm" value={value} options={opts} data-testid="clip-audio-channels" onChange={pick} />
+      </Row>
+      {downmix ? (
+        <>
+          <Row label="Centre" prop="downmix-centre" title="Level of the centre channel in the stereo downmix (BS.775 default −3 dB)"
+            onReset={() => { setLevel('centreDb', DEFAULT_CENTRE_DB); finish('Downmix levels'); }} canReset={targets.some((c) => c.audio.channelSelection?.mode === 'downmix' && c.audio.channelSelection.centreDb !== DEFAULT_CENTRE_DB)}>
+            <NF value={downmix.centreDb} mixed={!sameLevel('centreDb')} unit="dB" min={DOWNMIX_DB_MIN} max={DOWNMIX_DB_MAX} step={0.5} precision={1} signed def={DEFAULT_CENTRE_DB}
+              onChange={(v) => setLevel('centreDb', v)} onCommit={() => finish('Downmix levels')} />
+          </Row>
+          <Row label="Surround" prop="downmix-surround" title="Level of the surround channels in the stereo downmix (BS.775 default −3 dB). LFE is left out."
+            onReset={() => { setLevel('surroundDb', DEFAULT_SURROUND_DB); finish('Downmix levels'); }} canReset={targets.some((c) => c.audio.channelSelection?.mode === 'downmix' && c.audio.channelSelection.surroundDb !== DEFAULT_SURROUND_DB)}>
+            <NF value={downmix.surroundDb} mixed={!sameLevel('surroundDb')} unit="dB" min={DOWNMIX_DB_MIN} max={DOWNMIX_DB_MAX} step={0.5} precision={1} signed def={DEFAULT_SURROUND_DB}
+              onChange={(v) => setLevel('surroundDb', v)} onCommit={() => finish('Downmix levels')} />
+          </Row>
+        </>
+      ) : null}
+      {problem ? <div className="insp-empty text-danger" data-testid="clip-audio-channels-problem">Not available: {problem}. The clip plays and exports the normal mix.</div> : null}
+      {!mixed && sel && !problem ? <ChannelPreviewStatus media={media} clip={targets[0]} /> : null}
+    </>
+  );
+}
+
+/** State of the clip's channel proxy (the preview's audio for its selection), with Rebuild when it failed. */
+function ChannelPreviewStatus({ media, clip }: { media: MediaItem | undefined; clip: Clip }) {
+  const ch = clipChannelProxy(media, clip);
+  const jobId = ch && media ? channelProxyJobId(media.id, ch.key) : undefined;
+  const progress = useJobsStore((s) => (jobId ? s.jobs.find((j) => j.id === jobId)?.progress ?? 0 : 0));
+  if (!ch || !media) return null;
+  const st = ch.info?.status ?? 'none';
+  const text = st === 'ready' ? 'ready'
+    : st === 'failed' ? `failed${ch.info?.error ? `: ${ch.info.error}` : ''}`
+      : st === 'running' || st === 'queued' ? `building${progress > 0 ? ` ${Math.round(progress * 100)}%` : '…'}` : 'waiting';
+  return (
+    <Row label="Preview" prop="channel-preview" title="The preview plays this selection from a small audio file made from the original with the same filter as the export">
+      <Value dim testId="clip-channel-preview">{text}</Value>
+      {st === 'failed' ? <Button size="sm" onClick={() => rebuildChannelProxy({ mediaId: media.id, key: ch.key, stream: ch.stream, selection: ch.selection })}>Rebuild</Button> : null}
+    </Row>
   );
 }
 

@@ -60,6 +60,28 @@ describe('licence files (Help › About › Licences)', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  it('macOS: finds the Electron and Chromium licences in Contents/Resources, not next to the executable', () => {
+    // ReCut.app/Contents/MacOS/ReCut; electron-builder leaves the two files out on macOS and build.mac.extraResources
+    // copies them into Contents/Resources (package.json).
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-lic-mac-'));
+    const contents = path.join(root, 'ReCut.app', 'Contents');
+    const resources = path.join(contents, 'Resources');
+    fs.mkdirSync(path.join(contents, 'MacOS'), { recursive: true });
+    fs.mkdirSync(resources, { recursive: true });
+    for (const f of ['LICENSE', 'LICENSE.electron.txt', 'LICENSES.chromium.html']) fs.writeFileSync(path.join(resources, f), f);
+    const dirs = licenceDirs({ packaged: true, resourcesPath: resources, appPath: path.join(resources, 'app.asar'), execPath: path.join(contents, 'MacOS', 'ReCut'), cwd: os.tmpdir() });
+    expect(dirs.exe).toEqual([path.join(contents, 'MacOS'), resources]);
+    expect(resolveLicenceFile('electron', dirs)).toBe(path.join(resources, 'LICENSE.electron.txt'));
+    expect(resolveLicenceFile('chromium', dirs)).toBe(path.join(resources, 'LICENSES.chromium.html'));
+    // Only the fixed names: ReCut's own LICENSE in the same folder is still id 'recut', never 'electron'.
+    expect(resolveLicenceFile('recut', dirs)).toBe(path.join(resources, 'LICENSE'));
+    expect(listLicenceFiles(dirs).map((f) => f.id)).toEqual(['recut', 'electron', 'chromium']);
+    // Windows / Linux: the copy next to the executable wins when both exist.
+    fs.writeFileSync(path.join(contents, 'MacOS', 'LICENSE.electron.txt'), 'next to exe');
+    expect(resolveLicenceFile('electron', dirs)).toBe(path.join(contents, 'MacOS', 'LICENSE.electron.txt'));
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
   it('packaged: never looks in the working directory or the app path', () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-lic-cwd-'));
     fs.writeFileSync(path.join(cwd, 'LICENSE'), 'someone else\'s licence');

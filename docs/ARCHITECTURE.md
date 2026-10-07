@@ -58,10 +58,11 @@ flowchart LR
 | `media/thumbs.ts` | Thumbnails and filmstrips, un-squeezed to the display shape for non-square pixels. They run outside the job queue on a small **LIFO, cancellable** semaphore, so the current viewport wins and abandoned requests never start ffmpeg. |
 | `media/waveform.ts` | Streams the audio to u8 mono peaks (O(peaks) memory, even for multi-hour files). Late-starting audio is padded. |
 | `media/proxy.ts` | H.264 / AAC proxy transcode carrying every audio stream, one AAC track each in source order: `<cache>/proxies/<key>_<h>p_all.mp4`. If that run fails (a stream FFmpeg cannot decode or encode), it retries with the decodable streams (`<key>_<h>p_a<N>_a<M>….mp4`), then the media's selected stream alone (`_a<N>`), and returns the streams it carries (`ProxyResult.audioStreams`, recorded in `ProxyInfo.audioStreams`). Older single-stream proxies (`<key>_<h>p_a<N>.mp4`, `<key>_<h>p.mp4` = first stream) stay valid for their stream. Still images get `<key>_still.png` (first picture, upright, long side ≤ 3840). Writes a per-job `.part` file first, then renames it. |
+| `media/channelProxy.ts` | Channel proxies (Roadmap §9): the preview audio of a clip's channel selection. One audio-only stereo AAC file per (source file, audio stream, selection), `<cache>/proxies/<key>_ch<stream>.<selection>_v1.m4a`, made from the original with the export's own `pan` filter (`shared/audioChannels.ts`), padded to the container start. Job kind `channelProxy` (media lane), de-duplicated per output, `.part` + rename. |
 | `media/sceneDetect.ts` | `select='gt(scene,T)'` + `showinfo` on a downscaled stream. Results are cached per threshold. |
 | `media/subtitlesExtract.ts` | Embedded text subtitle stream → SRT. Bitmap codecs ReCut can OCR (PGS, VobSub, DVB, XSUB) are refused with a pointer to **Read with OCR…**; teletext and ARIB captions are refused as unsupported. |
-| `media/cache.ts` | Cache root and `sha1(path + size + mtime)` keys. |
-| `jobs/jobQueue.ts` | Four lanes: **media** (proxies, waveforms, extraction; concurrency 2), **background** (scene detection, OCR; 1), **network** (OCR language downloads, kind `download`; 2), **export** (1). Progress, cancel and `AbortSignal` per job. Snapshots are pushed at most 10×/s on `ev:jobs`. `jobs/inFlight.ts` de-duplicates identical requests (same proxy output, same scene-detect key). |
+| `media/cache.ts` + `identity.ts` | Cache root and keys. `cacheKeyForPath` is a **content key**: size + a SHA-1 of nine sampled 64 KiB blocks (first, last, evenly between; small files whole), with no path or mtime, so derived media survive moves, renames, copies and Collect. It is computed once per path + size + mtime (memory, then `<cache>/ids/<legacy key>`). Entries written by older versions under the legacy `sha1(path + size + mtime)` key are found by `findCachedFile` and adopted under the content key with a hard link. Thumbnails, waveforms, proxies, scene detection and OCR use it; new media caches should too. |
+| `jobs/jobQueue.ts` | Four lanes: **media** (proxies, waveforms, extraction; concurrency 2), **background** (scene detection, OCR; 1), **network** (OCR language downloads, kind `download`; 2), **export** (exports and Collect Project; 1). Progress, cancel and `AbortSignal` per job. Snapshots are pushed at most 10×/s on `ev:jobs`. `jobs/inFlight.ts` de-duplicates identical requests (same proxy output, same scene-detect key). |
 | `ocr/ocrJob.ts` | The `ocr` job (background lane): checks the language file's SHA-256, then the cache (`<cache>/ocr/<key>_s<stream>_<lang>-<sha8>_v<pipeline>-<core>.json`, `.part` + rename), starts the worker pool while FFmpeg isolates the stream, reads each new image's bands on the pool (a band read with confidence under 50 is read again with the polarity flipped), reuses the text of repeated images and merges touching identical lines. Progress: isolate 0–25 %, then "n/N events". Cancel kills FFmpeg and terminates the workers. De-duplicated per path + stream + language. |
 | `ocr/bitmapEvents.ts` | Bitmap subtitle stream → timed images: remux the stream alone into a temp file, `ffprobe -show_frames` for the timing, sub2video to raw `ya8` for the pixels (with stdout backpressure); pure `assembleEvents` pairs them, drops blank and < 40 ms events, merges back-to-back repeats and gives each distinct picture an `imageId`. |
 | `ocr/preprocess.ts`, `ocr/postprocess.ts` | Pure: crop to the ink, composite onto black and invert (black text on white), split into bands at empty rows, PGM; text clean-up (`|` → `I`, whitespace, punctuation-only lines). |
@@ -71,8 +72,10 @@ flowchart LR
 | `export/chunks.ts` | Pure: decides when to chunk and where the chunk boundaries go. |
 | `export/exporter.ts` | Runs the graph (single pass or chunked), parses `-progress`, handles cancel, renders into an exclusively created `<name>.recut-part-<random>.mp4` and moves it onto the output (kept as `<name>.recut-unsaved-<time>.mp4` if that fails), writes the `.srt` sidecar through a temp, cleans temp files. Refuses an output that is a project source file, and an existing output unless the request says `overwrite` (see [export-pipeline.md](export-pipeline.md#output-files)). |
 | `safeMkdir.ts` | Creates the output folder level by level, without recursive or blocking mkdir. Refuses `/proc`, `/sys` and `/dev`. Gives up after 5 s. |
+| `updateCheck.ts`, `updateIpc.ts` | Update notice: `UpdateChecker` (pure Node, unit-tested) makes one GET to GitHub's `releases/latest` (`net.fetch`, only a `User-Agent: ReCut/<version>` header, no cookies, 10 s timeout, 1 MB cap), remembers the answer in `prefs.json` (`updateCheck`, `updateLastCheckAt`, `updateLatest`, `updateSkipVersion`) and broadcasts `ev:updateStatus`. The automatic check runs 5 s after startup, only when the user opted in, at most once per 24 h; Help › Check for Updates… runs it on demand. Failures are logged, never thrown. `update:openRelease` opens only the repository's releases pages. Rules (semver, reply parser, URL check, throttle) are pure in `shared/update.ts`; the prompt, notice and Help command are `src/app/updates.ts` / `UpdateBanner.tsx`. Nothing is downloaded or installed. |
 | `pathSafety.ts` | "Is this the same file as a project source?" for writes: `canonicalPath` (realpath), `fileIdentity` (device + inode) and `findSameFile`, case-folded on every platform. Used by video export and subtitle export. |
 | `fs.ts` | fs helpers for IPC (stat, listDir, relink scan) and `writeSubtitleFile` (`subtitles:export`): writes only absolute `.srt` / `.vtt` paths, refuses project source files via `pathSafety.ts`, writes atomically. There is no generic write-file IPC. |
+| `project/collect.ts` | Collect Project (`collect:preflight`, `collect:start`): stats the sources of the plan (`shared/collect.ts`), checks the destination (`<dest>/<Project name>` new or empty, free space via `statfs`), then a `collect` job (export lane) streams each file to `.part` with byte progress, verifies size + fingerprint, renames, and writes the rewritten `.recut` last. `COLLECT-INCOMPLETE.txt` marks the folder until the end, and stays (with the reason) after a failure or cancel. |
 | `project/io.ts` | Atomic writes (temp + rename) that keep one `.bak` (written via temp + rename, so a symlink there is replaced, not followed), load + `normalizeProjectWithReport` (a repaired file is first copied to `<file>.pre-repair-<ts>`), `.bak` fallback with `fromBackup` for damaged files (the damaged file is kept as `<file>.corrupt-<ts>`), refusal of newer / non-ReCut format versions (never replaced by the `.bak`), autosave / recovery discovery, `prefs.json`, recent projects. |
 
 ## Shared code
@@ -85,7 +88,9 @@ flowchart LR
 | `project.ts` | Factories and `normalizeProjectWithReport` / `normalizeProject`: load-time repair and migration. |
 | `limits.ts` | Ranges a loaded project must stay within (`MAX_TIMELINE_FRAMES` = 86,400,000, `MAX_SOURCE_SECONDS`, zoom, Preferences ranges, `MAX_PROJECT_DEPTH` = 64). The UI takes its ranges from here too. |
 | `media.ts` | Sample aspect ratio rules (`saneSar`: positive safe integers, 1/16–16) and `videoDisplaySize` for the export graph and the preview compositor. |
+| `collect.ts` | Collect Project plan: which files (scope, subtitles, proxies), the name-collision scheme (own name; same names from different folders get the fewest distinguishing parent folders as subfolders; numbers last), missing files, and the path rewrite of the collected project. |
 | `exportPlan.ts` | Export planning shared by the render graph and the Export dialog's checklist: per-track segments, transition handles (`transitionHandles`: rendered length, or why a transition is shortened or dropped), the range widened so no transition is cut, clips that run past their media. The dialog's pre-export warnings predict exactly what the export renders. |
+| `audioChannels.ts` | Per-clip channel selection (Roadmap §9): channel names from FFmpeg layouts (numbered when unknown), the `pan` filter both the render graph and the channel proxy use (one channel as mono, controlled BS.775 downmix), proxy keys, normalisation, and whether Extract Centre Channel can run on a clip. |
 | `exportFormat.ts` | Export file formats: containers, encoder arguments (H.264 / H.265, ProRes, DNxHR, AAC / AC-3, PCM, FLAC), extensions, size-estimate rates, the per-track audio file plan, and MKV packaging (output audio tracks as mix definitions, soft subtitle streams, language codes), shared by the render graph and the Export dialog. |
 | `linkSync.ts` | Linked-clip sync offsets (`linkedSyncOffsets`), used by the timeline's out-of-sync badge and the Export dialog's warning. |
 | `pathKey.ts` | Lexical `path.resolve` + case folding for the renderer's early "is this a project source?" check (subtitle export). The main process repeats the check with realpath and inode (`electron/pathSafety.ts`). |
@@ -141,7 +146,8 @@ SequencePlayer                  SourcePlayer (one <video>, JKL; native at 0<rate
    │  MediaElementPool.acquire()    ← pooled <video> per (path, role), LRU capacity 12
    │  keep elements at sourceTime + ½ media frame (drift > 80 ms → re-seek)
    │  draw bottom→top on a 2D canvas (transform, crop, opacity, transition alpha), subtitles on top
-   │  WebAudio: element → clip gain → track gain → master gain (→ AudioMeter tap)
+   │  WebAudio: element → clip gain → track gain → master gain (→ AudioMeter tap); a mono stream played directly
+   │            gets 1/√2 in its clip gain, the export's equal-power up-mix (previewUpmixGain)
 SyncGroup: two SequencePlayers on one clock with a frame offset (Compare)
 ```
 
@@ -213,6 +219,10 @@ Export dialog → window.recut.startExport({ sequence, media, settings, subtitle
 2. `jobsRouter.ts` mirrors queued / running / ready / failed into `media.proxy` (quiet writes) and invalidates pooled
    elements, so the monitors switch to the proxy.
 3. The preview uses the proxy. **Export always uses originals** (the render graph never sees a proxy path).
+   A clip with a channel selection (`ClipAudio.channelSelection`) plays its **channel proxy** instead, whatever the
+   media proxy: `src/app/channelProxies.ts` watches the project, requests the ones clips need (`startChannelProxy`,
+   job kind `channelProxy`), mirrors them into `media.channelProxies` and prunes unused entries; until one is ready
+   the planner reports the clip as missing ("preview audio … in progress"), like a pending proxy.
 4. On open, `verifyMediaOnline` re-checks originals (offline flags) and drops `ready` proxies whose file has gone.
 
 ## Relink
@@ -277,4 +287,6 @@ See `docs/attack/performance.md` for the measurements that drove these changes. 
 - **Commands:** `registerCommand({ id, title, category, defaultKeys, when, run })`. Commands show up in the Keyboard
   Shortcuts dialog automatically.
 - **Project format:** bump `formatVersion` and migrate in `normalizeProject()` (`shared/project.ts`). See
-  [project-format.md](project-format.md).
+  [project-format.md](project-format.md). Every saved-project fixture in `tests/fixtures/projects/` (one per stable
+  release, made by `scripts/make-project-fixture.mjs`) must keep opening without loss
+  (`tests/unit/project-compat.test.ts`); a new kind of project data goes into the fixture scenario too.

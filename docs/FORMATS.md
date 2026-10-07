@@ -110,7 +110,7 @@ not supported by Chromium"). Typical cases:
 
 | Source | Preview | Export (stereo) | Export (5.1) |
 |---|---|---|---|
-| Mono | plays through WebAudio | upmixed to both channels | mapped into 5.1 by FFmpeg's resampler |
+| Mono | on both channels at −3 dB, as the stereo export (a proxy is already stereo) | upmixed to both channels at −3 dB each (equal power) | the centre channel |
 | Stereo | plays as is | as is | mapped into 5.1 by FFmpeg's resampler (front L/R) |
 | 5.1 | the browser downmixes to your output device (a proxy is already stereo) | downmixed by FFmpeg (`aformat` / `-ac 2`) | 6 channels, AC-3 |
 | 7.1 and other layouts | as above | downmixed | converted to 5.1 |
@@ -120,6 +120,16 @@ not supported by Chromium"). Typical cases:
 - A sequence can be set to 5.1 in New Sequence / Sequence Settings (Match Media picks 5.1 when the clip has ≥ 6
   channels). That sets the export defaults. Mixing itself is level / gain / fades per clip and volume per track.
   There is no panning or surround positioning.
+- **Channel selection per clip** (Clip Inspector › Audio › **Channels**, for streams with two or more channels):
+  the normal mix (the table above), one source channel as mono, or a controlled stereo downmix. Channels are named
+  from the layout ffprobe reports (FL, FR, FC, LFE, BL, BR, SL, SR, ... in FFmpeg's decode order); a stream without a
+  reported layout lists numbered channels and offers no downmix. The export applies it with FFmpeg `pan` first in
+  the clip's audio chain: one channel goes to both sides at −3.01 dB in a stereo export (`pan=stereo|c0=0.707107*c2|c1=0.707107*c2`
+  for FC of 5.1) and to the centre speaker at full level in a 5.1 export (`pan=5.1|c2=1*c2`); the downmix is
+  `L = FL + c·FC + s·(BL, SL)`, `R = FR + c·FC + s·(BR, SR)` with the centre (c) and surround (s) levels, LFE left out,
+  never renormalised. The preview plays the same filter's stereo output from a cached audio-only file
+  (`proxies/<key>_ch<stream>.<selection>_v1.m4a`, AAC 192 kb/s), made from the original, so it works for AC-3, E-AC-3,
+  DTS and TrueHD sources too.
 - **Multi-stream files** (e.g. an English stereo track and a Japanese 5.1 track): choose the stream in Media
   Inspector › **Audio stream** (used for new clips and by the Source monitor) or per clip in Clip Inspector › Audio ›
   **Stream** (**Media default** follows the media's choice). Export renders that exact stream, and so does the

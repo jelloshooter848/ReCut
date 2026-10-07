@@ -16,7 +16,7 @@ import type { JobInfo, MediaProbe } from '@shared/model';
 import type { ProxyRequest } from '@shared/ipc';
 import type { JobQueue, JobRunContext } from '../jobs/jobQueue';
 import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
-import { cacheKeyForPath, cacheSubdir, fileExists, removeQuietly } from './cache';
+import { cacheKeyForPath, cacheKeysForPath, cacheSubdir, fileExists, findCachedFile, removeQuietly, type MediaCacheKeys } from './cache';
 import { FfmpegError, ffmpegAudioDecoders, ffmpegFileArg, runFfmpeg } from './ffmpeg';
 import { probeMedia } from './probe';
 
@@ -129,15 +129,19 @@ async function validStill(file: string): Promise<{ width?: number; height?: numb
 
 /** The still-image branch of runProxy: one PNG per source file version, same `.part` + rename discipline. */
 async function runStillProxy(req: ProxyRequest, probe: MediaProbe, ctx: JobRunContext): Promise<ProxyResult> {
-  const key = await cacheKeyForPath(req.path);
-  const out = stillProxyOutputPath(key);
-  if (await fileExists(out)) {
-    const info = await validStill(out);
-    if (info) {
-      ctx.setProgress(1, 'Cached');
-      return { path: out, ...info, cached: true, audioStreams: [] };
-    }
-    await removeQuietly(out); // corrupt leftover
+  const keys = await cacheKeysForPath(req.path);
+  const out = stillProxyOutputPath(keys.key);
+  let cachedInfo: { width?: number; height?: number } | null = null;
+  // The content-key PNG, else one an older version cached under the legacy key (adopted under the content key).
+  const hit = await findCachedFile(keys, stillProxyOutputPath, async (f) => {
+    if (!(await fileExists(f))) return false;
+    cachedInfo = await validStill(f);
+    if (!cachedInfo && f === out) await removeQuietly(out); // corrupt leftover
+    return !!cachedInfo;
+  });
+  if (hit && cachedInfo) {
+    ctx.setProgress(1, 'Cached');
+    return { path: hit, ...(cachedInfo as { width?: number; height?: number }), cached: true, audioStreams: [] };
   }
   const outPart = `${out}.part-${ctx.jobId}`;
   await removeStaleParts(out);
@@ -231,6 +235,16 @@ async function validProxy(file: string): Promise<{ width?: number; height?: numb
   return null;
 }
 
+/**
+ * A finished proxy for `pathFor(key)`: under the content key, else under the legacy (pre-0.10) key, adopted under the
+ * content key (cache.ts findCachedFile). Null when neither is a usable proxy.
+ */
+async function findProxy(keys: Pick<MediaCacheKeys, 'key' | 'legacyKey'>, pathFor: (key: string) => string): Promise<({ path: string; width?: number; height?: number }) | null> {
+  let info: { width?: number; height?: number } | null = null;
+  const hit = await findCachedFile(keys, pathFor, async (f) => { info = await validProxy(f); return !!info; });
+  return hit && info ? { path: hit, ...(info as { width?: number; height?: number }) } : null;
+}
+
 function streamList(streams: readonly number[]): string {
   return streams.map((s) => `#${s}`).join(', ');
 }
@@ -250,17 +264,18 @@ export async function runProxy(req: ProxyRequest, ctx: JobRunContext): Promise<P
   const hasAudio = probe.audio.length > 0;
   if (!hasVideo && !hasAudio) throw new Error('source has neither video nor audio');
 
-  const key = await cacheKeyForPath(req.path);
+  const keys = await cacheKeysForPath(req.path);
+  const key = keys.key;
   const reqHeight = evenDown(req.height > 0 ? req.height : 540);
   const srcHeight = probe.video?.height ?? 0;
   const targetHeight = Math.max(2, hasVideo && srcHeight > 0 ? Math.min(reqHeight, evenDown(srcHeight)) : reqHeight);
   const outAll = proxyOutputPath(key, reqHeight);
   const all = probe.audio.map((a) => a.index);
 
-  const cachedAll = await validProxy(outAll);
+  const cachedAll = await findProxy(keys, (k) => proxyOutputPath(k, reqHeight));
   if (cachedAll) {
     ctx.setProgress(1, 'Cached');
-    return { path: outAll, ...cachedAll, cached: true, audioStreams: all };
+    return { ...cachedAll, cached: true, audioStreams: all };
   }
 
   // The fallback plans need the decoder list only after the all-streams run failed.
@@ -271,10 +286,10 @@ export async function runProxy(req: ProxyRequest, ctx: JobRunContext): Promise<P
     const fallback = k > 0;
     const out = fallback ? streamsProxyOutputPath(key, reqHeight, streams) : outAll;
     if (fallback) {
-      const cached = await validProxy(out);
+      const cached = await findProxy(keys, (k) => streamsProxyOutputPath(k, reqHeight, streams));
       if (cached) {
         ctx.setProgress(1, 'Cached');
-        return { path: out, ...cached, cached: true, audioStreams: streams };
+        return { ...cached, cached: true, audioStreams: streams };
       }
     }
     try {

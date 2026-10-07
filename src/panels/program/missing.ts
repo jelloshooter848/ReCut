@@ -2,9 +2,9 @@
  * Split the Program monitor's "cannot play" list by cause (E-07): offline files, files that need a proxy
  * (present but not decodable by Chromium) and anything else (decoder errors, unprobed media).
  */
-import type { ID, MediaItem, Sequence } from '@shared/model';
+import type { Clip, ID, MediaItem, Sequence } from '@shared/model';
 import type { MissingMedia } from '@/playback';
-import { mediaNeedsProxyForPreview, resolvePlaybackPath } from '@/playback/mediaSource';
+import { channelProxyPendingReason, clipChannelProxy, mediaNeedsProxyForPreview, resolvePlaybackPath } from '@/playback/mediaSource';
 
 /** Distinct media ids referenced by a sequence's clips (cached per sequence object). */
 const mediaIdsCache = new WeakMap<Sequence, ID[]>();
@@ -36,8 +36,27 @@ export function sequenceMissing(seq: Sequence, media: Record<ID, MediaItem>, use
     const err = getError(res.path);
     if (err) { seen.add(id); out.push({ clipId: '', mediaId: id, reason: err.message }); }
   }
+  // Clips whose channel selection waits for its preview audio (Roadmap §9), anywhere in the sequence.
+  for (const c of channelClips(seq)) {
+    if (seen.has(c.mediaId)) continue;
+    const ch = clipChannelProxy(media[c.mediaId], c);
+    if (!ch || (ch.info?.status === 'ready' && ch.info.path) || media[c.mediaId]?.offline) continue;
+    seen.add(c.mediaId);
+    out.push({ clipId: c.id, mediaId: c.mediaId, reason: channelProxyPendingReason(ch), channelProxy: true });
+  }
   for (const m of atFrame) if (!seen.has(m.mediaId)) { seen.add(m.mediaId); out.push(m); }
   return out;
+}
+
+/** Enabled audio clips with a channel selection (cached per sequence object). */
+const channelClipsCache = new WeakMap<Sequence, Clip[]>();
+function channelClips(seq: Sequence): Clip[] {
+  let list = channelClipsCache.get(seq);
+  if (list) return list;
+  list = [];
+  for (const t of seq.audioTracks) for (const c of t.clips) if (c.enabled && c.audio?.channelSelection) list.push(c);
+  channelClipsCache.set(seq, list);
+  return list;
 }
 
 export interface MissingSplit {
@@ -56,6 +75,12 @@ export function classifyMissing(missing: readonly MissingMedia[], media: Record<
   for (const m of missing) {
     const item = media[m.mediaId];
     if (!item || item.offline) { out.offline++; continue; }
+    if (m.channelProxy) {
+      // Preview audio of a channel selection: built automatically (src/app/channelProxies.ts), never by Generate.
+      out.needsProxy++;
+      if (/in progress$/.test(m.reason)) out.proxyBusy = true;
+      continue;
+    }
     if (mediaNeedsProxyForPreview(item)) {
       out.needsProxy++;
       const st = item.proxy.status;

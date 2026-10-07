@@ -1,6 +1,6 @@
 # Known limitations
 
-This page describes ReCut 0.6.0 as of 7 October 2026. Every item was checked against the code. Items marked **bug** are
+This page describes ReCut 0.7.0 as of 7 October 2026. Every item was checked against the code. Items marked **bug** are
 defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.md)).
 
 ## Editing and effects
@@ -30,9 +30,19 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **No mixer, panning or per-track meters.** You get clip gain, level and fades, track volume, mute and solo, and one
   stereo peak meter on the Program monitor. The **Audio** workspace is only a different layout of the same panels.
 - **Surround:** 5.1 is pass-through or downmix only. Export can produce 5.1 AC-3 (offered when a source has ≥ 6
-  channels) or downmix to stereo through FFmpeg's resampler. There is no surround positioning, and 7.1 output is
-  not available.
+  channels) or downmix to stereo through FFmpeg's resampler. Per clip, Clip Inspector › Audio › **Channels** can play
+  one source channel as mono or a stereo downmix with set centre and surround levels instead (Roadmap §9 quick
+  utility). There is no surround mixer, panner or per-channel routing (a mono channel goes to the centre), and 7.1
+  output is not available.
+- **The centre channel is not a dialogue stem.** **Extract Centre Channel (Dialogue)** copies the source's centre
+  channel (FC), which carries most of a film's dialogue but also the music and effects mixed to the centre. It does
+  not separate voices from the rest; that is stem separation (Roadmap §12), which ReCut does not have. Off-centre
+  dialogue (panned voices, dialogue in the surrounds) stays in the other channels.
 - **Preview of surround:** proxies are stereo, and the browser downmixes directly-played 5.1 to your output device.
+  A clip's channel selection previews from its own stereo audio file (made with the export's filter), so it needs
+  a short FFmpeg job before it is heard; the clip is silent in the Program monitor until then. Each distinct
+  selection (stream, channel or downmix levels) of a file gets its own file in the cache.
+- **Channel-selected clips draw the whole stream's waveform** on the timeline, not the selected channel's.
 - **Multi-stream originals** preview the stream the export renders for each clip. This relies on Chromium's
   `HTMLMediaElement.audioTracks`, which sits behind the `AudioVideoTracks` Blink feature; ReCut turns it on at
   startup (`electron/main.ts`). If a future Electron drops that feature, the preview would fall back to each file's
@@ -131,31 +141,48 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **Verified packages:** the Windows installer and portable exe (built, installed and smoke-tested on Windows in CI;
   the unit and end-to-end suites run on Windows on every build and must pass before anything is published) and the
   Linux x86-64 AppImage (built on Ubuntu 22.04 in CI, launched and smoke-tested; the unit and end-to-end suites run on
-  Linux on every build and must pass before anything is published). The macOS dmg is configured but untested.
-  Nothing is signed or notarised, so Windows SmartScreen warns on first launch.
+  Linux on every build and must pass before anything is published). Nothing is signed for Windows, so SmartScreen
+  warns on first launch.
+- **macOS: Apple Silicon test builds only, not released.** CI builds an arm64 dmg on every build, with FFmpeg
+  bundled, and smoke-tests the app from the mounted dmg, but the macOS jobs are advisory: they do not gate releases
+  and the dmg is not attached to them (planned for 0.7.0, [ROADMAP](ROADMAP.md) §19). No Intel or universal build.
+  Needs macOS 12 or newer (the bundled FFmpeg's minimum); tested in CI on macOS 14 only. Until the Developer ID
+  signing secrets are set up ([MACOS-SIGNING](MACOS-SIGNING.md)) the dmg is ad-hoc signed and not notarized, so macOS
+  blocks the first launch until it is allowed under System Settings › Privacy & Security. The end-to-end suite on
+  macOS (advisory `macos-e2e` job) has not passed on a Mac yet.
 - **Linux: AppImage only, x86-64 only.** No `.deb`, `.rpm`, Flatpak or Snap, and no ARM build. The AppImage needs the
   FUSE 2 library (`libfuse2`) unless it is started with `--appimage-extract-and-run`, and it does not add itself to
   the application menu or register `.recut` files (an AppImage integration tool can). The bundled FFmpeg needs glibc
   2.28 or newer, so very old distributions (before Debian 10 / Ubuntu 18.10 / RHEL 8) cannot run it. Tested on Ubuntu
   22.04 only.
-- **FFmpeg is bundled only in the Windows release builds and the Linux AppImage** (and fetched by `Start ReCut.cmd`).
+- **FFmpeg is bundled only in the Windows release builds, the Linux AppImage and the macOS test dmg** (and fetched
+  by `Start ReCut.cmd`).
   Elsewhere, install it yourself or drop static binaries into `resources/ffmpeg/` before `npm run package` /
   `npm run dist` (see
   [INSTALL](INSTALL.md#bundling-ffmpeg)). ReCut works with FFmpeg 6 through 9. When FFmpeg is missing, ReCut shows a banner and import / proxies / export stop with
   an explanation. ReCut finds FFmpeg once per session, so restart it after installing.
 - The cache location can only be changed with `RECUT_CACHE_DIR` or `cacheDir` in `prefs.json`. There is no UI for it.
 - One window and one open project at a time.
+- **No automatic updates.** ReCut can only tell you that a newer release exists (opt-in daily check, or Help › Check
+  for Updates…) and open its release page; you download and install it yourself. The check needs access to
+  `api.github.com` (through the system proxy, if any) and does not offer pre-releases.
 
 ## Projects
 
 - Projects store **absolute** media paths, so moving media means using Relink. A media path that is not absolute
   (for example in a hand-edited project file) is refused by probing, thumbnails, proxies and export with "media path
   must be an absolute path".
-- **Moving media rebuilds its derived media.** Thumbnails, waveforms and proxies are cached under a key made from the
-  file's absolute path, size and modified time. After you move a file (even unchanged, to a new folder or drive) and
-  relink it, its thumbnails and waveform are generated again, and so is its proxy the next time one is built. A
-  proxy that was ready before the move keeps being used while its cache file exists. The old cache entries stay on
-  disk until you clear the cache. There is no Collect / Consolidate Project command.
+- **Derived media are cached by a sampled fingerprint, not a full hash.** Thumbnails, waveforms, proxies, scene cuts
+  and OCR results are keyed by the file's size and nine 64 KiB blocks (start, end and evenly between), so they survive
+  moving, renaming and copying a file. A file changed in place without changing its size, where every changed byte
+  lies outside those blocks (a hex patch, a fixed-size tag rewritten in the middle), keeps its old derived media until
+  you clear the cache folder. Remuxes and re-encodes change the size or the sampled bytes.
+- **Collect Project copies, it does not move.** It needs room for a full copy of the media on the destination, and
+  it does not delete or relink anything in the open project. It stops at the first file it cannot copy or verify
+  (the folder is left marked incomplete); there is no resume, so collect again into an empty folder. Media not used
+  in any sequence (with **Media used in sequences only**) and offline media keep their original paths in the copy.
+  Collected projects still store absolute paths (relative media roots are [roadmap §17](ROADMAP.md#17-cloud-free-collaboration)).
+  A FAT32 drive cannot hold a file over 4 GB, so collecting a large remux there fails at that file.
 - **Limits on load:** timeline positions and durations are capped at 86,400,000 frames (24 h at 1000 fps, far more
   at normal rates), clip speed at 1 %–10 000 %, and nesting at 64 levels. An invalid sequence frame rate becomes
   23.976.

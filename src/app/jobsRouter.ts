@@ -5,6 +5,8 @@
  *  - export: toasts
  *  - download (OCR language installs): toasts + refresh of the OCR language list (src/state/ocrStatus.ts)
  *  - ocr: done → the OCR subtitle track of that media + stream (added, or the earlier one replaced); toasts
+ *  - channelProxy: → media.channelProxies (preview audio of clips' channel selections; ./channelProxies.ts)
+ *  - collect (Collect Project): toasts
  * This is the ONLY job→project mirror (jobsStore → store): each terminal result is applied once (by job id) and
  * every write is additionally guarded by the media's current state, so results survive a project reload without
  * double-applying. Jobs are also mirrored into store.jobs so panels may read either store consistently.
@@ -23,6 +25,8 @@ import { useOcrStatus } from '@/state/ocrStatus';
 import { OCR_TITLE_TAIL, ocrTrackName } from '@/ocr/ocrUi';
 import { iso6392ForOcr, ocrLanguage, type OcrResult } from '@shared/ocr';
 import { uid } from '@shared/ids';
+import { routeChannelProxyJob } from './channelProxies';
+import type { CollectResult } from '@shared/collect';
 
 interface ProxyResultLike { path: string; width?: number; height?: number; cached?: boolean; audioStreams?: number[] }
 interface ExportResultLike { outputPath?: string; sidecarPath?: string; warnings?: string[] }
@@ -177,6 +181,19 @@ function routeOcr(job: JobInfo): void {
   toast('ok', `${n} subtitle line${n === 1 ? '' : 's'} read from ${where}${r.cached ? ' (from cache)' : ''}`);
 }
 
+function routeCollect(job: JobInfo): void {
+  if (!isTerminal(job) || !claim(job)) return;
+  if (job.status === 'done') {
+    const r = (job.result ?? null) as CollectResult | null;
+    toast('ok', r ? `Project collected to ${r.folder}` : 'Project collected', 8000);
+    if (r?.missing.length) toast('warn', `Collect skipped ${r.missing.length} missing file${r.missing.length === 1 ? '' : 's'}: ${r.missing.map((m) => m.names[0] ?? baseName(m.path)).slice(0, 3).join(', ')}${r.missing.length > 3 ? ', …' : ''}`, 8000);
+  } else if (job.status === 'failed') {
+    toast('error', `Collect failed: ${job.error ?? 'unknown error'}`, 10_000);
+  } else {
+    toast('info', 'Collect canceled; the destination folder is marked incomplete');
+  }
+}
+
 /** Reveal an exported file in the OS file manager (for UI that renders export results). */
 export function revealExport(path: string): void { void window.recut?.showItemInFolder?.(path).catch(() => { /* ignore */ }); }
 
@@ -190,6 +207,8 @@ export function routeJobs(jobs: JobInfo[]): void {
       else if (job.kind === 'export') routeExport(job);
       else if (job.kind === 'download') routeDownload(job);
       else if (job.kind === 'ocr') routeOcr(job);
+      else if (job.kind === 'channelProxy') routeChannelProxyJob(job);
+      else if (job.kind === 'collect') routeCollect(job);
     } catch (e) {
       console.error('[jobsRouter] failed to route job', job.id, e);
     }

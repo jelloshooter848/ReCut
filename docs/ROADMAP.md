@@ -19,8 +19,12 @@ in every release PR (docs/RELEASING.md).
 | 2 | Fix the remaining preview gaps | Done | 0.4.0 |
 | 3 | Pre-export warnings | Done | 0.5.0 |
 | 4 | Bitmap subtitle OCR (PGS / VobSub / DVB) | Done | 0.6.0 |
-| 19 | Official Linux and macOS releases | In progress: Linux AppImage and CI gate implemented (ships in 0.6.1); macOS next | 0.6.1 (Linux), 0.7.0 (macOS) |
-| 5–18 | Everything else | Not started | — |
+| 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS dmg built as a CI test build, waiting for signing | 0.6.1 (Linux), macOS once signed |
+| 16 | Collect / Consolidate Project (with the moved-media cache fix) | Done | 0.7.0 |
+| 6 | Intermediate and audio-only export | Done | next release |
+| 7 | MKV packaging export | Done | next release |
+| 9 | Surround: centre-channel and channel-selection utility (the mixer comes after 1.0) | Quick utility done | next release |
+| 5, 8, 10–15, 17, 18 | Everything else | Not started | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
 the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
@@ -42,11 +46,12 @@ at franchise scale), on Windows, Linux and macOS. It is not feature parity with 
 | Release | Milestone | Entries |
 |---|---|---|
 | 0.6.0 | Bitmap subtitle OCR | §4 (done) |
-| 0.6.1 | Official Linux release (AppImage) | §19, Linux part |
-| 0.7.0 | Official macOS release (dmg, signed and notarised) | §19, macOS part |
+| 0.6.1 | Official Linux release (AppImage) | §19, Linux part (done) |
+| 0.7.0 | Collect Project, the moved-media cache fix, the project compatibility promise and the update notice (all of 0.10.0, shipped early) | §16 (done), 0.10.0 (done) |
+| next | Official macOS release (dmg, signed and notarised) | §19, macOS part (built; waits for signing) |
 | 0.8.0 | Delivery 1: intermediates and audio | §6 (ProRes, DNxHR, WAV / audio-only, one file per audio track) and the centre-channel utility from §9 |
 | 0.9.0 | Delivery 2: MKV packaging | §7 (MKV, more than one audio track, soft subtitle tracks, chapters) |
-| 0.10.0 | Portability and trust | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/open/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
+| 0.10.0 | Portability and trust (done early, in 0.7.0) | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/closed/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
 | 0.11.0 | Local transcription (Whisper) | §5 |
 | 0.12.0 | Nested sequences and compound clips | §8 |
 | 0.13.0 | Keyframes, first version | §11 (position, scale, opacity, volume) |
@@ -246,7 +251,7 @@ frame-exact and safe first.
 **Plan:** ProRes (`prores_ks`) and DNxHR (`dnxhd`) in MOV, PCM audio in MOV, audio-only WAV (PCM) and other audio
 containers, and per-track or per-stem export (one WAV per audio track, or per stem once §12 exists). The render graph
 already builds video and audio separately; this adds containers, codecs and a "no video" mode.
-**Status: done (7 October 2026, release 0.8.0).** Export › Format offers MP4, MOV (ProRes Proxy / LT / 422 / HQ /
+**Status: done (7 October 2026; ships in the next release).** Export › Format offers MP4, MOV (ProRes Proxy / LT / 422 / HQ /
 4444 with `prores_ks`, DNxHR LB / SQ / HQ / HQX / 444 with `dnxhd`, PCM 16- or 24-bit audio), WAV and FLAC (audio
 only, the mix or one file per audio track, sample-aligned and the length of the range); the file extension follows
 the format, and settings saved before load as MP4. Formats and encoder arguments live in `shared/exportFormat.ts`.
@@ -309,6 +314,14 @@ master meter), stereo/5.1 panning per clip, and multichannel proxies.
 as its own audio clip, choose which source channel a mono clip uses, and set a controlled stereo downmix (centre and
 surround levels) instead of FFmpeg's default. It is cheap (FFmpeg `pan` / `channelsplit`) and useful on its own, but it
 is not a substitute for stem separation (§12): the centre channel still carries music and effects.
+**Status: quick utility done (7 October 2026, for release 0.8.0); the mixer is not started and is planned after 1.0.**
+Clip Inspector › Audio › **Channels** plays a multichannel clip's normal mix, one source channel as mono (named from
+the ffprobe layout, numbered when it is unknown) or a stereo downmix with centre and surround levels (BS.775
+defaults, LFE left out); **Extract Centre Channel (Dialogue)** (clip context menu, **Clip** menu) adds a linked
+"(centre)" clip on a free track below, one undo step. The export applies a FFmpeg `pan` filter first in the clip's
+audio chain (`shared/audioChannels.ts`); the preview plays the same filter's output from a per-(stream, selection)
+audio file made from the original (`electron/media/channelProxy.ts`), so AC-3 / DTS sources preview correctly. What
+remains of this entry: the Audio Mixer panel, per-track meters, panning and multichannel proxies.
 
 ## 10. Interchange: EDL, FCPXML, OpenTimelineIO
 
@@ -374,6 +387,14 @@ sequences, and optionally subtitle sidecars and proxies) into one folder, and sa
 that folder. It shares groundwork with relative media roots (§17). Derived media should survive the move: today the
 cache key includes the absolute path, so thumbnails, waveforms and proxies are rebuilt after media moves
 (see [LIMITATIONS](LIMITATIONS.md#projects)).
+**Status: done (7 October 2026, release 0.7.0).** **File › Collect Project…** copies the project and its media
+(media used in sequences, or all project media; optionally subtitle files and ready proxies) into
+`<destination>/<Project name>/` (`Media/`, `Subtitles/`, `Proxies/`), as a cancellable job with byte progress that
+verifies each copy (size and fingerprint) and writes the project, with absolute paths rewritten to the copies, last.
+Same-named files from different folders get distinguishing subfolders; offline media are skipped with a warning; a
+failed or canceled collect leaves the folder marked `COLLECT-INCOMPLETE.txt` and never touches the originals. The
+derived-media cache is now keyed by content (size + sampled fingerprint, with the old path key still read), which
+closes the [moved-media cache bug](../bugs/closed/2026-10-05-moved-media-cache-miss.md). Paths stay absolute (§17).
 
 ## 17. Cloud-free collaboration
 
@@ -405,12 +426,19 @@ server.
 Bitmap subtitle OCR (§4, 0.6.0). Order: **Linux first, in 0.6.1; macOS in 0.7.0.** Source of the decision: the owner's
 review of the "ReCut Cross-Platform Release Support Proposal". The section keeps its number because other documents
 and bug files cite § numbers.
-**Linux part implemented, pending release 0.6.1** (not done until 0.6.1 is published): the x86-64 AppImage
+**Linux part done (7 October 2026, release 0.6.1):** the x86-64 AppImage
 `ReCut-<version>-linux-x86_64.AppImage` with a bundled BtbN `linux64-gpl` FFmpeg and its `FFMPEG-LICENSE.txt` /
 `FFMPEG-BUILD.txt` (`scripts/linux/get-ffmpeg.sh`; the BtbN builds have no readme), listed in
 `THIRD_PARTY_NOTICES.md`; the blocking `linux` job in `.github/workflows/windows.yml` on `ubuntu-22.04` (unit tests,
 e2e under xvfb, packaging, AppImage smoke test mounted and extracted), which the `publish` job needs; the AppImage
-attached to the release with run instructions in the notes. The macOS part has not started.
+attached to the release with run instructions in the notes.
+**macOS part implemented, pending CI validation and signing** (not done until 0.7.0 publishes it): the Apple Silicon
+dmg `ReCut-<version>-macos-arm64.dmg` (macOS 12+) with a bundled, pinned and checksum-verified jellyfin-ffmpeg
+`macarm64-gpl` build and its `FFMPEG-LICENSE.txt` / `FFMPEG-BUILD.txt` (`scripts/mac/get-ffmpeg.sh`), hardened runtime
+with only the `allow-jit` entitlement, and the advisory `macos` and `macos-e2e` jobs in `.github/workflows/windows.yml`
+on `macos-14` (unit tests, dmg, per-binary signature checks, smoke test of the app in the mounted dmg; signing and
+notarization when the five secrets of `docs/MACOS-SIGNING.md` are set, an ad-hoc signed test build otherwise). Not
+yet in the `publish` job's `needs` and not attached to releases (TODO block above the `publish` job).
 **Why:** ReCut ships only Windows builds. `package.json` → `build.linux` already targets `AppImage` and `build.mac`
 `dmg`, and the app has macOS menu and quit handling, but neither package has been released or tested: the Linux
 unpacked build is what the test suites run on, and no Mac build has ever been made. Fan editors work on all three
