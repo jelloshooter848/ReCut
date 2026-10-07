@@ -81,7 +81,13 @@ describe('opened project: idle freeze', () => {
   });
 
   it('freezes children before parents: at every slice boundary a frozen object is frozen all the way down', async () => {
-    const p = bigProject(6000); // ~36k clips: many 8 ms slices
+    // Slices are cut by performance.now(). A virtual clock that advances 1 ms per read makes every slice the same
+    // number of walk steps on any machine (8 reads of the 8 ms budget, one read per 256 steps). With wall-clock
+    // slices a slower or busier machine cut more slices and each check walks the whole project, so the test's cost
+    // grew with the square of the slowdown (it timed out at 5 s on a loaded Windows runner, CI run #64).
+    let clock = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => ++clock);
+    const p = bigProject(300); // ~1.8k clips, ~15k objects: about 15 slices of ~2k walk steps each
     S().loadProjectData(p, null);
     let partial = 0, checks = 0;
     while (projectFreezePending()) {
@@ -91,7 +97,7 @@ describe('opened project: idle freeze', () => {
       expect(st.brokenInvariant).toBe(0);
       if (st.frozen > 0 && st.frozen < st.total) partial++;
     }
-    expect(checks).toBeGreaterThan(1);
+    expect(checks).toBeGreaterThanOrEqual(10); // deterministic with the virtual clock (15 at the time of writing)
     expect(partial).toBeGreaterThan(0); // the walk was really sliced, and the checks saw it half done
     const st = freezeState(p);
     expect(st.frozen).toBe(st.total);
