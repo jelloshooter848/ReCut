@@ -17,6 +17,7 @@ import { listOcrLanguages, ocrDataDir } from '../ocr/dataDir';
 import { parseLangUrlOverride } from '../ocr/download';
 import { installFromFile, removeLanguage, startInstallJob } from '../ocr/languages';
 import { JobQueue } from '../jobs/jobQueue';
+import { ensureDirSafe } from '../safeMkdir';
 import { buildExportCommand, cancelExportJob, startExportJob } from '../export/exporter';
 import { cacheKeyForPath, setCacheDir } from './cache';
 import { getFfmpegPath, getFfprobePath, setFfmpegPaths } from './ffmpeg';
@@ -114,8 +115,11 @@ export const mediaHandlers: MediaHandlers = {
     throw notImplemented('Reading subtitles with OCR');
   },
 
-  ocrLanguages(): Promise<OcrLanguageState[]> {
-    return listOcrLanguages(ocrContext().dataDir, activeDownloadJob);
+  async ocrLanguages(): Promise<OcrLanguageState[]> {
+    const { dataDir } = ocrContext();
+    // Create the (app-owned) folder up front so "Open folder" has something to show before the first install.
+    await ensureDirSafe(dataDir).catch(() => undefined);
+    return listOcrLanguages(dataDir, activeDownloadJob);
   },
 
   async ocrInstallLanguage(code: string): Promise<JobInfo> {

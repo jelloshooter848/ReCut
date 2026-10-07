@@ -14,6 +14,8 @@ import { COMMAND_IDS } from '@/keyboard/commandIds';
 import type { AppInfo } from '@shared/ipc';
 import type { ProjectSettings } from '@shared/model';
 import { toast } from '@/components/ui/toastStore';
+import { installedSummary, useOcrStatus } from '@/state/ocrStatus';
+import { openOcrLanguages } from '@/ocr/ocrUi';
 import {
   AUTOSAVE_INTERVAL_MAX_SEC, AUTOSAVE_INTERVAL_MIN_SEC, DEFAULT_TRANSITION_FRAMES_MAX, DEFAULT_TRANSITION_FRAMES_MIN, PROXY_HEIGHTS,
 } from '@shared/limits';
@@ -48,6 +50,8 @@ export function PreferencesDialog() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [threshold, setThreshold] = useState(settings.sceneThreshold);
   useEffect(() => { if (open) setThreshold(settings.sceneThreshold); }, [open, settings.sceneThreshold]);
+  const ocrLanguages = useOcrStatus((s) => s.languages);
+  useEffect(() => { if (open) void useOcrStatus.getState().refresh(); }, [open]);
   useEffect(() => {
     if (!open || info) return;
     recutApi()?.appInfo().then(setInfo).catch(() => setInfo(null));
@@ -102,6 +106,15 @@ export function PreferencesDialog() {
             </span>
           </Row>
           <Row label="FFprobe"><span className="mono text-sm ellipsis grow" title={info?.ffprobePath ?? ''}>{info ? info.ffprobePath ?? 'not found' : '…'}</span></Row>
+          <Row label="OCR engine" hint="Reads image subtitles (PGS / VobSub / DVB) as text, offline">
+            <span className="text-sm">Tesseract (built in)</span>
+          </Row>
+          <Row label="OCR languages" hint="Language data for reading image subtitles; downloaded only when you install one">
+            <span className="text-sm ellipsis grow" data-testid="prefs-ocr-languages" title={installedSummary(ocrLanguages)}>
+              {ocrLanguages ? installedSummary(ocrLanguages) : (recutApi() ? '…' : 'unavailable outside the desktop app')}
+            </span>
+            <Button size="sm" onClick={() => openOcrLanguages()}>Manage…</Button>
+          </Row>
           <Row label="Version"><span className="text-sm">{info ? `ReCut ${info.version} · ${info.platform}${info.isDev ? ' · dev' : ''}` : '…'}</span></Row>
           <Row label="Layout">
             <Button size="sm" onClick={() => { resetAllLayouts(); toast('info', 'All workspaces reset'); }}>Reset layout</Button>

@@ -1,0 +1,16 @@
+/* OCR Languages dialog (OcrLanguagesDialog.tsx) */
+.ocrl-note { margin: 0; line-height: 1.45; }
+.ocrl-list { display: flex; flex-direction: column; height: 360px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-1); }
+.ocrl-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 64px 60px 210px; align-items: center; gap: 8px;
+  min-height: 28px; padding: 0 8px; border-bottom: 1px solid var(--bg-3); cursor: default;
+}
+.ocrl-row:hover { background: var(--bg-3); }
+.ocrl-row.selected { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.ocrl-name { color: var(--text-bright); }
+.ocrl-code, .ocrl-size { font-size: var(--font-size-sm); }
+.ocrl-size { text-align: right; }
+.ocrl-state { display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; }
+.ocrl-state .progress { max-width: 90px; }
+.ocrl-pct { width: 42px; text-align: right; font-size: var(--font-size-sm); }
+.ocrl-empty { padding: 16px; text-align: center; }

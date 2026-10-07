@@ -175,7 +175,7 @@ export async function downloadVerified(o: DownloadVerifiedOptions): Promise<void
   for (let attempt = 0; attempt < 2; attempt++) {
     let have = await fileSize(part);
     if (have < 0 || have >= o.bytes) { await removeQuietly(part); have = 0; } // not a file, or nothing left to resume
-    const headers: Record<string, string> = { 'accept-encoding': 'identity' };
+    const headers: Record<string, string> = {};
     if (have > 0) headers.range = `bytes=${have}-`;
 
     let opened: Opened;

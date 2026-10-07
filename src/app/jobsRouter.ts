@@ -3,6 +3,7 @@
  *  - proxy: queued/running/ready/failed → media.proxy (+ media element invalidation when ready)
  *  - sceneDetect: done → detected scenes; failed → status
  *  - export: toasts
+ *  - download (OCR language installs): toasts + refresh of the OCR language list (src/state/ocrStatus.ts)
  * This is the ONLY job→project mirror (jobsStore → store): each terminal result is applied once (by job id) and
  * every write is additionally guarded by the media's current state, so results survive a project reload without
  * double-applying. Jobs are also mirrored into store.jobs so panels may read either store consistently.
@@ -17,6 +18,7 @@ import { useJobsStore } from './jobsStore';
 import { invalidateMediaPath } from './media';
 import { requeueStaleProxy } from '@/state/mediaActions';
 import { toast } from '@/components/ui/toastStore';
+import { useOcrStatus } from '@/state/ocrStatus';
 
 interface ProxyResultLike { path: string; width?: number; height?: number; cached?: boolean; audioStreams?: number[] }
 interface ExportResultLike { outputPath?: string; sidecarPath?: string; warnings?: string[] }
@@ -120,6 +122,20 @@ function routeExport(job: JobInfo): void {
   }
 }
 
+/** "English" from a download job titled "Install English OCR data (4.1 MB)"; the title itself otherwise. */
+function downloadName(job: JobInfo): string {
+  return /^Install (.+) OCR data\b/.exec(job.title)?.[1] ?? job.title;
+}
+
+function routeDownload(job: JobInfo): void {
+  if (!isTerminal(job) || !claim(job)) return;
+  const name = downloadName(job);
+  if (job.status === 'done') toast('ok', `${name} OCR language installed`);
+  else if (job.status === 'failed') toast('error', `Could not install ${name} OCR data: ${job.error ?? 'unknown error'}`);
+  else toast('info', `${name} OCR download canceled`);
+  void useOcrStatus.getState().refresh();
+}
+
 /** Reveal an exported file in the OS file manager (for UI that renders export results). */
 export function revealExport(path: string): void { void window.recut?.showItemInFolder?.(path).catch(() => { /* ignore */ }); }
 
@@ -131,6 +147,7 @@ export function routeJobs(jobs: JobInfo[]): void {
       if (job.kind === 'proxy') routeProxy(job);
       else if (job.kind === 'sceneDetect') routeSceneDetect(job);
       else if (job.kind === 'export') routeExport(job);
+      else if (job.kind === 'download') routeDownload(job);
     } catch (e) {
       console.error('[jobsRouter] failed to route job', job.id, e);
     }

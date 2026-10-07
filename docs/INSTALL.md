@@ -169,6 +169,7 @@ All are optional. They are read by the main process (`electron/`).
 | `RECUT_DISABLE_GPU=1` | Calls `app.disableHardwareAcceleration()`. Use it on machines or VMs with broken GPU drivers. |
 | `RECUT_DEV_URL` | Loads the renderer from this URL instead of `dist/renderer` (set by `npm run dev` to the Vite server) and allows in-window navigation to its origin. |
 | `RECUT_EXPORT_STALL_MS` | How long an export may go without FFmpeg progress before it is stopped with an error (default 120000, two minutes). Guards against FFmpeg builds that hang. |
+| `RECUT_OCR_LANG_URL` | Test-only base URL for OCR language downloads (for example `http://127.0.0.1:8080/`). Accepted only for a loopback `http(s)://127.0.0.1`, `localhost` or `[::1]` address; any other value is ignored. |
 | `RECUT_SMOKE=1` | Smoke test: disables the GPU, checks that the `recut-media://` protocol serves byte ranges / HEAD / 404 / 416, prints `smoke:` lines to stdout and quits after about 2 s. |
 | `RECUT_SMOKE_FILE` | The file the smoke test fetches (default `/usr/bin/ffmpeg`, or the Electron executable on Windows). |
 
@@ -187,6 +188,7 @@ Test and benchmark scripts use their own variables (`ATTACK_MEDIA_DIR`, `RECUT_P
 | Autosave of a saved project | Next to it: `<project>.recut.autosave` |
 | Autosave of a never-saved project | `<userData>/autosave/untitled.recut.autosave` |
 | Cache (`thumbs/`, `waves/`, `proxies/`, `scenes/`) | `$RECUT_CACHE_DIR`, else `cacheDir` in `prefs.json`, else `<userData>/cache` |
+| OCR language data (`<code>.traineddata`, one file per installed language; `*.part` while a download runs) | `<userData>/ocr/tessdata` |
 | Panel layouts, the Jobs tab, Inspector collapsed sections, last export settings per project | Renderer `localStorage` (inside `userData`) |
 | Export temp files | `<os tmpdir>/recut-export-<id>/` (filter script, burn-in subtitles, chunks), deleted after each export. The render itself is written next to the output as `<name>.recut-part-<random>.mp4` and renamed at the end; if that rename fails it is kept as `<name>.recut-unsaved-<time>.mp4`. |
 
@@ -195,3 +197,12 @@ can delete the cache folder at any time; it is rebuilt on demand. Thumbnails cac
 are regenerated once: the thumbnail cache version changed when anamorphic sources started getting their display
 shape. Preferences › Application › **Cache folder** shows the current location and has a **Reveal** button. The
 location cannot be changed from the UI: edit `cacheDir` in `prefs.json` or set `RECUT_CACHE_DIR`.
+
+### Network access
+
+ReCut works offline. The only network access it makes is an OCR language install you start yourself (OCR
+Languages… › **Install**, or Preferences › Application › OCR languages › **Manage…**): it downloads that one
+language file from `raw.githubusercontent.com` (Tesseract `tessdata_fast`, pinned to one commit), checks its size
+and SHA-256 against the list built into ReCut and only then saves it in `<userData>/ocr/tessdata`. Downloads use the
+system proxy settings. Where the network is blocked, **Install from file…** accepts the same file downloaded
+elsewhere, with the same SHA-256 check. Removing a language deletes its file; **Open folder** shows the folder.
