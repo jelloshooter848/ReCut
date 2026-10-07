@@ -131,6 +131,22 @@ export function audioTrackOrdinal(media: MediaItem, usingProxy: boolean, want: n
 }
 
 /**
+ * Gain that makes the preview's up-mix of the played stream match the export's (bugs/closed/2026-10-07-mono-preview-
+ * level.md). The Web Audio destination plays a mono stream on L and R at unity; a stereo export up-mixes it with
+ * FFmpeg (`aformat=...:channel_layouts=stereo`, equal power) to 1/sqrt(2) (-3.01 dB) on each, and a 5.1 export puts it
+ * in the centre, which a stereo down-mix plays at the same 1/sqrt(2). A proxy is already stereo, up-mixed by FFmpeg
+ * (`-ac 2`, electron/media/proxy.ts), so it plays as exported. 1 for anything else (stereo and multichannel streams are
+ * down-mixed by Web Audio with the same coefficients FFmpeg uses; an unknown channel count is left alone).
+ */
+export function previewUpmixGain(media: MediaItem, usingProxy: boolean, stream: number | null): number {
+  if (usingProxy || stream === null) return 1;
+  const audio = media.probe?.audio;
+  if (!audio) return 1;
+  for (const a of audio) if (a.index === stream) return a.channels === 1 ? Math.SQRT1_2 : 1; // runs per frame: no allocation
+  return 1;
+}
+
+/**
  * Audio stream to draw a clip's waveform from: the stream the export renders for `want` (see resolveAudioStream), or
  * undefined for the file's first audio stream (the waveform cached before streams were selectable).
  */
