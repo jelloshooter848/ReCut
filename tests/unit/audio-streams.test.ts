@@ -391,7 +391,8 @@ describe('setClipAudioStream', () => {
       expect(requeueStaleProxy(m.id)).toBe(false);
       setClipsAudioStream(seqId, [a], 3);
       await Promise.resolve();
-      expect(reqs).toEqual([{ mediaId: m.id, path: m.path, height: S().project.settings.proxyHeight }]);
+      // The request names the preferred stream: the one a fallback proxy keeps when FFmpeg cannot proxy every stream.
+      expect(reqs).toEqual([{ mediaId: m.id, path: m.path, height: S().project.settings.proxyHeight, audioStream: 2 }]);
       expect(S().project.media[m.id].proxy.status).toBe('queued');
       expect(wantedAudioStreams(S().project, m.id)).toEqual([2, 3]);
       S().setProxy(m.id, { status: 'ready', path: '/cache/proxies/k_540p_a2.mp4' });

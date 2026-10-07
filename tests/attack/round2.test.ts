@@ -237,6 +237,46 @@ describe('proxy audio stream choice', () => {
     expect(Math.abs(exportHz - 880)).toBeLessThan(40);
     expect(Math.abs(proxyHz - exportHz)).toBeLessThan(40);
   });
+
+  it('multi.mkv with its AC-3 stream made undecodable (CodecID A_AC3 -> A_XC3): the proxy falls back to the AAC stream, records it, and the preview plays what the export plays', async () => {
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const broken = path.join(SCRATCH, 'multi-undecodable.mkv');
+    const bytes = fs.readFileSync(mediaPath('multi.mkv'));
+    const at = bytes.indexOf('A_AC3');
+    expect(at).toBeGreaterThan(0);
+    bytes.write('A_XC3', at, 'latin1'); // same length: the Matroska element sizes stay valid
+    fs.writeFileSync(broken, bytes);
+    const m = await makeMediaItem(broken, { preferredAudioStream: 1 });
+    expect(m.probe!.audio.map((a) => [a.index, a.codec])).toEqual([[1, 'aac'], [2, 'unknown']]);
+    // Mapping every stream fails outright (what the proxy did before the fallback).
+    await expect(ff(['-i', broken, '-map', '0:v:0', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-t', '1', '-f', 'mp4', path.join(SCRATCH, 'all-streams.mp4')]))
+      .rejects.toThrow(/decoder/i);
+    const q = new JobQueue();
+    const { job } = await startProxyJob(q, { mediaId: 'broken', path: broken, height: 240, audioStream: 2 });
+    const final = await q.waitFor(job.id);
+    expect(final.error).toBeUndefined();
+    expect(final.status).toBe('done');
+    const r = final.result as { path: string; audioStreams: number[] };
+    expect(r.path).toMatch(/_240p_a1\.mp4$/);
+    expect(r.audioStreams).toEqual([1]); // the wanted #2 cannot be decoded: the decodable streams
+    const pp = await probeMedia(r.path);
+    expect(pp.audio.map((a) => a.codec)).toEqual(['aac']);
+    expect(pp.video?.codec).toBe('h264');
+    const proxyHz = await zeroCrossHz(r.path, 0.5, 2.5);
+    // The renderer records the streams and maps tracks through them (src/playback/mediaSource.ts).
+    const { audioTrackOrdinal, proxyAudioStreams, proxyStreamStale } = await import('../../src/playback/mediaSource');
+    const withProxy: MediaItem = { ...m, proxy: { status: 'ready', path: r.path, audioStreams: r.audioStreams } };
+    expect(proxyAudioStreams(withProxy)).toEqual([1]);
+    expect(audioTrackOrdinal(withProxy, true, 1)).toBe(-1); // one track: its default track, stream #1
+    expect(proxyStreamStale(withProxy, [1, 2])).toBe(false); // a rebuild would make the same file: never requeued
+    const seq = makeSeq(FPS_24);
+    vclip(seq, m, 0, 48, 1); aclip(seq, m, 0, 48, 1).audioStream = 1;
+    const { outputPath: ex } = await exportSeq(seq, [m]);
+    const exportHz = await zeroCrossHz(ex, 0.2, 1.8);
+    console.log(`[proxy fallback] source ${m.probe!.audio.map((a) => `#${a.index} ${a.codec}`).join(', ')} -> proxy ${path.basename(r.path)} streams=${r.audioStreams} tone=${proxyHz.toFixed(0)} Hz | export #1 tone=${exportHz.toFixed(0)} Hz`);
+    expect(Math.abs(proxyHz - 440)).toBeLessThan(40);
+    expect(Math.abs(proxyHz - exportHz)).toBeLessThan(40);
+  });
 });
 
 // -----------------------------------------------------------------------------------------------------------------

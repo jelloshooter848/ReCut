@@ -148,7 +148,10 @@ export interface WaveformData {
 
 export interface ProxyRequest {
   mediaId: ID; path: string; height: number; audioChannels?: number;
-  /** Ignored: a proxy carries every audio stream (kept so older callers still type-check). */
+  /**
+   * The stream a fallback proxy keeps when the all-streams run and the decodable-streams run both fail (absolute
+   * index; the media's preferred stream). A proxy normally carries every audio stream (electron/media/proxy.ts).
+   */
   audioStream?: number;
 }
 export interface SceneDetectRequest { mediaId: ID; path: string; threshold: number; duration: number; minSceneSeconds?: number }

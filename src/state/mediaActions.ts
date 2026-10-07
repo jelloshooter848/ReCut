@@ -255,9 +255,10 @@ export async function startProxy(mediaId: ID): Promise<JobInfo | null> {
   if (!api || !m) return null;
   const noFfmpeg = ffmpegUnavailable('ffmpeg', 'ffprobe');
   if (noFfmpeg) throw new Error(noFfmpeg);
-  // A proxy carries every audio stream (electron/media/proxy.ts), so it is not tied to one.
+  // A proxy carries every audio stream (electron/media/proxy.ts), so it is not tied to one. `audioStream` is the one a
+  // fallback proxy keeps when FFmpeg cannot proxy every stream: the preferred stream (Source Monitor, new clips).
   st.setProxy(mediaId, { status: 'queued', progress: 0 });
-  return api.startProxy({ mediaId, path: m.path, height: st.project.settings.proxyHeight });
+  return api.startProxy({ mediaId, path: m.path, height: st.project.settings.proxyHeight, ...(m.preferredAudioStream !== undefined ? { audioStream: m.preferredAudioStream } : {}) });
 }
 
 /** Queue a proxy when proxies are on and the preview cannot decode the original (errors mark the proxy failed). */

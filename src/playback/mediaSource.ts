@@ -83,20 +83,32 @@ export function resolveAudioStream(media: MediaItem | undefined, want: number | 
 
 /** File-name suffix of a proxy that carries every audio stream (electron/media/proxy.ts proxyOutputPath). */
 const ALL_STREAMS_PROXY = /_all\.mp4$/i;
-/** Older single-stream proxies: `<key>_<h>p_a<N>.mp4` carries stream N. */
-const ONE_STREAM_PROXY = /_a(\d+)\.mp4$/i;
+/**
+ * Proxies of some streams: `<key>_<h>p_a<N>_a<M>....mp4` carries streams N, M, ... in that order (a fallback when
+ * FFmpeg could not proxy every stream), and the older single-stream `<key>_<h>p_a<N>.mp4` carries stream N.
+ */
+const SOME_STREAMS_PROXY = /((?:_a\d+)+)\.mp4$/i;
+
+/** The proxy job's record of the streams it carries (ProxyInfo.audioStreams), when it is a list of indexes. */
+function recordedProxyStreams(media: MediaItem): number[] | null {
+  const r = media.proxy.audioStreams;
+  return Array.isArray(r) && r.every((n) => Number.isSafeInteger(n) && n >= 0) ? r : null;
+}
 
 /**
- * Absolute indexes of the source audio streams the media's proxy carries, in the proxy's track order. A `_all` proxy
- * carries every stream of the probe; an older one carries one: its `_a<N>` suffix, else the stream recorded on the
- * proxy, else the first audio stream (what ffmpeg mapped by default).
+ * Absolute indexes of the source audio streams the media's proxy carries, in the proxy's track order: the list the
+ * proxy job recorded; else from the file name: a `_all` proxy carries every stream of the probe, an `_a<N>[_a<M>...]`
+ * one those streams; else the stream recorded on an older proxy, else the first audio stream (what ffmpeg mapped by
+ * default).
  */
 export function proxyAudioStreams(media: MediaItem): number[] {
+  const recorded = recordedProxyStreams(media);
+  if (recorded) return recorded;
   const all = media.probe?.audio.map((a) => a.index) ?? [];
   const p = media.proxy.path ?? '';
   if (ALL_STREAMS_PROXY.test(p)) return all;
-  const m = ONE_STREAM_PROXY.exec(p);
-  if (m) return [Number(m[1])];
+  const m = SOME_STREAMS_PROXY.exec(p);
+  if (m) return m[1].split('_a').filter(Boolean).map(Number);
   if (typeof media.proxy.audioStream === 'number') return [media.proxy.audioStream];
   return all.slice(0, 1);
 }
@@ -132,10 +144,13 @@ export function waveformStream(media: MediaItem | undefined, want: number | unde
 /**
  * True when the media has a proxy (ready / failed) that does not carry a stream the preview needs, so it would play
  * the wrong language / commentary track. `wants`: the requested streams (each resolved as the export does); default
- * the media's preferred stream. Proxies carrying every stream are never stale.
+ * the media's preferred stream. Proxies carrying every stream are never stale, and neither is a proxy whose job
+ * recorded its streams (ProxyInfo.audioStreams): it carries every stream FFmpeg could proxy, so a rebuild would make
+ * the same file (and requeueing it would loop). A stream it lacks plays its first track.
  */
 export function proxyStreamStale(media: MediaItem, wants: readonly (number | undefined)[] = [media.preferredAudioStream]): boolean {
   if (media.proxy.status !== 'ready' && media.proxy.status !== 'failed') return false;
+  if (media.proxy.status === 'ready' && recordedProxyStreams(media)) return false;
   const have = proxyAudioStreams(media);
   if (have.length === 0) return false;
   return wants.some((w) => { const abs = resolveAudioStream(media, w); return abs !== null && !have.includes(abs); });

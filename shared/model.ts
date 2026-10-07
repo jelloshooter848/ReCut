@@ -87,6 +87,12 @@ export interface ProxyInfo {
    * proxyAudioStreams).
    */
   audioStream?: number;
+  /**
+   * The source audio streams the proxy carries (absolute ffprobe indexes, in its track order), as the proxy job
+   * recorded them (electron/media/proxy.ts ProxyResult.audioStreams): every stream, or a fallback's subset when one
+   * stream could not be decoded or encoded. Proxies from before 0.4 have none.
+   */
+  audioStreams?: number[];
 }
 
 export interface DetectedScene {
