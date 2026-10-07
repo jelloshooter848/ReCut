@@ -107,7 +107,7 @@ On the old `AudioMeter.tsx`:
 With the fix: `[meter] pm-meter: L 0.738, R 0.738`, 2/2 passed.
 
 ### Tests run
-TESTS_RUN
+`npm run typecheck`: clean. `npm test`: 1530/1530. `npm run test:e2e` (xvfb, Linux): 69/69. Windows / macOS not run.
 
 ### Changed existing assertions
 None.
