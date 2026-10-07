@@ -20,7 +20,7 @@ import { startOcrJob } from '../ocr/ocrJob';
 import { JobQueue } from '../jobs/jobQueue';
 import { ensureDirSafe } from '../safeMkdir';
 import { buildExportCommand, cancelExportJob, startExportJob } from '../export/exporter';
-import { cacheKeyForPath, setCacheDir } from './cache';
+import { cacheKeysForPath, setCacheDir } from './cache';
 import { getFfmpegPath, getFfprobePath, setFfmpegPaths } from './ffmpeg';
 import { probeMedia } from './probe';
 import { cancelThumbRequests, getFilmstrip, getThumbnail } from './thumbs';
@@ -92,8 +92,8 @@ export const mediaHandlers: MediaHandlers = {
   },
 
   async waveform(path: string, _mediaId?: ID, streamIndex?: number): Promise<WaveformData> {
-    const key = await cacheKeyForPath(path);
-    return getWaveform(path, key, { streamIndex });
+    const { key, legacyKey } = await cacheKeysForPath(path);
+    return getWaveform(path, key, { streamIndex, legacyKey });
   },
 
   async startProxy(req: ProxyRequest): Promise<JobInfo> {
