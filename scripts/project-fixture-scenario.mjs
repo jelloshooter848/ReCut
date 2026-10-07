@@ -239,7 +239,7 @@ async function build(outPath, version, features) {
     location: 'Anchorhead', arc: 'Friends', tags: ['deleted'], notes: 'Restore in the extended cut', rating: 4, color: '#8e4ec6', createdAt: Date.now(),
   });
 
-  // ---------------------------------------------------------------- nested sequences (Roadmap §8, from 0.12.0)
+  // ---------------------------------------------------------------- nested sequences (Roadmap §8, from 0.8.0)
   // The alt cut's first two picture + sound pairs become a compound clip ("Reel 1", a new sequence), and the PAL recap
   // is nested after them: a nested clip of another frame rate.
   if (typeof S().makeCompoundClip === 'function' && typeof S().nestSequence === 'function') {

@@ -313,7 +313,7 @@ share one path and no intermediate render is needed. **Make Compound Clip** repl
 sequence and a single clip that points to it; **Open in Timeline** edits the inner sequence. Interchange exports
 nested sequences as OTIO stacks, or flattens them for EDL. If interchange (§10) has shipped by then, it must be
 extended for nesting as part of this work.
-**Status: implemented, pending release 0.12.0** (7 October 2026). A clip with `sequenceId` plays a project
+**Status: implemented, pending release 0.8.0** (7 October 2026). A clip with `sequenceId` plays a project
 sequence (`formatVersion` stays 1; cycles and nesting deeper than 8 levels are refused by every command and cut by
 `normalizeProject`). `flattenSequence` in `shared/nest.ts` expands nested clips into media clips (inner time at the
 outer frame rate, composed transforms, multiplied gains, transitions at nested edges as alpha / gain ramps) and is the

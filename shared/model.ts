@@ -233,7 +233,7 @@ export interface Clip {
   /**
    * Nested sequence (Roadmap §8, shared/nest.ts): the clip plays this project sequence instead of a media file.
    * `mediaId` then holds the same id (no media item has it), `sourceIn` is seconds of the inner sequence's
-   * timeline and `speed` is 1. Absent on every other clip (and in every project saved before 0.12).
+   * timeline and `speed` is 1. Absent on every other clip (and in every project saved before 0.8.0).
    */
   sequenceId?: ID;
 }

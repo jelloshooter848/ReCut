@@ -140,7 +140,7 @@ Compound Clip pair shares a `linkId` like any linked picture + sound pair. The i
 disagrees is set to `sequenceId` / 1, and references that close a cycle (a sequence that contains itself, directly or
 through others) or nest more than 8 levels deep are removed, leaving those clips as clips of missing media (both
 reported as repairs, see below). A reference to a sequence that is not in the project is kept and plays nothing.
-Added in 0.12.0; `formatVersion` stays 1, and files without nested clips are unchanged.
+Added in 0.8.0; `formatVersion` stays 1, and files without nested clips are unchanged.
 
 ### Transition
 

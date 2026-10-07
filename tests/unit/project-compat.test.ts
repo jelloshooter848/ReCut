@@ -29,7 +29,7 @@ const atLeast = (v: readonly number[], min: [number, number, number]) => (v[0] -
  * The release that ships nested sequences (Roadmap §8): its fixture nests a compound clip and the PAL recap in the alt
  * cut (scripts/project-fixture-scenario.mjs). The release PR moves this if the milestone ships under another number.
  */
-const NESTING_FROM: [number, number, number] = [0, 12, 0];
+const NESTING_FROM: [number, number, number] = [0, 8, 0];
 
 let tmp: string;
 beforeEach(async () => { tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'recut-compat-')); });
