@@ -21,6 +21,7 @@ import { projectPathFromArgv } from './project/argv';
 import os from 'node:os';
 import { getFfmpegPath, getFfprobePath, getFfmpegVersion, runFfmpeg } from './media/ffmpeg';
 import { probeMedia } from './media/probe';
+import { LICENCE_FILES, licenceDirs, listLicenceFiles } from './licences';
 
 const isDev = Boolean(process.env.RECUT_DEV_URL) || !app.isPackaged;
 const smoke = process.env.RECUT_SMOKE === '1';
@@ -294,6 +295,15 @@ async function runSmoke(): Promise<void> {
     fs.rmSync(tmp, { recursive: true, force: true });
   } catch (e) {
     log(`smoke: ffmpeg FAILED: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  // Licence files Help › About › Licences can open (informational: lists which ones this build ships).
+  try {
+    const dirs = licenceDirs({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath(), execPath: process.execPath, cwd: process.cwd() });
+    const found = listLicenceFiles(dirs).map((f) => f.fileName);
+    const missing = LICENCE_FILES.map((f) => f.fileName).filter((n) => !found.includes(n));
+    log(`smoke: licences shipped=${found.join(',') || 'none'} absent=${missing.join(',') || 'none'}`);
+  } catch (e) {
+    log(`smoke: licences check error: ${e instanceof Error ? e.message : String(e)}`);
   }
   // Renderer: did the React app mount its layout?
   try {

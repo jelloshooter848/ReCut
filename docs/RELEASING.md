@@ -44,7 +44,8 @@ hand: agents cannot push tags (their git proxy drops tag pushes), and the owner 
    merge commit (created by the publish job), name `ReCut 0.3.0`, not a prerelease, marked **Latest**, body = that
    version's changelog section plus the install / SmartScreen note, with the installer and portable exe attached.
    See [What gates a release](#what-gates-a-release).
-4. Check the release page: both `.exe` files are attached and the notes read correctly.
+4. Check the release page: both `.exe` files are attached and the notes read correctly. In the installer job's log,
+   the smoke test lists the licence files the build ships (see [Licence files every release ships](#licence-files-every-release-ships)).
 
 Every later push to `main` finds `v0.3.0` already tagged and publishes a dev prerelease, as usual, until the next
 release PR is merged.
@@ -92,6 +93,31 @@ only) is not a gate.
 the branch), and push again; the next run that passes every gate publishes. A test that is red because of the
 runner, not the code, can be re-run (see [If the release build fails](#if-the-release-build-fails)). Never make a
 gate pass by weakening, skipping or deleting a test, and never re-add `continue-on-error` to a gate.
+
+### Licence files every release ships
+
+ReCut is MIT-licensed; the FFmpeg it bundles is GPL and is distributed alongside it with its licence and source
+information (see [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)). A release that bundles FFmpeg must contain all
+of these, in the installed app and in the portable exe:
+
+| File in the packaged app | Comes from |
+|---|---|
+| `resources/LICENSE` | `LICENSE` (ReCut, MIT), via `package.json` → `build.extraResources` |
+| `resources/THIRD_PARTY_NOTICES.md` | `THIRD_PARTY_NOTICES.md`, via `build.extraResources` |
+| `resources/ffmpeg/ffmpeg.exe`, `ffprobe.exe` | `scripts/windows/get-ffmpeg.ps1`, via the `resources/ffmpeg` entry (`**/*`) |
+| `resources/ffmpeg/FFMPEG-LICENSE.txt` | the licence file in the downloaded FFmpeg archive, copied by `get-ffmpeg.ps1` |
+| `resources/ffmpeg/FFMPEG-BUILD.txt` | written by `get-ffmpeg.ps1`: source URL, build name, `ffmpeg -version`, date, where to get the corresponding source |
+| `resources/ffmpeg/FFMPEG-README.txt` | the archive's readme, when it has one (gyan.dev builds do) |
+| `LICENSE.electron.txt`, `LICENSES.chromium.html` (next to `ReCut.exe`) | added by electron-builder |
+
+- `get-ffmpeg.ps1` refuses an FFmpeg download that has no licence file and tries the next source, so a build cannot
+  bundle FFmpeg without `FFMPEG-LICENSE.txt` and `FFMPEG-BUILD.txt`.
+- The installer job's smoke test logs `smoke: licences shipped=... absent=...` for the unpacked app; on a release run
+  `absent=` should list nothing but, at most, `FFMPEG-README.txt`.
+- After changing a runtime dependency (`package.json` → `dependencies`), run `node scripts/third-party-notices.mjs`
+  and commit the updated `THIRD_PARTY_NOTICES.md`; the unit suite fails while it is out of date.
+- Do not remove any of these files from the packaging config. If FFmpeg is ever bundled for Linux or macOS, the same
+  files must go next to those binaries (see `docs/INSTALL.md`, "Bundling FFmpeg").
 
 ### Fallback: pushing the tag yourself
 

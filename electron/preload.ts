@@ -7,7 +7,7 @@ import type { AppPreferences, ID, JobInfo, Project } from '../shared/model';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import { SAVE_STREAM_IPC, type ProjectAutosaveStreamApi, type ProjectSaveStreamApi } from '../shared/projectWire';
 import type {
-  DroppedFile, ExportRequest, FilmstripRequest, MenuCommand, MessageOptions, OpenFilesOptions, ProxyRequest, RecutApi,
+  DroppedFile, ExportRequest, FilmstripRequest, LicenceFileId, MenuCommand, MessageOptions, OpenFilesOptions, ProxyRequest, RecutApi,
   RelinkScanRequest, SaveFileOptions, SceneDetectRequest, ThumbnailRequest,
 } from '../shared/ipc';
 
@@ -32,6 +32,8 @@ const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
   quitCancel: () => ipcRenderer.invoke(IPC.appQuitCancel),
   openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url),
   showItemInFolder: (path: string) => ipcRenderer.invoke(IPC.showItemInFolder, path),
+  licenceFiles: () => ipcRenderer.invoke(IPC.licenceFiles),
+  openLicenceFile: (id: LicenceFileId) => ipcRenderer.invoke(IPC.openLicenceFile, id),
   toggleFullscreen: () => ipcRenderer.invoke(IPC.toggleFullscreen),
   pathForFile: (file: DroppedFile) => {
     try { return webUtils.getPathForFile(file as Parameters<typeof webUtils.getPathForFile>[0]) || ''; } catch { return ''; }

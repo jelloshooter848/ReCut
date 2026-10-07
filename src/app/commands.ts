@@ -544,7 +544,25 @@ export function buildEditingCommands(): CommandInput[] {
       const api = recutApi();
       if (!api) { toast('info', 'ReCut — fan-edit video editor'); return; }
       const info = await api.appInfo();
-      await api.message({ type: 'info', title: 'About ReCut', message: `ReCut ${info.version}`, detail: `FFmpeg: ${info.ffmpegVersion ?? 'not found'}\n${info.ffmpegPath ?? ''}\nCache: ${info.cacheDir}`, buttons: ['OK'] });
+      const files = await api.licenceFiles?.().catch(() => []) ?? [];
+      const licence = 'ReCut is free software under the MIT License. FFmpeg is a separate program with its own licence '
+        + '(the FFmpeg bundled with the Windows builds is GPL); see Licences.';
+      const choice = await api.message({
+        type: 'info', title: 'About ReCut', message: `ReCut ${info.version}`,
+        detail: `${licence}\n\nFFmpeg: ${info.ffmpegVersion ?? 'not found'}\n${info.ffmpegPath ?? ''}\nCache: ${info.cacheDir}`,
+        buttons: files.length ? ['OK', 'Licences…'] : ['OK'], defaultId: 0, cancelId: 0,
+      });
+      if (choice !== 1 || !files.length) return;
+      const pick = await api.message({
+        type: 'none', title: 'Licences', message: 'Licences and notices',
+        detail: 'Choose a file to open. ReCut is MIT-licensed; the third-party notices list everything ReCut ships with, '
+          + 'and the FFmpeg files describe the bundled FFmpeg build and where to get its source.',
+        buttons: [...files.map((f) => f.label), 'Close'], defaultId: files.length, cancelId: files.length,
+      });
+      const file = files[pick];
+      if (!file) return;
+      const res = await api.openLicenceFile(file.id);
+      if (!res.ok) toast('error', res.error);
     }),
   ];
 }

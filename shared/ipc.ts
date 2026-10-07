@@ -14,6 +14,8 @@ export const IPC = {
   appQuitCancel: 'app:quitCancel',
   openExternal: 'app:openExternal',
   showItemInFolder: 'app:showItemInFolder',
+  licenceFiles: 'app:licenceFiles',
+  openLicenceFile: 'app:openLicenceFile',
   toggleFullscreen: 'app:toggleFullscreen',
   // dialogs
   dialogOpenFiles: 'dialog:openFiles',
@@ -86,6 +88,11 @@ export interface AppInfo {
   homeDir: string;
   isDev: boolean;
 }
+
+/** Licence files Help › About can open (see electron/licences.ts). The renderer opens them by id, never by path. */
+export type LicenceFileId = 'recut' | 'notices' | 'ffmpegBuild' | 'ffmpegLicense' | 'ffmpegReadme' | 'electron' | 'chromium';
+export interface LicenceFile { id: LicenceFileId; label: string; fileName: string }
+export type OpenLicenceResult = { ok: true } | { ok: false; error: string };
 
 /** Structural stand-in for the DOM `File` (shared/ is compiled without the DOM lib); a real File satisfies it. */
 export interface DroppedFile { name: string; size: number; type: string }
@@ -189,6 +196,10 @@ export interface RecutApi {
   quitCancel(): Promise<void>;
   openExternal(url: string): Promise<void>;
   showItemInFolder(path: string): Promise<void>;
+  /** The licence files shipped with this build (ReCut, third-party notices, bundled FFmpeg, Electron), in display order. */
+  licenceFiles(): Promise<LicenceFile[]>;
+  /** Open one of `licenceFiles()` with the system's default app (or reveal it when nothing can open it). */
+  openLicenceFile(id: LicenceFileId): Promise<OpenLicenceResult>;
   toggleFullscreen(): Promise<boolean>;
   /** Filesystem path of a File dropped from the OS (Electron >= 32 no longer exposes `File.path`). '' when unknown. */
   pathForFile(file: DroppedFile): string;
