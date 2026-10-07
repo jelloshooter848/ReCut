@@ -106,6 +106,25 @@ async function previewLevels(mediaId: string, stream?: number): Promise<[number,
 }
 
 const levels: Record<string, [number, number]> = {};
+let monoIds: string[] = [];
+
+/** Lit width (0..1 of the bar) of the meter's L and R bars, read from its canvas (green part of the gradient). */
+async function meterBars(p: Page): Promise<{ cls: string; bars: [number, number] }> {
+  return p.evaluate(() => {
+    const root = document.querySelector('[data-testid="program-meter"]') as HTMLElement;
+    const cv = root.querySelector('canvas') as HTMLCanvasElement;
+    const g = cv.getContext('2d')!;
+    const k = cv.width / 132; // device pixels per CSS pixel (AudioMeter W = 132)
+    const barW = 130;
+    const lit = (y: number) => {
+      const row = g.getImageData(0, Math.round(y * k), cv.width, 1).data;
+      let n = 0;
+      for (let x = 0; x < cv.width; x++) { const i = x * 4; if (row[i + 1] > 120 && row[i] < 120) n++; }
+      return n / k / barW;
+    };
+    return { cls: root.className, bars: [lit(3.5), lit(9.5)] as [number, number] };
+  });
+}
 
 test.beforeAll(async () => {
   ctx = await launchApp();
@@ -116,7 +135,8 @@ test.beforeAll(async () => {
     const w = window as unknown as Record<string, any>;
     const orig = AudioNode.prototype.connect as (...a: any[]) => any;
     (AudioNode.prototype as any).connect = function (this: AudioNode, dest: any, ...rest: any[]) {
-      if (this instanceof GainNode && dest instanceof GainNode) w.__master = dest;
+      // The master bus keeps the default 'max' channel mode (the meter's stereo up-mix gain is 'explicit').
+      if (this instanceof GainNode && dest instanceof GainNode && dest.channelCountMode === 'max') w.__master = dest;
       return orig.call(this, dest, ...rest);
     };
   });
@@ -126,7 +146,7 @@ test.afterAll(async () => { await ctx?.app.close(); });
 
 test('a mono source previews 3 dB below the same tone in stereo, on both channels, as it exports', async () => {
   const files = makeMedia();
-  const [stereo, mono, multi, proxied] = await importMedia(page, [files.stereo, files.mono, files.multi, files.proxied]);
+  const [stereo, mono, multi, proxied] = monoIds = await importMedia(page, [files.stereo, files.mono, files.multi, files.proxied]);
   await evalStore(page, '(st) => st.updateSequenceSettings(st.project.activeSequenceId, { fps: { num: 24, den: 1 } })');
   const probe = await evalStore<{ playable: boolean; audio: { index: number; channels: number }[] }[]>(page,
     '(st, ids) => ids.map((id) => ({ playable: st.project.media[id].probe.browserPlayable, audio: st.project.media[id].probe.audio.map((a) => ({ index: a.index, channels: a.channels })) }))',
@@ -155,4 +175,17 @@ test('a mono source previews 3 dB below the same tone in stereo, on both channel
     for (const c of [0, 1]) expect(levels[k][c] - ref[c], `${k} channel ${c}`).toBeGreaterThan(-3.5);
     for (const c of [0, 1]) expect(levels[k][c] - ref[c], `${k} channel ${c}`).toBeLessThan(-2.5);
   }
+});
+
+test('the Program meter shows a mono source on both bars at the level heard (bugs/closed/2026-10-07-program-meter-always-unavailable.md)', async () => {
+  // Mono WAV: peak 0.25 x 1/sqrt(2) = -15.05 dBFS -> 0.75 of the -60..0 dB bar on L and R.
+  await previewLevels(monoIds[1]);
+  await page.click('[data-testid="program-go-start"]');
+  await page.click('[data-testid="program-play"]');
+  await page.waitForTimeout(800);
+  const m = await meterBars(page);
+  await page.click('[data-testid="program-play"]'); // pause
+  console.log(`[meter] ${m.cls}: L ${m.bars[0].toFixed(3)}, R ${m.bars[1].toFixed(3)}`);
+  expect(m.cls).not.toContain('unavailable');
+  for (const b of m.bars) expect(Math.abs(b - 0.75)).toBeLessThan(0.05);
 });

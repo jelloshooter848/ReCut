@@ -161,5 +161,5 @@ and Compare (both use `SequencePlayer`). The Source monitor plays the file witho
 no export counterpart). A mono stream whose probe is missing or reports no channel count keeps the old unity level.
 
 ### Follow-ups
-- `bugs/open/2026-10-07-program-meter-always-unavailable.md`: while measuring, the Program monitor's peak meter was
+- `bugs/closed/2026-10-07-program-meter-always-unavailable.md` (fixed on this branch): while measuring, the Program monitor's peak meter was
   found to be permanently "unavailable" in Electron (its tap throws on `ChannelSplitter.channelInterpretation`).
