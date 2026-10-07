@@ -5,6 +5,34 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
+## [0.6.1] - 2026-10-07
+
+ReCut on Linux ([Roadmap](docs/ROADMAP.md) §19): an official x86-64 AppImage with FFmpeg built in, built and tested on
+every release like the Windows downloads. No changes to editing features; project files stay `formatVersion` 1.
+
+### Added
+
+- **Linux download:** `ReCut-0.6.1-linux-x86_64.AppImage` on the release page, next to the Windows installer and
+  portable exe. Make it executable (`chmod +x`) and run it; nothing to install. FFmpeg (GPL, with libx264) is
+  built in, with its licence and source information (Help › About › Licences…). Needs a 64-bit Intel/AMD PC and glibc
+  2.28 or newer (Debian 10, Ubuntu 18.10, RHEL 8 or later). If it says FUSE is missing, install `libfuse2`
+  (`libfuse2t64` on Ubuntu 24.04 and later) or start it with `--appimage-extract-and-run`.
+- Opening a `.recut` project from a Linux file manager (which passes a `file://` link) opens it.
+
+### Development
+
+- Every release now also needs the Linux gate to pass: unit and end-to-end tests on Ubuntu 22.04, the AppImage built
+  with the bundled FFmpeg, and the AppImage launched (mounted and extracted) and smoke-tested. `scripts/linux/get-ffmpeg.sh`
+  fetches and checks the FFmpeg build. Test builds keep the AppImage as the run's `ReCut-linux` artifact.
+
+### Known issues
+
+- The AppImage is about 240 MB (the Linux FFmpeg build is larger than the Windows one). AppImage only: no `.deb`,
+  `.rpm`, Flatpak, Snap or ARM build, and it does not add itself to the application menu (an AppImage integration tool
+  can). Tested on Ubuntu 22.04. See [LIMITATIONS](docs/LIMITATIONS.md).
+- Unchanged from 0.6.0: moved media rebuilds its cache ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)),
+  unsigned builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
+
 ## [0.6.0] - 2026-10-07
 
 Read image subtitles ([Roadmap](docs/ROADMAP.md) §4): the picture subtitles on Blu-ray and DVD rips (PGS, VobSub,
@@ -48,7 +76,7 @@ tracks gain an optional `streamIndex`).
 
 - OCR accuracy is measured on generated subtitles (100 % on the test streams); italic, coloured and sign subtitles on
   real discs may read less well. See [LIMITATIONS](docs/LIMITATIONS.md).
-- Unchanged: moved media rebuilds its cache ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned
+- Unchanged: moved media rebuilds its cache ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned
   builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
 
 ## [0.5.0] - 2026-10-07
@@ -90,7 +118,7 @@ that otherwise only show up when the result is watched. Project files are unchan
 
 ### Known issues
 
-- Unchanged: moved media rebuilds its cache ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned
+- Unchanged: moved media rebuilds its cache ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned
   builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
 
 ## [0.4.1] - 2026-10-07
@@ -115,7 +143,7 @@ Project files are unchanged (`formatVersion` 1).
 
 - Unchanged from 0.4.0: the performance gate's verdict depends on the speed of the machine
   ([report](bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md)), moved media rebuilds its cache
-  ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned builds, NSIS 3.0.4 (CVE-2025-43715, only
+  ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned builds, NSIS 3.0.4 (CVE-2025-43715, only
   when an installer runs as SYSTEM).
 
 ## [0.4.0] - 2026-10-07
@@ -169,7 +197,7 @@ and every still image FFmpeg can decode shows in the monitors. Project files are
   ([report](bugs/closed/2026-10-07-bundled-ffmpeg-licence-not-shipped.md)).
 - The performance gate's verdict depends on the speed of the machine
   ([report](bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md)).
-- Unchanged: moved media rebuilds its cache ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned
+- Unchanged: moved media rebuilds its cache ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned
   builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
 
 ## [0.3.0] - 2026-10-07
@@ -226,7 +254,7 @@ sequence at 23.976 fps now save, open, edit, scrub, scroll and play back without
 - None of the performance gates fail (`npm run perf:check -- --runs 2`: 98 of 98 gates, 130 of 130 guardrails;
   [closed report](bugs/closed/2026-10-05-perf-budgets-2500-clips.md)). On a heavily loaded machine, the first visit
   to each page while scrubbing a multi-hour sequence at the closest zoom can still stutter briefly.
-- Unchanged: moved media rebuilds its cache ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned
+- Unchanged: moved media rebuilds its cache ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned
   builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
 
 ## [0.2.2] - 2026-10-06
@@ -250,7 +278,7 @@ Fixes chapter export. Project files are unchanged (`formatVersion` 1).
 
 - Unchanged from 0.2.1: 2,500-clip performance budgets
   ([open report](bugs/closed/2026-10-05-perf-budgets-2500-clips.md)), moved media rebuilds its cache
-  ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned builds, NSIS 3.0.4 (CVE-2025-43715,
+  ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned builds, NSIS 3.0.4 (CVE-2025-43715,
   only when an installer runs as SYSTEM).
 
 ## [0.2.1] - 2026-10-05
@@ -277,7 +305,7 @@ Fixes the Windows installer crash in 0.2.0. Project files are unchanged (`format
 
 - Unchanged from 0.2.0: 2,500-clip performance budgets
   ([open report](bugs/closed/2026-10-05-perf-budgets-2500-clips.md)), moved media rebuilds its cache
-  ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned builds. The installer is built with NSIS
+  ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned builds. The installer is built with NSIS
   3.0.4, which has CVE-2025-43715 (privilege escalation only when an installer runs as SYSTEM; ReCut's per-user
   installer normally does not).
 
@@ -375,7 +403,7 @@ and damaged or hostile files are now repaired on load (see Changed).
   scrubbing at working zoom runs at 32-35 fps, and opening freezes the window for about 3 s
   ([open report](bugs/closed/2026-10-05-perf-budgets-2500-clips.md)).
 - Moving a media file to another folder or drive rebuilds its thumbnails, waveform and proxy
-  ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)).
+  ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)).
 - Builds are not code-signed; Windows SmartScreen asks for confirmation. macOS and Linux packages are not tested.
   See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for the full list.
 

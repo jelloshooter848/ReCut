@@ -390,8 +390,9 @@ export interface AppPreferences {
 // ------------------------------------------------------------------
 // Jobs (background work in the main process)
 // ------------------------------------------------------------------
-/** 'ocr': bitmap subtitles to text; 'download': OCR language install; 'transcribe' is reserved for speech-to-text. */
-export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download';
+/** 'ocr': bitmap subtitles to text; 'download': OCR language install; 'transcribe' is reserved for speech-to-text;
+ * 'collect': Collect Project (copy the project and its media to one folder). */
+export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download' | 'collect';
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled';
 
 export interface JobInfo {

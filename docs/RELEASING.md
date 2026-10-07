@@ -93,6 +93,13 @@ release gates. They run in parallel, four on `windows-latest` and one on `ubuntu
 | `launcher` (Start ReCut.cmd from a fresh clone) | `Start ReCut.cmd -Smoke`. |
 | `linux` (Linux AppImage + tests) | On `ubuntu-22.04`: typecheck, the vitest suite and the Playwright suite under xvfb, all with the FFmpeg that gets bundled; builds the x86-64 AppImage with that FFmpeg (`scripts/linux/get-ffmpeg.sh`), checks the OCR packaging budget and the bundled FFmpeg files, and smoke-tests the AppImage twice, mounted with FUSE and with `--appimage-extract-and-run` (media protocol, encode + probe with the FFmpeg inside the AppImage, licence files, OCR worker, UI mounted). Uploads the `ReCut-linux` artifact. |
 
+Two more jobs run on every build but are **advisory** while macOS is in bring-up (docs/ROADMAP.md §19): `macos`
+(on `macos-14`: unit tests, the Apple Silicon dmg, code-signature checks and a smoke test of the app inside the
+mounted dmg; artifact `ReCut-macos`) and `macos-e2e` (the Playwright suite on macOS). They are not gates: `publish`
+does not need them and does not attach the dmg, so a red macOS job does not stop a release, and "green" in this
+document and in the run summaries means the five required gates (installer, tests, e2e, launcher, linux). The dmg is signed and notarized when the signing secrets are set
+([MACOS-SIGNING.md](MACOS-SIGNING.md)). When macOS becomes official, follow the TODO above the `publish` job.
+
 Publishing happens in a separate last job, `publish`, which runs only on a release run and only when all five gates
 succeeded. It downloads the installer job's build, the Linux job's AppImage and the release notes, re-checks the tag,
 and publishes. If any gate fails, is cancelled or is skipped, `publish` is skipped. None of the gates is allowed to
@@ -134,6 +141,10 @@ of these, in the installed app, in the portable exe and in the AppImage:
   and commit the updated `THIRD_PARTY_NOTICES.md`; the unit suite fails while it is out of date.
 - Do not remove any of these files from the packaging config. If FFmpeg is ever bundled for macOS, the same files
   must go next to those binaries (see `docs/INSTALL.md`, "Bundling FFmpeg").
+- **macOS (advisory until 0.7.0):** the `macos` job bundles an arm64 FFmpeg with the same three files
+  (`scripts/mac/get-ffmpeg.sh`; `FFMPEG-LICENSE.txt` is the build's `COPYING.GPLv3`, there is no readme) plus
+  `LICENSE.electron.txt` and `LICENSES.chromium.html` in `ReCut.app/Contents/Resources`. Signing and notarization
+  of the dmg: [MACOS-SIGNING.md](MACOS-SIGNING.md).
 - **Before every release, check the FFmpeg source links still work**, for Windows and Linux. The release does not
   carry FFmpeg's source code; `FFMPEG-BUILD.txt` points to where it can be downloaded (the owner's decision, 7 October
   2026: a link, not an attached copy). After the release run, open the latest release build's logs (the linux job
@@ -232,7 +243,8 @@ To download a test build: open the repository's **Actions** tab → **Windows bu
 "Test build: download the installers from this run's Artifacts (ReCut-windows)") → **Artifacts** → **ReCut-windows**.
 GitHub downloads a zip with `ReCut-Setup-<version>.exe` and `ReCut-Portable-<version>.exe`; you must be signed in to
 GitHub. The Linux build is the **ReCut-linux** artifact of the same run, a zip with
-`ReCut-<version>-linux-x86_64.AppImage` (unzipping drops the executable bit: run `chmod +x` on it). Use a test build only if every job in its run is green. Users should install the release marked **Latest**.
+`ReCut-<version>-linux-x86_64.AppImage` (unzipping drops the executable bit: run `chmod +x` on it). Use a test build only if the five required jobs of its run (installer, tests, e2e, launcher, linux) are green; the
+advisory macOS jobs do not count (for the macOS dmg itself, its `macos` job must be green). Users should install the release marked **Latest**.
 
 To make a test build of a work branch, run the workflow by hand (*Run workflow*, `workflow_dispatch`) on that branch.
 

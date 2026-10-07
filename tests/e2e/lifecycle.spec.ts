@@ -116,9 +116,9 @@ test('keyboard: Space toggles playback, Ctrl+K adds an edit, Ctrl+Z undoes it', 
     const st = (window as unknown as W).__recut.store.getState();
     st.setView(st.project.activeSequenceId, { playhead: 40 });
   });
-  await page.keyboard.press('Control+K');
+  await page.keyboard.press('ControlOrMeta+K');
   await expect.poll(clipCount).toBe(before + 2);
-  await page.keyboard.press('Control+Z');
+  await page.keyboard.press('ControlOrMeta+Z');
   await expect.poll(clipCount).toBe(before);
 });
 
