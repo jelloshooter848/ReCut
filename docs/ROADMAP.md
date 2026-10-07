@@ -300,7 +300,14 @@ and bug files cite § numbers.
 `FFMPEG-BUILD.txt` (`scripts/linux/get-ffmpeg.sh`; the BtbN builds have no readme), listed in
 `THIRD_PARTY_NOTICES.md`; the blocking `linux` job in `.github/workflows/windows.yml` on `ubuntu-22.04` (unit tests,
 e2e under xvfb, packaging, AppImage smoke test mounted and extracted), which the `publish` job needs; the AppImage
-attached to the release with run instructions in the notes. The macOS part has not started.
+attached to the release with run instructions in the notes.
+**macOS part implemented, pending CI validation and signing** (not done until 0.7.0 publishes it): the Apple Silicon
+dmg `ReCut-<version>-macos-arm64.dmg` (macOS 12+) with a bundled, pinned and checksum-verified jellyfin-ffmpeg
+`macarm64-gpl` build and its `FFMPEG-LICENSE.txt` / `FFMPEG-BUILD.txt` (`scripts/mac/get-ffmpeg.sh`), hardened runtime
+with only the `allow-jit` entitlement, and the advisory `macos` and `macos-e2e` jobs in `.github/workflows/windows.yml`
+on `macos-14` (unit tests, dmg, per-binary signature checks, smoke test of the app in the mounted dmg; signing and
+notarization when the five secrets of `docs/MACOS-SIGNING.md` are set, an ad-hoc signed test build otherwise). Not
+yet in the `publish` job's `needs` and not attached to releases (TODO block above the `publish` job).
 **Why:** ReCut ships only Windows builds. `package.json` → `build.linux` already targets `AppImage` and `build.mac`
 `dmg`, and the app has macOS menu and quit handling, but neither package has been released or tested: the Linux
 unpacked build is what the test suites run on, and no Mac build has ever been made. Fan editors work on all three
