@@ -17,12 +17,13 @@ export interface Calibration { scores?: Partial<Record<Category, { median?: numb
 export interface Baseline { rows?: Record<string, { median: number | null; value?: unknown; tier?: string }> }
 export interface ABRow { key: string; file: string; section: string; metric: string; unit: string; tier: Tier; a: Aggregated | null; b: Aggregated | null; ratio: number | null; band: { rel: number; floor: number } | null; verdict: string; worse: boolean; pairs?: number[] }
 
-export const REGRESSION_RULE: { ratio: number; minRuns: number; floor: Record<string, number> };
+export const REGRESSION_RULE: { ratio: number; minRuns: number; floor: Record<string, number>; zeroBaseCount?: number };
 export const CALIBRATION_TOLERANCE: number;
 export const CATEGORIES: Category[];
 export const LONG_TASK_MS: number;
 export const CAP_NEAR: number;
 export const AB_BAND: { rel: number; floor: Record<string, number> };
+export const AB_RUNS: number;
 export const TIERS: Tier[];
 export function isNum(v: unknown): v is number;
 export function median(xs: number[]): number;
