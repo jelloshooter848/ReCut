@@ -5,6 +5,63 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
+## [0.3.0] - 2026-10-07
+
+Performance at franchise scale ([Roadmap](docs/ROADMAP.md) §1): a 2,500-clip project and a 3-hour, 6,700-clip
+sequence at 23.976 fps now save, open, edit, scrub, scroll and play back without freezes. Project files are unchanged (`formatVersion` 1).
+
+### Changed
+
+- **Saving** streams the project to disk while it is being prepared, instead of sending one large message at the end.
+  Saving takes about 215 ms for the 2,500-clip project (was about 2 s) and 250 ms with the 3-hour sequence (was
+  550–630 ms), and the 75–115 ms freeze on every save is gone. The
+  file is byte-for-byte identical; it is still written to a temp file and renamed, and the `.bak` is kept (now as a
+  hard link where the disk supports it, otherwise a copy).
+- **Autosave** is streamed the same way, in short slices during idle time, and waits for a pause in your work (about
+  2 s; after 15 s of continuous work any short pause, and after 60 s it saves anyway). Autosaves no longer freeze
+  scrubbing, scrolling or playback (they used to cause random 160–435 ms freezes).
+- **Opening** a project takes about 710 ms for the 2,500-clip project (810 ms with the 3-hour sequence), in small
+  pieces without freezing the window (it took about 4 s with a 3 s freeze on 5 October). The first edit after opening a big project no longer freezes for 340–370 ms.
+- **Timeline**: edits paint in 17–28 ms (were 80–120); scrubbing runs at 57–60 fps at every zoom, the 3-hour
+  sequence included (was 26–35); mouse-wheel scrolling responds in about 6 ms per step (was 10–12); switching to a
+  big sequence takes about 50 ms (was 100–140). Only the
+  clips in view are built, clips are reused when the view moves a page, and thumbnail work waits until you stop
+  editing.
+- **Program monitor**: while scrubbing it seeks only the layers you can see and never queues a new seek behind a
+  pending one, so it now shows real frames while you scrub; during playback it redraws only when the picture
+  changes.
+- **Project panel** no longer re-sorts or redraws on every timeline edit.
+- **Thumbnails** are cached by the app once loaded, and a cancelled thumbnail-strip job stops its ffmpeg process.
+- **Deliberate rendering trade-offs** (approved for performance; geometry, timing and hit testing are unchanged):
+  - Timeline waveforms are drawn as filled bars aligned to device pixels, one per device column, each covering the
+    peak of every sample in it, so edges are hard instead of anti-aliased in exchange for cheaper painting.
+  - The timeline playhead moves on its own GPU layer by whole-device-pixel steps, which cuts compositing cost about
+    53% when scrubbing within the page and about 42% during playback.
+
+### Fixed
+
+- Edits made while a save was running could be marked as saved and lost
+  ([report](bugs/closed/2026-10-06-edits-during-save-marked-saved.md)).
+- An autosave made during a save could be ignored by crash recovery
+  ([report](bugs/closed/2026-10-06-autosave-during-save-ignored-by-recovery.md)).
+- At display scales of 125% and 150% the timeline playhead could be drawn one pixel off.
+
+### Development
+
+- `npm run perf:check` is the performance gate. Every benchmark row is a user-facing **gate** (pass/fail), an
+  architecture **guardrail** (fails on a regression against `tests/perf/baseline.json`) or a **diagnostic** (reported
+  only); see `docs/DEVELOPMENT.md` → Performance gate.
+- The Electron perf bench no longer crashes partway ("Resulting promise was garbage collected"), measures edits to
+  the next painted frame, measures scrub fps with its render counter off, and deletes its temp folder on exit.
+
+### Known issues
+
+- None of the performance gates fail (`npm run perf:check -- --runs 2`: 98 of 98 gates, 130 of 130 guardrails;
+  [closed report](bugs/closed/2026-10-05-perf-budgets-2500-clips.md)). On a heavily loaded machine, the first visit
+  to each page while scrubbing a multi-hour sequence at the closest zoom can still stutter briefly.
+- Unchanged: moved media rebuilds its cache ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned
+  builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
+
 ## [0.2.2] - 2026-10-06
 
 Fixes chapter export. Project files are unchanged (`formatVersion` 1).
