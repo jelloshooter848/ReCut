@@ -9,9 +9,10 @@
  * exact frame counts, compositing, audio mixing).
  */
 import path from 'node:path';
-import type { Clip, ExportSettings, ID, MediaItem, Rational, Sequence, Track, Transition, VideoStreamInfo } from '@shared/model';
+import type { ExportSettings, MediaItem, Rational, Sequence, VideoStreamInfo } from '@shared/model';
 import type { ExportRequest } from '@shared/ipc';
-import { clipEnd, sequenceDuration, sourceTimeAt, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN } from '@shared/timeline';
+import { clipEnd, sequenceDuration } from '@shared/timeline';
+import { activeTracks, planTrackSegments, widenRangeForTransitions, type ClipSeg, type TrackPlan } from '@shared/exportPlan';
 import { framesToSeconds, isValidFps } from '@shared/time';
 import { serializeSrt } from '@shared/subtitles';
 import { videoDisplaySize } from '@shared/media';
@@ -173,12 +174,6 @@ export function escapeFilterPath(p: string): string {
   return option.replace(/[\\'\[\],;]/g, (m) => '\\' + m);         // graph-level: \ ' [ ] , ;
 }
 
-function isImageMedia(m: MediaItem): boolean {
-  if (m.kind === 'image') return true;
-  const p = m.probe;
-  return !!(p && p.video && (!p.duration || p.duration <= 0) && p.audio.length === 0);
-}
-
 /**
  * Whether a still can be opened with `-loop 1` (the image2 demuxer and its `*_pipe` variants accept it). Unprobed
  * stills keep the loop input (an image file by extension, usually image2).
@@ -188,23 +183,11 @@ function loopableStill(m: MediaItem): boolean {
   return !c || c === 'image2' || c.startsWith('image2') || /_pipe$/.test(c);
 }
 
-function mediaDurationSec(m: MediaItem): number {
-  if (isImageMedia(m)) return Infinity;
-  const d = m.probe?.duration;
-  return d && d > 0 ? d : Infinity;
-}
-
-export function activeTracks(tracks: Track[]): Track[] {
-  const live = tracks.filter((t) => !t.muted);
-  const solo = live.filter((t) => t.solo);
-  return solo.length ? solo : live;
-}
+/** The tracks an export renders (shared/exportPlan.ts; electron/export/chunks.ts imports it from here). */
+export { activeTracks };
 
 /** Longest export accepted (seconds): anything longer is a corrupt In/Out point or clip position. */
 export const MAX_EXPORT_SECONDS = 24 * 3600;
-/** Largest source position (seconds) a clip may read from (about 115 days). */
-const MAX_SOURCE_SECONDS = 1e7;
-
 function resolveRange(seq: Sequence, settings: ExportSettings, warnings: string[]): { startF: number; endF: number } {
   const check = (r: { startF: number; endF: number }) => {
     if (!Number.isSafeInteger(r.startF) || !Number.isSafeInteger(r.endF)) {
@@ -224,150 +207,6 @@ function resolveRange(seq: Sequence, settings: ExportSettings, warnings: string[
   }
   if (total <= 0) throw new Error('Nothing to export: the sequence is empty.');
   return check({ startF: 0, endF: total });
-}
-
-// ---------------------------------------------------------------------------------------------------
-// Segment model
-// ---------------------------------------------------------------------------------------------------
-
-interface ClipSeg {
-  kind: 'clip';
-  clip: Clip;
-  media: MediaItem;
-  /** Timeline frames relative to range start (before transition extension). */
-  start: number;
-  frames: number;
-  /** Source position (seconds) at `start`. */
-  srcStart: number;
-  /** Transition handles, in frames. */
-  extBefore: number;
-  extAfter: number;
-  /** Transition INTO this segment from the previous segment (centered on the cut). */
-  transIn?: { type: Transition['type']; frames: number };
-  /** Fade from black/silence at segment start (transition with outClipId null). */
-  fadeIn?: number;
-  /** Fade to black/silence at segment end (transition with inClipId null). */
-  fadeOut?: number;
-  isImage: boolean;
-  speed: number;
-  /** Set once the segment is assigned an ffmpeg input index. */
-  input: number;
-}
-interface GapSeg { kind: 'gap'; frames: number }
-type Seg = ClipSeg | GapSeg;
-
-interface TrackPlan { track: Track; segs: Seg[] }
-
-function collectTrackSegments(
-  track: Track, seq: Sequence, media: Record<ID, MediaItem>, startF: number, endF: number,
-  need: 'video' | 'audio', warnings: string[],
-): TrackPlan {
-  const fps = seq.fps;
-  const fd = fps.den / fps.num;
-  const clipSegs: ClipSeg[] = [];
-  const sorted = track.clips
-    .filter((c) => c.enabled && c.start < endF && clipEnd(c) > startF)
-    .sort((a, b) => a.start - b.start);
-  let cursor = startF;
-  for (const clip of sorted) {
-    const m = Object.hasOwn(media, clip.mediaId) ? media[clip.mediaId] : undefined; // "constructor" etc. are not media
-    if (!m) { warnings.push(`Clip "${clip.name}" on ${track.name}: media is missing from the project; rendered as ${need === 'video' ? 'black' : 'silence'}.`); continue; }
-    if (m.offline) { warnings.push(`Clip "${clip.name}" on ${track.name}: media "${m.name}" is offline; rendered as ${need === 'video' ? 'black' : 'silence'}.`); continue; }
-    if (need === 'video' && m.probe && !m.probe.video) { warnings.push(`Clip "${clip.name}" on ${track.name}: media "${m.name}" has no video stream; rendered as black.`); continue; }
-    if (need === 'audio' && m.probe && m.probe.audio.length === 0) { warnings.push(`Clip "${clip.name}" on ${track.name}: media "${m.name}" has no audio stream; rendered as silence.`); continue; }
-    if (need === 'audio' && clip.audio.muted) continue; // muted clip => silence
-    let speed = clip.speed;
-    if (!(speed > 0) || !Number.isFinite(speed)) { warnings.push(`Clip "${clip.name}": invalid speed ${clip.speed}; using 1.0.`); speed = 1; }
-    if (speed < (SPEED_PERCENT_MIN / 100) * (1 - 1e-9) || speed > (SPEED_PERCENT_MAX / 100) * (1 + 1e-9)) {
-      throw new Error(`Clip "${clip.name}" on ${track.name}: speed ${speed * 100}% is out of range (${SPEED_PERCENT_MIN}% to ${SPEED_PERCENT_MAX}%). Fix the clip speed and export again.`);
-    }
-    const segStartAbs = Math.max(clip.start, startF, cursor);
-    const segEndAbs = Math.min(clipEnd(clip), endF);
-    if (segEndAbs <= segStartAbs) continue;
-    if (segStartAbs > Math.max(clip.start, startF)) warnings.push(`Clip "${clip.name}" overlaps the previous clip on ${track.name}; the overlap is trimmed.`);
-    const srcStart = sourceTimeAt({ ...clip, speed }, segStartAbs, fps);
-    if (!Number.isFinite(srcStart) || Math.abs(srcStart) > MAX_SOURCE_SECONDS) {
-      throw new Error(`Clip "${clip.name}" on ${track.name}: source position ${String(clip.sourceIn)} s is not valid. Fix the clip and export again.`);
-    }
-    const mediaDur = mediaDurationSec(m);
-    if (Number.isFinite(mediaDur)) {
-      const srcEnd = sourceTimeAt({ ...clip, speed }, segEndAbs, fps);
-      if (srcEnd > mediaDur + fd / 2 + 1e-6) {
-        warnings.push(`Clip "${clip.name}" on ${track.name} extends past the end of its media "${m.name}" (needs ${srcEnd.toFixed(2)}s, media is ${mediaDur.toFixed(2)}s); ${need === 'video' ? 'the last frame is held' : 'the rest is silent'}.`);
-      }
-    }
-    clipSegs.push({
-      kind: 'clip', clip, media: m,
-      start: segStartAbs - startF, frames: segEndAbs - segStartAbs,
-      srcStart,
-      extBefore: 0, extAfter: 0, isImage: isImageMedia(m), speed, input: -1,
-    });
-    cursor = segEndAbs;
-  }
-
-  // Transitions (centered on cuts; handles taken from source media).
-  const byId = new Map(clipSegs.map((s) => [s.clip.id, s] as const));
-  for (const tr of track.transitions) {
-    const wantAudio = need === 'audio';
-    const typeOk = wantAudio ? (tr.type === 'audioCrossfade' || tr.type === 'crossDissolve') : (tr.type === 'crossDissolve' || tr.type === 'dipToBlack');
-    if (!typeOk) continue;
-    const D = Math.max(0, Math.round(tr.duration));
-    if (!Number.isFinite(D) || D <= 0) continue;
-    const outSeg = tr.outClipId ? byId.get(tr.outClipId) : undefined;
-    const inSeg = tr.inClipId ? byId.get(tr.inClipId) : undefined;
-    if (tr.outClipId && tr.inClipId) {
-      if (!outSeg || !inSeg) { continue; } // one side skipped/out of range -> hard cut (already warned if media problem)
-      const cutAbs = clipEnd(outSeg.clip);
-      if (inSeg.clip.start !== cutAbs) { warnings.push(`Transition between "${outSeg.clip.name}" and "${inSeg.clip.name}" is not on an adjacent cut; ignored.`); continue; }
-      const cut = cutAbs - startF;
-      if (outSeg.start + outSeg.frames !== cut || inSeg.start !== cut) { warnings.push(`Transition at the edge of the export range is dropped (hard cut).`); continue; }
-      // Handles (frames) available on each side.
-      const outDur = mediaDurationSec(outSeg.media);
-      const srcOut = outSeg.srcStart + outSeg.frames * fd * outSeg.speed;
-      const handleOut = Number.isFinite(outDur) ? Math.floor(((outDur - srcOut) / outSeg.speed) / fd + 1e-6) : Infinity;
-      const handleIn = inSeg.isImage ? Infinity : Math.floor((inSeg.srcStart / inSeg.speed) / fd + 1e-6);
-      // Centered on the cut: an odd duration renders D - 1 frames (not reported).
-      const hClips = Math.min(Math.floor(D / 2), outSeg.frames, inSeg.frames);
-      const hSource = Math.min(handleOut, handleIn);
-      const h = Math.max(0, Math.min(hClips, hSource));
-      const names = `"${outSeg.clip.name}" and "${inSeg.clip.name}"`;
-      if (h < 1) { warnings.push(`Transition between ${names} dropped: ${hSource < 1 ? 'not enough source handles' : 'too short to render'}.`); continue; }
-      if (h < Math.floor(D / 2)) {
-        warnings.push(`Transition between ${names} shortened from ${D} to ${2 * h} frames (${hSource < hClips ? 'source handles' : 'the clips are shorter than the transition'}).`);
-      }
-      outSeg.extAfter = h;
-      inSeg.extBefore = h;
-      inSeg.transIn = { type: tr.type, frames: 2 * h };
-    } else if (inSeg && !tr.outClipId) {
-      if (inSeg.start + startF !== inSeg.clip.start) continue; // clip start is outside range
-      inSeg.fadeIn = Math.min(D, inSeg.frames);
-    } else if (outSeg && !tr.inClipId) {
-      if (outSeg.start + outSeg.frames + startF !== clipEnd(outSeg.clip)) continue;
-      outSeg.fadeOut = Math.min(D, outSeg.frames);
-    }
-  }
-  // Guard: a clip cannot carry overlapping transitions on both ends.
-  for (let i = 0; i < clipSegs.length; i++) {
-    const s = clipSegs[i];
-    if (s.extBefore + s.extAfter > s.frames) {
-      const next = clipSegs[i + 1];
-      warnings.push(`Transitions on both sides of "${s.clip.name}" overlap; the outgoing transition is dropped.`);
-      s.extAfter = 0;
-      if (next) { next.extBefore = 0; next.transIn = undefined; }
-    }
-  }
-
-  // Interleave gaps so the track covers the whole range.
-  const total = endF - startF;
-  const segs: Seg[] = [];
-  let pos = 0;
-  for (const s of clipSegs) {
-    if (s.start > pos) segs.push({ kind: 'gap', frames: s.start - pos });
-    segs.push(s);
-    pos = s.start + s.frames;
-  }
-  if (pos < total) segs.push({ kind: 'gap', frames: total - pos });
-  return { track, segs };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -954,44 +793,6 @@ function assertOutputNotASource(req: ExportRequest, outputPath: string, opts: Re
 const AC3_SAMPLE_RATES = [32000, 44100, 48000];
 
 /**
- * Widens `[startF, endF)` so it never starts or ends inside a transition window (D2). A transition is laid out
- * on the full timeline (centered on its cut, its length limited by the clips and their handles); a range edge
- * inside it would shorten it, turn it into a hard cut or restart a fade. The caller renders the widened range
- * and trims the composite back to `[startF, endF)`, so the frames are the full export's. Windows are the ones
- * chunks.ts never puts a chunk boundary in (only the export range edges can be inside one).
- */
-function widenRangeForTransitions(seq: Sequence, startF: number, endF: number): { startF: number; endF: number } {
-  const windows: [number, number][] = [];
-  for (const t of [...activeTracks(seq.videoTracks), ...activeTracks(seq.audioTracks)]) {
-    const byId = new Map(t.clips.filter((c) => c.enabled).map((c) => [c.id, c] as const));
-    for (const tr of t.transitions) {
-      const D = Math.max(0, Math.round(tr.duration));
-      if (!Number.isFinite(D) || D <= 0) continue;
-      const outC = tr.outClipId ? byId.get(tr.outClipId) : undefined;
-      const inC = tr.inClipId ? byId.get(tr.inClipId) : undefined;
-      const h = Math.ceil(D / 2);
-      if (outC && inC) {
-        const cut = clipEnd(outC);
-        windows.push([cut - Math.min(h, outC.duration), cut + Math.min(h, inC.duration)]);
-      } else if (inC && !tr.outClipId) {
-        windows.push([inC.start, inC.start + Math.min(D, inC.duration)]);
-      } else if (outC && !tr.inClipId) {
-        windows.push([clipEnd(outC) - Math.min(D, outC.duration), clipEnd(outC)]);
-      }
-    }
-  }
-  let s = startF, e = endF, changed = true;
-  while (changed) {
-    changed = false;
-    for (const [lo, hi] of windows) {
-      if (lo < s && s < hi) { s = Math.max(0, lo); changed = true; }
-      if (lo < e && e < hi) { e = hi; changed = true; }
-    }
-  }
-  return { startF: s, endF: e };
-}
-
-/**
  * Burn-in SRT for `[startF, endF)` (relative to startF). Cues are snapped to the sequence frames the editor shows
  * them on (start frame inclusive, end frame exclusive) and written at frame midpoints, half a frame before those
  * frames: libass picks cues by frame time in whole milliseconds, so exact frame times (rounded to the nearest
@@ -1084,7 +885,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   let subtitleContent: string | undefined;
   if (wantVideo) {
     for (const track of activeTracks(seq.videoTracks)) {
-      const plan = collectTrackSegments(track, seq, media, renderStartF, renderEndF, 'video', warnings);
+      const plan = planTrackSegments(track, seq, media, renderStartF, renderEndF, 'video', warnings);
       const label = videoTrack(ctx, plan);
       if (label) videoLabels.push(label);
     }
@@ -1126,7 +927,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   if (wantAudio) {
     const audioLabels: string[] = [];
     for (const track of activeTracks(seq.audioTracks)) {
-      const plan = collectTrackSegments(track, seq, media, renderStartF, renderEndF, 'audio', warnings);
+      const plan = planTrackSegments(track, seq, media, renderStartF, renderEndF, 'audio', warnings);
       const label = audioTrack(ctx, plan);
       if (label) audioLabels.push(label);
     }
