@@ -359,6 +359,14 @@ sequences, and optionally subtitle sidecars and proxies) into one folder, and sa
 that folder. It shares groundwork with relative media roots (§17). Derived media should survive the move: today the
 cache key includes the absolute path, so thumbnails, waveforms and proxies are rebuilt after media moves
 (see [LIMITATIONS](LIMITATIONS.md#projects)).
+**Status: done (7 October 2026, release 0.10.0).** **File › Collect Project…** copies the project and its media
+(media used in sequences, or all project media; optionally subtitle files and ready proxies) into
+`<destination>/<Project name>/` (`Media/`, `Subtitles/`, `Proxies/`), as a cancellable job with byte progress that
+verifies each copy (size and fingerprint) and writes the project, with absolute paths rewritten to the copies, last.
+Same-named files from different folders get distinguishing subfolders; offline media are skipped with a warning; a
+failed or canceled collect leaves the folder marked `COLLECT-INCOMPLETE.txt` and never touches the originals. The
+derived-media cache is now keyed by content (size + sampled fingerprint, with the old path key still read), which
+closes the [moved-media cache bug](../bugs/closed/2026-10-05-moved-media-cache-miss.md). Paths stay absolute (§17).
 
 ## 17. Cloud-free collaboration
 
