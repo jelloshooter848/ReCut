@@ -2,9 +2,9 @@
 
 ReCut runs from source on Linux, macOS and Windows. Verified packaged builds: the **Windows installer and portable
 exe** (built on Windows by CI with FFmpeg bundled; the unpacked app they are made from is smoke-tested, the installer
-is silently installed and the installed app smoke-tested; the unit and end-to-end suites also run on Windows) and the
-**Linux unpacked** build (built and run locally). macOS (dmg) and the Linux AppImage are configured but untested.
-Nothing is code-signed.
+is silently installed and the installed app smoke-tested; the unit and end-to-end suites run on Windows on every
+build and must pass before anything is published) and the **Linux unpacked** build (built and run locally). macOS
+(dmg) and the Linux AppImage are configured but untested. Nothing is code-signed.
 
 ## Windows in one step
 
@@ -21,8 +21,10 @@ Nothing is code-signed.
 Releases are produced by `.github/workflows/windows.yml`, which builds on `windows-latest`, bundles the current FFmpeg release (gyan.dev essentials, BtbN as fallback;
 see `scripts/windows/get-ffmpeg.ps1`), smoke-tests both the unpacked app and a silent install (media protocol, FFmpeg encode + probe,
 UI mounted), and publishes a release `v<version>` automatically when a release PR (version bump + changelog entry) is merged to
-`main`, or a test-build prerelease `v<version>-dev.<run>` for any other push (see [RELEASING.md](RELEASING.md)). The same workflow checks `Start ReCut.cmd`
-from a fresh clone and runs the unit and end-to-end suites on Windows.
+`main`, or a test-build prerelease `v<version>-dev.<run>` for any other push (see [RELEASING.md](RELEASING.md)). On every
+build the same workflow also checks `Start ReCut.cmd` from a fresh clone and runs the unit and end-to-end suites on
+Windows. Publishing is a separate last job that runs only when the build, smoke and install checks, both test suites
+and the launcher check have all passed; a run with any failure publishes nothing, release or test build.
 
 ## Prerequisites
 

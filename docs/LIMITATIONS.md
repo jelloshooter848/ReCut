@@ -1,6 +1,6 @@
 # Known limitations
 
-This page describes ReCut 0.2.2 as of 6 October 2026. Every item was checked against the code. Items marked **bug** are
+This page describes ReCut 0.3.0 as of 7 October 2026. Every item was checked against the code. Items marked **bug** are
 defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.md)).
 
 ## Editing and effects
@@ -85,9 +85,10 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 
 ## Platform and packaging
 
-- **Verified packages:** the Windows installer and portable exe (built, installed and smoke-tested on Windows in CI,
-  where the unit and end-to-end suites also pass) and the Linux unpacked build. The macOS dmg and Linux AppImage are
-  configured but untested. Nothing is signed or notarised, so Windows SmartScreen warns on first launch.
+- **Verified packages:** the Windows installer and portable exe (built, installed and smoke-tested on Windows in CI;
+  the unit and end-to-end suites run on Windows on every build and must pass before anything is published) and the
+  Linux unpacked build. The macOS dmg and Linux AppImage are configured but untested. Nothing is signed or notarised,
+  so Windows SmartScreen warns on first launch.
 - **FFmpeg is bundled only in the Windows release builds** (and fetched by `Start ReCut.cmd`). Elsewhere, install it
   yourself or drop static binaries into `resources/ffmpeg/` before `npm run package` / `npm run dist` (see
   [INSTALL](INSTALL.md#bundling-ffmpeg)). ReCut works with FFmpeg 6 through 9. When FFmpeg is missing, ReCut shows a banner and import / proxies / export stop with
