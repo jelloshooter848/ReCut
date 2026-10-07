@@ -1,12 +1,25 @@
 name: Windows build
 
-# Builds the Windows installer + portable exe on a real Windows machine, smoke-tests them, and publishes them
-# as a GitHub Release. Also checks that "Start ReCut.cmd" works from a fresh clone and runs the test suites on Windows.
+# Builds the Windows installer + portable exe on a real Windows machine, smoke-tests them, runs the unit and
+# end-to-end suites on Windows, checks that "Start ReCut.cmd" works from a fresh clone, and publishes a GitHub Release.
+#
+# Job graph (the required release gates run in parallel; publishing is a separate final job):
+#   installer  build, smoke test, install check, upload the ReCut-windows and release-notes artifacts, and decide
+#              the release metadata (job outputs)
+#   tests      unit tests (vitest) on Windows
+#   e2e        end-to-end tests (Playwright + Electron) on Windows
+#   launcher   "Start ReCut.cmd" self-test from a fresh clone
+#   publish    needs installer, tests, e2e and launcher. Runs only when all four succeeded (default success()
+#              semantics: a failed, cancelled or skipped gate skips it), then re-checks the tag and publishes the
+#              release or dev prerelease from the installer job's artifacts and outputs.
+#   installer-stress  manual only, not a gate (see below).
+# Every gate is required: none has continue-on-error. A red gate means nothing is published, neither a release nor a
+# dev prerelease; fix the problem and push again (docs/RELEASING.md).
 #
 # Releases are automatic (docs/RELEASING.md). The normal flow is: a release PR bumps package.json
 # (npm version X.Y.Z --no-git-tag-version) and adds a "## [X.Y.Z]" section to CHANGELOG.md -> the PR is merged ->
-# this workflow runs on the push to main and, after the smoke and install checks pass, publishes release vX.Y.Z on
-# the merge commit. Nobody pushes a tag: the publish step creates it. Never create the release or tag by hand (for
+# this workflow runs on the push to main and, after every gate passes, the publish job publishes release vX.Y.Z on
+# the merge commit. Nobody pushes a tag: the publish job creates it. Never create the release or tag by hand (for
 # example in the GitHub web UI) before the release PR is merged.
 #
 # Release naming, decided by the "Release metadata" step:
@@ -16,8 +29,8 @@ name: Windows build
 #     "v" + package.json version, and CHANGELOG.md must have a "## [<version>]" section, or the run fails in seconds.
 #   - anything else (push to main when v<v> is already tagged or has no changelog section, other branches,
 #     workflow_dispatch): prerelease  v<version>-dev.<run_number>  "ReCut <version>-dev.<run> (Windows test build)"
-#   Just before publishing, an automatic release re-checks that v<v> is still untagged (someone may have pushed the
-#   tag while this run was building) and falls back to a dev prerelease if it is not.
+#   Just before publishing, the publish job re-checks that an automatic release's v<v> is still untagged (someone may
+#   have pushed the tag while this run was building) and falls back to a dev prerelease if it is not.
 #
 # Trigger notes:
 #   - Only plain semver tags (v0.2.0, v1.10.3) trigger a tag build. GitHub filter patterns treat '.' literally and '+'
@@ -58,11 +71,23 @@ jobs:
     name: Installer + portable exe
     runs-on: windows-latest
     timeout-minutes: 60
+    # What the publish job needs. notes / dev_notes are file names inside the release-notes artifact (a file does not
+    # cross jobs, so the notes travel as an artifact and stay byte-identical).
+    outputs:
+      auto: ${{ steps.rel.outputs.auto }}
+      tag: ${{ steps.rel.outputs.tag }}
+      name: ${{ steps.rel.outputs.name }}
+      prerelease: ${{ steps.rel.outputs.prerelease }}
+      latest: ${{ steps.rel.outputs.latest }}
+      notes: ${{ steps.rel.outputs.notes }}
+      dev_tag: ${{ steps.rel.outputs.dev_tag }}
+      dev_name: ${{ steps.rel.outputs.dev_name }}
+      dev_notes: ${{ steps.rel.outputs.dev_notes }}
     steps:
       - uses: actions/checkout@v4
 
-      # Runs first so a mistagged release fails in seconds, not after the build. Publishing happens at the end,
-      # after the smoke and install checks, in every case.
+      # Runs first so a mistagged release fails in seconds, not after the build. Publishing happens in the separate
+      # publish job, after this job and every test job have passed, in every case.
       - name: Release metadata (release or dev build, changelog notes)
         id: rel
         shell: pwsh
@@ -150,14 +175,18 @@ jobs:
             }
           }
 
-          $notes = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          $devNotes = Join-Path $env:RUNNER_TEMP 'dev-notes.md'
+          # Both notes files go into one directory, uploaded as the release-notes artifact for the publish job.
+          # The notes / dev_notes outputs are the file names inside that directory (and artifact).
+          $notesDir = Join-Path $env:RUNNER_TEMP 'release-notes'
+          New-Item -ItemType Directory -Force -Path $notesDir | Out-Null
+          $notes = Join-Path $notesDir 'release-notes.md'
+          $devNotes = Join-Path $notesDir 'dev-notes.md'
           Set-Content -Path $notes -Value $body -Encoding utf8
           Set-Content -Path $devNotes -Value $devBody -Encoding utf8
           Write-Host "Release: $name (tag $tag, prerelease $pre, automatic $auto)"; Get-Content $notes
           Add-Content -Path $env:GITHUB_OUTPUT -Value @(
-            "version=$v", "tag=$tag", "name=$name", "prerelease=$pre", "latest=$latest", "notes=$notes", "auto=$auto",
-            "dev_tag=$devTag", "dev_name=$devName", "dev_notes=$devNotes")
+            "version=$v", "tag=$tag", "name=$name", "prerelease=$pre", "latest=$latest", "notes=release-notes.md",
+            "auto=$auto", "dev_tag=$devTag", "dev_name=$devName", "dev_notes=dev-notes.md", "notes_dir=$notesDir")
           exit 0
 
       - uses: actions/setup-node@v4
@@ -190,7 +219,9 @@ jobs:
           if ($r -cmatch 'FAILED|layout=MISSING' -or $r -notmatch 'encode\+probe ok' -or $r -notmatch 'status=206' -or $r -notmatch 'resources\\ffmpeg') { throw 'smoke test failed' }
 
       # Uploaded before the install check so a failed install can still be inspected, and so the installer-stress
-      # job can reuse the build. The Release is published only after the install check passes.
+      # and publish jobs can reuse the build. The artifact root is release/ (the files' common folder), so
+      # downloading it into release/ restores release/ReCut-Setup-*.exe and release/ReCut-Portable-*.exe, the files
+      # the publish job attaches. The Release is published only after the install check and every test job pass.
       - uses: actions/upload-artifact@v4
         with:
           name: ReCut-windows
@@ -199,63 +230,19 @@ jobs:
             release/ReCut-Portable-*.exe
           if-no-files-found: error
 
+      # The notes files written by the "Release metadata" step (release-notes.md, dev-notes.md), for the publish job.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: ${{ steps.rel.outputs.notes_dir }}
+          if-no-files-found: error
+
       # Five silent install / smoke / uninstall cycles plus one portable launch, because the installer crash in
       # bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md was intermittent. Prints the CPU first and, on a
       # failed install, the faulting module (Application error events) and the NSIS temp dir.
       - name: Install check (installer x5, uninstall, portable exe)
         shell: pwsh
         run: ./scripts/windows/install-check.ps1 -Release release -Attempts 5 -SmokeAttempts 1
-
-      # An automatic release re-checks its tag right before publishing. If v<version> appeared while this run was
-      # building (someone pushed the tag or made the release by hand), the run publishes a dev prerelease instead of
-      # touching that release. Everything else passes through unchanged.
-      - name: Final release check
-        id: pub
-        if: github.event_name != 'pull_request'
-        shell: pwsh
-        env:
-          AUTO: ${{ steps.rel.outputs.auto }}
-          TAG: ${{ steps.rel.outputs.tag }}
-          NAME: ${{ steps.rel.outputs.name }}
-          PRE: ${{ steps.rel.outputs.prerelease }}
-          LATEST: ${{ steps.rel.outputs.latest }}
-          NOTES: ${{ steps.rel.outputs.notes }}
-          DEV_TAG: ${{ steps.rel.outputs.dev_tag }}
-          DEV_NAME: ${{ steps.rel.outputs.dev_name }}
-          DEV_NOTES: ${{ steps.rel.outputs.dev_notes }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $false
-          $tag = $env:TAG; $name = $env:NAME; $pre = $env:PRE; $latest = $env:LATEST; $notes = $env:NOTES
-          if ($env:AUTO -eq 'true') {
-            git ls-remote --exit-code --tags origin "refs/tags/$tag" | Out-Host
-            $rc = $LASTEXITCODE; $global:LASTEXITCODE = 0
-            if ($rc -eq 0) {
-              Write-Host "::warning::Tag $tag was created while this run was building; publishing a dev prerelease instead."
-              $tag = $env:DEV_TAG; $name = $env:DEV_NAME; $pre = 'true'; $latest = 'false'; $notes = $env:DEV_NOTES
-            } elseif ($rc -ne 2) {
-              Write-Host "::error::git ls-remote failed (exit $rc) while re-checking tag $tag."; exit 1
-            }
-          }
-          Write-Host "Publishing: $name (tag $tag, prerelease $pre, latest $latest)"
-          Add-Content -Path $env:GITHUB_OUTPUT -Value @("tag=$tag", "name=$name", "prerelease=$pre", "latest=$latest", "notes=$notes")
-          exit 0
-
-      # softprops creates the tag (with GITHUB_TOKEN, on target_commitish = the commit this run built) when it does
-      # not exist yet. That is how an automatic release gets its v<version> tag on the release PR's merge commit.
-      - name: Publish GitHub Release
-        if: github.event_name != 'pull_request'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.pub.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          name: ${{ steps.pub.outputs.name }}
-          prerelease: ${{ steps.pub.outputs.prerelease }}
-          make_latest: ${{ steps.pub.outputs.latest }}
-          body_path: ${{ steps.pub.outputs.notes }}
-          files: |
-            release/ReCut-Setup-*.exe
-            release/ReCut-Portable-*.exe
 
   # Manual only (workflow_dispatch with installer_stress): repeats the install check on several runners to raise the
   # chance of landing on the host types where the intermittent NSIS installer crash showed up (AMD EPYC 7763), see
@@ -297,7 +284,6 @@ jobs:
     name: Unit tests on Windows
     runs-on: windows-latest
     timeout-minutes: 30
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -316,7 +302,6 @@ jobs:
     name: End-to-end tests on Windows
     runs-on: windows-latest
     timeout-minutes: 60
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -337,3 +322,77 @@ jobs:
         with:
           name: e2e-results-windows
           path: test-results/
+
+  # The only job that publishes. It needs every required gate and has no always()/failure()/cancelled() in its if:,
+  # so the implicit success() applies: if installer, tests, e2e or launcher failed, was cancelled or was skipped,
+  # this job is skipped and nothing is published (no release, no dev prerelease, no tag).
+  publish:
+    name: Publish GitHub Release
+    needs: [installer, tests, e2e, launcher]
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      # The checkout leaves credentials in the git config for git ls-remote in the final release check.
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ReCut-windows
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/release-notes
+
+      # An automatic release re-checks its tag right before publishing. If v<version> appeared while this run was
+      # building (someone pushed the tag or made the release by hand), the run publishes a dev prerelease instead of
+      # touching that release. Everything else passes through unchanged.
+      - name: Final release check
+        id: pub
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          AUTO: ${{ needs.installer.outputs.auto }}
+          TAG: ${{ needs.installer.outputs.tag }}
+          NAME: ${{ needs.installer.outputs.name }}
+          PRE: ${{ needs.installer.outputs.prerelease }}
+          LATEST: ${{ needs.installer.outputs.latest }}
+          NOTES: ${{ runner.temp }}/release-notes/${{ needs.installer.outputs.notes }}
+          DEV_TAG: ${{ needs.installer.outputs.dev_tag }}
+          DEV_NAME: ${{ needs.installer.outputs.dev_name }}
+          DEV_NOTES: ${{ runner.temp }}/release-notes/${{ needs.installer.outputs.dev_notes }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $tag = $env:TAG; $name = $env:NAME; $pre = $env:PRE; $latest = $env:LATEST; $notes = $env:NOTES
+          if ($env:AUTO -eq 'true') {
+            git ls-remote --exit-code --tags origin "refs/tags/$tag" | Out-Host
+            $rc = $LASTEXITCODE; $global:LASTEXITCODE = 0
+            if ($rc -eq 0) {
+              Write-Host "::warning::Tag $tag was created while this run was building; publishing a dev prerelease instead."
+              $tag = $env:DEV_TAG; $name = $env:DEV_NAME; $pre = 'true'; $latest = 'false'; $notes = $env:DEV_NOTES
+            } elseif ($rc -ne 2) {
+              Write-Host "::error::git ls-remote failed (exit $rc) while re-checking tag $tag."; exit 1
+            }
+          }
+          Write-Host "Publishing: $name (tag $tag, prerelease $pre, latest $latest)"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value @("tag=$tag", "name=$name", "prerelease=$pre", "latest=$latest", "notes=$notes")
+          exit 0
+
+      # softprops creates the tag (with GITHUB_TOKEN, on target_commitish = the commit this run built) when it does
+      # not exist yet. That is how an automatic release gets its v<version> tag on the release PR's merge commit.
+      - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.pub.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.pub.outputs.name }}
+          prerelease: ${{ steps.pub.outputs.prerelease }}
+          make_latest: ${{ steps.pub.outputs.latest }}
+          body_path: ${{ steps.pub.outputs.notes }}
+          files: |
+            release/ReCut-Setup-*.exe
+            release/ReCut-Portable-*.exe
