@@ -31,59 +31,142 @@ async function playhead(page: Page): Promise<number> {
   return getState<number>(page, '(s) => s.project.sequences[s.project.activeSequenceId].view.playhead');
 }
 
+interface Size { w: number; h: number }
+interface CanvasSizes { actual: Size; expected: Size; uncapped: Size; seq: Size; box: Size; dpr: number; capped: boolean }
+
+/**
+ * The Program canvas size next to the size the app should produce for the monitor as it is laid out right now: the
+ * sequence size x playback resolution, capped to the monitor's on-screen box in device pixels, keeping the sequence
+ * aspect ratio. Mirrors ProgramPanel (fitBox of the .pm-video rect, setDisplaySize(box x devicePixelRatio)) and
+ * SequencePlayer.resizeCanvas, rounding included. Read live, so it holds whatever room the screen size, the window
+ * frame and menu bar, and the other panels leave for the monitor, which differs between xvfb and a Windows runner.
+ */
+async function canvasSizes(page: Page): Promise<CanvasSizes> {
+  return page.evaluate((sel) => {
+    const canvas = document.querySelector(sel) as HTMLCanvasElement;
+    const video = canvas.closest('.pm-video') as HTMLElement;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const s = (window as any).__recut.store.getState();
+    const q = s.project.sequences[s.project.activeSequenceId];
+    const factor = ({ full: 1, '1/2': 0.5, '1/4': 0.25 } as Record<string, number>)[s.project.settings.playbackResolution] ?? 1;
+    const r = video.getBoundingClientRect();
+    const fit = Math.min(r.width / q.width, r.height / q.height);
+    const box = r.width > 0 && r.height > 0 ? { w: Math.max(2, Math.floor(q.width * fit)), h: Math.max(2, Math.floor(q.height * fit)) } : { w: 0, h: 0 };
+    const dpr = window.devicePixelRatio || 1;
+    const cap = box.w > 0 ? { w: Math.round(box.w * dpr), h: Math.round(box.h * dpr) } : null;
+    const w = q.width * factor, h = q.height * factor;
+    const k = cap ? Math.min(1, cap.w / w, cap.h / h) : 1;
+    return {
+      actual: { w: canvas.width, h: canvas.height },
+      expected: { w: Math.max(2, Math.round(w * k)), h: Math.max(2, Math.round(h * k)) },
+      uncapped: { w: Math.max(2, Math.round(w)), h: Math.max(2, Math.round(h)) },
+      seq: { w: q.width, h: q.height }, box, dpr, capped: k < 1,
+    };
+  }, CANVAS);
+}
+
+/**
+ * Waits until the canvas has exactly the size canvasSizes computes, then checks that it keeps the sequence aspect
+ * ratio (width and height are rounded separately, so each is within half a pixel of it). Returns the sizes.
+ */
+async function expectCanvasSize(page: Page, label: string): Promise<CanvasSizes> {
+  // Received on failure: every input of the computation, as last sampled.
+  await expect.poll(async () => { const c = await canvasSizes(page); return c.actual.w === c.expected.w && c.actual.h === c.expected.h ? 'match' : JSON.stringify(c); },
+    { message: `${label}: canvas size` }).toBe('match');
+  const c = await canvasSizes(page);
+  console.log(`[program canvas] ${label}: ${c.actual.w}x${c.actual.h} (box ${c.box.w}x${c.box.h} @${c.dpr}x, uncapped ${c.uncapped.w}x${c.uncapped.h}, capped ${c.capped})`);
+  expect(c.actual).toEqual(c.expected);
+  expect(Math.abs(c.actual.h - (c.actual.w * c.seq.h) / c.seq.w)).toBeLessThan(1);
+  return c;
+}
+
+/** A fresh, empty project (no save prompt) with movie 1 imported. Every test starts here: none reuses another's state. */
+async function freshProjectWithMovie(launched: LaunchedApp): Promise<{ seqId: string; mediaId: string }> {
+  const { page, tmp } = launched;
+  await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const store = (window as any).__recut.store;
+    store.setState({ dirty: false });
+    store.getState().newProject();
+  });
+  const movie = path.join(makeTestMedia(tmp, 'short'), MEDIA.movie1);
+  expect(fs.existsSync(movie)).toBeTruthy();
+  const [mediaId] = await importMedia(page, [movie]);
+  expect(await getState<boolean>(page, `(s) => !!s.project.media[${JSON.stringify(mediaId)}].probe?.video`)).toBeTruthy();
+  const seqId = await getState<string>(page, '(s) => s.project.activeSequenceId');
+  expect(seqId).toBeTruthy();
+  return { seqId, mediaId };
+}
+
+/** Puts 1–3 s of movie 1 at frames 0–47 and 5–7 s of the same file at frames 48–95 into the sequence. */
+async function insertTwoRanges(page: Page, seqId: string, mediaId: string): Promise<void> {
+  await page.evaluate(({ seqId, mediaId }) => {
+    const w = window as unknown as { __recut: { store: { getState(): any } } };
+    const st = w.__recut.store.getState();
+    st.insertFromSource(seqId, { mediaId, in: 1, out: 3, atFrame: 0, mode: 'insert' });
+    st.insertFromSource(seqId, { mediaId, in: 5, out: 7, atFrame: 48, mode: 'insert' });
+  }, { seqId, mediaId });
+  const duration = await page.evaluate(() => {
+    const w = window as unknown as { __recut: { store: { getState(): any } } };
+    const s = w.__recut.store.getState();
+    const seq = s.project.sequences[s.project.activeSequenceId];
+    let end = 0;
+    for (const t of [...seq.videoTracks, ...seq.audioTracks]) for (const c of t.clips) end = Math.max(end, c.start + c.duration);
+    return end;
+  });
+  expect(duration).toBe(96);
+}
+
+/** freshProjectWithMovie + insertTwoRanges: the two-clip sequence the playback tests run on. */
+async function twoClipProject(launched: LaunchedApp): Promise<{ seqId: string; mediaId: string }> {
+  const ids = await freshProjectWithMovie(launched);
+  await insertTwoRanges(launched.page, ids.seqId, ids.mediaId);
+  return ids;
+}
+
 test.describe('Program Monitor', () => {
   let launched: LaunchedApp;
 
   test.beforeAll(async () => {
     launched = await launchApp();
+    // A realistic editing window so the monitor gets a usable width (xvfb defaults are small). The content size, not
+    // the outer size, which includes the frame and title bar on Windows. The OS still clamps the window to the
+    // screen (xvfb-run's 1280x1024 gives 1279x996 here), so the canvas size checks do not rely on this size: they
+    // compute the expected size from the monitor box as laid out.
+    const win = await launched.app.evaluate(({ BrowserWindow, screen }) => {
+      const w = BrowserWindow.getAllWindows()[0];
+      w.setContentSize(1600, 1000);
+      w.center();
+      return { content: w.getContentSize(), outer: w.getSize(), workArea: screen.getPrimaryDisplay().workAreaSize };
+    });
+    // The OS may clamp the window to the screen (a small CI display): the size checks below adapt, this says why.
+    console.log(`[program window] content ${win.content.join('x')}, outer ${win.outer.join('x')}, work area ${win.workArea.width}x${win.workArea.height}`);
+    await launched.page.waitForTimeout(300);
   });
   test.afterAll(async () => {
     await launched?.app.close();
   });
 
   test('renders, plays, seeks and marks in/out', async () => {
-    const { app, page, tmp } = launched;
+    const { page } = launched;
     page.on('pageerror', (e) => console.log('[renderer:pageerror]', e.message));
-    // A realistic editing window so the monitor gets a usable width (xvfb defaults are small).
-    await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setSize(1600, 1000); w.center(); });
-    await page.waitForTimeout(300);
-
-    const mediaDir = makeTestMedia(tmp, 'short');
-    const movie = path.join(mediaDir, MEDIA.movie1);
-    expect(fs.existsSync(movie)).toBeTruthy();
-
-    // Import + probe.
-    const [mediaId] = await importMedia(page, [movie]);
-    const probed = await getState<boolean>(page, `(s) => !!s.project.media[${JSON.stringify(mediaId)}].probe?.video`);
-    expect(probed).toBeTruthy();
+    const { seqId, mediaId } = await freshProjectWithMovie(launched);
 
     // Empty sequence → hint instead of a silent black rectangle (UX-04).
     await expect(page.getByTestId('program-empty-hint')).toBeVisible();
 
     // Two ranges into the active sequence: 1–3 s at frame 0 and 5–7 s at frame 48.
-    const seqId = await getState<string>(page, '(s) => s.project.activeSequenceId');
-    expect(seqId).toBeTruthy();
-    await page.evaluate(({ seqId, mediaId }) => {
-      const w = window as unknown as { __recut: { store: { getState(): any } } };
-      const st = w.__recut.store.getState();
-      st.insertFromSource(seqId, { mediaId, in: 1, out: 3, atFrame: 0, mode: 'insert' });
-      st.insertFromSource(seqId, { mediaId, in: 5, out: 7, atFrame: 48, mode: 'insert' });
-    }, { seqId, mediaId });
-    const duration = await page.evaluate(() => {
-      const w = window as unknown as { __recut: { store: { getState(): any } } };
-      const s = w.__recut.store.getState();
-      const seq = s.project.sequences[s.project.activeSequenceId];
-      let end = 0;
-      for (const t of [...seq.videoTracks, ...seq.audioTracks]) for (const c of t.clips) end = Math.max(end, c.start + c.duration);
-      return end;
-    });
-    expect(duration).toBe(96);
+    await insertTwoRanges(page, seqId, mediaId);
     await expect(page.getByTestId('program-empty-hint')).toHaveCount(0);
 
-    // Program panel is mounted with its canvas sized to the sequence.
+    // Program panel is mounted with its canvas sized to the sequence, capped to the monitor's on-screen size. The
+    // docked monitor is far narrower than the 1920 px sequence, so this exercises the cap on every platform.
     await page.waitForSelector(CANVAS, { timeout: 30_000 });
     await page.waitForSelector('[data-testid="program-panel"]');
     await expect.poll(() => page.evaluate((sel) => (document.querySelector(sel) as HTMLCanvasElement).width, CANVAS)).toBeGreaterThan(100);
+    const docked = await expectCanvasSize(page, 'docked, full resolution');
+    expect(docked.capped).toBe(true);
+    expect(docked.actual.w).toBeLessThan(docked.uncapped.w);
 
     // renderFrame(10) through the store playhead (paused: store is the source of truth) yields a non-black frame.
     await page.evaluate(({ seqId }) => {
@@ -168,18 +251,26 @@ test.describe('Program Monitor', () => {
     await page.click('[data-testid="program-safe-margins"]');
     await page.selectOption('[data-testid="program-resolution"]', '1/2');
     await expect.poll(() => getState<string>(page, '(s) => s.project.settings.playbackResolution')).toBe('1/2');
-    await expect.poll(() => page.evaluate((sel) => (document.querySelector(sel) as HTMLCanvasElement).width, CANVAS)).toBe(960);
+    // Half of 1920x1080 is 960x540, capped to the maximized monitor's box when that is smaller on screen (the
+    // Windows runner's window leaves a box about 514 px tall: 913x514; xvfb leaves 1271x714, uncapped).
+    const half = await expectCanvasSize(page, 'maximized, 1/2 resolution');
+    expect(half.uncapped).toEqual({ w: 960, h: 540 });
+    if (!half.capped) expect(half.actual).toEqual({ w: 960, h: 540 });
+    else expect(half.actual.w).toBeLessThan(960);
     await page.waitForTimeout(300);
     await page.screenshot({ path: path.join(ROOT, 'docs/screenshots/program-maximized.png') });
     await page.click('[data-testid="program-maximize"]');
     await page.waitForTimeout(200);
     expect(await page.evaluate((sel) => document.querySelector(sel) === (window as any).__programCanvas, CANVAS)).toBe(true);
+    // Docked again, the canvas follows the smaller box.
+    const restored = await expectCanvasSize(page, 'docked again, 1/2 resolution');
+    expect(restored.actual.w).toBeLessThanOrEqual(half.actual.w);
   });
 
   test('Play In to Out stops at Out when Loop is off (E-15)', async () => {
     const { page } = launched;
     test.setTimeout(60_000);
-    const seqId = await getState<string>(page, '(s) => s.project.activeSequenceId');
+    const { seqId } = await twoClipProject(launched);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await page.evaluate(({ seqId }) => { (window as any).__recut.store.getState().setView(seqId, { playhead: 0, inPoint: 24, outPoint: 48 }); }, { seqId });
     if ((await page.getByTestId('program-loop-toggle').getAttribute('aria-pressed')) === 'true') await page.click('[data-testid="program-loop-toggle"]');
@@ -197,11 +288,11 @@ test.describe('Program Monitor', () => {
   test('draws a still image on V2 over video (no Needs proxy)', async () => {
     const { page, tmp } = launched;
     test.setTimeout(90_000);
+    const { seqId } = await twoClipProject(launched); // video on V1 under the image
     const png = path.join(tmp, 'still-magenta.png');
     execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=magenta:s=320x180:d=1', '-frames:v', '1', png]);
     const [imgId] = await importMedia(page, [png]);
     expect(await getState<string>(page, `(s) => s.project.media[${JSON.stringify(imgId)}].kind`)).toBe('image');
-    const seqId = await getState<string>(page, '(s) => s.project.activeSequenceId');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const clipId = await page.evaluate(({ seqId, imgId }) => {
       const st = (window as any).__recut.store.getState();
@@ -236,20 +327,14 @@ test.describe('Program Monitor', () => {
   test('a cut between two clips of one file reuses the pooled element and lands on the right frame', async () => {
     const { page } = launched;
     test.setTimeout(90_000);
-    const seqId = await getState<string>(page, '(s) => s.project.activeSequenceId');
-    // V1 holds 1–3 s of movie 1 at frames 0–47 and 5–7 s of the same file at 48–95 (first test). Elements are pooled
-    // per (file, kind, slot), so both clips use the same <video>: crossing the cut is a seek, not a new element.
-    await page.evaluate(() => {
-      const w = window as unknown as { __videosCreated: number };
-      w.__videosCreated = 0;
-      const ce = document.createElement.bind(document);
-      document.createElement = ((tag: string, o?: ElementCreationOptions) => { if (tag.toLowerCase() === 'video') w.__videosCreated++; return ce(tag, o); }) as typeof document.createElement;
-    });
-    /** 8x8 grid of mean luma over the bottom-right quarter (video only; the still image covers the top-left). */
+    // V1 holds 1–3 s of movie 1 at frames 0–47 and 5–7 s of the same file at 48–95. Elements are pooled per
+    // (file, kind, slot), so both clips use the same <video>: crossing the cut is a seek, not a new element.
+    const { seqId } = await twoClipProject(launched);
+    /** 8x8 grid of mean luma over the whole frame. */
     const signature = () => page.evaluate((sel) => {
       const c = document.querySelector(sel) as HTMLCanvasElement;
-      const x0 = Math.floor(c.width / 2), y0 = Math.floor(c.height / 2), w = c.width - x0, h = c.height - y0;
-      const d = c.getContext('2d')!.getImageData(x0, y0, w, h).data;
+      const w = c.width, h = c.height;
+      const d = c.getContext('2d')!.getImageData(0, 0, w, h).data;
       const out: number[] = [];
       for (let gy = 0; gy < 8; gy++) for (let gx = 0; gx < 8; gx++) {
         let s = 0, n = 0;
@@ -269,13 +354,26 @@ test.describe('Program Monitor', () => {
       await expect.poll(async () => { prev = sig; await page.waitForTimeout(250); sig = await signature(); return sig === prev && sig.split(',').some((v) => Number(v) > 20); }, { timeout: 20_000, intervals: [0] }).toBe(true);
       return sig;
     };
-    const at10: string[] = [];
-    const at70: string[] = [];
-    for (let i = 0; i < 4; i++) { at10.push(await settleAt(10)); at70.push(await settleAt(70)); }
-    expect(new Set(at10).size).toBe(1);
-    expect(new Set(at70).size).toBe(1);
-    expect(at10[0]).not.toBe(at70[0]); // 1.4 s vs 5.9 s into the movie: different burned-in frame
-    expect(await page.evaluate(() => (window as unknown as { __videosCreated: number }).__videosCreated)).toBe(0);
+    // The first clip loads its element; from here on, no <video> may be created (the second clip must reuse it).
+    await settleAt(10);
+    await page.evaluate(() => {
+      const w = window as unknown as { __videosCreated: number; __restoreCreateElement(): void };
+      w.__videosCreated = 0;
+      const original = document.createElement;
+      const ce = original.bind(document);
+      document.createElement = ((tag: string, o?: ElementCreationOptions) => { if (tag.toLowerCase() === 'video') w.__videosCreated++; return ce(tag, o); }) as typeof document.createElement;
+      w.__restoreCreateElement = () => { document.createElement = original; };
+    });
+    try {
+      const at10: string[] = [];
+      const at70: string[] = [];
+      for (let i = 0; i < 4; i++) { at70.push(await settleAt(70)); at10.push(await settleAt(10)); }
+      expect(new Set(at10).size).toBe(1);
+      expect(new Set(at70).size).toBe(1);
+      expect(at10[0]).not.toBe(at70[0]); // 1.4 s vs 5.9 s into the movie: different burned-in frame
+      expect(await page.evaluate(() => (window as unknown as { __videosCreated: number }).__videosCreated)).toBe(0);
+    } finally {
+      await page.evaluate(() => (window as unknown as { __restoreCreateElement(): void }).__restoreCreateElement());
+    }
   });
 });
-
