@@ -172,6 +172,8 @@ All are optional. They are read by the main process (`electron/`).
 | `RECUT_DEV_URL` | Loads the renderer from this URL instead of `dist/renderer` (set by `npm run dev` to the Vite server) and allows in-window navigation to its origin. |
 | `RECUT_EXPORT_STALL_MS` | How long an export may go without FFmpeg progress before it is stopped with an error (default 120000, two minutes). Guards against FFmpeg builds that hang. |
 | `RECUT_OCR_LANG_URL` | Test-only base URL for OCR language downloads (for example `http://127.0.0.1:8080/`). Accepted only for a loopback `http(s)://127.0.0.1`, `localhost` or `[::1]` address; any other value is ignored. |
+| `RECUT_UPDATE_CHECK=0` | No "Check for new ReCut versions?" prompt and no daily update check for this installation (Preferences shows the setting as turned off). **Help › Check for Updates…** still works. The end-to-end tests set it. |
+| `RECUT_UPDATE_URL` | Test-only URL asked instead of GitHub's latest-release API (for example `http://127.0.0.1:8080/latest`). Accepted only for a loopback `http(s)://127.0.0.1`, `localhost` or `[::1]` address; any other value is ignored. |
 | `RECUT_SMOKE=1` | Smoke test: disables the GPU, checks that the `recut-media://` protocol serves byte ranges / HEAD / 404 / 416, prints `smoke:` lines to stdout and quits after about 2 s. |
 | `RECUT_SMOKE_FILE` | The file the smoke test fetches (default `/usr/bin/ffmpeg`, or the Electron executable on Windows). |
 

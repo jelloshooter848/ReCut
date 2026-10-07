@@ -12,7 +12,9 @@ import {
 } from '../../shared/update';
 import { UpdateChecker, type UpdateFetch } from '../../electron/updateCheck';
 import { normalizePrefs, readPrefs, updatePrefs } from '../../electron/project/io';
-import { noticeRelease, showsUpdatePrompt } from '../../src/app/updates';
+import { CHECK_FOR_UPDATES_COMMAND, initUpdates, noticeRelease, showsUpdatePrompt } from '../../src/app/updates';
+import { menuCommandMap } from '../../src/app/bootstrap';
+import { getCommand } from '../../src/keyboard/shortcuts';
 import { lastCheckText } from '../../src/app/dialogs/PreferencesDialog';
 
 const sv = (v: string) => parseSemver(v)!;
@@ -143,6 +145,11 @@ describe('throttle and what to show', () => {
     expect(lastCheckText(base)).toBe('Never checked');
     expect(lastCheckText({ ...base, lastCheckAt: 1, lastCheckOk: false })).toMatch(/could not be reached/);
     expect(lastCheckText({ ...base, lastCheckAt: 1, lastCheckOk: true, available })).toMatch(/ReCut 0\.10\.0 is available$/);
+  });
+  it('Help › Check for Updates… is a registered command the menu reaches', () => {
+    initUpdates();
+    expect(menuCommandMap['help.checkForUpdates']).toBe(CHECK_FOR_UPDATES_COMMAND);
+    expect(getCommand(CHECK_FOR_UPDATES_COMMAND)).toMatchObject({ title: 'Check for Updates…', category: 'Help' });
   });
   it('prefs keep only well-formed update fields', () => {
     const p = normalizePrefs({
