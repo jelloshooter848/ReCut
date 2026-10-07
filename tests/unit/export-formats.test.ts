@@ -5,6 +5,7 @@
  * Checks list). The real encodes are checked in export-intermediates.test.ts.
  */
 import { describe, it, expect } from 'vitest';
+import path from 'node:path';
 import type { ExportSettings, MediaItem, Sequence } from '@shared/model';
 import { EXPORT_PRESETS } from '@shared/model';
 import { createMediaItem, createSequence } from '@shared/project';
@@ -58,6 +59,8 @@ function req(over: Partial<ExportSettings> = {}, s = sequence()): ExportRequest 
 }
 
 const after = (args: string[], flag: string) => args[args.indexOf(flag) + 1];
+/** An output path as exportOutputPath resolves it (a drive letter and backslashes on Windows). */
+const OUT = (name: string) => path.resolve('/out', name);
 
 // ---------------------------------------------------------------------------------------------------
 // FFmpeg arguments
@@ -69,7 +72,7 @@ describe('FFmpeg arguments per format', () => {
       const g = buildRenderGraph(req(s));
       expect(g.videoCodecArgs).toEqual(['-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', '24/1', '-fps_mode', 'cfr']);
       expect(g.audioCodecArgs).toEqual(['-c:a', 'aac', '-b:a', '320k', '-ar', '48000', '-ac', '2']);
-      expect(g.args.slice(-7)).toEqual(['-movflags', '+faststart', '-t', '4', '-f', 'mp4', '/out/cut.mp4']);
+      expect(g.args.slice(-7)).toEqual(['-movflags', '+faststart', '-t', '4', '-f', 'mp4', OUT('cut.mp4')]);
       expect(g.filterGraph).toMatch(/format=yuv420p\[vout\]/);
       expect([g.container, g.audioOnly]).toEqual(['mp4', false]);
     }
@@ -84,7 +87,7 @@ describe('FFmpeg arguments per format', () => {
       expect(g.filterGraph).toContain(`format=${p.pixFmt}[vout]`);
       expect(g.audioCodecArgs).toEqual(['-c:a', 'pcm_s24le', '-ar', '48000', '-ac', '2']);
       expect(g.args).not.toContain('-movflags');
-      expect(g.args.slice(-5)).toEqual(['-t', '4', '-f', 'mov', '/out/cut.mov']);
+      expect(g.args.slice(-5)).toEqual(['-t', '4', '-f', 'mov', OUT('cut.mov')]);
       expect(g.args).toContain('-c:v');
       expect(g.args).not.toContain('-crf');
     });
@@ -123,7 +126,7 @@ describe('FFmpeg arguments per format', () => {
     expect(g.videoCodecArgs).toEqual([]);
     expect(g.audioCodecArgs).toEqual(['-c:a', 'pcm_s24le', '-ar', '96000', '-ac', '2']);
     expect(g.filterGraph).toContain('apad=whole_len=96000,atrim=end_sample=96000[aout]'); // 24 frames at 24 fps = 1 s
-    expect(g.args.slice(-7)).toEqual(['-rf64', 'auto', '-t', '1', '-f', 'wav', '/out/cut.wav']);
+    expect(g.args.slice(-7)).toEqual(['-rf64', 'auto', '-t', '1', '-f', 'wav', OUT('cut.wav')]);
     expect(g.chapters).toEqual([]);
     expect(g.args).not.toContain('ffmetadata');
   });
@@ -134,7 +137,7 @@ describe('FFmpeg arguments per format', () => {
     const g = buildRenderGraph(req({ container: 'flac' }, s), { chaptersFilePath: '/tmp/ch.txt' });
     expect(g.audioCodecArgs).toEqual(['-c:a', 'flac', '-sample_fmt', 's32', '-bits_per_raw_sample', '24', '-ar', '48000', '-ac', '2']);
     expect(g.chapters.length).toBe(2);
-    expect(g.args.slice(-3)).toEqual(['-f', 'flac', '/out/cut.flac']);
+    expect(g.args.slice(-3)).toEqual(['-f', 'flac', OUT('cut.flac')]);
     expect(buildRenderGraph(req({ container: 'flac', audioBitDepth: 16 })).audioCodecArgs.slice(0, 4)).toEqual(['-c:a', 'flac', '-sample_fmt', 's16']);
   });
 
@@ -170,13 +173,13 @@ describe('FFmpeg arguments per format', () => {
 
 describe('output, temp and sidecar names follow the format', () => {
   it('exportOutputPath gives the format extension, replacing a known media extension', () => {
-    expect(exportOutputPath(settings({ fileName: 'cut' }))).toBe('/out/cut.mp4');
-    expect(exportOutputPath(settings({ fileName: 'cut.mp4', container: 'mov' }))).toBe('/out/cut.mov');
-    expect(exportOutputPath(settings({ fileName: 'cut.MOV', container: 'mov' }))).toBe('/out/cut.MOV');
-    expect(exportOutputPath(settings({ fileName: 'cut.mov', container: 'wav' }))).toBe('/out/cut.wav');
-    expect(exportOutputPath(settings({ fileName: 'cut.wav', container: 'flac' }))).toBe('/out/cut.flac');
-    expect(exportOutputPath(settings({ fileName: 'cut.flac' }))).toBe('/out/cut.mp4');
-    expect(exportOutputPath(settings({ fileName: 'my.cut', container: 'wav' }))).toBe('/out/my.cut.wav');
+    expect(exportOutputPath(settings({ fileName: 'cut' }))).toBe(OUT('cut.mp4'));
+    expect(exportOutputPath(settings({ fileName: 'cut.mp4', container: 'mov' }))).toBe(OUT('cut.mov'));
+    expect(exportOutputPath(settings({ fileName: 'cut.MOV', container: 'mov' }))).toBe(OUT('cut.MOV'));
+    expect(exportOutputPath(settings({ fileName: 'cut.mov', container: 'wav' }))).toBe(OUT('cut.wav'));
+    expect(exportOutputPath(settings({ fileName: 'cut.wav', container: 'flac' }))).toBe(OUT('cut.flac'));
+    expect(exportOutputPath(settings({ fileName: 'cut.flac' }))).toBe(OUT('cut.mp4'));
+    expect(exportOutputPath(settings({ fileName: 'my.cut', container: 'wav' }))).toBe(OUT('my.cut.wav'));
     expect(withExportExtension(' a.mkv ', 'mov')).toBe('a.mov');
   });
   it('temps, the kept render and the sidecar keep the extension', () => {
@@ -225,14 +228,14 @@ describe('one file per audio track', () => {
     expect(outs.files.map((f) => f.label)).toEqual(['A1 Dialogue', 'A2 Music']);
     expect(outs.files.every((f) => f.req.settings.audioPerTrack === false && f.req.settings.exportSubtitleSidecar === false)).toBe(true);
     const { graphs } = buildExportGraphs(r);
-    expect(graphs.map((g) => g.outputPath)).toEqual(['/out/cut - A1 Dialogue.wav', '/out/cut - A2 Music.wav']);
+    expect(graphs.map((g) => g.outputPath)).toEqual([OUT('cut - A1 Dialogue.wav'), OUT('cut - A2 Music.wav')]);
     // Each graph reads only its track's media and pads to the same sample count.
     expect(graphs[0].inputArgs.filter((a) => a.startsWith('/media/'))).toEqual(['/media/a.mp4']);
     expect(graphs[1].inputArgs.filter((a) => a.startsWith('/media/'))).toEqual(['/media/b.mp4']);
     for (const g of graphs) expect(g.filterGraph).toContain('apad=whole_len=192000,atrim=end_sample=192000[aout]');
     expect(graphs[0].warnings).toContain('No file for A3 (no clips in the range).');
     // The preview command is the first file's.
-    expect(buildExportCommand(r).at(-1)).toBe('/out/cut - A1 Dialogue.wav');
+    expect(buildExportCommand(r).at(-1)).toBe(OUT('cut - A1 Dialogue.wav'));
   });
 
   it('per-track is for audio-only formats; MOV / MP4 ignore it', () => {
@@ -249,9 +252,9 @@ describe('one file per audio track', () => {
 
   it('the shared sidecar is <base>.srt and is checked against the sources', () => {
     const r = { ...req({ container: 'wav', audioPerTrack: true, fileName: 'cut', exportSubtitleSidecar: true }), subtitles: [{ start: 0, end: 1, text: 'x' }] };
-    expect(exportOutputFiles(r).sidecarPath).toBe('/out/cut.srt');
-    expect(() => buildExportGraphs({ ...r, protectedPaths: ['/out/cut.srt'] })).toThrow(/Refusing to export/);
-    expect(() => buildExportGraphs({ ...r, protectedPaths: ['/out/cut - A2 Music.wav'] })).toThrow(/Refusing to export/);
+    expect(exportOutputFiles(r).sidecarPath).toBe(OUT('cut.srt'));
+    expect(() => buildExportGraphs({ ...r, protectedPaths: [OUT('cut.srt')] })).toThrow(/Refusing to export/);
+    expect(() => buildExportGraphs({ ...r, protectedPaths: [OUT('cut - A2 Music.wav')] })).toThrow(/Refusing to export/);
   });
 });
 
@@ -270,7 +273,7 @@ describe('export settings: backward compatibility, presets, extension, validatio
     const s = initialExportSettings(seq, { sequenceId: seq.id, settings: old }, {});
     expect(exportContainer(s)).toBe('mp4');
     expect([s.fileName, s.videoCodec, s.audioCodec, s.preset]).toEqual(['Old.mp4', 'libx265', 'ac3', 'slow']);
-    expect(buildRenderGraph({ sequence: seq, media: sequence().media, settings: { ...old, outputDir: '/old' } }).args.at(-1)).toBe('/old/Old.mp4');
+    expect(buildRenderGraph({ sequence: seq, media: sequence().media, settings: { ...old, outputDir: '/old' } }).args.at(-1)).toBe(path.resolve('/old', 'Old.mp4'));
     expect(presetNameFor(s, presetsFor(seq))).toBe(CUSTOM);
     // A saved MOV comes back as MOV, its name with .mov.
     const mov = initialExportSettings(seq, { sequenceId: 'other', settings: { ...old, container: 'mov' } }, {});

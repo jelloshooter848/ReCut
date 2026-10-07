@@ -184,8 +184,9 @@ MOV profiles and the pixel format each one is written in (FFmpeg's `-profile:v`)
   frame.
 - MOV keeps the MP4 rules otherwise: frame size, frame rate (and its conversion), range, chapters, burn-in and sidecar
   subtitles, no metadata from the sources. It is written without `+faststart` (rewriting a 100 GB file at the end
-  would take minutes). Colour tags are what the MP4 export writes (none for ProRes, as for H.264); FFmpeg's DNxHR
-  encoder always marks its stream BT.709, limited range.
+  would take minutes). Colour tags are what the MP4 export writes: no primaries, transfer or matrix for ProRes, as
+  for H.264 (FFmpeg 8 and later mark ProRes as limited range, which it is); FFmpeg's DNxHR encoder always marks its
+  stream BT.709, limited range.
 - **WAV / FLAC (audio only):** stereo or 5.1, at the sample rate chosen (44.1 / 48 / 96 kHz, or the sequence's). The
   file has exactly the samples of the range (frames × rate ÷ fps, rounded). A WAV larger than 4 GB is written as
   RF64. FLAC carries the chapters; WAV has none. Burn-in does not apply; the sidecar `.srt` does.

@@ -163,10 +163,15 @@ describe('ProRes / DNxHR in MOV with PCM audio', () => {
     expect(v.r_frame_rate).toBe('24/1');
     expect([a.codec_name, a.channels, a.channel_layout, Number(a.sample_rate)]).toEqual(['pcm_s24le', 2, 'stereo', SR]);
     expect((await samples(r.outputPath)).data.length / 2).toBe(RANGE_SAMPLES);
-    // Colour tags: the same graph output as the MP4 export, so the same tags.
+    // Colour tags: the same graph output as the MP4 export, so the same primaries, transfer and matrix (none). The
+    // range is limited (tv) either way: FFmpeg 6.1 leaves it unmarked, FFmpeg 8 / 9 mark ProRes as tv.
     const mp4 = await runExport(req(s, { rangeMode: 'inOut' }), undefined, undefined, NO_CHUNKS);
     const mv = (await probeJson(mp4.outputPath)).streams.find((x: any) => x.codec_type === 'video');
-    expect(colourTags(v)).toEqual(colourTags(mv));
+    const { range, ...tags } = colourTags(v);
+    const { range: mp4Range, ...mp4Tags } = colourTags(mv);
+    expect(tags).toEqual(mp4Tags);
+    expect(['tv', 'unknown', undefined]).toContain(range);
+    expect(['tv', 'unknown', undefined]).toContain(mp4Range);
   }, 120000);
 
   it('DNxHR SQ: dnxhd dnxhr_sq, yuv422p, exact frames and samples, PCM 16-bit 5.1', async () => {

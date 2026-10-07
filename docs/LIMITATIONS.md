@@ -97,7 +97,8 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **Intermediates are composited in 8-bit 4:2:0.** ProRes and DNxHR are written in their 4:2:2 / 4:4:4 10-bit pixel
   formats, but the render graph composites every clip in 8-bit 4:2:0 (as for H.264), so a 10-bit or 4:2:2 source
   loses that precision. They are edit-friendly intra-frame files, not a higher-quality master.
-- **Colour tags:** MOV files carry the same colour tags as the MP4 export (none for ProRes). FFmpeg's DNxHR encoder
+- **Colour tags:** MOV files carry the same colour tags as the MP4 export: no primaries, transfer or matrix
+  for ProRes (FFmpeg 8 and later mark it limited range; 6.1 leaves the range unmarked). FFmpeg's DNxHR encoder
   always marks its stream BT.709, limited range, whatever the source.
 - **DNxHR needs at least 256×120** (an FFmpeg encoder limit); the dialog refuses smaller frame sizes.
 - **One file per audio track:** muted tracks, tracks not soloed (when any track is soloed) and tracks with no enabled
