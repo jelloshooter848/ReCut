@@ -351,7 +351,8 @@ function SettingsView(p: SettingsViewProps) {
           <div className="xd-row">
             <label>Preset</label>
             <div className="ctl">
-              <Select value={presetName} options={presetOptions} data-testid="export-preset" style={{ minWidth: 220 }}
+              {/* First focus: the preset, not a checklist item's "Show" (which comes first in the DOM). */}
+              <Select value={presetName} options={presetOptions} data-testid="export-preset" data-autofocus="" style={{ minWidth: 220 }}
                 onChange={(name) => { const pr = presets.find((x) => x.name === name); if (pr) { setChosenPreset(pr.name); update(applyPreset(settings, pr)); } }} />
             </div>
           </div>
