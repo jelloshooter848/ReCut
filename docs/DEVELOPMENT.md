@@ -138,6 +138,12 @@ Every budgeted row has a tier. The owner decided this policy on 6 October 2026:
   `resolveSubtitleCues` 1.87 and 2.86 ms; a 0.04 → 0.07 ms change at timer resolution is not material either.
   With a single run an excess is printed as `UNCONFIRMED` and does not fail; run `--runs 2` before you call a
   regression or a fix. Guardrails with non-numeric values (`"16 / 0"`) are judged on their budget only.
+- **A count with a baseline of 0 tolerates 1** (`REGRESSION_RULE.zeroBaseCount`; owner's decision, 7 October 2026).
+  For a guardrail of the count / structural class (see [metric classes](#calibration-and-the-reference-machine)) whose
+  baseline median is 0, the ratio rule leaves no room: 1 would fail. A median of up to 1 passes; 2 or more (also a
+  median of 1.5) still fails as a regression. `pool: media elements (<video> + <audio>) created during 10 s
+  playback` measures 1 now and then on unchanged code. Every other row is unchanged: time, rate and long-task rows with a baseline of 0, and
+  count rows with a non-zero baseline (1 → 2 still fails), keep the ratio rule; the row's own budget still applies.
 - **Nothing is deleted or loosened.** Re-scoping a row's tier is the only mechanism. Diagnostic rows (and
   `reference` guardrails) keep their old threshold in the row, shown as a reference, so history stays comparable.
 - **Where the tier lives.** With the row, where it is recorded: `ms(section, metric, value, budget, note, tiering)`
@@ -255,13 +261,16 @@ node tests/perf/perf-check.mjs --ab <checkoutA> <checkoutB> --from-a <dirs…> -
 `perf:compare` checks each ref out as a detached worktree under `$RECUT_PERF_SCRATCH/ab` (a ref that is a directory
 is used as it is, e.g. a worktree with uncommitted changes), links this checkout's `node_modules` when the lockfiles
 match (else runs `npm ci` there), and calls `perf-check.mjs --ab`. That builds each checkout once, then runs A, B, A,
-B, … (`--runs` each, default 2; each side runs its own bench scripts; results in `<out>/ab/{A,B}/run-<k>`),
+B, … (`--runs` each, default 3; each side runs its own bench scripts; results in `<out>/ab/{A,B}/run-<k>`),
 calibrating before each run so a change in the host's load shows. It prints, per budgeted row, A's and B's median
 and min–max, B/A and the noise band, `max(10 %, A's own min–max spread / median, floor 2 ms | 8 MB | 2 fps)`.
 **WORSE** means B is worse than A beyond the band in every run pair (A1/B1, A2/B2, …) and in the medians (worse =
 higher time or count, lower rate); a difference in the medians only is reported as noise, and non-numeric rows report
-`changed`. It exits 1 when a gate or guardrail row is WORSE. Both suites with `--runs 2` take about an hour,
-`--electron-only` about 25 minutes; run it alone, like `perf:check`.
+`changed`. It exits 1 when a gate or guardrail row is WORSE. The default is 3 runs per side (owner's decision,
+7 October 2026): with 2, rows flagged WORSE on this 4-core container that 3 runs showed clean (PR #49); `--runs N`
+still overrides it. Both suites with the default 3 runs take about 1.5 hours, `--electron-only` about 40 minutes;
+run it alone, like `perf:check`. The zero-baseline tolerance above is a guardrail rule against the baseline; the A/B
+comparison has its own noise band and is unchanged.
 
 #### Classification of every budgeted row
 

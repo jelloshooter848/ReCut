@@ -9,12 +9,13 @@
  * uncommitted changes). Otherwise the ref is checked out as a detached git worktree under
  * $RECUT_PERF_SCRATCH/ab (default <tmp>/recut-perf/ab), with this checkout's node_modules linked in when its
  * package-lock.json is identical (else `npm ci` runs there). Then `perf-check.mjs --ab <A> <B>` builds both and runs
- * them interleaved (A, B, A, B, ...; --runs N each, default 2) and prints per-row medians, B/A and the noise band.
+ * them interleaved (A, B, A, B, ...; --runs N each, default 3: 2 gave false WORSE flags on the 4-core container where 3
+ * were clean, PR #49) and prints per-row medians, B/A and the noise band.
  * The worktrees are removed at the end unless --keep. Exit code: perf-check's (1 when a gate or guardrail row of B
  * is worse than A beyond the band in every run pair).
  *
- * Run it alone on the machine, like perf:check: --runs 2 of both suites takes about an hour; --electron-only about
- * 25 minutes.
+ * Run it alone on the machine, like perf:check: the default 3 runs of both suites take about 1.5 hours;
+ * --electron-only about 40 minutes.
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
