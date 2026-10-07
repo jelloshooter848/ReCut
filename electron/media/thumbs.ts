@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { FilmstripRequest, ThumbnailRequest } from '@shared/ipc';
-import { cacheKeyForPath, cacheSubdir, ensureDir, fileExists, getCacheDir, removeQuietly } from './cache';
+import { cacheKeysForPath, cacheSubdir, ensureDir, fileExists, findCachedFile, getCacheDir, removeQuietly, type MediaCacheKeys } from './cache';
 import { ffmpegFileArg, fmtSeconds, runFfmpeg } from './ffmpeg';
 import { probeMedia, type ProbedVideoStreamInfo } from './probe';
 
@@ -115,6 +115,14 @@ async function thumbDir(key: string): Promise<string> {
 
 function thumbFileName(time: number, width: number): string { return `${timeKey(time)}_${width}.jpg`; }
 
+/**
+ * The cached frame `name` of a file: under its content key, else under its legacy (pre-0.10) key, adopted under the
+ * content key (cache.ts findCachedFile). Null when it is not cached.
+ */
+function cachedFrame(keys: Pick<MediaCacheKeys, 'key' | 'legacyKey'>, name: string): Promise<string | null> {
+  return findCachedFile(keys, (k) => path.join(cacheSubdir('thumbs'), thumbDirName(k), name));
+}
+
 export function thumbnailCachePath(key: string, time: number, width?: number): string {
   return path.join(cacheSubdir('thumbs'), thumbDirName(key), thumbFileName(time, normWidth(width)));
 }
@@ -123,7 +131,8 @@ const THUMB_FILE_RE = /^[0-9a-f]{40}[\\/]\d+_\d+\.jpg$/;
 
 /**
  * True for a finished thumbnail / filmstrip frame in the cache (`thumbs/<dir>/<ms>_<w>.jpg`, never a `.part`). Its
- * name is content-keyed: the directory hashes the source's path + size + mtime (cacheKeyForFile) and THUMB_VERSION,
+ * name is content-keyed: the directory hashes the source's content key (cacheKeyForPath: size + sampled fingerprint; or, for
+ * entries from before 0.10, path + size + mtime) and THUMB_VERSION,
  * the file name the time and width, and the file only appears by a rename of a complete JPEG. So the bytes behind a
  * name never change: a changed source gets a new directory, hence a new URL. The recut-media:// handler lets the
  * renderer cache these (electron/media/protocol.ts).
@@ -249,10 +258,12 @@ async function extractWithFallback(file: string, time: number, width: number, ou
  */
 export async function getThumbnail(req: ThumbnailRequest): Promise<string> {
   const width = normWidth(req.width);
-  const key = await cacheKeyForPath(req.path);
-  const dir = await thumbDir(key);
-  const out = path.join(dir, thumbFileName(req.time, width));
-  if (await fileExists(out)) return out;
+  const keys = await cacheKeysForPath(req.path);
+  const dir = await thumbDir(keys.key);
+  const name = thumbFileName(req.time, width);
+  const out = path.join(dir, name);
+  const hit = await cachedFrame(keys, name);
+  if (hit) return hit;
 
   const existing = inFlight.get(out);
   if (existing) { const v = await existing; if (v !== null) return v; }
@@ -295,9 +306,11 @@ export async function getFilmstrip(req: FilmstripRequest, signal?: AbortSignal):
 
 async function filmstripInner(req: FilmstripRequest, signal: AbortSignal | undefined): Promise<string[]> {
   const width = normWidth(req.width);
-  const key = await cacheKeyForPath(req.path);
-  const dir = await thumbDir(key);
+  const keys = await cacheKeysForPath(req.path);
+  const dir = await thumbDir(keys.key);
   const outs = req.times.map((t) => path.join(dir, thumbFileName(t, width)));
+  /** Frames already cached: the content-key file, or an older entry under the legacy key (cachedFrame). */
+  const found = new Map<string, string>();
   const joined = new Set<SharedBatch>();
 
   // unique uncached times (not currently in flight elsewhere)
@@ -310,7 +323,8 @@ async function filmstripInner(req: FilmstripRequest, signal: AbortSignal | undef
     let fl = inFlight.get(out);
     while (fl && frameBatch.get(out)?.controller.signal.aborted) { await fl.catch(() => null); fl = inFlight.get(out); }
     if (fl) { const b = frameBatch.get(out); if (b) joinBatch(b, signal, joined); continue; }
-    if (await fileExists(out)) continue;
+    const hit = await cachedFrame(keys, path.basename(out));
+    if (hit) { found.set(out, hit); continue; }
     pending.set(out, Math.max(0, req.times[i]));
   }
   if (signal?.aborted) { leaveBatches(joined); return outs.map(() => ''); }
@@ -355,6 +369,8 @@ async function filmstripInner(req: FilmstripRequest, signal: AbortSignal | undef
       const out = outs[i];
       const inflight = inFlight.get(out);
       if (inflight) { const v = await inflight; if (v !== null) return v; }
+      const hit = found.get(out);
+      if (hit) return hit;
       if (await fileExists(out)) return out;
       if (signal?.aborted) return '';
       return getThumbnail({ path: req.path, time: t, width, mediaId: req.mediaId });

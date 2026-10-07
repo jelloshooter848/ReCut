@@ -1,7 +1,7 @@
 /**
  * Background job queue for the main process.
  *
- * - Four lanes: 'export' jobs run one at a time; 'sceneDetect' and 'ocr' (long, CPU-heavy full-file work) run
+ * - Four lanes: 'export' and 'collect' jobs (the heavy writers) run one at a time; 'sceneDetect' and 'ocr' (long, CPU-heavy full-file work) run
  *   one at a time in their own 'background' lane; 'download' (OCR language installs, network-bound) runs two at
  *   a time in the 'network' lane; every other kind (proxies, waveforms, subtitle extraction...) shares the
  *   'media' lane with concurrency 2, so a long scene detection or OCR run never starves a proxy (P-07).
@@ -46,7 +46,7 @@ export type Lane = 'export' | 'media' | 'background' | 'network';
 
 /** Lane a job kind runs in. */
 export function laneFor(kind: JobKind): Lane {
-  if (kind === 'export') return 'export';
+  if (kind === 'export' || kind === 'collect') return 'export'; // the heavy writers: one at a time
   if (kind === 'sceneDetect' || kind === 'ocr') return 'background';
   if (kind === 'download') return 'network';
   return 'media';

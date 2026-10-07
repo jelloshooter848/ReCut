@@ -21,7 +21,7 @@ import { uid } from '@shared/ids';
 import { isOcrCodec, ocrLanguage, type OcrRequest, type OcrResult } from '@shared/ocr';
 import type { JobQueue, JobRunContext } from '../jobs/jobQueue';
 import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
-import { cacheKeyForPath, cacheSubdir, fileExists, removeQuietly } from '../media/cache';
+import { cacheKeysForPath, cacheSubdir, findCachedFile, removeQuietly } from '../media/cache';
 import { FfmpegError } from '../media/ffmpeg';
 import { probeMedia } from '../media/probe';
 import { extractBitmapEvents, type BitmapEvent } from './bitmapEvents';
@@ -139,12 +139,14 @@ export async function runOcr(req: OcrRequest, ctx: OcrJobContext, jc: JobRunCont
   if (!verified.ok) throw new Error(verified.error);
   if (jc.signal.aborted) throw canceled();
 
-  const fileKey = await cacheKeyForPath(req.path);
+  const keys = await cacheKeysForPath(req.path);
+  const fileKey = keys.key;
   const sha8 = lang.sha256.slice(0, 8);
   const cacheFor = (core: OcrCoreVariant) => ocrCachePath(fileKey, req.streamIndex, req.language, sha8, core);
   for (const core of lastCore ? [lastCore] : CORE_VARIANTS) {
-    const file = cacheFor(core);
-    if (!(await fileExists(file))) continue;
+    // Under the content key, else a result an older version cached under the legacy key (cache.ts findCachedFile).
+    const file = await findCachedFile(keys, (k) => ocrCachePath(k, req.streamIndex, req.language, sha8, core));
+    if (!file) continue;
     const hit = await readCache(file, req);
     if (hit) {
       jc.setProgress(1, `${hit.cues.length} lines (cached)`);

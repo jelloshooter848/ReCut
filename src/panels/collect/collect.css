@@ -1,0 +1,13 @@
+/* Collect Project dialog (CollectDialog.tsx) */
+.collect-note { margin: 0; line-height: 1.45; }
+.collect-k { width: 76px; flex: none; color: var(--text-dim); }
+.collect-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.collect-options { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; margin: 0; background: var(--bg-1); }
+.collect-options label { cursor: default; }
+.collect-toggle { display: inline-flex; align-items: center; justify-content: flex-start; gap: 6px; }
+.collect-summary { padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-1); }
+.collect-warn { color: var(--warn); line-height: 1.45; }
+.collect-warn ul { margin: 4px 0 0; padding-left: 18px; max-height: 120px; overflow: auto; }
+.collect-warn li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.collect-problem { color: var(--danger); line-height: 1.45; }
+.collect-done { padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-1); }

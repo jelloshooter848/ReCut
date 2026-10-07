@@ -129,11 +129,17 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - Projects store **absolute** media paths, so moving media means using Relink. A media path that is not absolute
   (for example in a hand-edited project file) is refused by probing, thumbnails, proxies and export with "media path
   must be an absolute path".
-- **Moving media rebuilds its derived media.** Thumbnails, waveforms and proxies are cached under a key made from the
-  file's absolute path, size and modified time. After you move a file (even unchanged, to a new folder or drive) and
-  relink it, its thumbnails and waveform are generated again, and so is its proxy the next time one is built. A
-  proxy that was ready before the move keeps being used while its cache file exists. The old cache entries stay on
-  disk until you clear the cache. There is no Collect / Consolidate Project command.
+- **Derived media are cached by a sampled fingerprint, not a full hash.** Thumbnails, waveforms, proxies, scene cuts
+  and OCR results are keyed by the file's size and nine 64 KiB blocks (start, end and evenly between), so they survive
+  moving, renaming and copying a file. A file changed in place without changing its size, where every changed byte
+  lies outside those blocks (a hex patch, a fixed-size tag rewritten in the middle), keeps its old derived media until
+  you clear the cache folder. Remuxes and re-encodes change the size or the sampled bytes.
+- **Collect Project copies, it does not move.** It needs room for a full copy of the media on the destination, and
+  it does not delete or relink anything in the open project. It stops at the first file it cannot copy or verify
+  (the folder is left marked incomplete); there is no resume, so collect again into an empty folder. Media not used
+  in any sequence (with **Media used in sequences only**) and offline media keep their original paths in the copy.
+  Collected projects still store absolute paths (relative media roots are [roadmap §17](ROADMAP.md#17-cloud-free-collaboration)).
+  A FAT32 drive cannot hold a file over 4 GB, so collecting a large remux there fails at that file.
 - **Limits on load:** timeline positions and durations are capped at 86,400,000 frames (24 h at 1000 fps, far more
   at normal rates), clip speed at 1 %–10 000 %, and nesting at 64 levels. An invalid sequence frame rate becomes
   23.976.

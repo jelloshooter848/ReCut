@@ -8,7 +8,7 @@ import type { JobInfo } from '@shared/model';
 import type { SceneDetectRequest, SceneDetectResult } from '@shared/ipc';
 import type { JobQueue, JobRunContext } from '../jobs/jobQueue';
 import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
-import { cacheKeyForPath, cacheSubdir, fileExists, removeQuietly } from './cache';
+import { cacheKeysForPath, cacheSubdir, findCachedFile, removeQuietly } from './cache';
 import { FfmpegError, ffmpegFileArg, runFfmpeg } from './ffmpeg';
 import { probeMedia } from './probe';
 
@@ -63,13 +63,15 @@ export function enforceMinSceneGap(boundaries: number[], minGap: number): number
 export async function runSceneDetect(req: SceneDetectRequest, ctx: JobRunContext): Promise<SceneDetectResult> {
   const threshold = Math.min(1, Math.max(0, Number.isFinite(req.threshold) ? req.threshold : 0.4));
   const minGap = req.minSceneSeconds !== undefined && req.minSceneSeconds >= 0 ? req.minSceneSeconds : DEFAULT_MIN_SCENE_SECONDS;
-  const key = await cacheKeyForPath(req.path);
-  const cachePath = sceneCachePath(key, threshold);
+  const keys = await cacheKeysForPath(req.path);
+  const cachePath = sceneCachePath(keys.key, threshold);
 
   let duration = req.duration > 0 ? req.duration : 0;
-  if (await fileExists(cachePath)) {
+  // Under the content key, else a result an older version cached under the legacy key (cache.ts findCachedFile).
+  const hit = await findCachedFile(keys, (k) => sceneCachePath(k, threshold));
+  if (hit) {
     try {
-      const cached = JSON.parse(await fsp.readFile(cachePath, 'utf8')) as { boundaries: number[]; duration: number; version?: number };
+      const cached = JSON.parse(await fsp.readFile(hit, 'utf8')) as { boundaries: number[]; duration: number; version?: number };
       if (cached.version === SCENE_VERSION && Array.isArray(cached.boundaries)) {
         ctx.setProgress(1, 'Cached');
         return { boundaries: enforceMinSceneGap(cached.boundaries, minGap), duration: cached.duration || duration };
