@@ -363,7 +363,8 @@ Saga Fan Cut/
    and 48 kHz only) and **Range** (Entire sequence or In to Out).
 4. **Subtitles:** **Burn in** renders them into the picture, on exactly the frames where the Program monitor shows
    them. **Sidecar** writes a `.srt` next to the exported file. Burn-in is off for the audio-only formats (there is
-   no picture); the sidecar still works.
+   no picture); the sidecar still works. An **MKV** can also carry the subtitle tracks as soft subtitles that viewers
+   switch on and off (see **Subtitle tracks (MKV)** below).
 5. The **Checks** list blocks the export with a reason when something is wrong (an empty sequence, offline or missing
    media, an invalid file name, folder or size). It also warns, without blocking, about what would only show when
    the result is watched (see **Pre-export warnings** below). **Show FFmpeg command** previews the exact command.
@@ -374,6 +375,10 @@ Saga Fan Cut/
 
 - **MP4** (the default): H.264 or H.265 with AAC or AC-3, for watching and sharing. Settings saved by an earlier
   version open as MP4.
+- **MKV**: the same H.264 or H.265 picture, packaged the way fan edits are usually released: more than one audio
+  track (for example 5.1 plus a stereo downmix, or a commentary), soft subtitle tracks and chapters, each track with
+  its language and title. Audio tracks can be AAC, AC-3, FLAC or PCM. Without any change to **Tracks**, an MKV has
+  the one mixed audio track an MP4 has.
 - **MOV**: an intermediate for grading or finishing in another editor. **Codec** is Apple ProRes or Avid DNxHR, and
   **Profile** picks the quality: ProRes 422 Proxy, 422 LT, 422, 422 HQ or 4444; DNxHR LB, SQ, HQ, HQX (10-bit) or
   444 (10-bit). Every frame is a key frame, so the file is large but quick to edit: about 160 GB for two hours of
@@ -390,10 +395,41 @@ none, and when a track is soloed only the soloed tracks get one. A track with no
 either; the Checks list says which tracks are left out and why. There is no master level to apply (the Program
 monitor's volume only changes what you hear), so the files add up to the mixed export.
 
+**Audio tracks (MKV).** With Format **MKV**, the Audio section lists the file's audio tracks. Each one is a mix of
+the sequence audio tracks ticked under **Sources** (**All tracks** is the whole mix, as in an MP4), in its own
+**Format**: Stereo, 5.1 or Mono, and AAC, AC-3 (Dolby Digital), FLAC or PCM, with a bitrate for AAC and AC-3. Give it
+a **title** (shown by players, for example "Commentary") and a **language** as a three-letter ISO 639-2 code (`eng`,
+`fre`, `ger`, `spa`, `jpn`, ...; empty is "undetermined"). The first track is the **Default** one players start
+with; use the arrows to reorder, **Add track** for another one and the bin to remove one. **Tracks** has three
+presets:
+
+- **Main mix only**: one track of everything, with the codec and channels of the MP4 settings (the default).
+- **5.1 + stereo downmix**: the whole mix as AC-3 5.1 (640 kbps) and as AAC stereo (256 kbps).
+- **Main + commentary (last audio track)**: the last audio track with clips (A3 in a three-track sequence with a
+  commentary on A3) alone as a stereo "Commentary" track, and every other track as the "Main" track.
+
+Every audio track has exactly the length of the range and lines up sample for sample with the others (AAC and AC-3
+round the end up to a whole codec frame, as in any file). Mute and solo still apply: a muted track is in no audio
+track, and when a track is soloed only the soloed tracks are mixed. The 5.1 tracks place stereo sources in front
+left and right; a stereo or mono track of a 5.1 source is FFmpeg's standard downmix. The sample rate is the same
+for every track.
+
+**Subtitle tracks (MKV).** With Format **MKV** and subtitle tracks in the sequence, the Subtitles section lists them:
+tick a track to put it in the file as a soft subtitle stream (SubRip text), with its **title** (the track's name
+unless you change it) and **language** (from the track unless you set one). **Default** asks players to show it
+from the start (only one track should be Default); **Forced** marks a track for lines in another language that are
+shown even when subtitles are off. A hidden track can be included too. The cue times are the ones the sidecar uses,
+measured from the start of the range; a track with no cue in the range is left out. Burn-in and the sidecar still
+work alongside.
+
 **Checks for the formats.** The Checks list also says when a MOV export will be very large (over 100 GB, for example
 two hours of ProRes 4444), when a WAV will pass 4 GB (it is then written as RF64, which some older programs cannot
 open), and when an audio-only export has no enabled audio clip in the range (the export is blocked). Frame-rate, VFR
-and sync warnings are about the picture, so they are left out for the audio-only formats.
+and sync warnings are about the picture, so they are left out for the audio-only formats. For an MKV it blocks an
+audio track with no source track ticked, a language that is not a three-letter code and an AC-3 bitrate FFmpeg
+cannot encode (above 640 kbps, or below 64 kbps in 5.1), and warns about an audio track that will be silent (its
+sources are muted, not soloed or have no clips in the range), subtitle tracks that are gone or have no cues in the
+range, and more than one Default subtitle track. AC-3 in any track limits the sample rate to 32, 44.1 or 48 kHz.
 
 The exported video has exactly the frame count of the exported range, and each frame is the one the Program monitor showed.
 An In/Out range that starts or ends inside a transition renders those frames exactly as the full export does.
@@ -423,7 +459,7 @@ muted, inside the chosen range) and warns about:
 Each warning names the media or clips (the first three, then "and N more"). **Show** closes the dialog, selects
 them (or the transition) on the timeline and moves the playhead to the first one. Warnings never block the export.
 
-**Chapters:** markers of kind **Chapter** (marker dialog or Markers panel) become the chapters of an MP4, MOV or FLAC file (WAV has none), with their
+**Chapters:** markers of kind **Chapter** (marker dialog or Markers panel) become the chapters of an MP4, MKV, MOV or FLAC file (WAV has none), with their
 names. Only chapter markers inside the exported range count; times are measured from the start of the range. A chapter
 marker before the In point that is still current at In becomes the first chapter, starting at the beginning of the
 file. If no chapter marker is at or before the start of the range (for example, you marked only the act breaks), the
@@ -431,11 +467,12 @@ file gets an extra first chapter with no name, from the start to your first chap
 marked is kept. Each chapter runs to the next one, the last to the end of the file. Ordinary markers and continuity
 notes are not exported. A trailing backslash in a chapter name is dropped (FFmpeg cannot store it).
 Nothing else is copied from your source files: no title, comment, artist or other tags, no chapters, no stream names
-or languages.
+or languages. The only stream names and languages in a file are the ones you give the audio and subtitle tracks of
+an MKV.
 
 Export never writes over a file the project reads from: media, proxies, and subtitle files (imported to media or to
 a sequence track, or read by the Transcript). Such a name is refused, also when it differs only in letter case or is
-a link to the same file. ReCut renders into `<name>.recut-part-<random>.mp4` (`.mov`, `.wav`, ...) next to the output
+a link to the same file. ReCut renders into `<name>.recut-part-<random>.mp4` (`.mkv`, `.mov`, `.wav`, ...) next to the output
 and renames it at the end; a per-track export renders every file before renaming any. If that final rename fails, the
 finished render is kept as `<name>.recut-unsaved-<time>.mp4` and the error says so, so you do not have to render
 again.

@@ -22,8 +22,9 @@ in every release PR (docs/RELEASING.md).
 | 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS dmg built as a CI test build, waiting for signing | 0.6.1 (Linux), macOS once signed |
 | 16 | Collect / Consolidate Project (with the moved-media cache fix) | Done | 0.7.0 |
 | 6 | Intermediate and audio-only export | Done | next release |
+| 7 | MKV packaging export | Done | next release |
 | 9 | Surround: centre-channel and channel-selection utility (the mixer comes after 1.0) | Quick utility done | next release |
-| 5, 7, 8, 10–15, 17, 18 | Everything else | Not started | — |
+| 5, 8, 10–15, 17, 18 | Everything else | Not started | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
 the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
@@ -288,6 +289,15 @@ commentary), each with its own language and title. Subtitle tracks are muxed as 
 in or written as a sidecar. Use FFmpeg's Matroska muxer, not `mkvmerge`, so there is no new dependency. It must work
 with a user-installed FFmpeg: FFmpeg is bundled only in the Windows builds (see
 [LIMITATIONS](LIMITATIONS.md#platform-and-packaging)).
+**Status: done (7 October 2026, release 0.9.0).** Export › Format › **MKV** (FFmpeg's Matroska muxer) writes H.264 /
+H.265 with any number of audio tracks, each a mix definition (which sequence audio tracks, stereo / 5.1 / mono, AAC /
+AC-3 / FLAC / PCM, language, title; the first is the default; presets "Main mix only", "5.1 + stereo downmix", "Main
++ commentary"), all sample-exact and the same length; the sequence's subtitle tracks as soft SubRip streams with
+language, title and Default / Forced flags; chapters as in MP4; no metadata from the sources. Settings without the
+new fields export one main mix, as before. Plan and arguments in `shared/exportFormat.ts` (`audioOutputPlan`,
+`subtitleOutputPlan`), the mixes in `electron/export/renderGraph.ts`. Not done: several audio tracks or soft
+subtitles in MP4 (FFmpeg's MP4 muxer drops the titles), ProRes / DNxHR in MKV, ASS styling, audio passthrough (see
+[LIMITATIONS](LIMITATIONS.md#export)).
 
 ## 8. Nested sequences and compound clips
 
@@ -417,6 +427,10 @@ server.
   dmg build with bundled FFmpeg, and macOS signing and notarisation, are planned in §19.
 - Snapshots stored as diffs, to keep project files small.
 - Titles / text generator.
+- **More than one audio track and soft subtitles in MP4** (project owner's request, 7 October 2026; after 1.0). MKV
+  export already has them (§7) and the render graph already builds every output track, so this is mostly muxing: per-track
+  language and title metadata and `mov_text` subtitles. Limits to design around: FFmpeg's MP4 muxer does not keep track
+  titles or the default flag on every version, and many players only play an MP4's first audio track.
 
 ## 19. Official Linux and macOS releases
 

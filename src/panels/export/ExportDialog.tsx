@@ -26,8 +26,9 @@ import {
 } from './settings';
 import {
   CONTAINER_IDS, CONTAINERS, DNXHR_PROFILES, INTERMEDIATE_CODECS, PRORES_PROFILES, audioBitDepth, dnxhrProfile, exportContainer, intermediateCodec,
-  isPerTrackAudio, proresProfile, videoEncoder, withExportExtension,
+  isPerTrackAudio, proresProfile, resolveAudioOutputs, subtitleOutputPlan, supportsPackaging, usesAc3, videoEncoder, withExportExtension,
 } from '@shared/exportFormat';
+import { AudioOutputsEditor, SubtitleOutputsEditor } from './PackagingEditors';
 
 const CSS = `
 .xd { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 0; min-height: 0; margin: -12px; }
@@ -76,12 +77,14 @@ const AUDIO_BITRATES = [96, 128, 160, 192, 256, 320, 384, 448, 640];
 const SAMPLE_RATES = [44100, 48000, 96000];
 
 /**
- * Sample rates offered for `codec`: AC-3 (MP4) gets 32 / 44.1 / 48 kHz only; others the common rates. The current
- * rate stays selectable when the codec supports it (e.g. a sequence at 22.05 kHz). With `settings` whose format is
- * not MP4 (PCM, FLAC) the AC-3 limit does not apply.
+ * Sample rates offered for `codec`: AC-3 (MP4 / MKV, or an MKV output track) gets 32 / 44.1 / 48 kHz only; others the
+ * common rates. The current rate stays selectable when the codec supports it (e.g. a sequence at 22.05 kHz). With
+ * `settings` the AC-3 limit follows the export's encoders (usesAc3), so PCM / FLAC formats are not limited.
  */
-export function sampleRateChoices(codec: ExportSettings['audioCodec'], current: number, settings?: Pick<ExportSettings, 'container'>): number[] {
-  const ac3 = codec === 'ac3' && (!settings || exportContainer(settings) === 'mp4');
+export function sampleRateChoices(
+  codec: ExportSettings['audioCodec'], current: number, settings?: Pick<ExportSettings, 'container'> & Partial<Pick<ExportSettings, 'audioOutputs'>>,
+): number[] {
+  const ac3 = settings ? usesAc3({ ...settings, audioCodec: codec }) : codec === 'ac3';
   const base = ac3 ? AC3_SAMPLE_RATES : SAMPLE_RATES;
   const vals = base.filter((r) => sampleRateSupported(codec, r, settings));
   if (current > 0 && !vals.includes(current) && sampleRateSupported(codec, current, settings)) vals.push(current);
@@ -287,6 +290,10 @@ function SettingsView(p: SettingsViewProps) {
   const cinfo = CONTAINERS[container];
   const audioOnly = cinfo.audioOnly;
   const mp4 = container === 'mp4';
+  /** MKV (ROADMAP §7): several output audio tracks and soft subtitle streams. */
+  const mkv = supportsPackaging(settings);
+  /** H.264 / H.265 with a quality setting (MP4, MKV). */
+  const h26x = mp4 || mkv;
   const vEnc = videoEncoder(settings);
   const perTrackPaths = useMemo(() => perTrackOutputPaths(seq, settings), [seq, settings]);
   const size = estimateFileSize(settings, range.seconds, perTrackPaths?.length || 1);
@@ -313,9 +320,11 @@ function SettingsView(p: SettingsViewProps) {
     return vals.map((v) => ({ value: String(v), label: `${v} kbps` }));
   }, [settings.audioBitrateKbps]);
   const sampleRateOptions = useMemo(() => {
-    return sampleRateChoices(settings.audioCodec, settings.sampleRate, { container })
+    return sampleRateChoices(settings.audioCodec, settings.sampleRate, { container, audioOutputs: settings.audioOutputs })
       .map((v) => ({ value: String(v), label: `${(v / 1000).toFixed(1).replace(/\.0$/, '')} kHz` }));
-  }, [settings.audioCodec, settings.sampleRate, container]);
+  }, [settings.audioCodec, settings.sampleRate, settings.audioOutputs, container]);
+  const mkvOutputs = mkv ? resolveAudioOutputs(settings) : [];
+  const mkvSubs = mkv ? subtitleOutputPlan(seq.subtitleTracks, settings) : [];
   const channelsLabel = settings.audioChannels === 6 ? '5.1' : 'Stereo';
   const kHz = `${(settings.sampleRate / 1000).toFixed(1).replace(/\.0$/, '')} kHz`;
 
@@ -351,8 +360,9 @@ function SettingsView(p: SettingsViewProps) {
             <dl className="xd-kv">
               <dt>Format</dt><dd data-testid="export-summary-format">{cinfo.ext.slice(1).toUpperCase()}{perTrackPaths ? ' · one per track' : ''}</dd>
               <dt>Video</dt><dd>{vEnc ? <>{settings.width}×{settings.height} · {fpsLabel(outFps)} fps · {vEnc.label}</> : 'None (audio only)'}</dd>
-              {mp4 ? <><dt>Quality</dt><dd>{settings.qualityMode === 'crf' ? `CRF ${settings.crf} (${crfLabel(settings.crf)})` : `${settings.videoBitrateKbps} kbps`} · {settings.preset}</dd></> : null}
-              <dt>Audio</dt><dd>{audioSummary(settings)} · {channelsLabel} · {kHz}</dd>
+              {h26x ? <><dt>Quality</dt><dd>{settings.qualityMode === 'crf' ? `CRF ${settings.crf} (${crfLabel(settings.crf)})` : `${settings.videoBitrateKbps} kbps`} · {settings.preset}</dd></> : null}
+              <dt>Audio</dt><dd data-testid="export-summary-audio" title={audioSummary(settings)}>{audioSummary(settings)}{mkv ? '' : ` · ${channelsLabel}`} · {kHz}</dd>
+              {mkv ? <><dt>Subtitles</dt><dd data-testid="export-summary-subtitles">{mkvSubs.length ? `${mkvSubs.length} track${mkvSubs.length === 1 ? '' : 's'} (soft)` : 'none (soft)'}</dd></> : null}
               <dt>Range</dt><dd>{range.usesInOut ? 'In → Out' : 'Entire sequence'}</dd>
               <dt>Duration</dt><dd className="mono">{formatSequenceTimecode(range.frames, seq.fps)}{audioOnly ? '' : ` · ${outFramesLabel}`}</dd>
               <dt>Est. size</dt><dd data-testid="export-size">{size.approximate ? '≈ ' : ''}{formatBytes(size.bytes)}</dd>
@@ -432,7 +442,7 @@ function SettingsView(p: SettingsViewProps) {
               </div>
             </div>
             {fpsDiffers ? <div className="xd-row"><span /><span className="xd-hint" data-testid="export-fps-note">{fpsConversionNote(seq.fps, outFps)}</span></div> : null}
-            {!mp4 ? <>
+            {!h26x ? <>
               <div className="xd-row">
                 <label>Codec</label>
                 <div className="ctl"><Select value={intermediateCodec(settings)} options={INTERMEDIATE_OPTIONS} data-testid="export-intermediate-codec" onChange={(v) => update({ intermediateCodec: v })} /></div>
@@ -486,7 +496,18 @@ function SettingsView(p: SettingsViewProps) {
 
           <section className="xd-section">
             <h4>Audio</h4>
-            {mp4 ? <>
+            {mkv ? <>
+              <AudioOutputsEditor seq={seq} settings={settings} update={update} />
+              {mkvOutputs.some((o) => o.codec === 'pcm' || o.codec === 'flac') ? (
+                <div className="xd-row">
+                  <label>Bit depth</label>
+                  <div className="ctl">
+                    <Select value={String(audioBitDepth(settings))} options={BIT_DEPTH_OPTIONS} data-testid="export-bit-depth" onChange={(v) => update({ audioBitDepth: v === '16' ? 16 : 24 })} />
+                    <span className="xd-hint">PCM and FLAC tracks</span>
+                  </div>
+                </div>
+              ) : null}
+            </> : mp4 ? <>
               <div className="xd-row">
                 <label>Codec</label>
                 <div className="ctl"><Select value={settings.audioCodec} options={AUDIO_CODEC_OPTIONS} onChange={(v) => update({ audioCodec: v })} /></div>
@@ -513,14 +534,14 @@ function SettingsView(p: SettingsViewProps) {
                 </div>
               </div>
             ) : null}
-            <div className="xd-row">
+            {mkv ? null : <div className="xd-row">
               <label>Channels</label>
               <div className="ctl">
                 <Select value={String(settings.audioChannels)} options={[{ value: '2', label: 'Stereo' }, { value: '6', label: '5.1 Surround', disabled: !surroundOk }]}
                   onChange={(v) => update(v === '6' ? (mp4 ? { audioChannels: 6, audioCodec: 'ac3', audioBitrateKbps: Math.max(settings.audioBitrateKbps, 448) } : { audioChannels: 6 }) : { audioChannels: 2 })} />
                 <span className="xd-hint">{surroundOk ? `Source has ${maxCh}-channel audio.` : 'Needs a source with 6 audio channels.'}</span>
               </div>
-            </div>
+            </div>}
             <div className="xd-row">
               <label>Sample rate</label>
               <div className="ctl"><Select value={String(settings.sampleRate)} options={sampleRateOptions} onChange={(v) => update({ sampleRate: Number(v) })} /></div>
@@ -554,6 +575,13 @@ function SettingsView(p: SettingsViewProps) {
                 <Toggle checked={settings.exportSubtitleSidecar && hasSubs} disabled={!hasSubs} onChange={(v) => update({ exportSubtitleSidecar: v })} label={<span className="text-sm">{perTrackPaths ? 'Export one .srt next to the audio files' : `Export .srt next to the ${audioOnly ? 'audio file' : 'video'}`}</span>} />
               </div>
             </div>
+            {mkv && hasSubs ? <>
+              <div className="xd-row">
+                <label>Tracks</label>
+                <div className="ctl"><span className="xd-hint">Soft subtitle streams (SubRip) in the MKV, which viewers can switch on and off.</span></div>
+              </div>
+              <SubtitleOutputsEditor seq={seq} settings={settings} update={update} />
+            </> : null}
             {!hasSubs ? <div className="xd-row"><span /><span className="xd-hint">The sequence has no subtitle tracks.</span></div> : null}
           </section>
 

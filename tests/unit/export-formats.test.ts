@@ -279,7 +279,7 @@ describe('export settings: backward compatibility, presets, extension, validatio
     const mov = initialExportSettings(seq, { sequenceId: 'other', settings: { ...old, container: 'mov' } }, {});
     expect([mov.container, mov.fileName]).toEqual(['mov', 'Cut.mov']);
     // An unknown container (a newer version's) falls back to MP4.
-    expect(initialExportSettings(seq, { sequenceId: seq.id, settings: { ...old, container: 'mkv' as never } }, {}).container).toBe('mp4');
+    expect(initialExportSettings(seq, { sequenceId: seq.id, settings: { ...old, container: 'webm' as never } }, {}).container).toBe('mp4');
   });
 
   it('presets: MP4 presets switch back to MP4, the new presets select their format, detection is format-aware', () => {

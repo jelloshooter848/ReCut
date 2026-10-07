@@ -115,9 +115,19 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 
 ## Export
 
-- Formats: MP4 (H.264 / H.265, AAC / AC-3), MOV (ProRes or DNxHR with PCM audio), and audio-only WAV or FLAC (one
-  mixed file or one file per audio track). No MKV yet (planned, ROADMAP §7), no image sequences, no hardware
-  encoders, no DNxHD (the legacy fixed-size profiles) and no ProRes 4444 XQ or alpha channel.
+- Formats: MP4 (H.264 / H.265, AAC / AC-3), MKV (H.264 / H.265 with several audio tracks, soft subtitles and
+  chapters), MOV (ProRes or DNxHR with PCM audio), and audio-only WAV or FLAC (one mixed file or one file per audio
+  track). No WebM, no image sequences, no hardware encoders, no DNxHD (the legacy fixed-size profiles) and no ProRes
+  4444 XQ or alpha channel.
+- **MKV packaging:** ProRes / DNxHR are not offered in MKV (use MOV); there is no Opus, E-AC-3, DTS or TrueHD audio
+  and no audio passthrough (every track is re-encoded from the mix); all audio tracks share one sample rate; soft
+  subtitles are plain SubRip text (no ASS styling, no bitmap PGS / VobSub, no attachments or fonts). A 5.1 track of
+  stereo sources has them in front left / right only (no upmix to the centre or surrounds), and a stereo or mono
+  track of 5.1 sources is FFmpeg's standard downmix (no custom downmix levels, §9). Matroska stores no channel layout
+  for PCM tracks, only the count. Audio track sources are saved as track ids, so export settings reused on another
+  sequence lose their chosen sources (the Checks list asks for them again).
+- **MP4 has one audio track and no soft subtitles.** FFmpeg's MP4 muxer drops stream titles and forces the first
+  `mov_text` track to default, so multi-track packaging is MKV only.
 - **Intermediates are composited in 8-bit 4:2:0.** ProRes and DNxHR are written in their 4:2:2 / 4:4:4 10-bit pixel
   formats, but the render graph composites every clip in 8-bit 4:2:0 (as for H.264), so a 10-bit or 4:2:2 source
   loses that precision. They are edit-friendly intra-frame files, not a higher-quality master.

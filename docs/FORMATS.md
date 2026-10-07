@@ -161,6 +161,9 @@ inserting a clip copies its cues into the sequence's subtitle tracks, attached t
 - Export dialog › Subtitles › **Burn in** renders them into the picture with FFmpeg's `subtitles` filter (needs
   libass). Cues are snapped to the sequence frames the Program monitor shows them on, so they appear and disappear on
   exactly those frames. The sidecar keeps the exact cue times.
+- MKV export › Subtitles › tracks: each chosen sequence subtitle track becomes a soft subtitle stream (SubRip,
+  `S_TEXT/UTF8`) with the sidecar's exact cue times, a language (ISO 639-2), a title and Default / Forced flags. Plain
+  text only: ReCut's subtitles have no styling, so ASS is not written.
 
 ## Images
 
@@ -175,6 +178,7 @@ Export › Output › **Format** picks the file format; the file name's extensio
 | Format | Video | Audio | Use |
 |---|---|---|---|
 | **MP4** (default) | H.264 (libx264) or H.265 / HEVC (libx265), yuv420p | AAC or AC-3 | Delivery, playback, upload |
+| **MKV** | H.264 or H.265, as MP4 | One or more tracks: AAC, AC-3, FLAC or PCM 16 / 24-bit, each stereo, 5.1 or mono | Fan-edit release: several audio tracks, soft subtitles, chapters |
 | **MOV** | Apple ProRes (`prores_ks`) or Avid DNxHR (`dnxhd`), intra-only | PCM 16- or 24-bit (`pcm_s16le` / `pcm_s24le`) | Intermediate for grading and finishing in another editor |
 | **WAV** | none | PCM 16- or 24-bit | The mix, or one file per audio track, for a mixer |
 | **FLAC** | none | FLAC 16- or 24-bit (lossless) | A smaller lossless soundtrack |
@@ -208,6 +212,30 @@ MOV profiles and the pixel format each one is written in (FFmpeg's `-profile:v`)
   Program monitor's volume is only for listening), so the files add up to the mixed export. The sidecar `.srt`,
   when on, is written once as `<name>.srt`.
 
+**MKV** (FFmpeg's Matroska muxer, `-f matroska`; no MKVToolNix needed):
+
+- Video: exactly the MP4 encoder settings (H.264 / H.265, CRF or bitrate, preset, frame size and rate), without the
+  `hvc1` tag (Matroska has codec ids, not tags; FFmpeg refuses one). ProRes and DNxHR are not offered in MKV: few
+  players and editors read them there, and MOV is their container.
+- Audio tracks: a list of mix definitions (`ExportSettings.audioOutputs`): which sequence audio tracks feed the track
+  (default: all, the main mix), its layout (stereo, 5.1, mono), codec (AAC, AC-3, FLAC, PCM; PCM and FLAC at the
+  dialog's bit depth), bitrate (AAC / AC-3), language (ISO 639-2) and title. The first is the default track. Presets:
+  **Main mix only** (no list: one track with the codec, bitrate and channels of the MP4 settings), **5.1 + stereo
+  downmix** (AC-3 5.1 640 kbps + AAC stereo 256 kbps), **Main + commentary** (the last audio track with clips alone,
+  and the rest). Every track is exactly the range's samples long (AAC / AC-3 are padded to whole codec frames when
+  decoded) and all line up sample for sample. One sample rate for all; AC-3 anywhere limits it to 32 / 44.1 / 48 kHz.
+- Matroska stores no channel layout for PCM, only the channel count: players assume the standard layout for 2 or 6
+  channels. FLAC, AAC and AC-3 carry theirs.
+- Subtitles: soft SubRip streams (above). Burn-in and the sidecar `.srt` still work.
+- Chapters: as MP4 (the sequence's Chapter markers in the range). Matroska can start the first chapter later, but the
+  same untitled leading chapter is written so MP4 and MKV exports have the same chapters.
+- Metadata: nothing from the sources (as MP4). Each audio and subtitle stream gets the language (`und` when none is
+  set) and the title you give it, and the default / forced flags; the video stream is marked default. FFmpeg's own
+  `ENCODER` / `DURATION` tags are written as by any FFmpeg Matroska file.
+- **MP4 keeps one audio track and no soft subtitles.** FFmpeg's MP4 muxer can hold several audio tracks and
+  `mov_text` subtitles, but it does not store stream titles (FFmpeg 6.1 reads them back as nothing) and it marks the
+  first `mov_text` track default whatever is asked, so the track list would not survive. Use MKV for packaging.
+
 MP4 details:
 
 - Container: **MP4** (`+faststart`).
@@ -221,7 +249,7 @@ MP4 details:
   at 48 kHz (or the next supported rate) with a warning.
 - Range: entire sequence or In → Out. A range edge inside a transition renders the frames the full export renders.
 - Anamorphic sources are un-squeezed, and the output always has square pixels.
-- Chapters: the sequence's **Chapter** markers in the range (names and times from the range start; ordinary and
+- Chapters (MP4, MKV, MOV, FLAC): the sequence's **Chapter** markers in the range (names and times from the range start; ordinary and
   continuity markers are not exported). No chapter markers, no chapters. The first chapter starts at 0: a chapter
   marker at or before the range start (the latest one) covers it; if there is none, an untitled chapter runs from 0
   to the first chapter marker. No metadata is copied from the sources: no global tags (title, comment, artist,

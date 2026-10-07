@@ -2,16 +2,17 @@
  * Pure helpers for the Export dialog: defaults, presets, estimates, validation, range math and the
  * client-side pre-flight checklist. No DOM, no zustand — unit-tested in tests/unit/exportSettings.test.ts.
  */
-import type { Clip, ExportPreset, ExportSettings, ID, MediaItem, Rational, Sequence } from '@shared/model';
+import type { Clip, ExportPreset, ExportSettings, ID, MediaItem, Rational, Sequence, SequenceSubtitleTrack } from '@shared/model';
 import { EXPORT_PRESETS } from '@shared/model';
 import { FPS_PRESETS, fpsEquals, fpsLabel, fpsValue, framesToSeconds, isValidFps } from '@shared/time';
-import { allTracks, clipEnd, sequenceDuration } from '@shared/timeline';
+import { allTracks, clipEnd, resolveSubtitleCues, sequenceDuration } from '@shared/timeline';
 import { activeTracks, planTrackSegments, widenRangeForTransitions, type ClipSeg, type PastEndIssue, type TransitionIssueReason, type TransitionOutcome } from '@shared/exportPlan';
 import { formatSyncOffset, linkedSyncOffsets } from '@shared/linkSync';
 import { channelSelectionLabel, channelSelectionProblem, clipAudioStream, resolveChannelSelection } from '@shared/audioChannels';
 import {
-  CONTAINERS, DNXHR_MIN_HEIGHT, DNXHR_MIN_WIDTH, PER_TRACK_SKIP_REASON, audioEncoder, exportContainer, intermediateVideoBitsPerSecond, isAudioOnly,
-  isPerTrackAudio, pcmBitsPerSecond, perTrackAudioPlan, usesAc3, videoEncoder, withExportExtension,
+  AC3_MAX_KBPS, AC3_MIN_KBPS_51, CONTAINERS, DNXHR_MIN_HEIGHT, DNXHR_MIN_WIDTH, PER_TRACK_SKIP_REASON, audioBitDepth, audioEncoder, audioOutputBitrate,
+  audioOutputPlan, exportContainer, hasAudioOutputs, intermediateVideoBitsPerSecond, isAudioOnly, isPerTrackAudio, pcmBitsPerSecond, perTrackAudioPlan,
+  sanitizePackaging, subtitleOutputPlan, supportsPackaging, usesAc3, validLanguageCode, videoEncoder, withExportExtension,
 } from '@shared/exportFormat';
 
 export const MATCH_SEQUENCE = 'Match Sequence';
@@ -150,12 +151,15 @@ export function applyPreset(settings: ExportSettings, preset: ExportPreset): Exp
 export const AC3_SAMPLE_RATES = [32000, 44100, 48000];
 
 /**
- * True when `sampleRate` can be encoded with `codec`. Only AC-3 is limited; with settings whose format is not MP4
- * (PCM, FLAC) every rate is fine whatever `audioCodec` says.
+ * True when `sampleRate` can be encoded with `codec`. Only AC-3 is limited; with `settings` the rule follows the
+ * export's AC-3 encoders (usesAc3: MP4 / MKV main mix, or an MKV output track), so PCM and FLAC formats take every rate
+ * whatever `audioCodec` says.
  */
-export function sampleRateSupported(codec: ExportSettings['audioCodec'], sampleRate: number, settings?: Pick<ExportSettings, 'container'>): boolean {
-  if (settings && exportContainer(settings) !== 'mp4') return true;
-  return codec !== 'ac3' || AC3_SAMPLE_RATES.includes(sampleRate);
+export function sampleRateSupported(
+  codec: ExportSettings['audioCodec'], sampleRate: number, settings?: Pick<ExportSettings, 'container'> & Partial<Pick<ExportSettings, 'audioOutputs'>>,
+): boolean {
+  const ac3 = settings ? usesAc3({ ...settings, audioCodec: codec }) : codec === 'ac3';
+  return !ac3 || AC3_SAMPLE_RATES.includes(sampleRate);
 }
 
 /**
@@ -179,6 +183,7 @@ function settingEquals(key: keyof ExportSettings, a: ExportSettings[keyof Export
   // Optional format fields: missing means the default (settings saved before 0.8.0).
   if (key === 'audioPerTrack') return (a === true) === (b === true);
   if (key === 'audioBitDepth') return (a === 16 ? 16 : 24) === (b === 16 ? 16 : 24);
+  if (key === 'audioOutputs' || key === 'subtitleOutputs') return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
   return a === b;
 }
 
@@ -257,7 +262,7 @@ export interface SizeEstimate { bytes: number; approximate: boolean }
 export function estimateFileSize(settings: ExportSettings, durationSec: number, files = 1): SizeEstimate {
   const d = Math.max(0, durationSec);
   const container = exportContainer(settings);
-  if (container !== 'mp4') {
+  if (container !== 'mp4' && container !== 'mkv') {
     // PCM is exact; FLAC compresses film sound to roughly 60 %; ProRes / DNxHR follow their published data rates.
     // A per-track export is the size of one file per track (the dialog passes the file count in `files`).
     const pcm = pcmBitsPerSecond(settings) * (container === 'flac' ? 0.6 : 1) * Math.max(1, files);
@@ -265,10 +270,13 @@ export function estimateFileSize(settings: ExportSettings, durationSec: number, 
     const video = intermediateVideoBitsPerSecond(settings, fps) ?? 0;
     return { bytes: Math.round((video + pcm) / 8 * d), approximate: container !== 'wav' };
   }
-  const audioKbps = settings.audioBitrateKbps > 0 ? settings.audioBitrateKbps : (settings.audioChannels === 6 ? 640 : 192);
+  const audioKbps = hasAudioOutputs(settings)
+    ? audioOutputsKbps(settings)
+    : settings.audioBitrateKbps > 0 ? settings.audioBitrateKbps : (settings.audioChannels === 6 ? 640 : 192);
   if (settings.qualityMode === 'bitrate') {
     const kbps = Math.max(0, settings.videoBitrateKbps) + audioKbps;
-    return { bytes: Math.round(kbps * 1000 / 8 * d), approximate: false };
+    // FLAC output tracks are estimated (about 60 % of PCM).
+    return { bytes: Math.round(kbps * 1000 / 8 * d), approximate: hasAudioOutputs(settings) && settings.audioOutputs!.some((o) => o.codec === 'flac') };
   }
   // bits per pixel per frame at CRF 23 for x264 ≈ 0.07 on typical content; each CRF step ≈ ×0.89.
   const crf = Number.isFinite(settings.crf) ? settings.crf : 18;
@@ -278,6 +286,17 @@ export function estimateFileSize(settings: ExportSettings, durationSec: number, 
   const videoBps = Math.max(2, settings.width) * Math.max(2, settings.height) * fps * bpp;
   const bytes = (videoBps + audioKbps * 1000) / 8 * d;
   return { bytes: Math.round(bytes), approximate: true };
+}
+
+/** Total audio rate (kbit/s) of an MKV's output tracks: AAC / AC-3 their bitrate, PCM exact, FLAC about 60 % of PCM. */
+function audioOutputsKbps(settings: ExportSettings): number {
+  const rate = Math.max(1, settings.sampleRate) * audioBitDepth(settings) / 1000;
+  return settings.audioOutputs!.reduce((sum, o) => {
+    const ch = o.layout === '5.1' ? 6 : o.layout === 'mono' ? 1 : 2;
+    if (o.codec === 'pcm') return sum + rate * ch;
+    if (o.codec === 'flac') return sum + rate * ch * 0.6;
+    return sum + audioOutputBitrate(o);
+  }, 0);
 }
 
 export function formatBytes(bytes: number): string {
@@ -344,7 +363,9 @@ function isAbsoluteFolder(dir: string): boolean {
 export function validateExportSettings(settings: ExportSettings): ValidationResult {
   const container = exportContainer(settings);
   const audioOnly = CONTAINERS[container].audioOnly;
-  const mp4 = container === 'mp4';
+  // MP4 and MKV: H.264 / H.265 with a quality setting; their main mix is AAC / AC-3 unless MKV output tracks define the audio.
+  const mp4 = container === 'mp4' || container === 'mkv';
+  const lossyMain = mp4 && !hasAudioOutputs(settings);
   const issues: ValidationIssue[] = [];
   const name = (settings.fileName ?? '').trim();
   if (!name) issues.push({ field: 'fileName', message: 'Enter a file name.' });
@@ -368,10 +389,10 @@ export function validateExportSettings(settings: ExportSettings): ValidationResu
   }
   if (mp4 && settings.qualityMode === 'bitrate' && !(settings.videoBitrateKbps > 0)) issues.push({ field: 'videoBitrateKbps', message: 'Video bitrate must be greater than 0.' });
   if (mp4 && settings.qualityMode === 'crf' && !(settings.crf >= 0 && settings.crf <= 51)) issues.push({ field: 'crf', message: 'CRF must be between 0 and 51.' });
-  if (mp4 && !(settings.audioBitrateKbps > 0)) issues.push({ field: 'audioBitrateKbps', message: 'Audio bitrate must be greater than 0.' });
+  if (lossyMain && !(settings.audioBitrateKbps > 0)) issues.push({ field: 'audioBitrateKbps', message: 'Audio bitrate must be greater than 0.' });
   if (!(settings.sampleRate > 0)) issues.push({ field: 'sampleRate', message: 'Sample rate must be greater than 0.' });
   else if (!sampleRateSupported(settings.audioCodec, settings.sampleRate, settings)) {
-    issues.push({ field: 'sampleRate', message: 'AC-3 audio supports 32, 44.1 and 48 kHz only: choose 48 kHz or less, or AAC.' });
+    issues.push({ field: 'sampleRate', message: `AC-3 audio supports 32, 44.1 and 48 kHz only: choose 48 kHz or less, or ${hasAudioOutputs(settings) ? 'another codec for the AC-3 tracks' : 'AAC'}.` });
   }
   return { ok: issues.length === 0, issues };
 }
@@ -429,7 +450,8 @@ export function exportChecklist(seq: Sequence, media: Record<ID, MediaItem>, set
   const audioOnly = isAudioOnly(settings);
   // A different (valid) export frame rate is converted at the output (see fpsConversionNote); nothing to check.
   if (!audioOnly && !isValidFps(settings.fps)) items.push({ level: 'warning', text: `The export frame rate is not valid; the sequence frame rate (${fpsLabel(seq.fps)} fps) is used.` });
-  if (settings.audioChannels === 6 && maxSourceChannels(seq, media) < 6) items.push({ level: 'warning', text: 'No source has 6 audio channels; 5.1 output will be upmixed from stereo.' });
+  const surroundOut = hasAudioOutputs(settings) ? settings.audioOutputs!.some((o) => o.layout === '5.1') : settings.audioChannels === 6;
+  if (surroundOut && maxSourceChannels(seq, media) < 6) items.push({ level: 'warning', text: 'No source has 6 audio channels; 5.1 output will be upmixed from stereo.' });
   const burnIn = settings.burnSubtitles && !audioOnly;
   if ((burnIn || settings.exportSubtitleSidecar) && !sequenceHasSubtitles(seq)) items.push({ level: 'warning', text: 'The sequence has no subtitle tracks; nothing will be burned in or written.' });
   if (audioOnly && settings.burnSubtitles && sequenceHasSubtitles(seq)) {
@@ -439,6 +461,7 @@ export function exportChecklist(seq: Sequence, media: Record<ID, MediaItem>, set
   const timeline = sequenceExportWarnings(seq, media, range.startF, range.endF);
   items.push(...(audioOnly ? timeline.filter((i) => i.scope !== 'video') : timeline));
   items.push(...formatChecks(seq, settings, range));
+  items.push(...packagingChecks(seq, settings, range));
   const readyProxies = ids.map((id) => media[id]).filter((m): m is MediaItem => !!m && m.proxy.status === 'ready');
   if (projectUsesProxies && readyProxies.length) items.push({ level: 'info', text: 'Export always uses original media, not proxies.' });
   return items;
@@ -486,8 +509,59 @@ export function formatChecks(seq: Sequence, settings: ExportSettings, range: Exp
   return items;
 }
 
-/** One-line description of the output's audio for the dialog summary ("AAC 320 kbps", "PCM 24-bit"). */
+/**
+ * Checks of an MKV's output audio tracks and soft subtitle streams (ROADMAP §7): an output track with no source track
+ * (error) or whose sources are all muted / not soloed or have no clips in the range (silent: warning), AC-3 bitrates
+ * FFmpeg's encoder refuses, language codes that are not ISO 639-2, subtitle tracks that are gone or have no cues in
+ * the range (left out), and more than one default subtitle track.
+ */
+export function packagingChecks(seq: Sequence, settings: ExportSettings, range: Pick<ExportRange, 'startF' | 'endF'>): ChecklistItem[] {
+  const items: ChecklistItem[] = [];
+  if (!supportsPackaging(settings)) return items;
+  const hasClips = (t: { clips: Clip[] }) => t.clips.some((c) => c.enabled && c.start < range.endF && clipEnd(c) > range.startF);
+  if (hasAudioOutputs(settings)) {
+    for (const p of audioOutputPlan(seq, settings)) {
+      if (!p.allTracks && p.sources.length === 0) {
+        items.push({ level: 'error', text: `Audio ${p.name}: choose at least one source track.` });
+        continue;
+      }
+      const mixed = seq.audioTracks.filter((t) => p.mixed.includes(t.id));
+      if (mixed.length === 0) items.push({ level: 'warning', text: `Audio ${p.name}: its source tracks are muted or not soloed, so this track will be silent.` });
+      else if (!mixed.some(hasClips)) items.push({ level: 'warning', text: `Audio ${p.name}: its source tracks have no clips in the export range, so this track will be silent.` });
+      if (!validLanguageCode(p.output.language)) items.push({ level: 'error', text: `Audio ${p.name}: the language "${p.output.language}" is not a three-letter ISO 639-2 code (eng, fre, ger, jpn, ...).` });
+      if (p.encoder.codec === 'ac3') {
+        const kbps = audioOutputBitrate(p.output);
+        if (kbps > AC3_MAX_KBPS) items.push({ level: 'error', text: `Audio ${p.name}: AC-3 supports at most ${AC3_MAX_KBPS} kbps.` });
+        else if (p.layout === '5.1' && kbps < AC3_MIN_KBPS_51) items.push({ level: 'error', text: `Audio ${p.name}: AC-3 5.1 needs at least ${AC3_MIN_KBPS_51} kbps.` });
+      }
+    }
+  }
+  const chosen = Array.isArray(settings.subtitleOutputs) ? settings.subtitleOutputs : [];
+  if (chosen.length) {
+    const plan = subtitleOutputPlan(seq.subtitleTracks, settings);
+    const missing = chosen.filter((o) => !seq.subtitleTracks.some((t) => t.id === o?.trackId)).length;
+    if (missing) items.push({ level: 'warning', text: `${missing} chosen subtitle track${missing === 1 ? ' no longer exists' : 's no longer exist'}; ${missing === 1 ? 'it is' : 'they are'} left out.` });
+    const cues = resolveSubtitleCues({ ...seq, subtitleTracks: plan.map((p) => ({ ...(p.track as SequenceSubtitleTrack), enabled: true })) });
+    const empty = plan.filter((p) => !cues.some((c) => c.trackId === p.track.id && c.end > range.startF && c.start < range.endF && c.text.trim()));
+    if (empty.length) items.push({ level: 'info', text: `Subtitle track${empty.length === 1 ? '' : 's'} ${namesWithMore(empty.map((p) => `"${p.track.name}"`))} ${empty.length === 1 ? 'has' : 'have'} no cues in the export range and ${empty.length === 1 ? 'is' : 'are'} left out.` });
+    for (const p of plan) {
+      if (!validLanguageCode(p.output.language)) items.push({ level: 'error', text: `Subtitle track "${p.track.name}": the language "${p.output.language}" is not a three-letter ISO 639-2 code.` });
+    }
+    if (plan.filter((p) => p.isDefault).length > 1) items.push({ level: 'warning', text: 'More than one subtitle track is marked Default; players show only one of them.' });
+  }
+  return items;
+}
+
+/** One-line description of the output's audio for the dialog summary ("AAC 320 kbps", "PCM 24-bit", "2 tracks: ..."). */
 export function audioSummary(settings: ExportSettings): string {
+  if (hasAudioOutputs(settings)) {
+    const outs = settings.audioOutputs!;
+    const one = (o: (typeof outs)[number]) => {
+      const p = audioOutputPlan({ audioTracks: [] }, { ...settings, audioOutputs: [o] })[0];
+      return `${p.encoder.label} ${p.layout === 'stereo' ? 'stereo' : p.layout}`;
+    };
+    return outs.length === 1 ? one(outs[0]) : `${outs.length} tracks: ${outs.map(one).join(', ')}`;
+  }
   return audioEncoder(settings).label;
 }
 
@@ -738,6 +812,10 @@ export function initialExportSettings(seq: Sequence, saved: SavedExportSettings 
   const s = { ...defaults, ...saved.settings, useProxies: false as const };
   // Settings saved before 0.8.0 have no format fields: they keep the defaults (MP4). Unknown values fall back too.
   s.container = exportContainer(s);
+  // MKV output tracks and subtitle streams (0.9.0): malformed entries dropped, tracks that are not in this sequence removed.
+  const clean = sanitizePackaging(s, seq);
+  if (clean.audioOutputs) s.audioOutputs = clean.audioOutputs; else delete s.audioOutputs;
+  if (clean.subtitleOutputs) s.subtitleOutputs = clean.subtitleOutputs; else delete s.subtitleOutputs;
   if (saved.sequenceId !== seq.id) { s.fileName = defaults.fileName; }
   s.fileName = withExportExtension(s.fileName, s.container);
   if (!s.outputDir) s.outputDir = defaults.outputDir;
