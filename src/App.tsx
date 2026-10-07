@@ -27,6 +27,8 @@ import { FfmpegBanner } from '@/app/FfmpegBanner';
 import { ExportDialog } from '@/panels/export/ExportDialog';
 import { OcrLanguagesDialog } from '@/panels/ocr/OcrLanguagesDialog';
 import { OcrDialog } from '@/panels/ocr/OcrDialog';
+import { TranscribeDialog } from '@/panels/whisper/TranscribeDialog';
+import { WhisperModelsDialog } from '@/panels/whisper/WhisperModelsDialog';
 import { recutApi, setFfmpegAvailability } from '@/state';
 import '@/panels';
 
@@ -116,6 +118,8 @@ export function App() {
       <ExportDialog />
       <OcrDialog />
       <OcrLanguagesDialog />
+      <TranscribeDialog />
+      <WhisperModelsDialog />
       <DialogHost />
     </>
   );

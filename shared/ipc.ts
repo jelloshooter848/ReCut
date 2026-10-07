@@ -5,6 +5,7 @@
  */
 import type { AppPreferences, ExportSettings, ID, JobInfo, MediaProbe, Project, Sequence, MediaItem } from './model';
 import type { OcrLanguageState, OcrRequest } from './ocr';
+import type { TranscribeRequest, WhisperEngineInfo, WhisperModelState } from './whisper';
 import type { ProjectWire } from './projectWire';
 
 export const IPC = {
@@ -57,6 +58,13 @@ export const IPC = {
   ocrInstallLanguage: 'ocr:installLanguage',
   ocrRemoveLanguage: 'ocr:removeLanguage',
   ocrInstallLanguageFromFile: 'ocr:installLanguageFromFile',
+  // Speech-to-text with Whisper (shared/whisper.ts)
+  whisperStart: 'whisper:start',
+  whisperEngine: 'whisper:engine',
+  whisperModels: 'whisper:models',
+  whisperInstallModel: 'whisper:installModel',
+  whisperRemoveModel: 'whisper:removeModel',
+  whisperInstallModelFromFile: 'whisper:installModelFromFile',
   // jobs
   jobsList: 'jobs:list',
   jobsCancel: 'jobs:cancel',
@@ -93,13 +101,16 @@ export interface AppInfo {
   userDataDir: string;
   /** Folder holding the installed OCR language files (`<userData>/ocr/tessdata`). */
   ocrDataDir: string;
+  /** Folder holding the installed Whisper models (`<userData>/whisper/models`). */
+  whisperModelsDir?: string;
   /** The user's home directory (fallback output location for exports). */
   homeDir: string;
   isDev: boolean;
 }
 
 /** Licence files Help › About can open (see electron/licences.ts). The renderer opens them by id, never by path. */
-export type LicenceFileId = 'recut' | 'notices' | 'ffmpegBuild' | 'ffmpegLicense' | 'ffmpegReadme' | 'electron' | 'chromium' | 'tesseract';
+export type LicenceFileId = 'recut' | 'notices' | 'ffmpegBuild' | 'ffmpegLicense' | 'ffmpegReadme' | 'electron' | 'chromium' | 'tesseract'
+  | 'whisperLicense' | 'whisperBuild';
 export interface LicenceFile { id: LicenceFileId; label: string; fileName: string }
 export type OpenLicenceResult = { ok: true } | { ok: false; error: string };
 
@@ -279,6 +290,19 @@ export interface RecutApi {
   ocrRemoveLanguage(code: string): Promise<{ ok: boolean; error?: string }>;
   /** Install an OCR language from a local file the user picked; refused unless it matches the manifest SHA-256. */
   ocrInstallLanguageFromFile(code: string, path: string): Promise<{ ok: boolean; error?: string }>;
+
+  /** Transcribe one audio stream with Whisper: a job of kind 'transcribe' whose result is a TranscribeResult. */
+  startTranscribe(req: TranscribeRequest): Promise<JobInfo>;
+  /** The bundled speech-to-text engine (path, version) and the models folder. */
+  whisperEngine(): Promise<WhisperEngineInfo>;
+  /** Every installable Whisper model (shared/whisper.ts WHISPER_MODELS) and whether it is installed or downloading. */
+  whisperModels(): Promise<WhisperModelState[]>;
+  /** Download and verify one Whisper model: a job of kind 'download' (one per model at a time; resumes a partial file). */
+  whisperInstallModel(id: string): Promise<JobInfo>;
+  /** Delete an installed Whisper model and any partial download (refused while it is downloading). */
+  whisperRemoveModel(id: string): Promise<{ ok: boolean; error?: string }>;
+  /** Install a Whisper model from a local file the user picked; refused unless it matches the manifest SHA-256. */
+  whisperInstallModelFromFile(id: string, path: string): Promise<{ ok: boolean; error?: string }>;
 
   listJobs(): Promise<JobInfo[]>;
   cancelJob(id: ID): Promise<void>;

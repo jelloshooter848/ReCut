@@ -367,7 +367,7 @@ if (!gotLock) {
     const cacheDir = await resolveCacheDir(ud);
     const ff = resolveFfmpeg();
     try {
-      await mediaHandlers.init?.({ userData: ud, cacheDir, ffmpegPath: ff.ffmpegPath, ffprobePath: ff.ffprobePath, broadcast, fetch: net.fetch });
+      await mediaHandlers.init?.({ userData: ud, cacheDir, ffmpegPath: ff.ffmpegPath, ffprobePath: ff.ffprobePath, broadcast, fetch: net.fetch, packaged: app.isPackaged });
     } catch (e) {
       console.error('media init failed:', e);
     }

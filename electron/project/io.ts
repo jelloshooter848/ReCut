@@ -763,6 +763,8 @@ export function normalizePrefs(raw: unknown): AppPreferences {
   if (out.layout && typeof out.layout !== 'object') delete out.layout;
   // A tessdata code (shared/ocr.ts); anything else is dropped rather than handed to the OCR dialog.
   if ('ocrLastLanguage' in out && !(typeof out.ocrLastLanguage === 'string' && /^[a-z_]{3,12}$/.test(out.ocrLastLanguage))) delete out.ocrLastLanguage;
+  // A Whisper model id (shared/whisper.ts); anything else is dropped.
+  if ('whisperLastModel' in out && !(typeof out.whisperLastModel === 'string' && /^[a-z0-9.-]{2,32}$/.test(out.whisperLastModel))) delete out.whisperLastModel;
   return out;
 }
 

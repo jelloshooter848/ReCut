@@ -63,6 +63,7 @@ export const menuCommandMap: Record<string, string> = {
   'sequence.removeDisabledClips': 'sequence.removeDisabledClips',
   'app.preferences': 'app.preferences',
   'app.ocrLanguages': 'app.ocrLanguages',
+  'app.whisperModels': 'app.whisperModels',
   'help.about': 'help.about',
 };
 

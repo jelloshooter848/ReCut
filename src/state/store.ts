@@ -809,6 +809,24 @@ export const useStore = create<RecutStore>()((set, get) => {
       });
       return id;
     },
+    putWhisperSubtitleTrack(track) {
+      // A re-run on the same audio stream and language replaces the earlier result (same id: references stay valid).
+      const same = (t: SubtitleTrack) => t.origin === 'whisper' && track.mediaId !== null && t.mediaId === track.mediaId
+        && t.streamIndex === track.streamIndex && t.language === track.language;
+      const existing = Object.values(get().project.subtitleTracks).find(same);
+      const id = existing?.id ?? track.id;
+      commit('Transcribe', (d) => {
+        const cur = existing ? d.subtitleTracks[existing.id] : undefined;
+        if (cur) {
+          cur.cues = track.cues; cur.name = track.name;
+        } else {
+          d.subtitleTracks[id] = { ...track, id, origin: 'whisper' };
+        }
+        const m = track.mediaId ? d.media[track.mediaId] : undefined;
+        if (m && !m.subtitleTrackIds.includes(id)) m.subtitleTrackIds.push(id);
+      });
+      return id;
+    },
     removeMediaSubtitleTrack(trackId) {
       commit('Remove subtitles', (d) => {
         delete d.subtitleTracks[trackId];

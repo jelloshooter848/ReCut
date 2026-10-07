@@ -16,6 +16,9 @@ import { licenceDirs, listLicenceFiles, resolveLicenceFile } from './licences';
 import { ocrDataDir } from './ocr/dataDir';
 import { assertAbsolutePath, assertOcrLanguageCode, parseOcrRequest } from './ocr/validate';
 import type { OcrLanguageState, OcrRequest } from '../shared/ocr';
+import type { TranscribeRequest, WhisperEngineInfo, WhisperModelState } from '../shared/whisper';
+import { whisperModelsDir } from './whisper/models';
+import { assertWhisperModelId, parseTranscribeRequest } from './whisper/validate';
 import type { AppPreferences, ID, JobInfo, MediaProbe, Project } from '../shared/model';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import type {
@@ -38,8 +41,10 @@ export interface MediaContext {
   ffprobePath: string | null;
   /** Broadcast to every renderer window (used for ev:jobs). */
   broadcast(channel: string, ...args: unknown[]): void;
-  /** HTTP client for OCR language downloads (main.ts passes Electron's `net.fetch`, which uses the system proxy). */
+  /** HTTP client for OCR language and Whisper model downloads (main.ts passes Electron's `net.fetch`, which uses the system proxy). */
   fetch?: MediaFetch;
+  /** The app runs from a package (test-only switches such as RECUT_WHISPER_TEST_MODEL are ignored then). */
+  packaged?: boolean;
 }
 
 /** The part of `fetch` the media layer uses (Electron's `net.fetch` takes no URL object). */
@@ -70,6 +75,13 @@ export interface MediaHandlers {
   ocrRemoveLanguage(code: string): Promise<{ ok: boolean; error?: string }>;
   ocrInstallLanguageFromFile(code: string, path: string): Promise<{ ok: boolean; error?: string }>;
 
+  startTranscribe(req: TranscribeRequest): Promise<JobInfo>;
+  whisperEngine(): Promise<WhisperEngineInfo>;
+  whisperModels(): Promise<WhisperModelState[]>;
+  whisperInstallModel(id: string): Promise<JobInfo>;
+  whisperRemoveModel(id: string): Promise<{ ok: boolean; error?: string }>;
+  whisperInstallModelFromFile(id: string, path: string): Promise<{ ok: boolean; error?: string }>;
+
   listJobs(): Promise<JobInfo[]>;
   cancelJob(id: ID): Promise<void>;
   clearJobs(): Promise<void>;
@@ -85,6 +97,7 @@ export interface MediaHandlers {
 // Compile-time check: MediaHandlers must stay in sync with the RecutApi surface.
 type MediaApiKeys = 'probe' | 'thumbnail' | 'filmstrip' | 'cancelThumbnails' | 'waveform' | 'startProxy' | 'startSceneDetect' | 'extractSubtitles'
   | 'startOcr' | 'ocrLanguages' | 'ocrInstallLanguage' | 'ocrRemoveLanguage' | 'ocrInstallLanguageFromFile'
+  | 'startTranscribe' | 'whisperEngine' | 'whisperModels' | 'whisperInstallModel' | 'whisperRemoveModel' | 'whisperInstallModelFromFile'
   | 'listJobs' | 'cancelJob' | 'clearJobs' | 'startExport' | 'cancelExport' | 'previewExportCommand';
 type _AssertMediaHandlers = Pick<RecutApi, MediaApiKeys> extends Pick<MediaHandlers, MediaApiKeys> ? true : never;
 const _mediaHandlersInSync: _AssertMediaHandlers = true;
@@ -107,6 +120,14 @@ export function registerMediaIpc(h: MediaHandlers): void {
   ipcMain.handle(IPC.ocrRemoveLanguage, (_e, code: unknown) => h.ocrRemoveLanguage(assertOcrLanguageCode(code)));
   ipcMain.handle(IPC.ocrInstallLanguageFromFile, (_e, code: unknown, p: unknown) =>
     h.ocrInstallLanguageFromFile(assertOcrLanguageCode(code), assertAbsolutePath(p)));
+  // Whisper: arguments are checked here (electron/whisper/validate.ts) before they reach the transcription layer.
+  ipcMain.handle(IPC.whisperStart, (_e, req: unknown) => h.startTranscribe(parseTranscribeRequest(req)));
+  ipcMain.handle(IPC.whisperEngine, () => h.whisperEngine());
+  ipcMain.handle(IPC.whisperModels, () => h.whisperModels());
+  ipcMain.handle(IPC.whisperInstallModel, (_e, id: unknown) => h.whisperInstallModel(assertWhisperModelId(id)));
+  ipcMain.handle(IPC.whisperRemoveModel, (_e, id: unknown) => h.whisperRemoveModel(assertWhisperModelId(id)));
+  ipcMain.handle(IPC.whisperInstallModelFromFile, (_e, id: unknown, p: unknown) =>
+    h.whisperInstallModelFromFile(assertWhisperModelId(id), assertAbsolutePath(p)));
   ipcMain.handle(IPC.jobsList, () => h.listJobs());
   ipcMain.handle(IPC.jobsCancel, (_e, id: ID) => h.cancelJob(assertString(id, 'id')));
   ipcMain.handle(IPC.jobsClear, () => h.clearJobs());
@@ -194,6 +215,7 @@ export function registerIpc(deps: IpcDeps): void {
       cacheDir: await resolveCacheDir(userData),
       userDataDir: userData,
       ocrDataDir: ocrDataDir(userData),
+      whisperModelsDir: whisperModelsDir(userData),
       homeDir: app.getPath('home'),
       isDev: deps.isDev,
     };

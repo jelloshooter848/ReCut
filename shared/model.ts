@@ -329,8 +329,9 @@ export interface SubtitleTrack {
   /** Provider that produced it: 'srt' | 'vtt' | 'ocr' | 'whisper' | 'manual' (embedded text streams are 'srt') */
   origin: string;
   /**
-   * Source stream of an OCR / embedded track: absolute ffprobe stream index in the media file (`mediaId`).
-   * Non-negative integer; absent for tracks not read from a stream.
+   * Source stream of an OCR / embedded track (a subtitle stream) or a Whisper track (the audio stream it was
+   * transcribed from): absolute ffprobe stream index in the media file (`mediaId`). Non-negative integer; absent for
+   * tracks not read from a stream.
    */
   streamIndex?: number;
 }
@@ -385,12 +386,14 @@ export interface AppPreferences {
   layout?: Record<string, number>;
   /** tessdata code (shared/ocr.ts) last used for OCR, the OCR dialog's default when the track language says nothing. */
   ocrLastLanguage?: string;
+  /** Whisper model id (shared/whisper.ts) last used to transcribe, the Transcribe dialog's default while installed. */
+  whisperLastModel?: string;
 }
 
 // ------------------------------------------------------------------
 // Jobs (background work in the main process)
 // ------------------------------------------------------------------
-/** 'ocr': bitmap subtitles to text; 'download': OCR language install; 'transcribe' is reserved for speech-to-text. */
+/** 'ocr': bitmap subtitles to text; 'download': OCR language or Whisper model install; 'transcribe': speech-to-text (Whisper). */
 export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download';
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled';
 

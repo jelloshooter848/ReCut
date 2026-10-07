@@ -5,6 +5,8 @@
  *  - export: toasts
  *  - download (OCR language installs): toasts + refresh of the OCR language list (src/state/ocrStatus.ts)
  *  - ocr: done → the OCR subtitle track of that media + stream (added, or the earlier one replaced); toasts
+ *  - transcribe: done → the Whisper subtitle track of that media + audio stream + language (added, or replaced); toasts
+ *  - download of a Whisper model: toasts + refresh of the model list (src/state/whisperStatus.ts)
  * This is the ONLY job→project mirror (jobsStore → store): each terminal result is applied once (by job id) and
  * every write is additionally guarded by the media's current state, so results survive a project reload without
  * double-applying. Jobs are also mirrored into store.jobs so panels may read either store consistently.
@@ -23,6 +25,9 @@ import { useOcrStatus } from '@/state/ocrStatus';
 import { OCR_TITLE_TAIL, ocrTrackName } from '@/ocr/ocrUi';
 import { iso6392ForOcr, ocrLanguage, type OcrResult } from '@shared/ocr';
 import { uid } from '@shared/ids';
+import { useWhisperStatus } from '@/state/whisperStatus';
+import { isWhisperDownload, whisperDownloadName } from '@/whisper/whisperUi';
+import { whisperLanguage, whisperModel, whisperTrackName, type TranscribeResult } from '@shared/whisper';
 
 interface ProxyResultLike { path: string; width?: number; height?: number; cached?: boolean; audioStreams?: number[] }
 interface ExportResultLike { outputPath?: string; sidecarPath?: string; warnings?: string[] }
@@ -133,6 +138,14 @@ function downloadName(job: JobInfo): string {
 
 function routeDownload(job: JobInfo): void {
   if (!isTerminal(job) || !claim(job)) return;
+  if (isWhisperDownload(job)) {
+    const model = whisperDownloadName(job);
+    if (job.status === 'done') toast('ok', `${model} transcription model installed`);
+    else if (job.status === 'failed') toast('error', `Could not install the ${model} transcription model: ${job.error ?? 'unknown error'}`);
+    else toast('info', `${model} model download canceled`);
+    void useWhisperStatus.getState().refresh();
+    return;
+  }
   const name = downloadName(job);
   if (job.status === 'done') toast('ok', `${name} OCR language installed`);
   else if (job.status === 'failed') toast('error', `Could not install ${name} OCR data: ${job.error ?? 'unknown error'}`);
@@ -177,6 +190,37 @@ function routeOcr(job: JobInfo): void {
   toast('ok', `${n} subtitle line${n === 1 ? '' : 's'} read from ${where}${r.cached ? ' (from cache)' : ''}`);
 }
 
+function isTranscribeResult(r: unknown): r is TranscribeResult {
+  if (!r || typeof r !== 'object') return false;
+  const o = r as Partial<TranscribeResult>;
+  return Array.isArray(o.cues) && typeof o.language === 'string' && typeof o.model === 'string' && Number.isInteger(o.streamIndex);
+}
+
+function routeTranscribe(job: JobInfo): void {
+  if (!isTerminal(job) || !claim(job)) return;
+  const st = useStore.getState();
+  const media = job.mediaId ? st.project.media[job.mediaId] : undefined;
+  const label = media?.name ?? 'media';
+  if (job.status === 'failed') { toast('error', `Transcription of ${label} failed: ${job.error ?? 'unknown error'}`); return; }
+  if (job.status === 'canceled') { toast('info', `Transcription of ${label} canceled`); return; }
+  const r = job.result;
+  if (!isTranscribeResult(r)) { toast('error', `Transcription of ${label} returned no result`); return; }
+  if (!media) { toast('warn', `Transcription finished, but its media is no longer in the project`); return; }
+  if (r.cues.length === 0) { toast('warn', `No speech recognized in ${media.name}`); return; }
+  const several = (media.probe?.audio.length ?? 0) > 1;
+  st.putWhisperSubtitleTrack({
+    id: uid('sub'),
+    name: whisperTrackName(r.language, r.model, r.translate, several ? r.streamIndex : undefined),
+    language: whisperLanguage(r.language)?.iso6392 ?? 'und',
+    mediaId: media.id,
+    cues: r.cues.map((c) => ({ ...c })),
+    origin: 'whisper',
+    streamIndex: r.streamIndex,
+  });
+  const n = r.cues.length;
+  toast('ok', `${n} line${n === 1 ? '' : 's'} transcribed from ${media.name} (Whisper ${whisperModel(r.model)?.name ?? r.model})${r.cached ? ' (from cache)' : ''}`);
+}
+
 /** Reveal an exported file in the OS file manager (for UI that renders export results). */
 export function revealExport(path: string): void { void window.recut?.showItemInFolder?.(path).catch(() => { /* ignore */ }); }
 
@@ -190,6 +234,7 @@ export function routeJobs(jobs: JobInfo[]): void {
       else if (job.kind === 'export') routeExport(job);
       else if (job.kind === 'download') routeDownload(job);
       else if (job.kind === 'ocr') routeOcr(job);
+      else if (job.kind === 'transcribe') routeTranscribe(job);
     } catch (e) {
       console.error('[jobsRouter] failed to route job', job.id, e);
     }

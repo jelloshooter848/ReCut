@@ -10,8 +10,9 @@
  *  - `LICENSE.electron.txt`, `LICENSES.chromium.html` next to the executable (added by electron-builder itself)
  *  - `<resources>/app.asar.unpacked/dist/electron/ocr/core/LICENSE`: Tesseract's licence, copied with the OCR core by
  *    scripts/build-electron.mjs (dist/electron/ocr/** is unpacked from app.asar, build.asarUnpack)
+ *  - `<resources>/whisper/WHISPER-*.txt` (extraResources `resources/whisper`, written by scripts/<platform>/get-whisper.*)
  * In development the repository root (working directory / app path) stands in for `<resources>`, and
- * `<root>/dist/electron/ocr/core` for the OCR folder.
+ * `<root>/dist/electron/ocr/core` for the OCR folder, `<root>/resources/whisper` for the speech-to-text engine.
  *
  * No `electron` import, so the resolution is unit-testable; electron/ipc.ts supplies the directories.
  */
@@ -19,7 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { LicenceFile, LicenceFileId } from '../shared/ipc';
 
-type Where = 'app' | 'ffmpeg' | 'exe' | 'ocr';
+type Where = 'app' | 'ffmpeg' | 'exe' | 'ocr' | 'whisper';
 
 interface LicenceDef { id: LicenceFileId; label: string; fileName: string; where: Where }
 
@@ -33,10 +34,12 @@ export const LICENCE_FILES: readonly LicenceDef[] = Object.freeze([
   { id: 'electron', label: 'Electron licence', fileName: 'LICENSE.electron.txt', where: 'exe' },
   { id: 'chromium', label: 'Chromium licences', fileName: 'LICENSES.chromium.html', where: 'exe' },
   { id: 'tesseract', label: 'Tesseract OCR licence (Apache-2.0)', fileName: 'LICENSE', where: 'ocr' },
+  { id: 'whisperLicense', label: 'whisper.cpp licence (MIT)', fileName: 'WHISPER-LICENSE.txt', where: 'whisper' },
+  { id: 'whisperBuild', label: 'whisper.cpp build and source', fileName: 'WHISPER-BUILD.txt', where: 'whisper' },
 ].map((d) => Object.freeze(d as LicenceDef)));
 
 /** Directories searched, in order, for each kind of file. */
-export interface LicenceDirs { app: string[]; ffmpeg: string[]; exe: string[]; ocr: string[] }
+export interface LicenceDirs { app: string[]; ffmpeg: string[]; exe: string[]; ocr: string[]; whisper?: string[] }
 
 /** The OCR core folder, relative to the app root (repository root or app.asar.unpacked). */
 const OCR_CORE_DIR = path.join('dist', 'electron', 'ocr', 'core');
@@ -49,9 +52,11 @@ export function licenceDirs(env: { packaged: boolean; resourcesPath?: string; ap
   const app: string[] = [];
   const ffmpeg: string[] = [];
   const ocr: string[] = [];
+  const whisper: string[] = [];
   if (env.resourcesPath) {
     app.push(env.resourcesPath);
     ffmpeg.push(path.join(env.resourcesPath, 'ffmpeg'));
+    whisper.push(path.join(env.resourcesPath, 'whisper'));
     ocr.push(path.join(env.resourcesPath, 'app.asar.unpacked', OCR_CORE_DIR));
   }
   if (!env.packaged) {
@@ -60,9 +65,10 @@ export function licenceDirs(env: { packaged: boolean; resourcesPath?: string; ap
       app.push(root);
       ffmpeg.push(path.join(root, 'resources', 'ffmpeg'));
       ocr.push(path.join(root, OCR_CORE_DIR));
+      whisper.push(path.join(root, 'resources', 'whisper'));
     }
   }
-  return { app: unique(app), ffmpeg: unique(ffmpeg), exe: unique([path.dirname(env.execPath)]), ocr: unique(ocr) };
+  return { app: unique(app), ffmpeg: unique(ffmpeg), exe: unique([path.dirname(env.execPath)]), ocr: unique(ocr), whisper: unique(whisper) };
 }
 
 function unique(xs: string[]): string[] {
@@ -84,7 +90,7 @@ function defFor(id: unknown): LicenceDef | undefined {
 export function resolveLicenceFile(id: unknown, dirs: LicenceDirs, exists: (p: string) => boolean = isFile): string | null {
   const def = defFor(id);
   if (!def) return null;
-  for (const dir of dirs[def.where]) {
+  for (const dir of dirs[def.where] ?? []) {
     const p = path.join(dir, def.fileName);
     if (exists(p)) return p;
   }

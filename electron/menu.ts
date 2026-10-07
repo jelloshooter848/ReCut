@@ -54,6 +54,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       cmd('Import Media…', 'file.importMedia'),
       cmd('Import Subtitles…', 'file.importSubtitles'),
       cmd('OCR Languages…', 'app.ocrLanguages'),
+      cmd('Transcription Models…', 'app.whisperModels'),
       { type: 'separator' },
       cmd('Export…', 'file.export', 'CmdOrCtrl+M'),
       ...(isMac ? [] : [{ type: 'separator' as const }, { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: () => deps.requestQuit() }]),
