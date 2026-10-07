@@ -21,8 +21,13 @@ import {
   effectiveExportFps, estimateEtaSeconds, estimateFileSize, exportChecklist, exportOutputFrames, exportRange, formatBytes,
   formatDuration, fpsConversionNote, fpsFromOptionValue, type ChecklistTarget,
   fpsOptionValue, hasInOut, initialExportSettings, loadSavedExportSettings, maxSourceChannels, outputPathFor,
-  clampSampleRateForCodec, presetNameFor, presetsFor, sampleRateSupported, saveExportSettings, sanitizeFileName, sequenceHasSubtitles, validateExportSettings, withMp4,
+  clampSampleRateForCodec, presetNameFor, presetsFor, sampleRateSupported, saveExportSettings, sanitizeFileName, sequenceHasSubtitles, validateExportSettings,
+  audioSummary, perTrackOutputPaths, withFormatExtension,
 } from './settings';
+import {
+  CONTAINER_IDS, CONTAINERS, DNXHR_PROFILES, INTERMEDIATE_CODECS, PRORES_PROFILES, audioBitDepth, dnxhrProfile, exportContainer, intermediateCodec,
+  isPerTrackAudio, proresProfile, videoEncoder, withExportExtension,
+} from '@shared/exportFormat';
 
 const CSS = `
 .xd { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 0; min-height: 0; margin: -12px; }
@@ -71,23 +76,37 @@ const AUDIO_BITRATES = [96, 128, 160, 192, 256, 320, 384, 448, 640];
 const SAMPLE_RATES = [44100, 48000, 96000];
 
 /**
- * Sample rates offered for `codec`: AC-3 gets 32 / 44.1 / 48 kHz only; others the common rates. The current
- * rate stays selectable when the codec supports it (e.g. a sequence at 22.05 kHz).
+ * Sample rates offered for `codec`: AC-3 (MP4) gets 32 / 44.1 / 48 kHz only; others the common rates. The current
+ * rate stays selectable when the codec supports it (e.g. a sequence at 22.05 kHz). With `settings` whose format is
+ * not MP4 (PCM, FLAC) the AC-3 limit does not apply.
  */
-export function sampleRateChoices(codec: ExportSettings['audioCodec'], current: number): number[] {
-  const base = codec === 'ac3' ? AC3_SAMPLE_RATES : SAMPLE_RATES;
-  const vals = base.filter((r) => sampleRateSupported(codec, r));
-  if (current > 0 && !vals.includes(current) && sampleRateSupported(codec, current)) vals.push(current);
+export function sampleRateChoices(codec: ExportSettings['audioCodec'], current: number, settings?: Pick<ExportSettings, 'container'>): number[] {
+  const ac3 = codec === 'ac3' && (!settings || exportContainer(settings) === 'mp4');
+  const base = ac3 ? AC3_SAMPLE_RATES : SAMPLE_RATES;
+  const vals = base.filter((r) => sampleRateSupported(codec, r, settings));
+  if (current > 0 && !vals.includes(current) && sampleRateSupported(codec, current, settings)) vals.push(current);
   return vals.sort((a, b) => a - b);
 }
 
-/** A settings edit from the dialog: proxies stay off, and the sample rate follows the audio codec (AC-3 ≤ 48 kHz). */
+/**
+ * A settings edit from the dialog: proxies stay off, the sample rate follows the audio codec (AC-3 ≤ 48 kHz), and
+ * the file name's extension follows the format.
+ */
 export function patchExportSettings(settings: ExportSettings, patch: Partial<ExportSettings>): ExportSettings {
-  return clampSampleRateForCodec({ ...settings, ...patch, useProxies: false });
+  const next: ExportSettings = { ...settings, ...patch, useProxies: false };
+  if (patch.container !== undefined && exportContainer(next) !== exportContainer(settings)) next.fileName = withExportExtension(next.fileName, exportContainer(next));
+  return clampSampleRateForCodec(next);
 }
+
+const FORMAT_OPTIONS = CONTAINER_IDS.map((c) => ({ value: c, label: CONTAINERS[c].label }));
+const INTERMEDIATE_OPTIONS = INTERMEDIATE_CODECS.map((c) => ({ value: c.id, label: c.label }));
+const PRORES_OPTIONS = PRORES_PROFILES.map((p) => ({ value: p.id, label: p.label }));
+const DNXHR_OPTIONS = DNXHR_PROFILES.map((p) => ({ value: p.id, label: p.label }));
+const BIT_DEPTH_OPTIONS = [{ value: '24', label: '24-bit' }, { value: '16', label: '16-bit' }];
+const AUDIO_FILES_OPTIONS = [{ value: 'mix', label: 'One mixed file' }, { value: 'tracks', label: 'One per track' }];
 const ENCODER_OPTIONS = ENCODER_PRESETS.map((p) => ({ value: p, label: p }));
 
-type Phase = { kind: 'edit' } | { kind: 'job'; jobId: string; outputPath: string };
+type Phase = { kind: 'edit' } | { kind: 'job'; jobId: string; outputPath: string; outputPaths?: string[] };
 
 function isTerminal(j: JobInfo | undefined): boolean { return !!j && (j.status === 'done' || j.status === 'failed' || j.status === 'canceled'); }
 
@@ -169,7 +188,7 @@ export function ExportDialog() {
   if (phase.kind === 'job') {
     return (
       <ProgressView
-        seq={seq} settings={settings} job={activeJob ?? undefined} jobId={phase.jobId} outputPath={phase.outputPath}
+        seq={seq} settings={settings} job={activeJob ?? undefined} jobId={phase.jobId} outputPath={phase.outputPath} outputPaths={phase.outputPaths}
         onClose={onClose} onAnother={() => { setPhase({ kind: 'edit' }); setFinalJob(null); }}
       />
     );
@@ -199,7 +218,7 @@ export function ExportDialog() {
         const api = recutApi();
         if (!api) { setStartError('IPC unavailable'); return; }
         setStarting(true); setStartError(null);
-        const final: ExportSettings = { ...settings, fileName: withMp4(sanitizeFileName(settings.fileName)), useProxies: false };
+        const final: ExportSettings = { ...settings, fileName: withFormatExtension(sanitizeFileName(settings.fileName), settings), useProxies: false };
         saveExportSettings(projectId, seq.id, final);
         api.setPrefs({ lastExportDir: final.outputDir }).catch(() => { /* ignore */ });
         const noFfmpeg = ffmpegUnavailable('ffmpeg');
@@ -216,7 +235,7 @@ export function ExportDialog() {
             if (choice !== 0) return;
             res = await api.startExport({ ...req, overwrite: true });
           }
-          if (res.ok) { setFinalJob(null); setPhase({ kind: 'job', jobId: res.jobId, outputPath: res.outputPath }); }
+          if (res.ok) { setFinalJob(null); setPhase({ kind: 'job', jobId: res.jobId, outputPath: res.outputPath, outputPaths: res.outputPaths }); }
           else setStartError(res.error);
         } catch (e) { setStartError(e instanceof Error ? e.message : String(e)); }
         finally { setStarting(false); }
@@ -264,7 +283,13 @@ function SettingsView(p: SettingsViewProps) {
   const checklist = useMemo(() => exportChecklist(seq, media, settings, p.projectUsesProxies), [seq, media, settings, p.projectUsesProxies]);
   const blocked = checklistBlocks(checklist);
   const range = exportRange(seq, settings);
-  const size = estimateFileSize(settings, range.seconds);
+  const container = exportContainer(settings);
+  const cinfo = CONTAINERS[container];
+  const audioOnly = cinfo.audioOnly;
+  const mp4 = container === 'mp4';
+  const vEnc = videoEncoder(settings);
+  const perTrackPaths = useMemo(() => perTrackOutputPaths(seq, settings), [seq, settings]);
+  const size = estimateFileSize(settings, range.seconds, perTrackPaths?.length || 1);
   const maxCh = useMemo(() => maxSourceChannels(seq, media), [seq, media]);
   const surroundOk = maxCh >= 6;
   const hasSubs = sequenceHasSubtitles(seq);
@@ -288,9 +313,11 @@ function SettingsView(p: SettingsViewProps) {
     return vals.map((v) => ({ value: String(v), label: `${v} kbps` }));
   }, [settings.audioBitrateKbps]);
   const sampleRateOptions = useMemo(() => {
-    return sampleRateChoices(settings.audioCodec, settings.sampleRate)
+    return sampleRateChoices(settings.audioCodec, settings.sampleRate, { container })
       .map((v) => ({ value: String(v), label: `${(v / 1000).toFixed(1).replace(/\.0$/, '')} kHz` }));
-  }, [settings.audioCodec, settings.sampleRate]);
+  }, [settings.audioCodec, settings.sampleRate, container]);
+  const channelsLabel = settings.audioChannels === 6 ? '5.1' : 'Stereo';
+  const kHz = `${(settings.sampleRate / 1000).toFixed(1).replace(/\.0$/, '')} kHz`;
 
   const footer = (
     <>
@@ -322,13 +349,16 @@ function SettingsView(p: SettingsViewProps) {
           <div>
             <h4>Output</h4>
             <dl className="xd-kv">
-              <dt>Video</dt><dd>{settings.width}×{settings.height} · {fpsLabel(outFps)} fps · {settings.videoCodec === 'libx265' ? 'H.265' : 'H.264'}</dd>
-              <dt>Quality</dt><dd>{settings.qualityMode === 'crf' ? `CRF ${settings.crf} (${crfLabel(settings.crf)})` : `${settings.videoBitrateKbps} kbps`} · {settings.preset}</dd>
-              <dt>Audio</dt><dd>{settings.audioCodec.toUpperCase().replace('AC3', 'AC-3')} · {settings.audioBitrateKbps} kbps · {settings.audioChannels === 6 ? '5.1' : 'Stereo'}</dd>
+              <dt>Format</dt><dd data-testid="export-summary-format">{cinfo.ext.slice(1).toUpperCase()}{perTrackPaths ? ' · one per track' : ''}</dd>
+              <dt>Video</dt><dd>{vEnc ? <>{settings.width}×{settings.height} · {fpsLabel(outFps)} fps · {vEnc.label}</> : 'None (audio only)'}</dd>
+              {mp4 ? <><dt>Quality</dt><dd>{settings.qualityMode === 'crf' ? `CRF ${settings.crf} (${crfLabel(settings.crf)})` : `${settings.videoBitrateKbps} kbps`} · {settings.preset}</dd></> : null}
+              <dt>Audio</dt><dd>{audioSummary(settings)} · {channelsLabel} · {kHz}</dd>
               <dt>Range</dt><dd>{range.usesInOut ? 'In → Out' : 'Entire sequence'}</dd>
-              <dt>Duration</dt><dd className="mono">{formatSequenceTimecode(range.frames, seq.fps)} · {outFramesLabel}</dd>
+              <dt>Duration</dt><dd className="mono">{formatSequenceTimecode(range.frames, seq.fps)}{audioOnly ? '' : ` · ${outFramesLabel}`}</dd>
               <dt>Est. size</dt><dd data-testid="export-size">{size.approximate ? '≈ ' : ''}{formatBytes(size.bytes)}</dd>
-              <dt>File</dt><dd className="wrap xd-path" title={outPath}>{outPath}</dd>
+              {perTrackPaths ? (
+                <><dt>Files</dt><dd className="wrap xd-path" data-testid="export-files" title={perTrackPaths.join('\n')}>{perTrackPaths.length ? perTrackPaths.map((f) => <div key={f}>{f}</div>) : 'none'}</dd></>
+              ) : <><dt>File</dt><dd className="wrap xd-path" title={outPath}>{outPath}</dd></>}
             </dl>
           </div>
           <div>
@@ -360,9 +390,15 @@ function SettingsView(p: SettingsViewProps) {
           <section className="xd-section">
             <h4>Output</h4>
             <div className="xd-row">
+              <label>Format</label>
+              <div className="ctl">
+                <Select value={container} options={FORMAT_OPTIONS} data-testid="export-format" onChange={(v) => update({ container: v })} />
+              </div>
+            </div>
+            <div className="xd-row">
               <label>File name</label>
               <div className="ctl">
-                <TextField value={settings.fileName} onChange={(v) => update({ fileName: v })} invalid={!!issueFor('fileName')} title={issueFor('fileName')} data-testid="export-filename" placeholder="sequence.mp4" />
+                <TextField value={settings.fileName} onChange={(v) => update({ fileName: v })} invalid={!!issueFor('fileName')} title={issueFor('fileName')} data-testid="export-filename" placeholder={`sequence${cinfo.ext}`} />
               </div>
             </div>
             <div className="xd-row">
@@ -377,6 +413,7 @@ function SettingsView(p: SettingsViewProps) {
 
           <section className="xd-section">
             <h4>Video</h4>
+            {audioOnly ? <div className="xd-hint" data-testid="export-audio-only-note">Audio only: {cinfo.ext.slice(1).toUpperCase()} files have no picture.</div> : <>
             <div className="xd-row">
               <label>Frame size</label>
               <div className="ctl">
@@ -395,6 +432,21 @@ function SettingsView(p: SettingsViewProps) {
               </div>
             </div>
             {fpsDiffers ? <div className="xd-row"><span /><span className="xd-hint" data-testid="export-fps-note">{fpsConversionNote(seq.fps, outFps)}</span></div> : null}
+            {!mp4 ? <>
+              <div className="xd-row">
+                <label>Codec</label>
+                <div className="ctl"><Select value={intermediateCodec(settings)} options={INTERMEDIATE_OPTIONS} data-testid="export-intermediate-codec" onChange={(v) => update({ intermediateCodec: v })} /></div>
+              </div>
+              <div className="xd-row">
+                <label>Profile</label>
+                <div className="ctl">
+                  {intermediateCodec(settings) === 'dnxhr'
+                    ? <Select value={dnxhrProfile(settings).id} options={DNXHR_OPTIONS} data-testid="export-profile" onChange={(v) => update({ dnxhrProfile: v })} />
+                    : <Select value={proresProfile(settings).id} options={PRORES_OPTIONS} data-testid="export-profile" onChange={(v) => update({ proresProfile: v })} />}
+                  <span className="xd-hint">{vEnc ? `${vEnc.pixFmt}, every frame a key frame` : ''}</span>
+                </div>
+              </div>
+            </> : <>
             <div className="xd-row">
               <label>Codec</label>
               <div className="ctl"><Select value={settings.videoCodec} options={CODEC_OPTIONS} onChange={(v) => update({ videoCodec: v })} /></div>
@@ -428,23 +480,44 @@ function SettingsView(p: SettingsViewProps) {
                 <span className="xd-hint">Slower presets compress better at the same quality.</span>
               </div>
             </div>
+            </>}
+            </>}
           </section>
 
           <section className="xd-section">
             <h4>Audio</h4>
-            <div className="xd-row">
-              <label>Codec</label>
-              <div className="ctl"><Select value={settings.audioCodec} options={AUDIO_CODEC_OPTIONS} onChange={(v) => update({ audioCodec: v })} /></div>
-            </div>
-            <div className="xd-row">
-              <label>Bitrate</label>
-              <div className="ctl"><Select value={String(settings.audioBitrateKbps)} options={audioBitrateOptions} onChange={(v) => update({ audioBitrateKbps: Number(v) })} /></div>
-            </div>
+            {mp4 ? <>
+              <div className="xd-row">
+                <label>Codec</label>
+                <div className="ctl"><Select value={settings.audioCodec} options={AUDIO_CODEC_OPTIONS} onChange={(v) => update({ audioCodec: v })} /></div>
+              </div>
+              <div className="xd-row">
+                <label>Bitrate</label>
+                <div className="ctl"><Select value={String(settings.audioBitrateKbps)} options={audioBitrateOptions} onChange={(v) => update({ audioBitrateKbps: Number(v) })} /></div>
+              </div>
+            </> : (
+              <div className="xd-row">
+                <label>Codec</label>
+                <div className="ctl">
+                  <span className="text-sm">{container === 'flac' ? 'FLAC (lossless)' : 'PCM (uncompressed)'}</span>
+                  <Select value={String(audioBitDepth(settings))} options={BIT_DEPTH_OPTIONS} data-testid="export-bit-depth" onChange={(v) => update({ audioBitDepth: v === '16' ? 16 : 24 })} />
+                </div>
+              </div>
+            )}
+            {audioOnly ? (
+              <div className="xd-row">
+                <label>Files</label>
+                <div className="ctl">
+                  <Select value={isPerTrackAudio(settings) ? 'tracks' : 'mix'} options={AUDIO_FILES_OPTIONS} data-testid="export-audio-files" onChange={(v) => update({ audioPerTrack: v === 'tracks' })} />
+                  <span className="xd-hint">{isPerTrackAudio(settings) ? 'Each track with its clip and track levels, all the same length.' : 'All audio tracks mixed, as in a video export.'}</span>
+                </div>
+              </div>
+            ) : null}
             <div className="xd-row">
               <label>Channels</label>
               <div className="ctl">
                 <Select value={String(settings.audioChannels)} options={[{ value: '2', label: 'Stereo' }, { value: '6', label: '5.1 Surround', disabled: !surroundOk }]}
-                  onChange={(v) => update(v === '6' ? { audioChannels: 6, audioCodec: 'ac3', audioBitrateKbps: Math.max(settings.audioBitrateKbps, 448) } : { audioChannels: 2 })} />
+                  onChange={(v) => update(v === '6' ? (mp4 ? { audioChannels: 6, audioCodec: 'ac3', audioBitrateKbps: Math.max(settings.audioBitrateKbps, 448) } : { audioChannels: 6 }) : { audioChannels: 2 })} />
                 <span className="xd-hint">{surroundOk ? `Source has ${maxCh}-channel audio.` : 'Needs a source with 6 audio channels.'}</span>
               </div>
             </div>
@@ -471,13 +544,14 @@ function SettingsView(p: SettingsViewProps) {
             <div className="xd-row">
               <label>Burn in</label>
               <div className="ctl">
-                <Toggle checked={settings.burnSubtitles && hasSubs} disabled={!hasSubs} onChange={(v) => update({ burnSubtitles: v })} label={<span className="text-sm">Render subtitles into the picture</span>} />
+                <Toggle checked={settings.burnSubtitles && hasSubs && !audioOnly} disabled={!hasSubs || audioOnly} onChange={(v) => update({ burnSubtitles: v })} label={<span className="text-sm">Render subtitles into the picture</span>} />
               </div>
             </div>
+            {audioOnly && hasSubs ? <div className="xd-row"><span /><span className="xd-hint" data-testid="export-burn-in-note">Burn-in needs a picture, so it is off for audio-only formats. A sidecar .srt can still be written.</span></div> : null}
             <div className="xd-row">
               <label>Sidecar</label>
               <div className="ctl">
-                <Toggle checked={settings.exportSubtitleSidecar && hasSubs} disabled={!hasSubs} onChange={(v) => update({ exportSubtitleSidecar: v })} label={<span className="text-sm">Export .srt next to the video</span>} />
+                <Toggle checked={settings.exportSubtitleSidecar && hasSubs} disabled={!hasSubs} onChange={(v) => update({ exportSubtitleSidecar: v })} label={<span className="text-sm">{perTrackPaths ? 'Export one .srt next to the audio files' : `Export .srt next to the ${audioOnly ? 'audio file' : 'video'}`}</span>} />
               </div>
             </div>
             {!hasSubs ? <div className="xd-row"><span /><span className="xd-hint">The sequence has no subtitle tracks.</span></div> : null}
@@ -494,7 +568,7 @@ function SettingsView(p: SettingsViewProps) {
                 </div>
                 <pre className="xd-cmd" data-testid="export-command">{p.command}</pre>
               </div>
-            ) : <div className="xd-hint">Use “Show FFmpeg command” below to preview the exact command before exporting.</div>}
+            ) : <div className="xd-hint">Use “Show FFmpeg command” below to preview the exact command before exporting.{perTrackPaths ? ' A per-track export runs one command per file; the preview shows the first.' : ''}</div>}
             {p.startError ? <div className="xd-check-item error" data-testid="export-start-error"><XCircle /><span>{p.startError}</span></div> : null}
           </section>
         </div>
@@ -513,11 +587,13 @@ interface ProgressViewProps {
   job: JobInfo | undefined;
   jobId: string;
   outputPath: string;
+  /** Every file of a per-track audio export. */
+  outputPaths?: string[];
   onClose: () => void;
   onAnother: () => void;
 }
 
-function ProgressView({ seq, job, jobId, outputPath, onClose, onAnother }: ProgressViewProps) {
+function ProgressView({ seq, job, jobId, outputPath, outputPaths, onClose, onAnother }: ProgressViewProps) {
   const [, tick] = useState(0);
   const running = !job || job.status === 'queued' || job.status === 'running';
   useEffect(() => {
@@ -548,7 +624,7 @@ function ProgressView({ seq, job, jobId, outputPath, onClose, onAnother }: Progr
         </div>
         <ProgressBar value={job?.status === 'running' && job.progress > 0 ? job.progress : undefined} />
         <dl className="xd-kv">
-          <dt>Output</dt><dd className="wrap xd-path">{outputPath}</dd>
+          <dt>Output</dt><dd className="wrap xd-path">{outputPaths && outputPaths.length > 1 ? outputPaths.map((f) => <div key={f}>{f}</div>) : outputPath}</dd>
           <dt>Elapsed</dt><dd className="mono">{formatDuration(elapsedMs / 1000)}</dd>
           <dt>Remaining</dt><dd className="mono">{eta === null ? '—' : `≈ ${formatDuration(eta)}`}</dd>
         </dl>
@@ -572,7 +648,12 @@ function ProgressView({ seq, job, jobId, outputPath, onClose, onAnother }: Progr
           </div>
         </div>
         <dl className="xd-kv">
-          <dt>File</dt><dd className="wrap xd-path">{outputPath}</dd>
+          {(() => {
+            const files = (job.result as { outputPaths?: string[] } | undefined)?.outputPaths ?? outputPaths;
+            return files && files.length > 1
+              ? <><dt>Files</dt><dd className="wrap xd-path" data-testid="export-done-files">{files.map((f) => <div key={f}>{f}</div>)}</dd></>
+              : <><dt>File</dt><dd className="wrap xd-path">{outputPath}</dd></>;
+          })()}
           {(job.result as { sidecarPath?: string } | undefined)?.sidecarPath ? <><dt>Subtitles</dt><dd className="wrap xd-path">{(job.result as { sidecarPath?: string }).sidecarPath}</dd></> : null}
           {Array.isArray((job.result as { warnings?: string[] } | undefined)?.warnings) && (job.result as { warnings: string[] }).warnings.length ? (
             <><dt>Warnings</dt><dd className="wrap"><div className="xd-check">{(job.result as { warnings: string[] }).warnings.map((w, i) => <div key={i} className="xd-check-item warning"><AlertTriangle /><span>{w}</span></div>)}</div></dd></>

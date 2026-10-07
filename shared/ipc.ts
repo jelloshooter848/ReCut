@@ -5,6 +5,7 @@
  */
 import type { AppPreferences, AudioChannelSelection, ExportSettings, ID, JobInfo, MediaProbe, Project, Sequence, MediaItem } from './model';
 import type { OcrLanguageState, OcrRequest } from './ocr';
+import type { CollectRequest, CollectStartResult, CollectSummary } from './collect';
 import type { ProjectWire } from './projectWire';
 
 export const IPC = {
@@ -66,6 +67,9 @@ export const IPC = {
   exportStart: 'export:start',
   exportCancel: 'export:cancel',
   exportPreviewCommand: 'export:previewCommand',
+  // Collect Project (shared/collect.ts)
+  collectPreflight: 'collect:preflight',
+  collectStart: 'collect:start',
   // events (main -> renderer)
   evJobs: 'ev:jobs',
   evMenu: 'ev:menu',
@@ -200,7 +204,8 @@ export interface ExportRequest {
   overwrite?: boolean;
 }
 export type ExportStartResult =
-  | { ok: true; jobId: ID; outputPath: string }
+  /** `outputPaths`: every file of a per-track audio export (one per audio track); `outputPath` is the first. */
+  | { ok: true; jobId: ID; outputPath: string; outputPaths?: string[] }
   /** `code: 'exists'`: the output or sidecar exists; ask the user and resend with `overwrite: true`. */
   | { ok: false; error: string; code?: 'exists' }
 
@@ -296,6 +301,11 @@ export interface RecutApi {
   startExport(req: ExportRequest): Promise<ExportStartResult>;
   cancelExport(jobId: ID): Promise<void>;
   previewExportCommand(req: ExportRequest): Promise<string[]>;
+
+  /** Collect Project: what a collect with these options would copy, and whether it can start (shared/collect.ts). */
+  collectPreflight(req: CollectRequest): Promise<CollectSummary>;
+  /** Start Collect Project: a job of kind 'collect' (cancel with cancelJob); its result is a CollectResult. */
+  startCollect(req: CollectRequest): Promise<CollectStartResult>;
 
   onJobs(cb: (jobs: JobInfo[]) => void): () => void;
   onMenu(cb: (command: MenuCommand) => void): () => void;

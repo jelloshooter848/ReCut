@@ -3,7 +3,8 @@
  * and integrates with the main-process job queue.
  *
  * Temp files (filter script, burn-in SRT, chapters FFMETADATA) live in a fresh os.tmpdir()/recut-export-XXXXXX/ and
- * are removed when the run finishes. Output is written to <name>.recut-part-<random>.mp4 (created exclusively) and renamed on success.
+ * are removed when the run finishes. Output is written to <name>.recut-part-<random>.<ext> (created exclusively) and renamed on success;
+ * a per-track audio export renders every file first and then renames them one by one.
  * Every path handed to ffmpeg as an input or output is a `file:` URL, so no protocol prefix is ever interpreted.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -14,7 +15,7 @@ import path from 'node:path';
 import type { ExportRequest, ExportStartResult } from '@shared/ipc';
 import type { ID, JobInfo } from '@shared/model';
 import {
-  buildRenderGraph, buildSubtitleSrt, exportPartPath, exportSidecarPath, exportSidecarTempPath, ExportOutputExistsError, FILTER_SCRIPT_TOKEN,
+  buildExportGraphs, buildRenderGraph, buildSubtitleSrt, exportPartPath, exportSidecarTempPath, exportUnsavedPath, ExportOutputExistsError, FILTER_SCRIPT_TOKEN,
   outputFrameIndex, outputMetadataArgs, sec, type ExportPathStat, type RenderGraph,
 } from './renderGraph';
 import { ensureDirSafe } from '../safeMkdir';
@@ -76,11 +77,11 @@ function reserveRenderTemp(outputPath: string): { path: string; id: string | und
 }
 
 /**
- * The final move failed: keep the finished render under `<name>.recut-unsaved-<time>.mp4` (or, if even that rename
+ * The final move failed: keep the finished render under `<name>.recut-unsaved-<time>.<ext>` (or, if even that rename
  * fails, under its temp name) so the user does not have to render again. Returns where it is.
  */
 function keepUnsavedRender(partPath: string, outputPath: string): string {
-  const kept = `${outputPath.replace(/\.mp4$/i, '')}.recut-unsaved-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomToken().slice(0, 4)}.mp4`;
+  const kept = exportUnsavedPath(outputPath, `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomToken().slice(0, 4)}`);
   if (exportStatPath(kept)) return partPath;
   try { fs.renameSync(partPath, kept); return kept; } catch { return partPath; }
 }
@@ -123,7 +124,10 @@ export function resolveFfmpegPath(): string {
 // ---------------------------------------------------------------------------------------------------
 
 export interface ExportRunResult {
+  /** The output file (per-track audio export: the first file; all of them are in `outputPaths`). */
   outputPath: string;
+  /** Every file written, in track order for a per-track audio export. */
+  outputPaths: string[];
   durationSec: number;
   warnings: string[];
   /** Path of the sidecar .srt when one was written. */
@@ -148,10 +152,13 @@ export interface ExportRunOptions {
 
 export type ExportProgress = (progress: number, message?: string) => void;
 
-/** Full ffmpeg args (binary excluded) with the filter graph inline, for the "preview command" UI. */
+/**
+ * Full ffmpeg args (binary excluded) with the filter graph inline, for the "preview command" UI. A per-track audio
+ * export runs one command per file: this is the first file's.
+ */
 export function buildExportCommand(req: ExportRequest): string[] {
-  const graph = buildRenderGraph(req, { subtitleFilePath: graphSubtitlePathPreview(req), chaptersFilePath: path.join(os.tmpdir(), 'recut-export', 'chapters.txt') });
-  return inlineFilter(graph);
+  const { graphs } = buildExportGraphs(req, { subtitleFilePath: graphSubtitlePathPreview(req), chaptersFilePath: path.join(os.tmpdir(), 'recut-export', 'chapters.txt') });
+  return inlineFilter(graphs[0]);
 }
 
 function graphSubtitlePathPreview(req: ExportRequest): string | undefined {
@@ -170,8 +177,11 @@ function inlineFilter(graph: RenderGraph): string[] {
 /** Validates a request and queues an export job. Resolves synchronously-built results. */
 export async function startExportJob(queue: ExportJobQueue, req: ExportRequest): Promise<ExportStartResult> {
   let graph: RenderGraph;
+  let outputPaths: string[];
   try {
-    graph = buildRenderGraph(req, { canonicalPath, statPath: exportStatPath });
+    const built = buildExportGraphs(req, { canonicalPath, statPath: exportStatPath });
+    graph = built.graphs[0];
+    outputPaths = built.graphs.map((g) => g.outputPath);
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     return e instanceof ExportOutputExistsError ? { ok: false, error, code: 'exists' } : { ok: false, error };
@@ -183,7 +193,7 @@ export async function startExportJob(queue: ExportJobQueue, req: ExportRequest):
   } catch (e) {
     return { ok: false, error: `Cannot create output folder: ${e instanceof Error ? e.message : String(e)}` };
   }
-  const title = `Export ${path.basename(graph.outputPath)}`;
+  const title = outputPaths.length > 1 ? `Export ${outputPaths.length} audio files (${path.basename(graph.outputPath)}, …)` : `Export ${path.basename(graph.outputPath)}`;
   const info = queue.add({
     kind: 'export',
     title,
@@ -193,7 +203,7 @@ export async function startExportJob(queue: ExportJobQueue, req: ExportRequest):
       return runExport(req, (p, msg) => ctx.setProgress(p, msg), ac.signal);
     },
   });
-  return { ok: true, jobId: info.id, outputPath: graph.outputPath };
+  return { ok: true, jobId: info.id, outputPath: graph.outputPath, ...(outputPaths.length > 1 ? { outputPaths } : {}) };
 }
 
 export function cancelExportJob(queue: ExportJobQueue, jobId: ID): void {
@@ -248,62 +258,70 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-export-'));
   const subtitleFilePath = path.join(tmpDir, 'subtitles.srt');
   const chaptersFilePath = path.join(tmpDir, 'chapters.txt');
-  let partPath: string | null = null;
+  /** Reserved render temps not moved onto their output yet (deleted on failure). */
+  const parts: { path: string; id: string | undefined; outputPath: string }[] = [];
   let sidecarTemp: string | null = null;
   try {
     if (signal?.aborted) throw new Error('Export canceled');
-    const graph = buildRenderGraph(req, { subtitleFilePath, chaptersFilePath, canonicalPath, statPath: exportStatPath });
-    // The sequence's Chapter markers (FFMETADATA input of the single pass or of the chunk join).
-    if (graph.chaptersContent) fs.writeFileSync(chaptersFilePath, graph.chaptersContent, 'utf8');
-    try { await ensureDirSafe(path.dirname(graph.outputPath)); } catch (e) {
+    // One graph per output file: one file, or one per audio track (per-track audio export).
+    const { outputs, graphs } = buildExportGraphs(req, { subtitleFilePath, chaptersFilePath, canonicalPath, statPath: exportStatPath });
+    // The sequence's Chapter markers (FFMETADATA input of the single pass or of the chunk join); the same for every file.
+    const chaptersContent = graphs[0].chaptersContent;
+    if (chaptersContent) fs.writeFileSync(chaptersFilePath, chaptersContent, 'utf8');
+    try { await ensureDirSafe(path.dirname(graphs[0].outputPath)); } catch (e) {
       throw new Error(`Cannot create output folder: ${e instanceof Error ? e.message : String(e)}`);
     }
-    const reserved = reserveRenderTemp(graph.outputPath);
-    partPath = reserved.path;
-    const planInput = { req, startF: graph.startF, endF: graph.endF };
-    const chunked = opts.chunked ?? shouldChunk(planInput, graph.inputCount);
-    const chunks = chunked ? mergeChunksWithoutOutputFrames(planExportChunks(planInput, opts.maxSegmentsPerChunk ?? CHUNK_MAX_SEGMENTS, 'video'), req, graph) : [];
-    const audioChunks = chunked ? planExportChunks(planInput, opts.maxAudioSegmentsPerChunk ?? CHUNK_MAX_AUDIO_SEGMENTS, 'audio') : [];
-
-    if (chunked) {
-      await runChunkedExport(req, graph, chunks, audioChunks, tmpDir, graph.chaptersContent ? chaptersFilePath : null, partPath, onProgress, signal, opts.onSpawn);
-    } else {
-      if (graph.subtitleContent) fs.writeFileSync(subtitleFilePath, graph.subtitleContent, 'utf8');
-      const scriptPath = path.join(tmpDir, 'filter.txt');
-      fs.writeFileSync(scriptPath, graph.filterGraph, 'utf8');
-      const args = fileInputs(graph.args.map((a) => (a === FILTER_SCRIPT_TOKEN ? scriptPath : a)));
-      args[args.length - 1] = ffmpegFileArg(partPath);
-      onProgress?.(0, 'Starting ffmpeg');
-      await runFfmpeg(args, graph.durationSec, onProgress, signal, opts.onSpawn);
+    const n = graphs.length;
+    let chunks = 1, audioChunks = 1;
+    for (let i = 0; i < n; i++) {
+      const graph = graphs[i];
+      const file = outputs.files[i];
+      const reserved = reserveRenderTemp(graph.outputPath);
+      parts.push({ path: reserved.path, id: reserved.id, outputPath: graph.outputPath });
+      const fileProgress: ExportProgress | undefined = n > 1 && onProgress
+        ? (p, msg) => onProgress((i + p) / n, `${file.label ?? `File ${i + 1}`} (${i + 1}/${n}): ${msg ?? ''}`.trim())
+        : onProgress;
+      const fileDir = n > 1 ? fs.mkdtempSync(path.join(tmpDir, `file-${i}-`)) : tmpDir;
+      const used = await renderOutputFile(file.req, graph, file.audioTrackId, reserved.path, fileDir, chaptersContent ? chaptersFilePath : null, subtitleFilePath, fileProgress, signal, opts);
+      chunks = Math.max(chunks, used.chunks);
+      audioChunks = Math.max(audioChunks, used.audioChunks);
     }
 
-    // ffmpeg wrote into the file reserved above; never move anything else onto the output.
-    if (exportStatPath(partPath)?.id !== reserved.id) {
-      const foreign = partPath;
-      partPath = null;
-      throw new Error(`The render file "${foreign}" was replaced by another file during the export. It was left untouched; export again.`);
+    // ffmpeg wrote into the files reserved above; never move anything else onto an output.
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (exportStatPath(part.path)?.id !== part.id) {
+        parts.splice(i, 1);
+        throw new Error(`The render file "${part.path}" was replaced by another file during the export. It was left untouched; export again.`);
+      }
     }
-    try {
-      // Something created at the output path while rendering is not replaced without the user's consent.
-      if (!req.overwrite && exportStatPath(graph.outputPath)) throw new ExportOutputExistsError(graph.outputPath);
-      finalizeExportOutput(partPath, graph.outputPath);
-    } catch (e) {
-      const kept = keepUnsavedRender(partPath, graph.outputPath);
-      partPath = null;
-      throw new Error(`${e instanceof Error ? e.message : String(e)} The finished render was kept as "${kept}".`);
+    const written: string[] = [];
+    while (parts.length) {
+      const part = parts[0];
+      try {
+        // Something created at the output path while rendering is not replaced without the user's consent.
+        if (!req.overwrite && exportStatPath(part.outputPath)) throw new ExportOutputExistsError(part.outputPath);
+        finalizeExportOutput(part.path, part.outputPath);
+      } catch (e) {
+        const kept = keepUnsavedRender(part.path, part.outputPath);
+        parts.shift();
+        const done = written.length ? ` Already written: ${written.map((w) => `"${w}"`).join(', ')}.` : '';
+        throw new Error(`${e instanceof Error ? e.message : String(e)} The finished render was kept as "${kept}".${done}`);
+      }
+      parts.shift();
+      written.push(part.outputPath);
     }
-    partPath = null;
 
-    // Sidecar: its path was checked against the project's sources by buildRenderGraph. Written to a new temp
+    // Sidecar: its path was checked against the project's sources by buildExportGraphs. Written to a new temp
     // (random name, created exclusively) in the same folder and renamed, so a failed write never leaves a
-    // truncated .srt and no existing file is ever written through.
+    // truncated .srt and no existing file is ever written through. A per-track export writes one, `<base>.srt`.
     let sidecarPath: string | undefined;
-    if (req.settings.exportSubtitleSidecar && req.subtitles?.length) {
+    if (outputs.sidecarPath && req.subtitles?.length) {
       const srt = buildSubtitleSrt(req);
       if (srt) {
-        const target = exportSidecarPath(graph.outputPath);
+        const target = outputs.sidecarPath;
         if (!req.overwrite && exportStatPath(target)) throw new ExportOutputExistsError(target);
-        const temp = exportSidecarTempPath(graph.outputPath, randomToken());
+        const temp = exportSidecarTempPath(target.replace(/\.srt$/i, ''), randomToken()); // <base>.recut-part-<token>.srt
         try {
           fs.writeFileSync(temp, srt, { encoding: 'utf8', flag: 'wx' });
         } catch (e) {
@@ -317,21 +335,50 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
       }
     }
     onProgress?.(1, 'Done');
-    return { outputPath: graph.outputPath, durationSec: graph.durationSec, warnings: graph.warnings, sidecarPath, chunks: Math.max(1, chunks.length), audioChunks: Math.max(1, audioChunks.length) };
+    const warnings = graphs.flatMap((g) => g.warnings).filter((w, i, all) => all.indexOf(w) === i);
+    return { outputPath: written[0], outputPaths: written, durationSec: graphs[0].durationSec, warnings, sidecarPath, chunks, audioChunks };
   } finally {
-    if (partPath) { try { fs.unlinkSync(partPath); } catch { /* nothing to clean */ } }
+    for (const part of parts) { try { fs.unlinkSync(part.path); } catch { /* nothing to clean */ } }
     if (sidecarTemp) { try { fs.unlinkSync(sidecarTemp); } catch { /* nothing to clean */ } }
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best effort */ }
   }
+}
+
+/**
+ * Renders one output file into `partPath`: a single ffmpeg pass, or chunks joined at the end (large sequences, see
+ * chunks.ts). An audio-only file is chunked by its audio inputs only. Returns the chunk counts.
+ */
+async function renderOutputFile(
+  req: ExportRequest, graph: RenderGraph, audioTrackId: ID | undefined, partPath: string, tmpDir: string, chaptersFile: string | null, subtitleFilePath: string,
+  onProgress: ExportProgress | undefined, signal: AbortSignal | undefined, opts: ExportRunOptions,
+): Promise<{ chunks: number; audioChunks: number }> {
+  const planInput = { req, startF: graph.startF, endF: graph.endF };
+  const chunked = opts.chunked ?? (graph.audioOnly ? graph.inputCount > CHUNK_MAX_AUDIO_SEGMENTS : shouldChunk(planInput, graph.inputCount));
+  const chunks = chunked && !graph.audioOnly ? mergeChunksWithoutOutputFrames(planExportChunks(planInput, opts.maxSegmentsPerChunk ?? CHUNK_MAX_SEGMENTS, 'video'), req, graph) : [];
+  const audioChunks = chunked ? planExportChunks(planInput, opts.maxAudioSegmentsPerChunk ?? CHUNK_MAX_AUDIO_SEGMENTS, 'audio') : [];
+  if (chunked) {
+    await runChunkedExport(req, graph, chunks, audioChunks, tmpDir, chaptersFile, partPath, onProgress, signal, opts.onSpawn, audioTrackId);
+  } else {
+    if (graph.subtitleContent) fs.writeFileSync(subtitleFilePath, graph.subtitleContent, 'utf8');
+    const scriptPath = path.join(tmpDir, 'filter.txt');
+    fs.writeFileSync(scriptPath, graph.filterGraph, 'utf8');
+    const args = fileInputs(graph.args.map((a) => (a === FILTER_SCRIPT_TOKEN ? scriptPath : a)));
+    args[args.length - 1] = ffmpegFileArg(partPath);
+    onProgress?.(0, 'Starting ffmpeg');
+    await runFfmpeg(args, graph.durationSec, onProgress, signal, opts.onSpawn);
+  }
+  return { chunks: Math.max(1, chunks.length), audioChunks: Math.max(1, audioChunks.length) };
 }
 
 // ---------------------------------------------------------------------------------------------------
 // Chunked export (P-01): bounded ffmpeg memory for sequences with thousands of clips
 // ---------------------------------------------------------------------------------------------------
 
-/** x264/x265 GOP settings for chunk files: closed GOPs, IDR at each chunk start, headers independent of content. */
+/** x264/x265 GOP settings for chunk files: closed GOPs, IDR at each chunk start, headers independent of content (none for intra-only codecs). */
 function chunkGopArgs(vcodecArgs: string[]): string[] {
-  const hevc = vcodecArgs[vcodecArgs.indexOf('-c:v') + 1] === 'libx265';
+  const codec = vcodecArgs[vcodecArgs.indexOf('-c:v') + 1];
+  if (codec !== 'libx264' && codec !== 'libx265') return []; // ProRes / DNxHR: every frame is a key frame
+  const hevc = codec === 'libx265';
   return hevc
     ? ['-x265-params', 'keyint=250:open-gop=0', '-force_key_frames', '0']
     : ['-x264-params', 'keyint=250:open-gop=0:stitchable=1', '-force_key_frames', '0'];
@@ -368,17 +415,19 @@ function concatList(files: string[]): string {
 
 /**
  * Renders `chunks` (consecutive, covering the export range) one ffmpeg process at a time:
- * 1. video per chunk -> chunk-NNN.mp4 (same encoder settings, closed GOP, IDR at 0, exact frame count);
+ * 1. video per chunk -> chunk-NNN.mp4 (chunk-NNN.mov for MOV) with the same encoder settings, exact frame count
+ *    (H.264 / H.265: closed GOP, IDR at 0; ProRes / DNxHR are intra-only and need nothing more);
  * 2. audio per chunk -> chunk-NNN.wav (32-bit float PCM, exactly S(end) - S(start) samples where
  *    S(f) = round((f - startF) * SR * den/num), so the chunks join with no drift);
- * 3. one final process: concat demuxer (video stream copy + PCM) -> one AAC/AC-3 encode -> MP4, with the
- *    chapters (`chaptersFile`, FFMETADATA) and no metadata from the chunk files or the sources.
- * Every chunk graph is buildRenderGraph over the chunk's sub-range, so frame choice and timing are the
- * single-pass ones; boundaries never split a transition or fade (chunks.ts).
+ * 3. one final process: concat demuxer (video stream copy + PCM) -> one audio encode (AAC / AC-3 / PCM / FLAC) in the
+ *    output container, with the chapters (`chaptersFile`, FFMETADATA) and no metadata from the chunk files or the sources.
+ * An audio-only export has no video chunks (`chunks` is empty). Every chunk graph is buildRenderGraph over the chunk's
+ * sub-range (and `audioTrackId` for a per-track file), so frame choice and timing are the single-pass ones;
+ * boundaries never split a transition or fade (chunks.ts).
  */
 async function runChunkedExport(
   req: ExportRequest, full: RenderGraph, chunks: ExportChunk[], audioChunks: ExportChunk[], tmpDir: string, chaptersFile: string | null, partPath: string,
-  onProgress: ExportProgress | undefined, signal: AbortSignal | undefined, onSpawn: ExportRunOptions['onSpawn'],
+  onProgress: ExportProgress | undefined, signal: AbortSignal | undefined, onSpawn: ExportRunOptions['onSpawn'], audioTrackId?: ID,
 ): Promise<void> {
   const n = chunks.length;
   const na = audioChunks.length;
@@ -386,7 +435,7 @@ async function runChunkedExport(
   const fd = fps.den / fps.num;
   // Progress weights: video encode dominates; audio passes and the final mux are cheaper.
   const total = full.frameCount;
-  const W_VIDEO = 0.8, W_AUDIO = 0.12, W_MUX = 0.08;
+  const W_VIDEO = full.audioOnly ? 0 : 0.8, W_AUDIO = full.audioOnly ? 0.9 : 0.12, W_MUX = full.audioOnly ? 0.1 : 0.08;
   let done = 0; // completed weight
   const report = (w: number, p: number, msg: string) => onProgress?.(Math.min(0.999, done + w * p), msg);
 
@@ -406,11 +455,13 @@ async function runChunkedExport(
     done += w;
   };
 
-  onProgress?.(0, `Rendering in ${n} chunks`);
+  onProgress?.(0, `Rendering in ${Math.max(n, na)} chunks`);
   // Per-input decoder threads multiply ffmpeg memory by the input count: one decoder thread per input
   // (encode is the bottleneck) and 2 filter threads halve the peak RSS of a 100-segment chunk
   // (1.47 GB -> 0.56 GB) and do not slow it down.
   const oneThread = (inputArgs: string[]) => inputArgs.flatMap((a) => (a === '-i' ? ['-threads', '1', a] : [a]));
+  // Video chunk container: the output's (ProRes / DNxHR go in MOV), MP4 otherwise.
+  const chunkMuxer = full.container === 'mov' ? 'mov' : 'mp4';
   for (let i = 0; i < n; i++) {
     const c = chunks[i];
     const tag = String(i).padStart(4, '0');
@@ -419,9 +470,9 @@ async function runChunkedExport(
     if (g.subtitleContent) fs.writeFileSync(srt, g.subtitleContent, 'utf8');
     const script = path.join(tmpDir, `v-${tag}.txt`);
     fs.writeFileSync(script, g.filterGraph, 'utf8');
-    const out = path.join(tmpDir, `chunk-${tag}.mp4`);
+    const out = path.join(tmpDir, `chunk-${tag}.${chunkMuxer}`);
     const args = ['-hide_banner', '-nostdin', '-y', '-filter_complex_threads', '2', ...fileInputs(oneThread(g.inputArgs)), '-filter_complex_script', script, '-map', '[vout]', ...outputMetadataArgs(null),
-      ...g.videoCodecArgs, ...chunkGopArgs(g.videoCodecArgs), '-an', '-t', sec(Math.max(g.durationSec, g.outputDurationSec)), '-f', 'mp4', ffmpegFileArg(out)];
+      ...g.videoCodecArgs, ...chunkGopArgs(g.videoCodecArgs), '-an', '-t', sec(Math.max(g.durationSec, g.outputDurationSec)), '-f', chunkMuxer, ffmpegFileArg(out)];
     await step(i, c, 'video', args, g.durationSec, W_VIDEO * (c.endF - c.startF) / total);
     try { fs.unlinkSync(script); } catch { /* best effort */ }
     videoFiles.push(out);
@@ -430,7 +481,7 @@ async function runChunkedExport(
     const c = audioChunks[i];
     const tag = String(i).padStart(4, '0');
     const samples = sampleIndexAt(c.endF, full.startF, full.sampleRate, fps) - sampleIndexAt(c.startF, full.startF, full.sampleRate, fps);
-    const g = buildRenderGraph(req, { range: { startF: c.startF, endF: c.endF }, streams: 'audio', audioSamples: samples, canonicalPath });
+    const g = buildRenderGraph(req, { range: { startF: c.startF, endF: c.endF }, streams: 'audio', audioSamples: samples, canonicalPath, audioTrackId });
     const script = path.join(tmpDir, `a-${tag}.txt`);
     fs.writeFileSync(script, g.filterGraph, 'utf8');
     const out = path.join(tmpDir, `chunk-${tag}.wav`);
@@ -443,17 +494,22 @@ async function runChunkedExport(
 
   const vList = path.join(tmpDir, 'video.ffconcat');
   const aList = path.join(tmpDir, 'audio.ffconcat');
-  fs.writeFileSync(vList, concatList(videoFiles), 'utf8');
+  if (n) fs.writeFileSync(vList, concatList(videoFiles), 'utf8');
   fs.writeFileSync(aList, concatList(audioFiles), 'utf8');
   const hevc = full.videoCodecArgs.includes('libx265');
-  const args = ['-hide_banner', '-nostdin', '-y',
-    '-f', 'concat', '-safe', '0', '-i', ffmpegFileArg(vList), '-f', 'concat', '-safe', '0', '-i', ffmpegFileArg(aList),
+  const inputs = [
+    ...(n ? ['-f', 'concat', '-safe', '0', '-i', ffmpegFileArg(vList)] : []),
+    '-f', 'concat', '-safe', '0', '-i', ffmpegFileArg(aList),
     ...(chaptersFile ? ['-f', 'ffmetadata', '-i', ffmpegFileArg(chaptersFile)] : []),
-    '-map', '0:v:0', '-map', '1:a:0', ...outputMetadataArgs(chaptersFile ? 2 : null), '-c:v', 'copy', ...(hevc ? ['-tag:v', 'hvc1'] : []), ...full.audioCodecArgs,
-    '-movflags', '+faststart', '-t', sec(Math.max(full.durationSec, full.outputDurationSec)), '-f', 'mp4', ffmpegFileArg(partPath)];
+  ];
+  const aIn = n ? 1 : 0;
+  const args = ['-hide_banner', '-nostdin', '-y', ...inputs,
+    ...(n ? ['-map', '0:v:0'] : []), '-map', `${aIn}:a:0`, ...outputMetadataArgs(chaptersFile ? aIn + 1 : null),
+    ...(n ? ['-c:v', 'copy', ...(hevc ? ['-tag:v', 'hvc1'] : [])] : ['-vn']), ...full.audioCodecArgs,
+    ...full.muxArgs.slice(0, -2), '-t', sec(n ? Math.max(full.durationSec, full.outputDurationSec) : full.durationSec), ...full.muxArgs.slice(-2), ffmpegFileArg(partPath)];
   try {
     if (signal?.aborted) throw new Error('Export canceled');
-    await runFfmpeg(args, full.durationSec, (p) => report(W_MUX, p, `Joining ${n} chunks`), signal, onSpawn);
+    await runFfmpeg(args, full.durationSec, (p) => report(W_MUX, p, `Joining ${Math.max(n, na)} chunks`), signal, onSpawn);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'Export canceled') throw e;

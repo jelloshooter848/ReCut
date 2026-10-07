@@ -16,6 +16,7 @@ import { licenceDirs, listLicenceFiles, resolveLicenceFile } from './licences';
 import { ocrDataDir } from './ocr/dataDir';
 import { assertAbsolutePath, assertOcrLanguageCode, parseOcrRequest } from './ocr/validate';
 import type { OcrLanguageState, OcrRequest } from '../shared/ocr';
+import type { CollectRequest, CollectStartResult, CollectSummary } from '../shared/collect';
 import type { AppPreferences, ID, JobInfo, MediaProbe, Project } from '../shared/model';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import type {
@@ -79,6 +80,9 @@ export interface MediaHandlers {
   cancelExport(jobId: ID): Promise<void>;
   previewExportCommand(req: ExportRequest): Promise<string[]>;
 
+  collectPreflight(req: CollectRequest): Promise<CollectSummary>;
+  startCollect(req: CollectRequest): Promise<CollectStartResult>;
+
   /** Subscribe to job list changes; returns an unsubscribe function. */
   onJobsUpdate(cb: (jobs: JobInfo[]) => void): () => void;
 }
@@ -86,7 +90,8 @@ export interface MediaHandlers {
 // Compile-time check: MediaHandlers must stay in sync with the RecutApi surface.
 type MediaApiKeys = 'probe' | 'thumbnail' | 'filmstrip' | 'cancelThumbnails' | 'waveform' | 'startProxy' | 'startChannelProxy' | 'startSceneDetect' | 'extractSubtitles'
   | 'startOcr' | 'ocrLanguages' | 'ocrInstallLanguage' | 'ocrRemoveLanguage' | 'ocrInstallLanguageFromFile'
-  | 'listJobs' | 'cancelJob' | 'clearJobs' | 'startExport' | 'cancelExport' | 'previewExportCommand';
+  | 'listJobs' | 'cancelJob' | 'clearJobs' | 'startExport' | 'cancelExport' | 'previewExportCommand'
+  | 'collectPreflight' | 'startCollect';
 type _AssertMediaHandlers = Pick<RecutApi, MediaApiKeys> extends Pick<MediaHandlers, MediaApiKeys> ? true : never;
 const _mediaHandlersInSync: _AssertMediaHandlers = true;
 void _mediaHandlersInSync;
@@ -115,6 +120,9 @@ export function registerMediaIpc(h: MediaHandlers): void {
   ipcMain.handle(IPC.exportStart, (_e, req: ExportRequest) => h.startExport(req));
   ipcMain.handle(IPC.exportCancel, (_e, id: ID) => h.cancelExport(assertString(id, 'jobId')));
   ipcMain.handle(IPC.exportPreviewCommand, (_e, req: ExportRequest) => h.previewExportCommand(req));
+  // Collect Project: the request is checked in electron/project/collect.ts (absolute destination, project JSON).
+  ipcMain.handle(IPC.collectPreflight, (_e, req: CollectRequest) => h.collectPreflight(req));
+  ipcMain.handle(IPC.collectStart, (_e, req: CollectRequest) => h.startCollect(req));
 }
 
 // ------------------------------------------------------------------

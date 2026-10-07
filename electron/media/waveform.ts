@@ -8,7 +8,7 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { WaveformData } from '@shared/ipc';
-import { cacheSubdir, fileExists, removeQuietly } from './cache';
+import { adoptLegacyEntry, cacheSubdir, fileExists, removeQuietly } from './cache';
 import { ffmpegFileArg, runFfmpeg, runFfprobeJson } from './ffmpeg';
 import type { FfprobeOutput } from './probe';
 import { peakOfU8 } from './peaks';
@@ -77,10 +77,26 @@ export interface WaveformOptions {
   streamIndex?: number;
   onProgress?: (p: number) => void;
   signal?: AbortSignal;
+  /**
+   * The file's legacy (pre-0.10, path + size + mtime) cache key: peaks cached under it by an older version are read
+   * when none exist under `key`, and adopted under `key` (cache.ts adoptLegacyEntry).
+   */
+  legacyKey?: string;
+}
+
+/** Peaks cached under the legacy id, linked under the content id. Null when there are none. */
+async function readLegacy(cacheId: string, legacyId: string): Promise<WaveformData | null> {
+  const data = await readCached(legacyId);
+  if (!data) return null;
+  const from = waveformCachePaths(legacyId), to = waveformCachePaths(cacheId);
+  // .pk first: readCached needs both, so a half-adopted pair is never read as complete before the .json is linked.
+  if ((await adoptLegacyEntry(from.pk, to.pk)) === to.pk) await adoptLegacyEntry(from.json, to.json);
+  return data;
 }
 
 /**
- * Compute (or load from cache) the waveform of `filePath`. `key` is the file's cache key.
+ * Compute (or load from cache) the waveform of `filePath`. `key` is the file's cache key (cache.ts cacheKeyForPath);
+ * `opts.legacyKey` its pre-0.10 key, read as a fallback.
  * Files without audio yield `{ rate, duration, peaks: Uint8Array(0) }`.
  */
 export function getWaveform(filePath: string, key: string, opts: WaveformOptions = {}): Promise<WaveformData> {
@@ -90,6 +106,10 @@ export function getWaveform(filePath: string, key: string, opts: WaveformOptions
   const task = (async () => {
     const cached = await readCached(cacheId);
     if (cached) return cached;
+    if (opts.legacyKey && opts.legacyKey !== key) {
+      const old = await readLegacy(cacheId, opts.streamIndex !== undefined ? `${opts.legacyKey}_s${opts.streamIndex}` : opts.legacyKey);
+      if (old) return old;
+    }
     const data = await computeWaveform(filePath, opts);
     await writeCached(cacheId, data);
     return data;

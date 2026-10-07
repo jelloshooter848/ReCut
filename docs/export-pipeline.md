@@ -1,7 +1,8 @@
 # Export pipeline
 
-The export turns a `Sequence` into one MP4 with a single ffmpeg invocation (or, for very large sequences, a
-series of bounded chunk renders joined losslessly; see "Chunked rendering"). The acceptance bar is that
+The export turns a `Sequence` into one file (MP4, MOV, WAV or FLAC; or one WAV / FLAC per audio track) with a single
+ffmpeg invocation per file (or, for very large sequences, a series of bounded chunk renders joined losslessly; see
+"Chunked rendering"). The acceptance bar is that
 **the file reflects the timeline exactly**: every frame of the output corresponds to the frame the editor
 shows at that position, and the duration equals the exported range to the frame.
 
@@ -18,6 +19,10 @@ Files:
 - `electron/safeMkdir.ts` — creates the output folder without recursive mkdir (see "Running it").
 - `electron/pathSafety.ts` — `canonicalPath` (realpath) and `fileIdentity` (device + inode) for the "is this a
   project source file?" checks, shared with the Subtitles panel's SRT/VTT export.
+- `shared/exportFormat.ts` — pure. Containers (`CONTAINERS`: extension, muxer, muxer args, chapters, audio-only),
+  the video encoder (`videoEncoder`: H.264 / H.265, ProRes profiles, DNxHR profiles, pixel format) and audio encoder
+  (`audioEncoder`: AAC / AC-3, PCM 16 / 24, FLAC) of the settings, size-estimate rates, and the per-track audio plan
+  (`perTrackAudioPlan`, `perTrackFileName`). The render graph and the Export dialog both use it.
 - `shared/media.ts` — sample aspect ratio validation (`saneSar`, 1/16..16) and `videoDisplaySize`, shared with
   the preview compositor.
 - `src/panels/export/request.ts` — builds the `ExportRequest` in the dialog, including `protectedPaths`.
@@ -191,9 +196,24 @@ MP4 always has an audio track.
 
 ### Encoding
 
-`-c:v libx264|libx265 -preset P (-crf C | -b:v Nk -maxrate Nk -bufsize 2Nk) -pix_fmt yuv420p -r OUT_FPS
+MP4: `-c:v libx264|libx265 -preset P (-crf C | -b:v Nk -maxrate Nk -bufsize 2Nk) -pix_fmt yuv420p -r OUT_FPS
 -fps_mode cfr -c:a aac|ac3 -b:a Nk -ar SR -ac N -movflags +faststart -t <duration> -f mp4 <outputDir>/<fileName>.mp4`.
 `-shortest` is never used: durations are controlled in the graph; `-t` is only a safety clamp.
+
+MOV: `-c:v prores_ks -profile:v 0..4 -vendor apl0` or `-c:v dnxhd -profile:v dnxhr_lb|sq|hq|hqx|444`, then
+`-pix_fmt <profile's format> -r OUT_FPS -fps_mode cfr -c:a pcm_s16le|pcm_s24le -ar SR -ac N -t <duration> -f mov`.
+The graph's last video filter is `format=<the same pixel format>` (yuv420p for MP4) after the composite, which stays
+8-bit 4:2:0. No `+faststart` for MOV.
+
+WAV / FLAC (audio only, `RenderGraph.audioOnly`): no video chains at all (no `[vout]`, no inputs for video clips, no
+frame-size check), `-vn`, `-c:a pcm_s16le|pcm_s24le` (WAV, with `-rf64 auto`) or `-c:a flac -sample_fmt s16|s32
+[-bits_per_raw_sample 24]`, and `[aout]` padded / trimmed to exactly `round(frames × SR × den / num)` samples. WAV
+gets no chapters. Burn-in is ignored with a warning; "nothing enabled" checks audio tracks only.
+
+Per-track audio (`settings.audioPerTrack` on WAV / FLAC): `exportOutputFiles` lists one request per file and
+`buildExportGraphs` builds each with `RenderGraphOptions.audioTrackId`: the full export's range and its widening for
+transitions, but only that track's chain into `[aout]` (`[ta]aresample,aformat,...[aout]`, the same chain the mix
+sums with `amix=normalize=0`). The exporter renders every file to its own temp and only then renames them.
 
 ### Metadata and chapters
 
@@ -241,7 +261,8 @@ join adds the same file as its third input.
 ## Output files
 
 - **Absolute folder.** `exportOutputPath` refuses a relative `outputDir` ("The output folder must be an absolute
-  path"); the dialog validates the same rule. The file name is reduced to a basename with a `.mp4` extension.
+  path"); the dialog validates the same rule. The file name is reduced to a basename with the format's extension
+  (`.mp4` by default; a known media extension such as `.mov` is replaced).
 - **Never a project source.** `assertOutputNotASource` refuses an output or sidecar `.srt` that is a media or proxy
   file of the sequence, any media / proxy in `req.media` (own keys only, `Object.hasOwn`), or any path in
   `req.protectedPaths`. The dialog fills `protectedPaths` with `projectSourcePaths(project)`: every media and proxy
