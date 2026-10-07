@@ -34,7 +34,9 @@ hand: agents cannot push tags (their git proxy drops tag pushes), and the owner 
 
 1. **Release PR.** Branch from `main` (for example `claude/release-0.3.0`). Bump the version with
    `npm version 0.3.0 --no-git-tag-version` and add the `## [0.3.0] - YYYY-MM-DD` section to `CHANGELOG.md` (see
-   below). Run `npm run typecheck` and `npm test`. Open the PR.
+   below). Check `docs/ROADMAP.md`: every roadmap entry this release ships has its **Status** line and its row in the
+   Progress table marked done with this version (the feature PR sets them; the release PR fixes any that are
+   missing or still name an older version). Run `npm run typecheck` and `npm test`. Open the PR.
 2. **Merge it.** That is the whole release step.
 3. **CI publishes.** The merge is a push to `main`, so `.github/workflows/windows.yml` runs. Its first step sees that
    the `package.json` version (`0.3.0`) has a `## [0.3.0]` section in `CHANGELOG.md` and that no tag `v0.3.0` exists

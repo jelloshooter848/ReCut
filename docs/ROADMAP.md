@@ -1,12 +1,29 @@
 # Roadmap
 
-None of the capabilities below exist in ReCut yet. They are deferred, not abandoned. Each entry says why it waited
-and where it would plug in. For what works today, see the [README](../README.md). For current gaps and bugs, see
-[LIMITATIONS](LIMITATIONS.md).
+Entries marked **done** have shipped; the table below shows where each one stands. Every other entry does not exist
+in ReCut yet: it is deferred, not abandoned, and says why it waited and where it would plug in. For what works today,
+see the [README](../README.md). For current gaps and bugs, see [LIMITATIONS](LIMITATIONS.md).
 
 Order is rough priority for fan editing: restructuring finished films and series at franchise scale. Entries 1 and
 2 are gates rather than capabilities: they come before the next large feature. Why some entries sit where they do is
 recorded under [Ordering decisions](#ordering-decisions) at the end.
+
+## Progress
+
+Updated with every feature PR (the PR that lands an entry sets its row and the entry's **Status** line) and checked
+in every release PR (docs/RELEASING.md).
+
+| § | Entry | Status | Release |
+|---|---|---|---|
+| 1 | Performance at franchise scale | Done | 0.3.0 |
+| 2 | Fix the remaining preview gaps | Done | 0.4.0 |
+| 3 | Pre-export warnings | Done | 0.5.0 |
+| 4 | Bitmap subtitle OCR (PGS / VobSub / DVB) | Done | 0.6.0 |
+| 19 | Official Linux and macOS releases | **Next:** Linux, then macOS | 0.6.1 (Linux), 0.7.0 (macOS) |
+| 5–18 | Everything else | Not started | — |
+
+Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
+the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
 
 **Scheduled next after §4:** official Linux and macOS releases (§19) follow Bitmap subtitle OCR (§4, release 0.6.0):
 **Linux in 0.6.1, macOS in 0.7.0** (project owner's decision, 7 October 2026). §19 keeps its number, out of list
