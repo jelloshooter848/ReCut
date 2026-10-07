@@ -48,6 +48,8 @@ export interface TranscribeJobContext {
   tempRoot: string;
   /** whisper-cli to run; default the bundled one (engine.ts). */
   enginePath?: string | null;
+  /** Tests: arguments put before whisper-cli's own (a fake engine run as `node fake.js …`). */
+  enginePrefixArgs?: string[];
   /** Threads for whisper-cli; default every core but one. */
   threads?: number;
   /** Longest chunk in seconds (tests); default 30 minutes. */
@@ -242,7 +244,7 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
       const outBase = 'out';
       await removeQuietly(path.join(tmp, `${outBase}.json`));
       const lang = spoken ?? 'auto';
-      await runEngine(bin, whisperArgs({ model: modelArg, input, outBase, threads, language: lang, translate }), tmp, seconds, jc,
+      await runEngine(bin, [...(ctx.enginePrefixArgs ?? []), ...whisperArgs({ model: modelArg, input, outBase, threads, language: lang, translate })], tmp, seconds, jc,
         (f) => jc.setProgress(base + share * f, `Transcribing${label}… ${Math.round((start / info.sampleRate + f * seconds) / 60)} of ${Math.max(1, Math.round(total / 60))} min`),
         (child) => ctx.onEngine?.(child, tmp));
       if (jc.signal.aborted) throw canceled();

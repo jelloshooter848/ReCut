@@ -11,10 +11,14 @@
 # Source: scripts/whisper-source.mjs fetches the pinned release tag (tarball, or a git clone of the tag) and checks
 # its source-tree SHA-256 before anything is compiled.
 #
-# Build: shared ggml with every x86-64 CPU variant as a loadable backend (GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS,
-# GGML_NATIVE=OFF): at start ggml picks the best variant this CPU supports (x64 baseline, SSE4.2, AVX, AVX2, AVX-512,
-# AMX...), so one build runs on any x86-64 PC and still uses AVX2 / AVX-512 where present. No OpenMP (ggml's own
-# thread pool), libstdc++ and libgcc linked statically, RPATH $ORIGIN, so the folder needs nothing beyond glibc.
+# Build: shared ggml with the CPU kernels as loadable backends (GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS,
+# GGML_NATIVE=OFF): at start ggml loads the best variant this CPU supports, so one build runs on any x86-64 PC and
+# still uses AVX2 / AVX-512 where present. Five variants ship (CPU_VARIANTS, about 1-1.4 MB each): x64 (any x86-64),
+# sse42, sandybridge (AVX), haswell (AVX2 + FMA + F16C) and skylakex (AVX-512). The others ggml offers (ivybridge,
+# piledriver, alderlake, icelake, zen4, sapphirerapids...) add VNNI / BF16 / AMX kernels that speed up quantized
+# models; ReCut's models are f16, so the nearest variant below them runs at practically the same speed. No OpenMP
+# (ggml's own thread pool), libstdc++ and libgcc linked statically, RPATH $ORIGIN: the folder needs nothing beyond
+# glibc.
 #
 # Writes into --dest: whisper-cli, libwhisper.so.1, libggml.so.0, libggml-base.so.0, libggml-cpu-*.so, WHISPER-LICENSE.txt (MIT) and
 # WHISPER-BUILD.txt (tag, commit, source hash, flags, linkage, `whisper-cli --version`). Needs cmake, a C/C++
@@ -69,6 +73,9 @@ tag="$(node -e 'console.log(JSON.parse(process.argv[1]).tag)' "$pin_json")"
 commit="$(node -e 'console.log(JSON.parse(process.argv[1]).commit)' "$pin_json")"
 tree="$(node -e 'console.log(JSON.parse(process.argv[1]).treeSha256)' "$pin_json")"
 
+# CPU kernel variants to ship (see "Build:" above); ggml picks the best one this CPU supports at start.
+CPU_VARIANTS=(x64 sse42 sandybridge haswell skylakex)
+
 static_rt='-static-libstdc++ -static-libgcc'
 flags=(
   -DCMAKE_BUILD_TYPE=Release
@@ -98,8 +105,12 @@ command -v ninja >/dev/null 2>&1 && generator=(-G Ninja)
 echo "[ReCut] Configuring whisper.cpp $tag"
 cmake -S "$work/src" -B "$work/build" "${generator[@]}" "${flags[@]}" >"$work/configure.log" 2>&1 || { tail -40 "$work/configure.log" >&2; exit 1; }
 # whisper-cli and the CPU backend variants (loadable modules, not link dependencies of whisper-cli).
-mapfile -t cpu_targets < <(cmake --build "$work/build" --target help | sed -n 's/^\(\.\.\. \)\{0,1\}\(ggml-cpu-[A-Za-z0-9_.]*\)\(:.*\)\{0,1\}$/\2/p' | sort -u)
-((${#cpu_targets[@]})) || { echo "[ReCut] no ggml-cpu-* backend targets found" >&2; exit 1; }
+mapfile -t all_cpu_targets < <(cmake --build "$work/build" --target help | sed -n 's/^\(\.\.\. \)\{0,1\}\(ggml-cpu-[A-Za-z0-9_.]*\)\(:.*\)\{0,1\}$/\2/p' | sort -u)
+cpu_targets=()
+for v in "${CPU_VARIANTS[@]}"; do
+  [[ " ${all_cpu_targets[*]} " == *" ggml-cpu-$v "* ]] || { echo "[ReCut] whisper.cpp $tag has no CPU variant '$v' (it has: ${all_cpu_targets[*]})" >&2; exit 1; }
+  cpu_targets+=("ggml-cpu-$v")
+done
 echo "[ReCut] Building whisper-cli and ${#cpu_targets[@]} CPU variants (${cpu_targets[*]}) with $jobs jobs"
 nice -n "$niceness" cmake --build "$work/build" --config Release -j "$jobs" --target whisper-cli "${cpu_targets[@]}" >"$work/build.log" 2>&1 || { tail -60 "$work/build.log" >&2; exit 1; }
 

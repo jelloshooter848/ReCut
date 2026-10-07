@@ -128,7 +128,8 @@ export async function planChunks(file: string, info: WavInfo, opts: ChunkPlanOpt
       const last = cuts[cuts.length - 1];
       if (info.samples - last <= chunk) break;
       const nominal = last + chunk;
-      const from = Math.max(last + 1, nominal - search);
+      // Never closer than half a chunk to the previous cut, so every chunk makes real progress.
+      const from = Math.max(last + Math.floor(chunk / 2), nominal - search);
       let cut = nominal;
       if (nominal - from >= win) {
         const buf = Buffer.alloc((nominal - from) * BYTES_PER_SAMPLE);
