@@ -187,3 +187,24 @@ again reports nothing.
 
 Unknown fields are preserved on load where possible and dropped on normalisation only when they would make
 the file invalid. Future versions bump `formatVersion` and migrate in `normalizeProject()`.
+
+### Compatibility promise
+
+* **Every 1.x release opens projects saved by every earlier stable release (0.3.0 onwards), or refuses them with a
+  clear message.** A refused file is left exactly as it was: a project saved by a newer ReCut (a higher
+  `formatVersion`) is refused with "Project was saved by a newer ReCut (format N); this build reads M", and its
+  `.bak` is never opened in its place.
+* **ReCut never silently damages a project.** Opening a project from an older release keeps everything that release
+  saved. When a file needs repairs, the app says so and keeps the original as `<file>.pre-repair-<timestamp>` (see
+  [Repair on load](#repair-on-load)); the first save keeps the previous file as `.bak`.
+* **Format changes come with migrations.** New optional fields keep `formatVersion` at 1 and default in
+  `normalizeProject()`. When a change cannot be expressed that way, `formatVersion` goes up and `normalizeProject()`
+  migrates every older version to the new shape on load (a MINOR release at least, named in the changelog).
+* **Every stable release adds a fixture.** `tests/fixtures/projects/recut-<version>.recut` is a project saved by that
+  release with its own code (`scripts/make-project-fixture.mjs`; see the fixtures'
+  [README](../tests/fixtures/projects/README.md)). `tests/unit/project-compat.test.ts` opens every fixture through
+  the real open path on every build and checks that nothing is lost (media and paths, probe data, clip positions in
+  frames, links, transitions, markers and chapters, story blocks, subtitle tracks and cues, snapshots, scenes, bins,
+  tags and project settings), that saving and reopening is stable, and that a newer `formatVersion` is refused. The
+  fixtures are never edited or regenerated. Export dialog settings are not part of the project file (they are kept
+  per project in the app's local storage), so they are not covered.

@@ -1,0 +1,761 @@
+{
+  "formatVersion": 1,
+  "id": "projmuphf9c00n7q000o",
+  "name": "Compatibility fixture (saved by ReCut 0.5.0)",
+  "createdAt": 1790856000000,
+  "modifiedAt": 1790856000000,
+  "media": {
+    "medmuphf9c0lpl4000p": {
+      "id": "medmuphf9c0lpl4000p",
+      "name": "The Empire Strikes Back (1980).mkv",
+      "path": "D:\\Films\\Star Wars\\The Empire Strikes Back (1980).mkv",
+      "kind": "video",
+      "category": "Movie",
+      "identity": {"franchise":"Star Wars","collection":"Original Trilogy","title":"The Empire Strikes Back","year":1980},
+      "binId": "binmuphf9c0lmvm0016",
+      "offline": false,
+      "proxy": {"status":"ready","path":"/home/fan/.cache/recut/proxies/esb_540p_all.mp4","width":960,"height":540,"audioStreams":[1,2]},
+      "detectedScenes": [
+        {"id":"dscmuphf9c07o74000u","start":0,"end":83.2,"name":"Scene 001","tags":[],"characters":[]},
+        {"id":"dscmuphf9c0dn7r000v","start":83.2,"end":190.04,"name":"Hoth – Echo Base","tags":["snow"],"characters":["Han","Leia"]},
+        {"id":"dscmuphf9c0q7xp000w","start":190.04,"end":312.5,"name":"Scene 003","tags":[],"characters":[]},
+        {"id":"dscmuphf9c0u7n6000x","start":312.5,"end":455.75,"name":"Scene 004","tags":[],"characters":[]},
+        {"id":"dscmuphf9c0vp95000y","start":455.75,"end":7620.12,"name":"Scene 005","tags":[],"characters":[]}
+      ],
+      "subtitleTrackIds": ["stmuphf9c0l5b1000z"],
+      "notes": "Despecialized 2.7 master",
+      "tags": ["source:bluray"],
+      "addedAt": 1790856000000,
+      "probe": {"container":"matroska,webm","duration":7620.12,"size":32212254720,"startTime":0,"bitrate":33800000,"browserPlayable":false,"playabilityReason":"audio codec ac3 not supported by Chromium","video":{"index":0,"codec":"h264","width":1920,"height":1080,"fps":{"num":24000,"den":1001},"avgFps":{"num":24000,"den":1001},"pixFmt":"yuv420p","isVfr":false,"colorSpace":"bt709","sar":{"num":1,"den":1}},"audio":[{"index":1,"codec":"ac3","channels":6,"layout":"5.1(side)","sampleRate":48000,"language":"eng","title":"Surround 5.1"},{"index":2,"codec":"aac","channels":2,"layout":"stereo","sampleRate":48000,"language":"eng","title":"Commentary"}],"subtitles":[{"index":3,"codec":"subrip","language":"eng","title":"English"},{"index":4,"codec":"hdmv_pgs_subtitle","language":"fre","title":"Français"}]},
+      "preferredAudioStream": 1,
+      "fileSize": 32212254720,
+      "fileMtime": 1700000000000,
+      "color": "#e5484d",
+      "thumbnailTime": 312.5,
+      "sceneDetectStatus": "done"
+    },
+    "medmuphf9c0oliu000q": {
+      "id": "medmuphf9c0oliu000q",
+      "name": "S01E02 – Rising Malevolence.mkv",
+      "path": "/home/fan/TV/The Clone Wars/S01E02 – Rising Malevolence.mkv",
+      "kind": "video",
+      "category": "Episode",
+      "identity": {"series":"The Clone Wars","season":1,"episode":2,"title":"Rising Malevolence"},
+      "binId": "binmuphf9c021wv0018",
+      "offline": false,
+      "proxy": {"status":"failed","error":"ffmpeg exited with code 1"},
+      "detectedScenes": [],
+      "subtitleTrackIds": ["stmuphf9c022an0014"],
+      "notes": "",
+      "tags": [],
+      "addedAt": 1790856000000,
+      "probe": {"container":"matroska,webm","duration":1320.5,"size":1288490188,"startTime":0.021,"browserPlayable":true,"video":{"index":0,"codec":"h264","width":720,"height":576,"fps":{"num":25,"den":1},"avgFps":{"num":25,"den":1},"pixFmt":"yuv420p","isVfr":false,"sar":{"num":64,"den":45}},"audio":[{"index":1,"codec":"aac","channels":2,"layout":"stereo","sampleRate":48000,"language":"eng"}],"subtitles":[]},
+      "preferredAudioStream": 1,
+      "fileSize": 1288490188,
+      "fileMtime": 1650000000000
+    },
+    "medmuphf9c0eap4000r": {
+      "id": "medmuphf9c0eap4000r",
+      "name": "John Williams – Main Title.flac",
+      "path": "D:\\Music\\John Williams – Main Title.flac",
+      "kind": "audio",
+      "category": "Music",
+      "identity": {"title":"Main Title"},
+      "binId": "bin-audio",
+      "offline": false,
+      "proxy": {"status":"none"},
+      "detectedScenes": [],
+      "subtitleTrackIds": [],
+      "notes": "",
+      "tags": [],
+      "addedAt": 1790856000000,
+      "probe": {"container":"flac","duration":331.4,"size":41943040,"startTime":0,"browserPlayable":true,"audio":[{"index":0,"codec":"flac","channels":2,"layout":"stereo","sampleRate":96000}],"subtitles":[]},
+      "preferredAudioStream": 0
+    },
+    "medmuphf9c0wzwq000s": {
+      "id": "medmuphf9c0wzwq000s",
+      "name": "Title card – Amélie.png",
+      "path": "/home/fan/Graphics/Title card – Amélie.png",
+      "kind": "image",
+      "category": "Other",
+      "identity": {},
+      "binId": "bin-graphics",
+      "offline": false,
+      "proxy": {"status":"none"},
+      "detectedScenes": [],
+      "subtitleTrackIds": [],
+      "notes": "",
+      "tags": [],
+      "addedAt": 1790856000000,
+      "probe": {"container":"png_pipe","duration":0.04,"size":2097152,"startTime":0,"browserPlayable":true,"video":{"index":0,"codec":"png","width":1920,"height":1080,"fps":{"num":25,"den":1},"avgFps":{"num":25,"den":1},"pixFmt":"rgba","isVfr":false},"audio":[],"subtitles":[]}
+    },
+    "medmuphf9c0yzs1000t": {
+      "id": "medmuphf9c0yzs1000t",
+      "name": "Biggs at Anchorhead.mkv",
+      "path": "E:\\Rips\\Deleted Scenes\\Biggs at Anchorhead.mkv",
+      "kind": "video",
+      "category": "Deleted Scene",
+      "identity": {},
+      "binId": "binmuphf9c0lmvm0016",
+      "offline": true,
+      "proxy": {"status":"none"},
+      "detectedScenes": [],
+      "subtitleTrackIds": [],
+      "notes": "",
+      "tags": [],
+      "addedAt": 1790856000000,
+      "probe": {"container":"matroska,webm","duration":95.7,"size":734003200,"startTime":0,"browserPlayable":true,"video":{"index":0,"codec":"h264","width":1920,"height":1080,"fps":{"num":24000,"den":1001},"avgFps":{"num":24000,"den":1001},"isVfr":true},"audio":[{"index":1,"codec":"aac","channels":2,"layout":"stereo","sampleRate":48000}],"subtitles":[]},
+      "preferredAudioStream": 1
+    }
+  },
+  "bins": {
+    "bin-movies": {"id":"bin-movies","name":"Movies","parentId":null,"kind":"bin"},
+    "bin-tv": {"id":"bin-tv","name":"TV","parentId":null,"kind":"bin"},
+    "bin-scenes": {"id":"bin-scenes","name":"Scenes","parentId":null,"kind":"bin"},
+    "bin-sequences": {"id":"bin-sequences","name":"Sequences","parentId":null,"kind":"bin"},
+    "bin-audio": {"id":"bin-audio","name":"Audio","parentId":null,"kind":"bin"},
+    "bin-subtitles": {"id":"bin-subtitles","name":"Subtitles","parentId":null,"kind":"bin"},
+    "bin-graphics": {"id":"bin-graphics","name":"Graphics","parentId":null,"kind":"bin"},
+    "bin-misc": {"id":"bin-misc","name":"Misc","parentId":null,"kind":"bin"},
+    "binmuphf9c0lmvm0016": {"id":"binmuphf9c0lmvm0016","name":"Star Wars","parentId":"bin-movies","kind":"collection"},
+    "binmuphf9c06o1w0017": {"id":"binmuphf9c06o1w0017","name":"The Clone Wars","parentId":"bin-tv","kind":"series"},
+    "binmuphf9c021wv0018": {"id":"binmuphf9c021wv0018","name":"Season 1","parentId":"binmuphf9c06o1w0017","kind":"season"}
+  },
+  "sequences": {
+    "seqmuphf9c0pevy000h": {
+      "id": "seqmuphf9c0pevy000h",
+      "name": "Episode V – Despecialized",
+      "fps": {"num":24000,"den":1001},
+      "width": 1920,
+      "height": 1080,
+      "sampleRate": 48000,
+      "channels": 2,
+      "videoTracks": [
+        {
+          "id": "vmuphf9c0sn1j000i",
+          "name": "V1",
+          "kind": "video",
+          "clips": [
+            {"id":"clipmuphf9c0xlvy001a","mediaId":"medmuphf9c0lpl4000p","name":"The Empire Strikes Back (1980).mkv","start":0,"duration":240,"sourceIn":0,"speed":1,"linkId":"linkmuphf9c0hop30019","enabled":true,"kind":"video","transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""},
+            {"id":"clipmuphf9c0zog5001g","mediaId":"medmuphf9c0lpl4000p","name":"Luke meets Yoda","start":240,"duration":360,"sourceIn":120,"speed":1,"linkId":"linkmuphf9c0716u001f","enabled":true,"kind":"video","transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":["keep"],"characters":["Luke","Yoda"],"plotlines":["Jedi Training"],"locations":["Dagobah"],"notes":"The heart of the film","color":"#30a46c"},
+            {"id":"clipmuphf9c00eml001l","mediaId":"medmuphf9c0oliu000q","name":"S01E02 – Rising Malevolence.mkv","start":600,"duration":228,"sourceIn":30,"speed":1,"linkId":"linkmuphf9c0og24001k","enabled":true,"kind":"video","transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""}
+          ],
+          "transitions": [
+            {"id":"trmuphf9c0d8a7001r","type":"crossDissolve","duration":12,"outClipId":"clipmuphf9c0xlvy001a","inClipId":"clipmuphf9c0zog5001g"},
+            {"id":"trmuphf9c0wszo001t","type":"dipToBlack","duration":24,"outClipId":"clipmuphf9c00eml001l","inClipId":null}
+          ],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 64,
+          "volume": 1,
+          "patched": true
+        },
+        {
+          "id": "vmuphf9c04rsl000j",
+          "name": "V2",
+          "kind": "video",
+          "clips": [
+            {"id":"clipmuphf9c0e7ub001q","mediaId":"medmuphf9c0wzwq000s","name":"Title card – Amélie.png","start":48,"duration":96,"sourceIn":0,"speed":1,"linkId":null,"enabled":true,"kind":"video","transform":{"x":40,"y":-20,"scale":0.8,"rotation":2.5,"opacity":0.9,"crop":{"left":0.05,"top":0,"right":0.05,"bottom":0.1}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""}
+          ],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": true,
+          "height": 64,
+          "volume": 1,
+          "patched": false
+        },
+        {
+          "id": "vmuphf9c09gbw000k",
+          "name": "V3",
+          "kind": "video",
+          "clips": [],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 64,
+          "volume": 1,
+          "patched": false
+        }
+      ],
+      "audioTracks": [
+        {
+          "id": "amuphf9c0m2ef000l",
+          "name": "A1",
+          "kind": "audio",
+          "clips": [
+            {"id":"clipmuphf9c0anz4001b","mediaId":"medmuphf9c0lpl4000p","name":"The Empire Strikes Back (1980).mkv","start":0,"duration":240,"sourceIn":0,"speed":1,"linkId":"linkmuphf9c0hop30019","enabled":true,"kind":"audio","audioStream":1,"transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":-3,"volume":0.8,"fadeIn":12,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""},
+            {"id":"clipmuphf9c0n1fy001h","mediaId":"medmuphf9c0lpl4000p","name":"Luke meets Yoda","start":240,"duration":360,"sourceIn":120,"speed":1,"linkId":"linkmuphf9c0716u001f","enabled":true,"kind":"audio","audioStream":1,"transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":["keep"],"characters":["Luke","Yoda"],"plotlines":["Jedi Training"],"locations":["Dagobah"],"notes":"The heart of the film","color":"#30a46c"},
+            {"id":"clipmuphf9c0tctt001m","mediaId":"medmuphf9c0oliu000q","name":"S01E02 – Rising Malevolence.mkv","start":600,"duration":228,"sourceIn":30,"speed":1,"linkId":"linkmuphf9c0og24001k","enabled":false,"kind":"audio","audioStream":1,"transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""}
+          ],
+          "transitions": [
+            {"id":"trmuphf9c0ucqa001s","type":"audioCrossfade","duration":12,"outClipId":"clipmuphf9c0anz4001b","inClipId":"clipmuphf9c0n1fy001h"}
+          ],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 48,
+          "volume": 1,
+          "patched": true
+        },
+        {
+          "id": "amuphf9c0kzfn000m",
+          "name": "Music",
+          "kind": "audio",
+          "clips": [
+            {"id":"clipmuphf9c0xiba001p","mediaId":"medmuphf9c0eap4000r","name":"John Williams – Main Title.flac","start":0,"duration":480,"sourceIn":0,"speed":1,"linkId":null,"enabled":true,"kind":"audio","audioStream":0,"transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":0.5,"fadeIn":0,"fadeOut":24,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""}
+          ],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 48,
+          "volume": 0.7,
+          "patched": false
+        },
+        {
+          "id": "amuphf9c04tpr000n",
+          "name": "A3",
+          "kind": "audio",
+          "clips": [],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 48,
+          "volume": 1,
+          "patched": false
+        }
+      ],
+      "subtitleTracks": [
+        {
+          "id": "sstmuphf9c02r12001c",
+          "name": "eng",
+          "language": "eng",
+          "enabled": true,
+          "cues": [
+            {"id":"scuemuphf9c0u7qt001d","clipId":"clipmuphf9c0xlvy001a","srcStart":1.5,"srcEnd":3.25,"start":36,"duration":42,"offset":3,"text":"A long time ago…"},
+            {"id":"scuemuphf9c0tvf4001e","clipId":"clipmuphf9c0xlvy001a","srcStart":4,"srcEnd":6.5,"start":96,"duration":60,"offset":0,"text":"Echo Three to Echo Seven.\nHan, old buddy, do you read me?"},
+            {"id":"scuemuphf9c03lie001i","clipId":"clipmuphf9c0zog5001g","srcStart":121,"srcEnd":124.75,"start":264,"duration":90,"offset":0,"text":"<i>Do. Or do not.</i>"},
+            {"id":"scuemuphf9c0ul32001j","clipId":"clipmuphf9c0zog5001g","srcStart":126,"srcEnd":128,"start":384,"duration":48,"offset":0,"text":"There is no try."}
+          ],
+          "sourcePaths": ["D:\\Films\\Star Wars\\The Empire Strikes Back (1980).en.srt"]
+        },
+        {
+          "id": "sstmuphf9c06wql001n",
+          "name": "Notes",
+          "language": "und",
+          "enabled": true,
+          "cues": [
+            {"id":"scuemuphf9c0cge0001o","clipId":"clipmuphf9c00eml001l","srcStart":31,"srcEnd":33.5,"start":624,"duration":60,"offset":0,"text":"Malevolence fires"}
+          ]
+        },
+        {
+          "id": "sstmuphf9c0hida0021",
+          "name": "Forced",
+          "language": "eng",
+          "enabled": true,
+          "cues": [
+            {"id":"scuemuphf9c0i9tu0022","start":60,"duration":48,"offset":0,"text":"Somewhere on Hoth"},
+            {"id":"scuemuphf9c0zjv00023","start":250,"duration":36,"offset":0,"text":"Dagobah system\n(forced)"}
+          ]
+        }
+      ],
+      "markers": [
+        {"id":"mkmuphf9c04b33001u","time":0,"duration":0,"name":"Chapter 1 – Hoth","note":"","color":"#ffb224","kind":"chapter"},
+        {"id":"mkmuphf9c0u02x001w","time":24,"duration":48,"name":"Check the title timing","note":"Fade it in?","color":"#4d7cfe","kind":"marker"},
+        {"id":"mkmuphf9c0hg2t001v","time":240,"duration":0,"name":"Chapter 2 – Dagobah","note":"","color":"#ffb224","kind":"chapter"},
+        {"id":"mkmuphf9c06u5n001x","time":270,"duration":0,"name":"Luke's jacket","note":"Changes between shots","color":"#f5a623","kind":"continuity","category":"wardrobe","resolved":true,"clipId":"clipmuphf9c0zog5001g"},
+        {"id":"mkmuphf9c0gdjh001y","time":605,"duration":24,"name":"Music cuts off","note":"","color":"#f5a623","kind":"continuity","category":"music","resolved":false}
+      ],
+      "storyBlocks": [
+        {"id":"sbmuphf9c0hrju001z","name":"Act I – Hoth","start":0,"end":240,"color":"#5b8def","notes":"Cold open"},
+        {"id":"sbmuphf9c0ao2q0020","name":"Act II – Training","start":240,"end":840,"color":"#46a758","notes":""}
+      ],
+      "snapshots": [
+        {
+          "id": "snapmuphf9c0vdbx0024",
+          "name": "Before act 2 trim",
+          "createdAt": 1790856000000,
+          "data": {
+            "id": "seqmuphf9c0pevy000h",
+            "name": "Episode V – Despecialized",
+            "fps": {"num":24000,"den":1001},
+            "width": 1920,
+            "height": 1080,
+            "sampleRate": 48000,
+            "channels": 2,
+            "videoTracks": [
+              {
+                "id": "vmuphf9c0sn1j000i",
+                "name": "V1",
+                "kind": "video",
+                "clips": [
+                  {"id":"clipmuphf9c0xlvy001a","mediaId":"medmuphf9c0lpl4000p","name":"The Empire Strikes Back (1980).mkv","start":0,"duration":240,"sourceIn":0,"speed":1,"linkId":"linkmuphf9c0hop30019","enabled":true,"kind":"video","transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""},
+                  {"id":"clipmuphf9c0zog5001g","mediaId":"medmuphf9c0lpl4000p","name":"Luke meets Yoda","start":240,"duration":360,"sourceIn":120,"speed":1,"linkId":"linkmuphf9c0716u001f","enabled":true,"kind":"video","transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":["keep"],"characters":["Luke","Yoda"],"plotlines":["Jedi Training"],"locations":["Dagobah"],"notes":"The heart of the film","color":"#30a46c"},
+                  {"id":"clipmuphf9c00eml001l","mediaId":"medmuphf9c0oliu000q","name":"S01E02 – Rising Malevolence.mkv","start":600,"duration":240,"sourceIn":30,"speed":1,"linkId":"linkmuphf9c0og24001k","enabled":true,"kind":"video","transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""}
+                ],
+                "transitions": [
+                  {"id":"trmuphf9c0d8a7001r","type":"crossDissolve","duration":12,"outClipId":"clipmuphf9c0xlvy001a","inClipId":"clipmuphf9c0zog5001g"},
+                  {"id":"trmuphf9c0wszo001t","type":"dipToBlack","duration":24,"outClipId":"clipmuphf9c00eml001l","inClipId":null}
+                ],
+                "muted": false,
+                "solo": false,
+                "locked": false,
+                "height": 64,
+                "volume": 1,
+                "patched": true
+              },
+              {
+                "id": "vmuphf9c04rsl000j",
+                "name": "V2",
+                "kind": "video",
+                "clips": [
+                  {"id":"clipmuphf9c0e7ub001q","mediaId":"medmuphf9c0wzwq000s","name":"Title card – Amélie.png","start":48,"duration":96,"sourceIn":0,"speed":1,"linkId":null,"enabled":true,"kind":"video","transform":{"x":40,"y":-20,"scale":0.8,"rotation":2.5,"opacity":0.9,"crop":{"left":0.05,"top":0,"right":0.05,"bottom":0.1}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""}
+                ],
+                "transitions": [],
+                "muted": false,
+                "solo": false,
+                "locked": true,
+                "height": 64,
+                "volume": 1,
+                "patched": false
+              },
+              {
+                "id": "vmuphf9c09gbw000k",
+                "name": "V3",
+                "kind": "video",
+                "clips": [],
+                "transitions": [],
+                "muted": false,
+                "solo": false,
+                "locked": false,
+                "height": 64,
+                "volume": 1,
+                "patched": false
+              }
+            ],
+            "audioTracks": [
+              {
+                "id": "amuphf9c0m2ef000l",
+                "name": "A1",
+                "kind": "audio",
+                "clips": [
+                  {"id":"clipmuphf9c0anz4001b","mediaId":"medmuphf9c0lpl4000p","name":"The Empire Strikes Back (1980).mkv","start":0,"duration":240,"sourceIn":0,"speed":1,"linkId":"linkmuphf9c0hop30019","enabled":true,"kind":"audio","audioStream":1,"transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":-3,"volume":0.8,"fadeIn":12,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""},
+                  {"id":"clipmuphf9c0n1fy001h","mediaId":"medmuphf9c0lpl4000p","name":"Luke meets Yoda","start":240,"duration":360,"sourceIn":120,"speed":1,"linkId":"linkmuphf9c0716u001f","enabled":true,"kind":"audio","audioStream":1,"transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":["keep"],"characters":["Luke","Yoda"],"plotlines":["Jedi Training"],"locations":["Dagobah"],"notes":"The heart of the film","color":"#30a46c"},
+                  {"id":"clipmuphf9c0tctt001m","mediaId":"medmuphf9c0oliu000q","name":"S01E02 – Rising Malevolence.mkv","start":600,"duration":240,"sourceIn":30,"speed":1,"linkId":"linkmuphf9c0og24001k","enabled":false,"kind":"audio","audioStream":1,"transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""}
+                ],
+                "transitions": [
+                  {"id":"trmuphf9c0ucqa001s","type":"audioCrossfade","duration":12,"outClipId":"clipmuphf9c0anz4001b","inClipId":"clipmuphf9c0n1fy001h"}
+                ],
+                "muted": false,
+                "solo": false,
+                "locked": false,
+                "height": 48,
+                "volume": 1,
+                "patched": true
+              },
+              {
+                "id": "amuphf9c0kzfn000m",
+                "name": "Music",
+                "kind": "audio",
+                "clips": [
+                  {"id":"clipmuphf9c0xiba001p","mediaId":"medmuphf9c0eap4000r","name":"John Williams – Main Title.flac","start":0,"duration":480,"sourceIn":0,"speed":1,"linkId":null,"enabled":true,"kind":"audio","audioStream":0,"transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":0.5,"fadeIn":0,"fadeOut":24,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""}
+                ],
+                "transitions": [],
+                "muted": false,
+                "solo": false,
+                "locked": false,
+                "height": 48,
+                "volume": 0.7,
+                "patched": false
+              },
+              {
+                "id": "amuphf9c04tpr000n",
+                "name": "A3",
+                "kind": "audio",
+                "clips": [],
+                "transitions": [],
+                "muted": false,
+                "solo": false,
+                "locked": false,
+                "height": 48,
+                "volume": 1,
+                "patched": false
+              }
+            ],
+            "subtitleTracks": [
+              {
+                "id": "sstmuphf9c02r12001c",
+                "name": "eng",
+                "language": "eng",
+                "enabled": true,
+                "cues": [
+                  {"id":"scuemuphf9c0u7qt001d","clipId":"clipmuphf9c0xlvy001a","srcStart":1.5,"srcEnd":3.25,"start":36,"duration":42,"offset":3,"text":"A long time ago…"},
+                  {"id":"scuemuphf9c0tvf4001e","clipId":"clipmuphf9c0xlvy001a","srcStart":4,"srcEnd":6.5,"start":96,"duration":60,"offset":0,"text":"Echo Three to Echo Seven.\nHan, old buddy, do you read me?"},
+                  {"id":"scuemuphf9c03lie001i","clipId":"clipmuphf9c0zog5001g","srcStart":121,"srcEnd":124.75,"start":264,"duration":90,"offset":0,"text":"<i>Do. Or do not.</i>"},
+                  {"id":"scuemuphf9c0ul32001j","clipId":"clipmuphf9c0zog5001g","srcStart":126,"srcEnd":128,"start":384,"duration":48,"offset":0,"text":"There is no try."}
+                ],
+                "sourcePaths": ["D:\\Films\\Star Wars\\The Empire Strikes Back (1980).en.srt"]
+              },
+              {
+                "id": "sstmuphf9c06wql001n",
+                "name": "Notes",
+                "language": "und",
+                "enabled": true,
+                "cues": [
+                  {"id":"scuemuphf9c0cge0001o","clipId":"clipmuphf9c00eml001l","srcStart":31,"srcEnd":33.5,"start":624,"duration":60,"offset":0,"text":"Malevolence fires"}
+                ]
+              },
+              {
+                "id": "sstmuphf9c0hida0021",
+                "name": "Forced",
+                "language": "eng",
+                "enabled": true,
+                "cues": [
+                  {"id":"scuemuphf9c0i9tu0022","start":60,"duration":48,"offset":0,"text":"Somewhere on Hoth"},
+                  {"id":"scuemuphf9c0zjv00023","start":250,"duration":36,"offset":0,"text":"Dagobah system\n(forced)"}
+                ]
+              }
+            ],
+            "markers": [
+              {"id":"mkmuphf9c04b33001u","time":0,"duration":0,"name":"Chapter 1 – Hoth","note":"","color":"#ffb224","kind":"chapter"},
+              {"id":"mkmuphf9c0u02x001w","time":24,"duration":48,"name":"Check the title timing","note":"Fade it in?","color":"#4d7cfe","kind":"marker"},
+              {"id":"mkmuphf9c0hg2t001v","time":240,"duration":0,"name":"Chapter 2 – Dagobah","note":"","color":"#ffb224","kind":"chapter"},
+              {"id":"mkmuphf9c06u5n001x","time":270,"duration":0,"name":"Luke's jacket","note":"Changes between shots","color":"#f5a623","kind":"continuity","category":"wardrobe","resolved":true,"clipId":"clipmuphf9c0zog5001g"},
+              {"id":"mkmuphf9c0gdjh001y","time":605,"duration":24,"name":"Music cuts off","note":"","color":"#f5a623","kind":"continuity","category":"music","resolved":false}
+            ],
+            "storyBlocks": [
+              {"id":"sbmuphf9c0hrju001z","name":"Act I – Hoth","start":0,"end":240,"color":"#5b8def","notes":"Cold open"},
+              {"id":"sbmuphf9c0ao2q0020","name":"Act II – Training","start":240,"end":840,"color":"#46a758","notes":""}
+            ],
+            "createdAt": 1790856000000,
+            "modifiedAt": 1790856000000,
+            "binId": "bin-sequences",
+            "view": {"playhead":120,"zoom":2,"scroll":16,"inPoint":24,"outPoint":600}
+          }
+        }
+      ],
+      "createdAt": 1790856000000,
+      "modifiedAt": 1790856000000,
+      "binId": "bin-sequences",
+      "view": {"playhead":120,"zoom":2,"scroll":16,"inPoint":24,"outPoint":600}
+    },
+    "seqmuphf9c017p80036": {
+      "id": "seqmuphf9c017p80036",
+      "name": "Episode V – Alt cut",
+      "fps": {"num":24000,"den":1001},
+      "width": 1920,
+      "height": 1080,
+      "sampleRate": 48000,
+      "channels": 2,
+      "videoTracks": [
+        {
+          "id": "vmuphf9c0kkij0025",
+          "name": "V1",
+          "kind": "video",
+          "clips": [
+            {"id":"clipmuphf9c0lvwf0026","mediaId":"medmuphf9c0lpl4000p","name":"The Empire Strikes Back (1980).mkv","start":0,"duration":240,"sourceIn":0,"speed":1,"linkId":"linkmuphf9c07cxq0027","enabled":true,"kind":"video","transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""},
+            {"id":"clipmuphf9c0myxi0028","mediaId":"medmuphf9c0lpl4000p","name":"Luke meets Yoda","start":240,"duration":360,"sourceIn":120,"speed":1,"linkId":"linkmuphf9c0scj30029","enabled":true,"kind":"video","transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":["keep"],"characters":["Luke","Yoda"],"plotlines":["Jedi Training"],"locations":["Dagobah"],"notes":"The heart of the film","color":"#30a46c"},
+            {"id":"clipmuphf9c02dqs002a","mediaId":"medmuphf9c0oliu000q","name":"S01E02 – Rising Malevolence.mkv","start":600,"duration":228,"sourceIn":30,"speed":1,"linkId":"linkmuphf9c0joib002b","enabled":true,"kind":"video","transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""}
+          ],
+          "transitions": [
+            {"id":"trmuphf9c08bz3002c","type":"crossDissolve","duration":12,"outClipId":"clipmuphf9c0lvwf0026","inClipId":"clipmuphf9c0myxi0028"},
+            {"id":"trmuphf9c07yat002d","type":"dipToBlack","duration":24,"outClipId":"clipmuphf9c02dqs002a","inClipId":null}
+          ],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 64,
+          "volume": 1,
+          "patched": true
+        },
+        {
+          "id": "vmuphf9c0zici002e",
+          "name": "V2",
+          "kind": "video",
+          "clips": [
+            {"id":"clipmuphf9c0z8ia002f","mediaId":"medmuphf9c0wzwq000s","name":"Title card – Amélie.png","start":48,"duration":96,"sourceIn":0,"speed":1,"linkId":null,"enabled":true,"kind":"video","transform":{"x":40,"y":-20,"scale":0.8,"rotation":2.5,"opacity":0.9,"crop":{"left":0.05,"top":0,"right":0.05,"bottom":0.1}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""}
+          ],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": true,
+          "height": 64,
+          "volume": 1,
+          "patched": false
+        },
+        {
+          "id": "vmuphf9c0ccqu002g",
+          "name": "V3",
+          "kind": "video",
+          "clips": [],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 64,
+          "volume": 1,
+          "patched": false
+        }
+      ],
+      "audioTracks": [
+        {
+          "id": "amuphf9c0fp7v002h",
+          "name": "A1",
+          "kind": "audio",
+          "clips": [
+            {"id":"clipmuphf9c050l7002i","mediaId":"medmuphf9c0lpl4000p","name":"The Empire Strikes Back (1980).mkv","start":0,"duration":240,"sourceIn":0,"speed":1,"linkId":"linkmuphf9c07cxq0027","enabled":true,"kind":"audio","audioStream":1,"transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":-3,"volume":0.8,"fadeIn":12,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""},
+            {"id":"clipmuphf9c06x3r002j","mediaId":"medmuphf9c0lpl4000p","name":"Luke meets Yoda","start":240,"duration":360,"sourceIn":120,"speed":1,"linkId":"linkmuphf9c0scj30029","enabled":true,"kind":"audio","audioStream":1,"transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":["keep"],"characters":["Luke","Yoda"],"plotlines":["Jedi Training"],"locations":["Dagobah"],"notes":"The heart of the film","color":"#30a46c"}
+          ],
+          "transitions": [
+            {"id":"trmuphf9c0uj1l002l","type":"audioCrossfade","duration":12,"outClipId":"clipmuphf9c050l7002i","inClipId":"clipmuphf9c06x3r002j"}
+          ],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 48,
+          "volume": 1,
+          "patched": true
+        },
+        {
+          "id": "amuphf9c06ruh002m",
+          "name": "Music",
+          "kind": "audio",
+          "clips": [
+            {"id":"clipmuphf9c0u0i1002n","mediaId":"medmuphf9c0eap4000r","name":"John Williams – Main Title.flac","start":0,"duration":480,"sourceIn":0,"speed":1,"linkId":null,"enabled":true,"kind":"audio","audioStream":0,"transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":0.5,"fadeIn":0,"fadeOut":24,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""}
+          ],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 48,
+          "volume": 0.7,
+          "patched": false
+        },
+        {
+          "id": "amuphf9c0zhhj002o",
+          "name": "A3",
+          "kind": "audio",
+          "clips": [],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 48,
+          "volume": 1,
+          "patched": false
+        }
+      ],
+      "subtitleTracks": [
+        {
+          "id": "sstmuphf9c0ucqd002p",
+          "name": "eng",
+          "language": "eng",
+          "enabled": true,
+          "cues": [
+            {"id":"scuemuphf9c0lmp3002q","clipId":"clipmuphf9c0lvwf0026","srcStart":1.5,"srcEnd":3.25,"start":36,"duration":42,"offset":3,"text":"A long time ago…"},
+            {"id":"scuemuphf9c0eesn002r","clipId":"clipmuphf9c0lvwf0026","srcStart":4,"srcEnd":6.5,"start":96,"duration":60,"offset":0,"text":"Echo Three to Echo Seven.\nHan, old buddy, do you read me?"},
+            {"id":"scuemuphf9c0wx9k002s","clipId":"clipmuphf9c0myxi0028","srcStart":121,"srcEnd":124.75,"start":264,"duration":90,"offset":0,"text":"<i>Do. Or do not.</i>"},
+            {"id":"scuemuphf9c09iwn002t","clipId":"clipmuphf9c0myxi0028","srcStart":126,"srcEnd":128,"start":384,"duration":48,"offset":0,"text":"There is no try."}
+          ],
+          "sourcePaths": ["D:\\Films\\Star Wars\\The Empire Strikes Back (1980).en.srt"]
+        },
+        {
+          "id": "sstmuphf9c0aw3b002u",
+          "name": "Notes",
+          "language": "und",
+          "enabled": true,
+          "cues": [
+            {"id":"scuemuphf9c09li3002v","clipId":"clipmuphf9c02dqs002a","srcStart":31,"srcEnd":33.5,"start":624,"duration":60,"offset":0,"text":"Malevolence fires"}
+          ]
+        },
+        {
+          "id": "sstmuphf9c0ezzu002w",
+          "name": "Forced",
+          "language": "eng",
+          "enabled": true,
+          "cues": [
+            {"id":"scuemuphf9c07wff002x","start":60,"duration":48,"offset":0,"text":"Somewhere on Hoth"},
+            {"id":"scuemuphf9c00m9x002y","start":250,"duration":36,"offset":0,"text":"Dagobah system\n(forced)"}
+          ]
+        }
+      ],
+      "markers": [
+        {"id":"mkmuphf9c0xz0z002z","time":0,"duration":0,"name":"Chapter 1 – Hoth","note":"","color":"#ffb224","kind":"chapter"},
+        {"id":"mkmuphf9c0rg8v0030","time":24,"duration":48,"name":"Check the title timing","note":"Fade it in?","color":"#4d7cfe","kind":"marker"},
+        {"id":"mkmuphf9c0r8zo0031","time":240,"duration":0,"name":"Chapter 2 – Dagobah","note":"","color":"#ffb224","kind":"chapter"},
+        {"id":"mkmuphf9c03r7q0032","time":270,"duration":0,"name":"Luke's jacket","note":"Changes between shots","color":"#f5a623","kind":"continuity","category":"wardrobe","resolved":true,"clipId":"clipmuphf9c0myxi0028"},
+        {"id":"mkmuphf9c0lig70033","time":605,"duration":24,"name":"Music cuts off","note":"","color":"#f5a623","kind":"continuity","category":"music","resolved":false}
+      ],
+      "storyBlocks": [
+        {"id":"sbmuphf9c0ke8r0034","name":"Act I – Hoth","start":0,"end":240,"color":"#5b8def","notes":"Cold open"},
+        {"id":"sbmuphf9c047pn0035","name":"Act II – Training","start":240,"end":612,"color":"#46a758","notes":""}
+      ],
+      "snapshots": [],
+      "createdAt": 1790856000000,
+      "modifiedAt": 1790856000000,
+      "binId": "bin-sequences",
+      "view": {"playhead":120,"zoom":2,"scroll":16,"inPoint":24,"outPoint":600},
+      "parentSequenceId": "seqmuphf9c0pevy000h",
+      "versionLabel": "v2"
+    },
+    "seqmuphf9c0mcsu0037": {
+      "id": "seqmuphf9c0mcsu0037",
+      "name": "Clone Wars recap",
+      "fps": {"num":25,"den":1},
+      "width": 1280,
+      "height": 720,
+      "sampleRate": 48000,
+      "channels": 6,
+      "videoTracks": [
+        {
+          "id": "vmuphf9c0e6dz0038",
+          "name": "V1",
+          "kind": "video",
+          "clips": [
+            {"id":"clipmuphf9c0k305003f","mediaId":"medmuphf9c0oliu000q","name":"S01E02 – Rising Malevolence.mkv","start":0,"duration":313,"sourceIn":100,"speed":1,"linkId":"linkmuphf9c0ayj1003e","enabled":true,"kind":"video","transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""}
+          ],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 64,
+          "volume": 1,
+          "patched": true
+        },
+        {
+          "id": "vmuphf9c050o70039",
+          "name": "V2",
+          "kind": "video",
+          "clips": [],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 64,
+          "volume": 1,
+          "patched": false
+        },
+        {
+          "id": "vmuphf9c0pate003a",
+          "name": "V3",
+          "kind": "video",
+          "clips": [],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 64,
+          "volume": 1,
+          "patched": false
+        }
+      ],
+      "audioTracks": [
+        {
+          "id": "amuphf9c00bdg003b",
+          "name": "A1",
+          "kind": "audio",
+          "clips": [
+            {"id":"clipmuphf9c0bdda003g","mediaId":"medmuphf9c0oliu000q","name":"S01E02 – Rising Malevolence.mkv","start":0,"duration":313,"sourceIn":100,"speed":1,"linkId":"linkmuphf9c0ayj1003e","enabled":true,"kind":"audio","audioStream":1,"transform":{"x":0,"y":0,"scale":1,"rotation":0,"opacity":1,"crop":{"left":0,"top":0,"right":0,"bottom":0}},"audio":{"gain":0,"volume":1,"fadeIn":0,"fadeOut":0,"muted":false},"tags":[],"characters":[],"plotlines":[],"locations":[],"notes":""}
+          ],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 48,
+          "volume": 1,
+          "patched": true
+        },
+        {
+          "id": "amuphf9c0pzh9003c",
+          "name": "A2",
+          "kind": "audio",
+          "clips": [],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 48,
+          "volume": 1,
+          "patched": false
+        },
+        {
+          "id": "amuphf9c08oau003d",
+          "name": "A3",
+          "kind": "audio",
+          "clips": [],
+          "transitions": [],
+          "muted": false,
+          "solo": false,
+          "locked": false,
+          "height": 48,
+          "volume": 1,
+          "patched": false
+        }
+      ],
+      "subtitleTracks": [],
+      "markers": [
+        {"id":"mkmuphf9c0e0u8003h","time":25,"duration":0,"name":"Recap","note":"","color":"#4d7cfe","kind":"chapter"}
+      ],
+      "storyBlocks": [],
+      "snapshots": [],
+      "createdAt": 1790856000000,
+      "modifiedAt": 1790856000000,
+      "binId": "bin-sequences",
+      "view": {"playhead":0,"zoom":4,"scroll":0,"inPoint":null,"outPoint":null}
+    }
+  },
+  "sequenceOrder": ["seqmuphf9c0pevy000h","seqmuphf9c017p80036","seqmuphf9c0mcsu0037"],
+  "scenes": {
+    "scnmuphf9c0mvkt003i": {"id":"scnmuphf9c0mvkt003i","name":"Luke meets Yoda","mediaId":"medmuphf9c0lpl4000p","in":120,"out":135.015,"characters":["Luke","Yoda"],"location":"Dagobah","arc":"Jedi Training","tags":["keep"],"notes":"The heart of the film","rating":0,"color":"#30a46c","createdAt":1790856000000},
+    "scnmuphf9c02rjg003j": {"id":"scnmuphf9c02rjg003j","name":"Biggs farewell","mediaId":"medmuphf9c0yzs1000t","in":12.5,"out":58.25,"characters":["Luke","Biggs"],"location":"Anchorhead","arc":"Friends","tags":["deleted"],"notes":"Restore in the extended cut","rating":4,"color":"#8e4ec6","createdAt":1790856000000}
+  },
+  "subtitleTracks": {
+    "stmuphf9c0l5b1000z": {
+      "id": "stmuphf9c0l5b1000z",
+      "name": "The Empire Strikes Back (1980).en.srt",
+      "language": "eng",
+      "origin": "srt",
+      "mediaId": "medmuphf9c0lpl4000p",
+      "path": "D:\\Films\\Star Wars\\The Empire Strikes Back (1980).en.srt",
+      "cues": [
+        {"id":"cuemuphf9c0httw0010","start":1.5,"end":3.25,"text":"A long time ago…"},
+        {"id":"cuemuphf9c0m3fu0011","start":4,"end":6.5,"text":"Echo Three to Echo Seven.\nHan, old buddy, do you read me?"},
+        {"id":"cuemuphf9c0hrbd0012","start":121,"end":124.75,"text":"<i>Do. Or do not.</i>"},
+        {"id":"cuemuphf9c04xrh0013","start":126,"end":128,"text":"There is no try."}
+      ]
+    },
+    "stmuphf9c022an0014": {
+      "id": "stmuphf9c022an0014",
+      "name": "Notes",
+      "language": "und",
+      "origin": "manual",
+      "mediaId": "medmuphf9c0oliu000q",
+      "cues": [
+        {"id":"cuemuphf9c0y6l10015","start":31,"end":33.5,"text":"Malevolence fires"}
+      ]
+    }
+  },
+  "tags": {
+    "characters": ["Han","Leia","Luke","Yoda","Biggs"],
+    "plotlines": ["Jedi Training","Friends"],
+    "locations": ["Dagobah","Anchorhead"],
+    "themes": ["Redemption"],
+    "custom": ["source:bluray","snow","fan favourite","keep","deleted"]
+  },
+  "settings": {
+    "useProxies": false,
+    "proxyHeight": 720,
+    "autosaveIntervalSec": 120,
+    "carrySubtitles": false,
+    "sceneThreshold": 0.42,
+    "playbackResolution": "1/2",
+    "snapping": false,
+    "defaultTransitionFrames": 12,
+    "showSourceTimecodeOnClips": true
+  },
+  "activeSequenceId": "seqmuphf9c0pevy000h"
+}

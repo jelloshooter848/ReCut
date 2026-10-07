@@ -354,3 +354,28 @@ so, so you do not have to render again.
   A file saved by a newer ReCut is refused, never replaced by the `.bak`.
 - Opening or creating a project closes open dialogs (Export, Relink, ...) that belonged to the previous one.
 - **Quit** (Ctrl+Q) asks to save unsaved changes.
+- Projects saved by any earlier stable release (0.3.0 onwards) open without losing anything; a project saved by a
+  newer ReCut is refused with a message that says so (see
+  [the compatibility promise](project-format.md#compatibility-promise)).
+
+## Updates
+
+ReCut works offline and never updates itself. It can tell you when a newer release is out:
+
+- The first time you start this version, a bar at the top asks **Check for new ReCut versions on GitHub once a
+  day? [Yes] [No]**. Nothing is checked until you answer **Yes**.
+- With checking on, ReCut asks GitHub for the latest release a few seconds after it starts, at most once a day. When
+  a newer version exists, a bar says **ReCut X.Y.Z is available — Release notes**. **Release notes** opens the
+  release page in your browser, where you download and install the new version yourself (your projects and
+  preferences are kept). **Skip this version** hides the bar until a later release; **×** hides it until the next
+  start.
+- **Help › Check for Updates…** checks once, now, whatever the setting, and tells you whether you are up to date, a
+  new version exists, or the check failed.
+- **Preferences › Check for updates** changes the setting (**Ask me**, **Once a day**, **Off**) and shows when the
+  last check was made. **Check now** does the same as the Help menu item.
+
+**Privacy:** the check is one request to `api.github.com` for the latest ReCut release. It sends nothing about you,
+your projects or your media: no identifier, no cookies, no telemetry. The only header ReCut adds is
+`User-Agent: ReCut/<version>`; your network stack adds its usual ones (for example the accepted languages), and GitHub
+sees your IP address as for any web request. Pre-releases are never offered. Administrators can turn the prompt and
+the daily check off for an installation with the environment variable `RECUT_UPDATE_CHECK=0`.
