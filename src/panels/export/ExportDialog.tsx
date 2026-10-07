@@ -24,6 +24,7 @@ import {
   clampSampleRateForCodec, presetNameFor, presetsFor, sampleRateSupported, saveExportSettings, sanitizeFileName, sequenceHasSubtitles, validateExportSettings,
   audioSummary, perTrackOutputPaths, withFormatExtension,
 } from './settings';
+import { flattenSequence } from '@shared/nest';
 import {
   CONTAINER_IDS, CONTAINERS, DNXHR_PROFILES, INTERMEDIATE_CODECS, PRORES_PROFILES, audioBitDepth, dnxhrProfile, exportContainer, intermediateCodec,
   isPerTrackAudio, proresProfile, resolveAudioOutputs, subtitleOutputPlan, supportsPackaging, usesAc3, videoEncoder, withExportExtension,
@@ -199,7 +200,7 @@ export function ExportDialog() {
 
   return (
     <SettingsView
-      seq={seq} settings={settings} media={media} projectUsesProxies={projectUsesProxies} update={update}
+      seq={seq} settings={settings} media={media} projectUsesProxies={projectUsesProxies} sequences={sequences} update={update}
       onShowTarget={(t) => onShowTarget(seq.id, t)}
       command={command} commandError={commandError} starting={starting} startError={startError}
       onShowCommand={async () => {
@@ -264,6 +265,8 @@ interface SettingsViewProps {
   settings: ExportSettings;
   media: ExportRequest['media'];
   projectUsesProxies: boolean;
+  /** The project's sequences (nested sequences are checked flattened in). */
+  sequences: Record<string, Sequence>;
   update: (patch: Partial<ExportSettings>) => void;
   onShowTarget: (target: ChecklistTarget) => void;
   command: string | null;
@@ -283,7 +286,7 @@ function SettingsView(p: SettingsViewProps) {
   const presetName = presetNameFor(settings, presets, chosenPreset);
   const presetOptions = useMemo(() => [...presets.map((x) => ({ value: x.name, label: x.name })), { value: CUSTOM, label: CUSTOM }], [presets]);
   const validation = validateExportSettings(settings);
-  const checklist = useMemo(() => exportChecklist(seq, media, settings, p.projectUsesProxies), [seq, media, settings, p.projectUsesProxies]);
+  const checklist = useMemo(() => exportChecklist(seq, media, settings, p.projectUsesProxies, p.sequences), [seq, media, settings, p.projectUsesProxies, p.sequences]);
   const blocked = checklistBlocks(checklist);
   const range = exportRange(seq, settings);
   const container = exportContainer(settings);
@@ -297,7 +300,7 @@ function SettingsView(p: SettingsViewProps) {
   const vEnc = videoEncoder(settings);
   const perTrackPaths = useMemo(() => perTrackOutputPaths(seq, settings), [seq, settings]);
   const size = estimateFileSize(settings, range.seconds, perTrackPaths?.length || 1);
-  const maxCh = useMemo(() => maxSourceChannels(seq, media), [seq, media]);
+  const maxCh = useMemo(() => maxSourceChannels(flattenSequence(seq, p.sequences, media), media), [seq, media, p.sequences]);
   const surroundOk = maxCh >= 6;
   const hasSubs = sequenceHasSubtitles(seq);
   const outFps = effectiveExportFps(settings, seq);

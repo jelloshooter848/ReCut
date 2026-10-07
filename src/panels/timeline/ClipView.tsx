@@ -76,8 +76,10 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   const bodyTop = compact ? 0 : CLIP_BAR_H;
   const bodyH = Math.max(4, height - 2 - bodyTop - 2);
   const frameSec = fps.den / fps.num;
-  const path = media?.path ?? '';
-  const offline = !media || media.offline;
+  // A nested sequence clip (Roadmap §8) has no media of its own: no filmstrip or waveform, a NEST badge instead.
+  const nested = typeof clip.sequenceId === 'string' && clip.sequenceId !== '';
+  const path = nested ? '' : media?.path ?? '';
+  const offline = !nested && (!media || media.offline);
   const needsProxy = !offline && mediaNeedsProxy(media);
   const syncOffset = p.syncOffset ?? 0;
   const isVideo = trackKind === 'video';
@@ -96,7 +98,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   // scrolling re-runs this effect and cancels the timer) and for a pause in the editing (afterMediaSettle), and are
   // aborted when the clip leaves the viewport.
   const wantMedia = w >= MEDIA_MIN_CLIP_PX;
-  const stripOn = wantMedia && isVideo && !offline && !!media && media.kind !== 'audio';
+  const stripOn = wantMedia && isVideo && !offline && !nested && !!media && media.kind !== 'audio';
   const tileTime = (i: number) => (isImage ? 0 : quantizeTime(Math.max(0, clip.sourceIn + ((i * tileW + tileW / 2) / zoom) * frameSec * clip.speed)));
   // Fully cached strips (revisiting a view, a playback page flip) paint in the same render, read from the thumbnail
   // cache, instead of through an effect + state update (a second render and commit of every such clip). Kept in a
@@ -152,7 +154,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   const [waveState, setWaveState] = useState<{ path: string; stream?: number; data: WaveformData | null }>(() => ({ path, stream: waveSt, data: path ? waves.peek(path, waveSt) ?? null : null }));
   const wave = waveState.path === path && waveState.stream === waveSt ? waveState.data : (path ? waves.peek(path, waveSt) ?? null : null);
   useEffect(() => {
-    if (!wantMedia || isVideo || offline || !media || !path) return;
+    if (!wantMedia || isVideo || offline || nested || !media || !path) return;
     const hit = waves.peek(path, waveSt);
     // Only when it differs: a same-value setState right after mount still costs a (bailed-out) render and commit.
     if (hit !== undefined) { if (hit !== wave) setWaveState({ path, stream: waveSt, data: hit }); return; }
@@ -205,8 +207,8 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
 
   const cls = useMemo(() => [
     'tl-clip', trackKind, p.selected ? 'selected' : '', clip.enabled ? '' : 'disabled', offline ? 'offline' : '', needsProxy ? 'needs-proxy' : '',
-    p.filter === 'dim' ? 'dim' : p.filter === 'hide' ? 'hide' : '', compact ? 'compact' : '', p.trackLocked ? 'locked' : '',
-  ].filter(Boolean).join(' '), [trackKind, p.selected, clip.enabled, offline, needsProxy, p.filter, compact, p.trackLocked]);
+    p.filter === 'dim' ? 'dim' : p.filter === 'hide' ? 'hide' : '', compact ? 'compact' : '', p.trackLocked ? 'locked' : '', nested ? 'nested' : '',
+  ].filter(Boolean).join(' '), [trackKind, p.selected, clip.enabled, offline, needsProxy, p.filter, compact, p.trackLocked, nested]);
 
   const tileEls: React.ReactNode[] = [];
   if (isVideo && !offline) {
@@ -219,9 +221,9 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
 
   return (
     <div
-      className={cls} data-clip-id={clip.id} data-track-id={p.trackId}
+      className={cls} data-clip-id={clip.id} data-track-id={p.trackId} data-nested={nested ? clip.sequenceId : undefined}
       style={{ left: x, width: w, height: height - 2 }}
-      title={`${clip.name}${media ? `\n${media.name}` : ''}`}
+      title={nested ? `${clip.name}\nNested sequence (double-click to open in the timeline)` : `${clip.name}${media ? `\n${media.name}` : ''}`}
     >
       {stripe ? <div className="tl-clip-stripe" style={{ background: stripe }} /> : null}
       <div className="tl-clip-bar">
@@ -233,11 +235,12 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
         {srcTc ? <span className="tl-clip-tc">{srcTc}</span> : null}
         {clip.speed !== 1 ? <span className="tl-badge speed">{Math.round(clip.speed * 100)}%</span> : null}
         {offline ? <span className="tl-badge offline">OFFLINE</span> : null}
+        {nested ? <span className="tl-badge nested" title="Nested sequence">NEST</span> : null}
         {needsProxy ? <span className="tl-badge needs-proxy" title={media?.probe?.playabilityReason ? `Needs a proxy to preview: ${media.probe.playabilityReason}` : 'Needs a proxy to preview'}>PROXY</span> : null}
         {characters.map((c) => <span key={c} className="tl-badge" title={c}>{c}</span>)}
       </div>
       <div className="tl-clip-body" style={{ top: bodyTop }}>
-        {isVideo ? tileEls : (
+        {nested ? <div className="tl-nest-body" /> : isVideo ? tileEls : (
           <>
             {WAVE_LINE}
             {waveW > 0 ? <canvas ref={canvasRef} className="tl-wave" style={{ left: waveX - snappedBorderPx(CLIP_BORDER_PX, dpr), width: waveSize.cssW, height: waveSize.cssH }} /> : null}

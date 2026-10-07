@@ -575,7 +575,8 @@ function mapNested(outer: Sequence, N: Clip & { sequenceId: ID }, innerSeq: Sequ
         ...c,
         id: `${N.id}>${c.id}`,
         start: a, duration: b - a, sourceIn,
-        linkId: c.linkId ? `${N.id}>${c.linkId}` : null,
+        // Linked inner clips stay linked across the nested video / audio pair (one link group per nested link).
+        linkId: c.linkId ? `${N.linkId ?? N.id}>${c.linkId}` : null,
       };
       const env: Envelope[] = (io?.env ?? []).map((e) => ({ from: outerPos(e.from), to: outerPos(e.to), dir: e.dir }));
       env.push(...envN);

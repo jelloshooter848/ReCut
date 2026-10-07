@@ -1604,6 +1604,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       const loc = seq && findClip(seq, clipId);
       if (!seq || !loc) return null;
       const c = loc.clip;
+      if (isNestedClip(c)) { get().toast('info', 'A nested sequence clip has no source media to make a scene of: open it in the timeline and add its clips'); return null; }
       const record: SceneRecord = {
         id: uid('scn'), name: name ?? c.name, mediaId: c.mediaId, in: c.sourceIn, out: clipSourceOut(c, seq.fps),
         characters: [...c.characters], location: c.locations[0] ?? '', arc: c.plotlines[0] ?? '', tags: [...c.tags], notes: c.notes,
