@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import type { ID } from '@shared/model';
 import { DEFAULT_COLLECT_OPTIONS, type CollectOptions } from '@shared/collect';
+import { isJobActive, useJobsStore } from '@/app/jobsStore';
 
 export interface CollectUiState {
   open: boolean;
@@ -17,8 +18,11 @@ export interface CollectUiState {
 
 export const useCollectUi = create<CollectUiState>()(() => ({ open: false, destination: '', options: { ...DEFAULT_COLLECT_OPTIONS }, jobId: null }));
 
+/** Open the dialog; it keeps following a collect that is still running, and starts fresh otherwise. */
 export function openCollectDialog(): void {
-  useCollectUi.setState({ open: true });
+  const { jobId } = useCollectUi.getState();
+  const job = jobId ? useJobsStore.getState().jobs.find((j) => j.id === jobId) : undefined;
+  useCollectUi.setState({ open: true, jobId: job && isJobActive(job) ? jobId : null });
 }
 
 export function closeCollectDialog(): void {
