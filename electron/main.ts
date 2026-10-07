@@ -24,6 +24,7 @@ import { probeMedia } from './media/probe';
 import { LICENCE_FILES, licenceDirs, listLicenceFiles } from './licences';
 import { ocrWorkerPath, probeOcrCore } from './ocr/engine';
 import { getWhisperCliPath, whisperCliVersion } from './whisper/engine';
+import { manualRedirectFetch, type NetClientRequest } from './net/electronFetch';
 
 const isDev = Boolean(process.env.RECUT_DEV_URL) || !app.isPackaged;
 const smoke = process.env.RECUT_SMOKE === '1';
@@ -377,7 +378,10 @@ if (!gotLock) {
     const cacheDir = await resolveCacheDir(ud);
     const ff = resolveFfmpeg();
     try {
-      await mediaHandlers.init?.({ userData: ud, cacheDir, ffmpegPath: ff.ffmpegPath, ffprobePath: ff.ffprobePath, broadcast, fetch: net.fetch, packaged: app.isPackaged });
+      // Downloads (OCR languages, Whisper models) use net.request with manual redirects (electron/net/electronFetch.ts):
+    // net.fetch rejects a manual redirect instead of returning it.
+    const fetch = manualRedirectFetch((o) => net.request(o as Electron.ClientRequestConstructorOptions) as unknown as NetClientRequest);
+    await mediaHandlers.init?.({ userData: ud, cacheDir, ffmpegPath: ff.ffmpegPath, ffprobePath: ff.ffprobePath, broadcast, fetch, packaged: app.isPackaged });
     } catch (e) {
       console.error('media init failed:', e);
     }
