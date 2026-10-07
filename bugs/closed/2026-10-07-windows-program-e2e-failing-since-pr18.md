@@ -148,7 +148,9 @@ after).
 - Linux: `xvfb-run -a npm run test:e2e -- tests/e2e/program.spec.ts` twice, 4/4 passed both times. Extra runs:
   small window 4/4 passed; injected first-test failure 1 failed + 3 passed; original spec with small window 3
   failed + 1 passed.
-- Windows: pending coordinator's Windows CI run.
+- Windows: run #74 (id 37557931999, `workflow_dispatch` on `claude/gate-verify` = this branch + the release-gate
+  workflow): "End-to-end tests on Windows" **52 passed** (3.2 min), "Unit tests on Windows" passed. First green
+  Windows e2e run since #50.
 
 ### Changed existing assertions
 - `program.spec.ts:171`: `canvas.width === 960` became "equals the computed capped size". This is exact 960x540
