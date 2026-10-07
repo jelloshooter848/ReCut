@@ -8,6 +8,9 @@ import { defineConfig } from 'vitest/config';
 import path from 'node:path';
 
 const root = path.resolve(__dirname, '../..');
+// A slower host needs longer (the full chunked export takes about 8 min on the reference machine): perf-check.mjs sets
+// RECUT_PERF_TIMEOUT_SCALE to the run's calibration ratio against the baseline when that is above 1.
+const scale = Math.max(1, Number(process.env.RECUT_PERF_TIMEOUT_SCALE) || 1);
 
 export default defineConfig({
   resolve: {
@@ -20,8 +23,8 @@ export default defineConfig({
     root,
     include: ['tests/perf/**/*.perf.test.ts'],
     environment: 'node',
-    testTimeout: 900_000,
-    hookTimeout: 900_000,
+    testTimeout: Math.round(900_000 * scale),
+    hookTimeout: Math.round(900_000 * scale),
     fileParallelism: false,
     pool: 'forks',
     poolOptions: { forks: { singleFork: true, execArgv: ['--expose-gc'] } },

@@ -228,6 +228,8 @@ machine, so no local baseline is needed; to judge a change against main on one h
   machine, or when the test media and the 20-min long file are generated on first use. Run it **alone**: no other
   test suite, build or FFmpeg job on the machine at the same time. Before each step it waits (up to 90 s) for the
   load average to drop below half the cores, prints `nproc` and the load average, and warns when the machine is busy.
+  On a host that calibrates slower than the reference machine, the node suite's test timeouts (15 min) are scaled by
+  the slowest ratio (`RECUT_PERF_TIMEOUT_SCALE`), so the 8-minute full export does not time out there.
 - **Treat ±30 % as noise on a single run.** On an idle 4-core container three runs agreed within about ±10 % for
   most rows, but with other jobs on the machine a single row has doubled on identical code (`serializeProject`
   344 → 704 ms; see the baseline in `bugs/closed/2026-10-05-perf-budgets-2500-clips.md`). A single run is not

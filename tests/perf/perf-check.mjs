@@ -93,6 +93,13 @@ function calibrateInto(dir) {
   return ok ? [] : ['calibration failed (calibrate.mjs exited non-zero): this run is judged raw'];
 }
 
+/** The slowest category's calibration ratio against the baseline (>= 1): the node suite's timeouts scale with it. */
+function timeoutScale(dir) {
+  const ratios = calibrationRatios(scoresOf(readCalibration(dir)), readBaseline()?.calibration?.scores ?? null);
+  const ks = CATEGORIES.map((c) => ratios[c].k).filter(isNum);
+  return ks.length ? Math.max(1, Math.round(Math.max(...ks) * 100) / 100) : 1;
+}
+
 function build(root) {
   return sh('npm', ['run', 'build'], {}, root) ? [] : [`npm run build failed${root !== ROOT ? ` in ${root}` : ''}`];
 }
@@ -103,7 +110,9 @@ function runOnce(dir, root = ROOT, { buildFirst = !has('--skip-build') } = {}) {
   for (const f of expected) fs.rmSync(path.join(dir, `${f}.json`), { force: true }); // never read a stale result
   const problems = calibrateInto(dir);
   if (runNode) {
-    const env = { RECUT_PERF_OUT: dir, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --expose-gc`.trim() };
+    const scale = timeoutScale(dir);
+    if (scale > 1) console.log(`[perf:check] this host calibrates x${scale} slower than the reference machine: node suite timeouts x${scale}`);
+    const env = { RECUT_PERF_OUT: dir, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --expose-gc`.trim(), RECUT_PERF_TIMEOUT_SCALE: String(scale) };
     if (!sh('npx', ['vitest', 'run', '-c', 'tests/perf/vitest.config.ts'], env, root)) problems.push(`node perf suite exited non-zero (a test assertion failed or the run crashed)${root !== ROOT ? ` in ${root}` : ''}`);
   }
   if (runElectron) {

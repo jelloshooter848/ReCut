@@ -139,6 +139,13 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   190 ms without stalling playback or scrubbing. `npm run perf:check` checks these numbers (see
   [DEVELOPMENT](DEVELOPMENT.md) → Performance gate); the full record is
   `bugs/closed/2026-10-05-perf-budgets-2500-clips.md`.
+- **The reference machine** for these numbers and for the gate is that class of machine: a 4-core cloud container
+  (Intel Xeon @ 2.10 GHz, 16 GB, xvfb + software GL), calibration score js 80 ms, ffmpeg 452 ms, render 242 ms
+  (`tests/perf/calibrate.mjs`, lower is faster; recorded in `tests/perf/baseline.json` on 7 October 2026). Re-measured
+  then on 0.4.1 (the two quiet runs that seeded it), the 3 h sequence scrubbed at 54–57 fps at the closest zoom.
+- **A slower machine is slower.** On a 4-core host about 1.5–2× slower than the reference, scrubbing the 3 h sequence
+  at the closest zoom measured about 41 fps rather than ~59, and opening and saving took about 1.1 s and 450 ms
+  instead of 714 and 214 ms: open and save time scale with the host's speed.
 - Saving, autosave and open still handle the whole project each time (streamed in small pieces, so the window stays
   responsive). Saving only what changed is planned only if a much larger project needs it (see
   [ROADMAP](ROADMAP.md) §1, future architecture trigger).
