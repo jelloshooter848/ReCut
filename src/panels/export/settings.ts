@@ -2,10 +2,12 @@
  * Pure helpers for the Export dialog: defaults, presets, estimates, validation, range math and the
  * client-side pre-flight checklist. No DOM, no zustand — unit-tested in tests/unit/exportSettings.test.ts.
  */
-import type { ExportPreset, ExportSettings, ID, MediaItem, Rational, Sequence } from '@shared/model';
+import type { Clip, ExportPreset, ExportSettings, ID, MediaItem, Rational, Sequence } from '@shared/model';
 import { EXPORT_PRESETS } from '@shared/model';
 import { FPS_PRESETS, fpsEquals, fpsLabel, fpsValue, framesToSeconds, isValidFps } from '@shared/time';
 import { allTracks, sequenceDuration } from '@shared/timeline';
+import { activeTracks, planTrackSegments, widenRangeForTransitions, type ClipSeg, type PastEndIssue, type TransitionIssueReason, type TransitionOutcome } from '@shared/exportPlan';
+import { formatSyncOffset, linkedSyncOffsets } from '@shared/linkSync';
 
 export const MATCH_SEQUENCE = 'Match Sequence';
 export const CUSTOM = 'Custom';
@@ -338,9 +340,14 @@ export function sequenceHasSubtitles(seq: Sequence): boolean {
 }
 
 export type ChecklistLevel = 'error' | 'warning' | 'info';
-export interface ChecklistItem { level: ChecklistLevel; text: string }
+/** Where a checklist item points on the timeline: the dialog's "Show" selects these and moves the playhead there. */
+export interface ChecklistTarget { frame: number; clipIds: ID[]; transitionId?: ID }
+export interface ChecklistItem { level: ChecklistLevel; text: string; target?: ChecklistTarget }
 
-/** Client-side pre-flight checks. An 'error' item blocks the export. */
+/**
+ * Client-side pre-flight checks. An 'error' item blocks the export; warnings and info do not. The timeline warnings
+ * (sequenceExportWarnings) cover the export range the settings choose.
+ */
 export function exportChecklist(seq: Sequence, media: Record<ID, MediaItem>, settings: ExportSettings, projectUsesProxies = false): ChecklistItem[] {
   const items: ChecklistItem[] = [];
   const ids = sequenceMediaIds(seq);
@@ -359,8 +366,198 @@ export function exportChecklist(seq: Sequence, media: Record<ID, MediaItem>, set
   if (!isValidFps(settings.fps)) items.push({ level: 'warning', text: `The export frame rate is not valid; the sequence frame rate (${fpsLabel(seq.fps)} fps) is used.` });
   if (settings.audioChannels === 6 && maxSourceChannels(seq, media) < 6) items.push({ level: 'warning', text: 'No source has 6 audio channels; 5.1 output will be upmixed from stereo.' });
   if ((settings.burnSubtitles || settings.exportSubtitleSidecar) && !sequenceHasSubtitles(seq)) items.push({ level: 'warning', text: 'The sequence has no subtitle tracks; nothing will be burned in or written.' });
+  const range = exportRange(seq, settings);
+  items.push(...sequenceExportWarnings(seq, media, range.startF, range.endF));
   const readyProxies = ids.map((id) => media[id]).filter((m): m is MediaItem => !!m && m.proxy.status === 'ready');
   if (projectUsesProxies && readyProxies.length) items.push({ level: 'info', text: 'Export always uses original media, not proxies.' });
+  return items;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Pre-export warnings about the timeline (frame rates, VFR, sync, transition handles, media ends)
+// ---------------------------------------------------------------------------------------------------
+
+/** Names listed in one checklist item before "and N more". */
+export const CHECKLIST_NAME_CAP = 3;
+
+/** "a, b, c and 2 more" (the first `cap` entries). */
+export function namesWithMore(names: readonly string[], cap = CHECKLIST_NAME_CAP): string {
+  const shown = names.slice(0, cap).join(', ');
+  return names.length > cap ? `${shown} and ${names.length - cap} more` : shown;
+}
+
+const TRANSITION_REASON: Record<TransitionIssueReason, string> = {
+  handles: 'not enough source media past the cut',
+  clips: 'the clips are shorter than the transition',
+  tooShort: 'too short to render',
+  overlap: 'overlaps the transition at the other end of the clip',
+  notAdjacent: 'the clips are not next to each other',
+  rangeEdge: 'at the edge of the export range',
+  replaced: 'another transition on the same cut replaces it',
+};
+
+interface MediaGroup { media: MediaItem; clips: Clip[]; first: number }
+
+function groupByMedia(segs: readonly ClipSeg[]): MediaGroup[] {
+  const by = new Map<ID, MediaGroup>();
+  for (const s of segs) {
+    const g = by.get(s.media.id);
+    if (g) { g.clips.push(s.clip); g.first = Math.min(g.first, s.clip.start); } else by.set(s.media.id, { media: s.media, clips: [s.clip], first: s.clip.start });
+  }
+  return [...by.values()].sort((a, b) => a.first - b.first);
+}
+
+function mediaTarget(groups: readonly MediaGroup[]): ChecklistTarget {
+  return { frame: groups[0].first, clipIds: groups.flatMap((g) => g.clips.map((c) => c.id)) };
+}
+
+/** Distinct texts in order, each with the first entry that produced it. */
+function distinctBy<T>(xs: readonly T[], text: (x: T) => string): { text: string; x: T }[] {
+  const seen = new Set<string>();
+  const out: { text: string; x: T }[] = [];
+  for (const x of xs) { const t = text(x); if (!seen.has(t)) { seen.add(t); out.push({ text: t, x }); } }
+  return out;
+}
+
+function transitionItem(label: string, issues: TransitionOutcome[], describe: (i: TransitionOutcome) => string): ChecklistItem {
+  issues.sort((a, b) => a.cut - b.cut);
+  const list = distinctBy(issues, (i) => `"${i.outClip.name}" → "${i.inClip.name}" (${describe(i)})`);
+  const first = list[0].x;
+  return {
+    level: 'warning', text: `${label}: ${namesWithMore(list.map((l) => l.text))}.`,
+    target: { frame: first.cut, clipIds: [first.outClip.id, first.inClip.id], transitionId: first.transition.id },
+  };
+}
+
+/**
+ * The timeline warnings for exporting `[startF, endF)` of `seq`, from the plan the render graph uses
+ * (shared/exportPlan.ts) over the range it renders:
+ * - video clips whose source frame rate differs from the sequence's (constant-rate video media; stills, audio and
+ *   VFR media are not compared);
+ * - variable-frame-rate (VFR) video media;
+ * - linked video / audio clips out of sync (both rendered);
+ * - transitions the export drops or shortens (the render graph's handle calculation);
+ * - clips that run past the end of their media.
+ * Each names the media or clips (the first CHECKLIST_NAME_CAP, then "and N more") and carries a timeline target.
+ * Clips on muted tracks, disabled clips, missing or offline media and clips outside the range are left out, as the
+ * export leaves them out. O(clips); the last result is reused while the sequence, the media and the range are the
+ * same objects / values (the dialog re-runs the checklist on every settings change).
+ */
+export function sequenceExportWarnings(seq: Sequence, media: Record<ID, MediaItem>, startF: number, endF: number): ChecklistItem[] {
+  const m = warningsMemo;
+  if (m && m.seq === seq && m.media === media && m.startF === startF && m.endF === endF) return m.items;
+  const items = computeSequenceWarnings(seq, media, startF, endF);
+  warningsMemo = { seq, media, startF, endF, items };
+  return items;
+}
+let warningsMemo: { seq: Sequence; media: Record<ID, MediaItem>; startF: number; endF: number; items: ChecklistItem[] } | null = null;
+
+/** What the timeline warnings are built from (see sequenceExportWarnings); exported for the parity tests. */
+export interface ExportTimelineChecks {
+  /** The range the render graph renders: the export range widened so no transition is cut (widenRangeForTransitions). */
+  renderStartF: number;
+  renderEndF: number;
+  /** Clips rendered in the export range (active tracks; one entry per clip). */
+  rendered: Clip[];
+  /** Video segments in the export range whose (constant) source frame rate differs from the sequence's. */
+  fpsMismatch: ClipSeg[];
+  /** Video segments in the export range from variable-frame-rate media. */
+  vfr: ClipSeg[];
+  /** Transitions between two rendered clips and what the export does with them, and clips it renders past the end of
+   * their media (render range). */
+  transitions: TransitionOutcome[];
+  pastEnd: PastEndIssue[];
+}
+
+/** The export plan (shared/exportPlan.ts) of every active track over the rendered range, reduced to the checks. */
+export function exportTimelineChecks(seq: Sequence, media: Record<ID, MediaItem>, startF: number, endF: number): ExportTimelineChecks {
+  const render = widenRangeForTransitions(seq, startF, endF);
+  const out: ExportTimelineChecks = { renderStartF: render.startF, renderEndF: render.endF, rendered: [], fpsMismatch: [], vfr: [], transitions: [], pastEnd: [] };
+  const scratch: string[] = [];
+  for (const [tracks, need] of [[seq.videoTracks, 'video'], [seq.audioTracks, 'audio']] as const) {
+    for (const t of activeTracks(tracks)) {
+      let plan;
+      try { plan = planTrackSegments(t, seq, media, render.startF, render.endF, need, scratch); } catch { continue; } // the export reports it
+      finally { scratch.length = 0; }
+      for (const s of plan.segs) {
+        if (s.kind !== 'clip') continue;
+        const a = render.startF + s.start;
+        if (a >= endF || a + s.frames <= startF) continue; // only in the widened lead / tail
+        out.rendered.push(s.clip);
+        // Source frame rate / VFR: video media only (stills and audio have no frame rate to convert).
+        const v = s.media.probe?.video;
+        if (need !== 'video' || s.media.kind !== 'video' || s.isImage || !v) continue;
+        if (v.isVfr) out.vfr.push(s);
+        else if (isValidFps(v.fps) && !fpsEquals(v.fps, seq.fps)) out.fpsMismatch.push(s);
+      }
+      for (const i of plan.transitions) out.transitions.push(i);
+      for (const p of plan.pastEnd) out.pastEnd.push(p);
+    }
+  }
+  return out;
+}
+
+function computeSequenceWarnings(seq: Sequence, media: Record<ID, MediaItem>, startF: number, endF: number): ChecklistItem[] {
+  const items: ChecklistItem[] = [];
+  if (!(endF > startF) || !isValidFps(seq.fps)) return items;
+  const { rendered, fpsMismatch: fpsOff, vfr, transitions, pastEnd } = exportTimelineChecks(seq, media, startF, endF);
+  if (fpsOff.length) {
+    const groups = groupByMedia(fpsOff);
+    const names = groups.map((g) => `${g.media.name} (${fpsLabel(g.media.probe!.video!.fps)} fps)`);
+    items.push({
+      level: 'warning', target: mediaTarget(groups),
+      text: `Source frame rate differs from the sequence (${fpsLabel(seq.fps)} fps): ${namesWithMore(names)}. Frames are repeated or dropped to fit, so motion may stutter.`,
+    });
+  }
+  if (vfr.length) {
+    const groups = groupByMedia(vfr);
+    items.push({
+      level: 'warning', target: mediaTarget(groups),
+      text: `Variable frame rate (VFR) media in the sequence: ${namesWithMore(groups.map((g) => g.media.name))}. Frames are repeated or dropped unevenly; convert it to a constant frame rate if motion or sync looks off.`,
+    });
+  }
+
+  // Linked clips out of sync (both partners rendered).
+  const offsets = linkedSyncOffsets([{ clips: rendered }], seq.fps);
+  if (offsets.size) {
+    const byLink = new Map<ID, { clip: Clip; off: number; ids: ID[] }>();
+    for (const c of rendered) {
+      const off = offsets.get(c.id);
+      if (off === undefined) continue;
+      const k = c.linkId ?? c.id;
+      const e = byLink.get(k);
+      if (!e) byLink.set(k, { clip: c, off, ids: [c.id] });
+      else { e.ids.push(c.id); if (c.kind === 'video' && e.clip.kind !== 'video') { e.clip = c; e.off = off; } }
+    }
+    const list = [...byLink.values()].sort((a, b) => a.clip.start - b.clip.start);
+    items.push({
+      level: 'warning', target: { frame: list[0].clip.start, clipIds: list.flatMap((e) => e.ids) },
+      text: `Linked clips out of sync: ${namesWithMore(list.map((e) => `"${e.clip.name}" (${formatSyncOffset(e.off)} frames)`))}. Picture and sound will not line up.`,
+    });
+  }
+
+  // Transitions the export drops or shortens.
+  const dropped = transitions.filter((i) => i.reason !== null && i.to === 0);
+  const shortened = transitions.filter((i) => i.reason !== null && i.to > 0);
+  if (dropped.length) items.push(transitionItem('Transitions dropped (hard cut)', dropped, (i) => TRANSITION_REASON[i.reason!]));
+  if (shortened.length) items.push(transitionItem('Transitions shortened', shortened, (i) => `${i.from} → ${i.to} frames, ${TRANSITION_REASON[i.reason!]}`));
+
+  // Clips past the end of their media (a linked video / audio pair counts once).
+  if (pastEnd.length) {
+    const byClip = new Map<string, { clip: Clip; over: number; ids: ID[] }>();
+    for (const p of pastEnd) {
+      const k = `${p.clip.linkId ?? p.clip.id}\u0000${p.media.id}`;
+      const over = p.srcEnd - p.mediaDur;
+      const e = byClip.get(k);
+      if (!e) byClip.set(k, { clip: p.clip, over, ids: [p.clip.id] });
+      else { e.ids.push(p.clip.id); e.over = Math.max(e.over, over); }
+    }
+    const list = [...byClip.values()].sort((a, b) => a.clip.start - b.clip.start);
+    items.push({
+      level: 'warning', target: { frame: list[0].clip.start, clipIds: list.flatMap((e) => e.ids) },
+      text: `Clips run past the end of their media: ${namesWithMore(list.map((e) => `"${e.clip.name}" (by ${e.over.toFixed(2)} s)`))}. The last frame is held and the sound is silent there.`,
+    });
+  }
   return items;
 }
 

@@ -11,7 +11,7 @@
  *   edge.
  *
  * Besides the render graph's warning texts, `planTrackSegments` records what it dropped, shortened or held as data
- * (`TrackPlan.transitionIssues`, `TrackPlan.pastEnd`) for the checklist. No DOM, no Node.
+ * (`TrackPlan.transitions`, `TrackPlan.pastEnd`) for the checklist. No DOM, no Node.
  */
 import type { Clip, ID, MediaItem, Sequence, Track, Transition } from './model';
 import { clipEnd, sourceTimeAt, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN } from './timeline';
@@ -77,12 +77,16 @@ export type Seg = ClipSeg | GapSeg;
  * - `tooShort`: a 1-frame transition (a centered transition renders an even number of frames);
  * - `overlap`: the transitions at both ends of a clip would overlap (the outgoing one is dropped);
  * - `notAdjacent`: the clips are no longer next to each other;
- * - `rangeEdge`: the cut is at the edge of the rendered range.
+ * - `rangeEdge`: the cut is at the edge of the rendered range;
+ * - `replaced`: a later transition on the same cut replaces it (a damaged project can have two).
  */
-export type TransitionIssueReason = 'handles' | 'clips' | 'tooShort' | 'overlap' | 'notAdjacent' | 'rangeEdge';
+export type TransitionIssueReason = 'handles' | 'clips' | 'tooShort' | 'overlap' | 'notAdjacent' | 'rangeEdge' | 'replaced';
 
-/** A transition between two clips that renders shorter than set (`to` > 0) or is dropped (`to` = 0, a hard cut). */
-export interface TransitionIssue {
+/**
+ * What the export does with a transition between two rendered clips: renders it in full (`reason` null; an odd
+ * length renders one frame less), shorter than set (`to` > 0) or not at all (`to` = 0, a hard cut).
+ */
+export interface TransitionOutcome {
   transition: Transition;
   track: Track;
   outClip: Clip;
@@ -93,7 +97,8 @@ export interface TransitionIssue {
   from: number;
   /** Frames rendered: 0 when the transition is dropped. */
   to: number;
-  reason: TransitionIssueReason;
+  /** Why it is shortened or dropped; null when it renders in full. */
+  reason: TransitionIssueReason | null;
 }
 
 /** A clip segment that needs source media past the end of its media (the last frame is held, the sound is silent). */
@@ -109,7 +114,8 @@ export interface PastEndIssue {
 export interface TrackPlan {
   track: Track;
   segs: Seg[];
-  transitionIssues: TransitionIssue[];
+  /** Every transition of the track's kind between two segments of the plan, in track order. */
+  transitions: TransitionOutcome[];
   pastEnd: PastEndIssue[];
 }
 
@@ -152,7 +158,7 @@ export function transitionHandles(
 /**
  * The segments a track renders in `[startF, endF)` for one kind of output (`need`), with its transitions laid out
  * (handles, fades) and gaps in between. Problems the export works around are pushed to `warnings` (the texts the
- * export reports) and recorded in `transitionIssues` / `pastEnd`. Throws for a clip the export cannot render at all
+ * export reports) and recorded in `transitions` / `pastEnd`. Throws for a clip the export cannot render at all
  * (speed out of range, invalid source position).
  */
 export function planTrackSegments(
@@ -162,7 +168,7 @@ export function planTrackSegments(
   const fps = seq.fps;
   const fd = fps.den / fps.num;
   const clipSegs: ClipSeg[] = [];
-  const transitionIssues: TransitionIssue[] = [];
+  const transitions: TransitionOutcome[] = [];
   const pastEnd: PastEndIssue[] = [];
   const sorted = track.clips
     .filter((c) => c.enabled && c.start < endF && clipEnd(c) > startF)
@@ -208,7 +214,7 @@ export function planTrackSegments(
   // Transitions (centered on cuts; handles taken from source media).
   const byId = new Map(clipSegs.map((s) => [s.clip.id, s] as const));
   /** Transitions laid out between two segments, by the incoming segment's clip id (for the overlap guard). */
-  const into = new Map<ID, TransitionIssue>();
+  const into = new Map<ID, TransitionOutcome>();
   for (const tr of track.transitions) {
     const wantAudio = need === 'audio';
     const typeOk = wantAudio ? (tr.type === 'audioCrossfade' || tr.type === 'crossDissolve') : (tr.type === 'crossDissolve' || tr.type === 'dipToBlack');
@@ -220,30 +226,33 @@ export function planTrackSegments(
     if (tr.outClipId && tr.inClipId) {
       if (!outSeg || !inSeg) { continue; } // one side skipped/out of range -> hard cut (already warned if media problem)
       const cutAbs = clipEnd(outSeg.clip);
-      const issue = (to: number, reason: TransitionIssueReason): TransitionIssue => ({ transition: tr, track, outClip: outSeg.clip, inClip: inSeg.clip, cut: cutAbs, from: D, to, reason });
+      const outcome = (to: number, reason: TransitionIssueReason | null): TransitionOutcome => ({ transition: tr, track, outClip: outSeg.clip, inClip: inSeg.clip, cut: cutAbs, from: D, to, reason });
       if (inSeg.clip.start !== cutAbs) {
         warnings.push(`Transition between "${outSeg.clip.name}" and "${inSeg.clip.name}" is not on an adjacent cut; ignored.`);
-        transitionIssues.push(issue(0, 'notAdjacent'));
+        transitions.push(outcome(0, 'notAdjacent'));
         continue;
       }
       const cut = cutAbs - startF;
       if (outSeg.start + outSeg.frames !== cut || inSeg.start !== cut) {
         warnings.push(`Transition at the edge of the export range is dropped (hard cut).`);
-        transitionIssues.push(issue(0, 'rangeEdge'));
+        transitions.push(outcome(0, 'rangeEdge'));
         continue;
       }
       const { h, hClips, hSource } = transitionHandles(D, outSeg, inSeg, fd);
       const names = `"${outSeg.clip.name}" and "${inSeg.clip.name}"`;
       if (h < 1) {
         warnings.push(`Transition between ${names} dropped: ${hSource < 1 ? 'not enough source handles' : 'too short to render'}.`);
-        transitionIssues.push(issue(0, hSource < 1 ? 'handles' : 'tooShort'));
+        transitions.push(outcome(0, hSource < 1 ? 'handles' : 'tooShort'));
         continue;
       }
-      const laid = issue(2 * h, hSource < hClips ? 'handles' : 'clips');
-      if (h < Math.floor(D / 2)) {
+      const shortened = h < Math.floor(D / 2);
+      if (shortened) {
         warnings.push(`Transition between ${names} shortened from ${D} to ${2 * h} frames (${hSource < hClips ? 'source handles' : 'the clips are shorter than the transition'}).`);
-        transitionIssues.push(laid);
       }
+      const laid = outcome(2 * h, shortened ? (hSource < hClips ? 'handles' : 'clips') : null);
+      transitions.push(laid);
+      const replaced = into.get(inSeg.clip.id);
+      if (replaced) { replaced.to = 0; replaced.reason = 'replaced'; }
       into.set(inSeg.clip.id, laid);
       outSeg.extAfter = h;
       inSeg.extBefore = h;
@@ -265,11 +274,7 @@ export function planTrackSegments(
       s.extAfter = 0;
       if (next) {
         const laid = next.transIn ? into.get(next.clip.id) : undefined;
-        if (laid) {
-          const at = transitionIssues.indexOf(laid);
-          const dropped: TransitionIssue = { ...laid, to: 0, reason: 'overlap' };
-          if (at >= 0) transitionIssues[at] = dropped; else transitionIssues.push(dropped);
-        }
+        if (laid) { laid.to = 0; laid.reason = 'overlap'; }
         next.extBefore = 0; next.transIn = undefined;
       }
     }
@@ -285,7 +290,7 @@ export function planTrackSegments(
     pos = s.start + s.frames;
   }
   if (pos < total) segs.push({ kind: 'gap', frames: total - pos });
-  return { track, segs, transitionIssues, pastEnd };
+  return { track, segs, transitions, pastEnd };
 }
 
 /**
