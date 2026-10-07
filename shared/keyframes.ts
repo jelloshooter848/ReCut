@@ -274,7 +274,16 @@ export function writeClipProperty(clip: Clip, prop: KeyProp, frame: number, valu
   const v = clampKeyframeValue(prop, value);
   if (v === null) return;
   const keys = keyframesOf(clip, prop);
-  if (keys) { setClipKeyframes(clip, prop, putKeyframe(keys, clipFrameAt(clip, frame), v)); return; }
+  if (keys) {
+    const k = clipFrameAt(clip, frame);
+    // Position is one property in the Inspector: an animated y gets a keyframe (its current value) where x is keyed.
+    for (const other of prop === 'x' ? ['y'] as const : prop === 'y' ? ['x'] as const : []) {
+      const ok = keyframesOf(clip, other);
+      if (ok && !keyframeAt(ok, k)) setClipKeyframes(clip, other, putKeyframe(ok, k, evaluateKeyframes(ok, k)));
+    }
+    setClipKeyframes(clip, prop, putKeyframe(keys, k, v));
+    return;
+  }
   if (prop === 'volume') clip.audio.volume = v; else clip.transform[prop] = v;
 }
 

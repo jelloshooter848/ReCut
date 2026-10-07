@@ -194,6 +194,21 @@ async function build(outPath, version, features) {
   S().setClipTransform(mainId, ct[0], { x: 40, y: -20, scale: 0.8, rotation: 2.5, opacity: 0.9, crop: { left: 0.05, top: 0, right: 0.05, bottom: 0.1 } });
   S().setClipAudio(mainId, c1[1], { gain: -3, volume: 0.8, fadeIn: 12 });
   S().setClipAudio(mainId, cm[0], { fadeOut: 24, volume: 0.5 });
+  // Keyframes (Roadmap §11, from 0.13.0): an animated title card (position, scale, opacity) and a level dip on the music.
+  if (typeof S().addClipKeyframe === 'function') {
+    S().addClipKeyframe(mainId, ct, 'opacity', 48);
+    S().addClipKeyframe(mainId, ct, 'scale', 48);
+    S().addClipKeyframe(mainId, ct, 'position', 60);
+    S().quiet((d) => {
+      const c = d.sequences[mainId].videoTracks.flatMap((t) => t.clips).find((x) => x.id === ct[0]);
+      c.transform.keyframes.opacity = [{ frame: 0, value: 0, interp: 'ease' }, { frame: 24, value: 0.9 }];
+      c.transform.keyframes.scale = [{ frame: 0, value: 0.8 }, { frame: 95, value: 1.1, interp: 'ease' }];
+      c.transform.keyframes.x.push({ frame: 90, value: -60 });
+      c.transform.keyframes.y.push({ frame: 90, value: -20 });
+    });
+    S().addClipKeyframe(mainId, cm, 'volume', 48);
+    S().addClipKeyframe(mainId, cm, 'volume', 120);
+  }
   S().setClipTags(mainId, c2[0], { characters: ['Luke', 'Yoda'], plotlines: ['Jedi Training'], locations: ['Dagobah'], tags: ['keep'], notes: 'The heart of the film', color: '#30a46c', name: 'Luke meets Yoda' });
   S().setClipEnabled(mainId, c3[1], false);
 

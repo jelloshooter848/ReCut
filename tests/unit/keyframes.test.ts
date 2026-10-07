@@ -233,9 +233,11 @@ describe('edits', () => {
     c.transform.x = 30;
     addKeyframeAt(c, ['x', 'y'], 110);
     expect(c.transform.keyframes).toEqual({ x: [kf(10, 30)], y: [kf(10, 0)] });
-    writeClipProperty(c, 'x', 130, 90);
+    writeClipProperty(c, 'x', 130, 90); // y (animated) is keyed there too, at its current value
+    expect(c.transform.keyframes!.y).toEqual([kf(10, 0), kf(30, 0)]);
     removeKeyframeAt(c, ['x', 'y'], 110);
-    expect(c.transform.keyframes).toEqual({ x: [kf(30, 90)] });
+    expect(c.transform.keyframes).toEqual({ x: [kf(30, 90)], y: [kf(30, 0)] });
+    removeKeyframeAt(c, ['y'], 130);
     removeKeyframeAt(c, ['x'], 130);
     expect(c.transform.keyframes).toBeUndefined();
     expect(c.transform.x).toBe(90);
