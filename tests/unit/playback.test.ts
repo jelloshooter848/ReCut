@@ -588,13 +588,18 @@ describe('still images', () => {
     }
   });
 
-  it('an image Chromium cannot show reports a conversion hint, not a proxy hint', () => {
+  it('an image Chromium cannot show needs a PNG proxy, and draws it once ready (whatever the proxies toggle)', () => {
     const m = image('T', 'tiff');
     expect(isDisplayableImage(m)).toBe(false);
     const r = resolvePlaybackPath(m, true);
     expect(r.path).toBeNull();
-    expect(r.reason).toMatch(/convert/);
-    expect(mediaNeedsProxyForPreview(m)).toBe(false);
+    expect(r.reason).toMatch(/TIFF image needs a preview proxy; generate a proxy/);
+    expect(r.reason).not.toMatch(/convert/);
+    expect(mediaNeedsProxyForPreview(m)).toBe(true);
+    const ready = image('T', 'tiff', { proxy: { status: 'ready', path: '/cache/proxies/k_still.png', width: 640, height: 360 } });
+    for (const useProxies of [true, false]) {
+      expect(resolvePlaybackPath(ready, useProxies)).toEqual({ path: '/cache/proxies/k_still.png', usingProxy: true, timeOffset: 0, isImage: true });
+    }
   });
 
   it('undecodable video still needs a proxy', () => {

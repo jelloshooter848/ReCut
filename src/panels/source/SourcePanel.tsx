@@ -13,6 +13,7 @@ import { pathToMediaUrl } from '@shared/ipc';
 import { useStore, identityLabel, startProxy } from '@/state';
 import type { StoreState } from '@/state';
 import { SourcePlayer, resolvePlaybackPath, mediaFps, mediaSize, type SourcePlayerStatus } from '@/playback';
+import { isStillImage } from '@/playback/mediaSource';
 import { resumeAudio } from '@/app/media';
 import { registerTransport, setActiveTransport, shuttle, useActiveTransportId, type Transport } from '@/app/transport';
 import { setClipDrag } from '@/app/dnd';
@@ -49,6 +50,10 @@ function selectLoadKey(s: StoreState): string {
 export function describeDecodeProblem(media: MediaItem | undefined): string {
   const p = media?.probe;
   if (!p) return 'Cannot decode this file';
+  if (isStillImage(media)) {
+    const m = /\.([^./\\]+)$/.exec(media!.path);
+    return `${m ? m[1].toUpperCase() : 'This'} image needs a preview proxy`;
+  }
   const reason = p.playabilityReason?.trim();
   if (reason) {
     const audio = /audio codec\s+([\w.-]+)/i.exec(reason);
@@ -92,7 +97,9 @@ export function SourcePanel({ focused, active }: PanelProps) {
   const [subclipName, setSubclipName] = useState('');
 
   const fps = useMemo(() => mediaFps(media), [media]);
-  const isImage = media?.kind === 'image';
+  // Stills are drawn with an <img>: the original (PNG / JPEG / WebP / GIF / BMP / AVIF) or its PNG proxy.
+  const isImage = media?.kind === 'image' || isStillImage(media);
+  const [imageFailed, setImageFailed] = useState<string | null>(null);
   const isAudio = media?.kind === 'audio' || (!!media?.probe && !media.probe.video && media.probe.audio.length > 0);
   const resolution = useMemo(() => (media ? resolvePlaybackPath(media, useProxies) : null), [media, useProxies]);
   const probedDuration = media?.probe?.duration ?? 0;
@@ -158,7 +165,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
     const resume = sameMedia ? sp.currentTime() : (st.ui.sourceClip?.time ?? 0);
     setDurationEl(0);
     live.current.playRange = null;
-    if (!m || m.kind === 'image') {
+    if (!m || m.kind === 'image' || isStillImage(m)) {
       sp.load(null, { useProxies: st.project.settings.useProxies });
       setStatus(sp.status());
       setTime(0);
@@ -304,7 +311,8 @@ export function SourcePanel({ focused, active }: PanelProps) {
   // ------------------------------------------------------------- derived display values
   const playing = status.state === 'playing';
   const loading = status.state === 'loading';
-  const errored = !!media && !isImage && (status.state === 'error' || !resolution?.path);
+  const imagePath = isImage ? resolution?.path ?? null : null;
+  const errored = !!media && (isImage ? !imagePath || imageFailed === imagePath : (status.state === 'error' || !resolution?.path));
   const size = mediaSize(media);
   const curFrame = secondsToFramesFloor(time, fps);
   const inFrame = inPoint !== null ? secondsToFrames(inPoint, fps) : null;
@@ -332,7 +340,10 @@ export function SourcePanel({ focused, active }: PanelProps) {
       data-state={status.state} data-media-id={media.id} data-transport-active={transportActive ? 'true' : 'false'}>
       <div ref={stageRef} className={['source-stage', zoom !== 'fit' ? 'zoomed' : ''].filter(Boolean).join(' ')}>
         {isImage ? (
-          <img className={['source-image', zoom !== 'fit' ? 'zoomed' : ''].filter(Boolean).join(' ')} style={zoomStyle()} src={pathToMediaUrl(media.path)} alt={media.name} draggable={false} />
+          imagePath ? (
+            <img className={['source-image', zoom !== 'fit' ? 'zoomed' : ''].filter(Boolean).join(' ')} style={zoomStyle()} src={pathToMediaUrl(imagePath)} alt={media.name} draggable={false}
+              data-testid="source-image" onError={() => setImageFailed(imagePath)} onLoad={() => setImageFailed((p) => (p === imagePath ? null : p))} />
+          ) : null
         ) : (
           <div ref={videoWrapRef} className={['source-video-wrap', zoom !== 'fit' ? 'zoomed' : '', isAudio ? 'hidden-video' : ''].filter(Boolean).join(' ')} style={zoomStyle()} />
         )}
@@ -343,7 +354,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
             {identityLabel(media) && identityLabel(media) !== media.name ? <span className="identity">{identityLabel(media)}</span> : null}
           </div>
           <div className="source-badges">
-            {status.usingProxy ? <span className="source-badge proxy" title={status.reason ?? 'Playing the proxy file'}>Proxy</span> : null}
+            {status.usingProxy || (isImage && resolution?.usingProxy) ? <span className="source-badge proxy" title={isImage ? 'Showing the PNG preview proxy' : status.reason ?? 'Playing the proxy file'}>Proxy</span> : null}
             {media.offline ? <span className="source-badge offline"><WifiOff /> Offline</span> : null}
             {size ? <span className="source-badge" title="Source resolution">{size.width}×{size.height}</span> : null}
           </div>
@@ -361,6 +372,11 @@ export function SourcePanel({ focused, active }: PanelProps) {
                 <>
                   <div className="title">{media.probeError ? 'Cannot read file' : 'Analyzing…'}</div>
                   <div className="desc">{media.probeError ?? status.reason ?? 'Waiting for probe'}</div>
+                </>
+              ) : isImage && imagePath ? (
+                <>
+                  <div className="title" data-testid="source-error-title">This image could not be decoded</div>
+                  <div className="desc">{imagePath}</div>
                 </>
               ) : (
                 <>
