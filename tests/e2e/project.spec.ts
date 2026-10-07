@@ -28,7 +28,7 @@ test.beforeAll(async () => {
   app = await _electron.launch({
     args: ['.', '--no-sandbox'],
     cwd: root,
-    env: { ...process.env, RECUT_USER_DATA: path.join(tmp, 'user'), RECUT_CACHE_DIR: path.join(tmp, 'cache'), RECUT_DISABLE_GPU: '1' },
+    env: { ...process.env, RECUT_USER_DATA: path.join(tmp, 'user'), RECUT_CACHE_DIR: path.join(tmp, 'cache'), RECUT_DISABLE_GPU: '1', RECUT_UPDATE_CHECK: '0' },
     timeout: 60_000,
   });
   page = await app.firstWindow();

@@ -8,8 +8,10 @@
  *  RECUT_UPDATE_URL     — tests: ask this loopback http(s) URL instead of GitHub (any other value is ignored).
  */
 import { app, ipcMain, net, shell } from 'electron';
+import fs from 'node:fs';
+import path from 'node:path';
 import { IPC } from '../shared/ipc';
-import { isReleasePageUrl, isUpdateCheckSetting, parseUpdateUrlOverride, type UpdateStatus } from '../shared/update';
+import { isReleasePageUrl, isUpdateCheckSetting, parseSemver, parseUpdateUrlOverride, type UpdateStatus } from '../shared/update';
 import { UpdateChecker } from './updateCheck';
 
 export interface UpdateIpcDeps {
@@ -18,12 +20,30 @@ export interface UpdateIpcDeps {
   broadcast(channel: string, ...args: unknown[]): void;
 }
 
+/**
+ * The running version: app.getVersion() (package.json `version`). When Electron was started on a script outside the
+ * app folder (`electron dist/electron/main.js`, as the end-to-end tests do) it reports its own default instead, so
+ * the version is then read from ReCut's package.json above the app path.
+ */
+export function runningVersion(): string {
+  const v = app.getVersion();
+  if (parseSemver(v)) return v;
+  let dir = app.getAppPath();
+  for (let i = 0; i < 4; i++, dir = path.dirname(dir)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')) as { name?: unknown; version?: unknown };
+      if (pkg.name === 'recut' && typeof pkg.version === 'string' && parseSemver(pkg.version)) return pkg.version;
+    } catch { /* not here */ }
+  }
+  return v;
+}
+
 export function registerUpdateIpc(deps: UpdateIpcDeps): UpdateChecker {
   const rawUrl = process.env.RECUT_UPDATE_URL;
   const apiUrl = parseUpdateUrlOverride(rawUrl);
   if (rawUrl && !apiUrl) console.warn('RECUT_UPDATE_URL ignored: only a loopback http(s) URL is accepted');
   const checker = new UpdateChecker({
-    currentVersion: app.getVersion(),
+    currentVersion: runningVersion(),
     userData: deps.userData,
     // Electron's net.fetch honours the system proxy; `credentials: 'omit'` keeps the session's cookies out of it.
     fetch: (url, init) => net.fetch(url, init),
