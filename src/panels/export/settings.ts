@@ -9,6 +9,7 @@ import { allTracks, clipEnd, resolveSubtitleCues, sequenceDuration } from '@shar
 import { activeTracks, planTrackSegments, widenRangeForTransitions, type ClipSeg, type PastEndIssue, type TransitionIssueReason, type TransitionOutcome } from '@shared/exportPlan';
 import { formatSyncOffset, linkedSyncOffsets } from '@shared/linkSync';
 import { flattenSequence, flattenWarnings, isNestedClip, outerClipId } from '@shared/nest';
+import { hasKeyframes, keyframeRange, keyframesOf } from '@shared/keyframes';
 import { channelSelectionLabel, channelSelectionProblem, clipAudioStream, resolveChannelSelection } from '@shared/audioChannels';
 import {
   AC3_MAX_KBPS, AC3_MIN_KBPS_51, CONTAINERS, DNXHR_MIN_HEIGHT, DNXHR_MIN_WIDTH, PER_TRACK_SKIP_REASON, audioBitDepth, audioEncoder, audioOutputBitrate,
@@ -779,7 +780,39 @@ function computeSequenceWarnings(seq: Sequence, media: Record<ID, MediaItem>, st
       text: `Channel selection not available in the clip's audio stream: ${namesWithMore(badChannels.map((c) => `"${c.name}" (${channelSelectionLabel(c.audio.channelSelection)}: ${channelSelectionProblem(c.audio.channelSelection, clipAudioStream(media[c.mediaId], c))})`))}. These clips export the stream's normal mix.`,
     });
   }
+
+  // Keyframes (Roadmap §11). The export renders them frame by frame (slower). A keyframed scale is drawn from a copy
+  // filtered to its largest size (when below 100 %) and resampled bilinearly per frame (renderGraph.ts motionFilters):
+  // well below that size, fine detail can shimmer, as in the preview.
+  const animated = rendered.filter((c) => hasKeyframes(c)).sort((a, b) => a.start - b.start);
+  if (animated.length) {
+    const shimmer = animated.filter((c) => c.kind === 'video' && keyframedScaleRatio(c) < KEYFRAME_SHIMMER_RATIO);
+    if (shimmer.length) {
+      items.push({
+        level: 'warning', target: { frame: shimmer[0].start, clipIds: shimmer.map((c) => c.id) }, scope: 'video',
+        text: `Keyframed scale shrinks to less than half of its largest size: ${namesWithMore(shimmer.map((c) => `"${c.name}"`))}. The export resamples the picture per frame without extra filtering there, so fine detail may shimmer at the small end; split the move into clips at different sizes if it shows.`,
+      });
+    }
+    items.push({
+      level: 'info', target: { frame: animated[0].start, clipIds: animated.map((c) => c.id) },
+      text: `Keyframes on ${animated.length === 1 ? '1 clip' : `${animated.length} clips`}: ${namesWithMore(animated.map((c) => `"${c.name}"`))}. They are rendered frame by frame, so these parts export more slowly.`,
+    });
+  }
   return items;
+}
+
+/** A keyframed scale below this fraction of the size the export pre-filters to gets the "may shimmer" warning. */
+export const KEYFRAME_SHIMMER_RATIO = 0.5;
+
+/**
+ * Smallest keyframed scale of a clip's visible frames relative to the size the export filters the picture to first
+ * (its largest scale when below 100 %, else 100 %): 1 when the scale is not animated.
+ */
+export function keyframedScaleRatio(c: Clip): number {
+  if (!keyframesOf(c, 'scale')) return 1;
+  const { min, max } = keyframeRange(c, 'scale', 0, Math.max(0, c.duration - 1));
+  const k = max > 0 && max < 0.999 ? max : 1;
+  return min / k;
 }
 
 /** Explains output frame-rate conversion (sequence rate -> export rate). */

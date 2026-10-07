@@ -6,6 +6,7 @@ import type { AudioChannelSelection, Clip, ClipAudio, ClipTransform, Sequence, S
 import { isDraft } from 'immer';
 import { uid } from './ids';
 import { secondsToFrames } from './time';
+import { hasKeyframes, shiftClipKeyframes } from './keyframes';
 
 export type MediaDurationLookup = (mediaId: ID) => number; // seconds (Infinity for images/unknown)
 
@@ -650,6 +651,8 @@ export function clearRange(track: Track, start: number, end: number, fps: Ration
         for (let j = 0; j < trs.length; j++) if (trs[j].outClipId === c.id) writableItem<Transition>(track, 'transitions', j).outClipId = tail.id;
         if (head) res.splits.push({ head, tail });
       }
+      // Keyframes stay on their source moments (shared/keyframes.ts): the tail gets its own transform / audio objects.
+      if (hasKeyframes(c)) { tail.transform = { ...tail.transform }; tail.audio = { ...tail.audio }; shiftClipKeyframes(tail, consumed); }
       result.push(tail);
     }
   }
@@ -831,6 +834,7 @@ export function splitClip(seq: Sequence, track: Track, clip: Clip, frame: number
   // transitions: out transition moves to tail
   const trs = readItems(track.transitions);
   for (let j = 0; j < trs.length; j++) if (trs[j].outClipId === clip.id) writableItem<Transition>(track, 'transitions', j).outClipId = tail.id;
+  shiftClipKeyframes(tail, frame - src.start);
   addClipSorted(track, tail);
   // Both halves are shorter than the original: a transition on either side may now exceed its clip (unless the
   // caller reconciles the track itself once it is done with it).
@@ -990,6 +994,7 @@ export function trimStart(seq: Sequence, clipId: ID, newStart: number, mediaDur:
   clip.sourceIn = Math.max(0, clip.sourceIn + delta * seq.fps.den / seq.fps.num * clip.speed);
   clip.start = target;
   clip.duration -= delta;
+  shiftClipKeyframes(clip, delta);
   reconcileTransitions(track);
   return target;
 }
@@ -1030,6 +1035,7 @@ export function rippleTrimStart(seq: Sequence, clipId: ID, newStart: number, med
   for (const g of group) {
     g.sourceIn = Math.max(0, g.sourceIn + delta * seq.fps.den / seq.fps.num * g.speed);
     g.duration -= delta;
+    shiftClipKeyframes(g, delta);
   }
   rippleShift(seq, oldStart, -delta, { except });
   reconcileAll(seq);
@@ -1072,6 +1078,7 @@ export function rollEdit(seq: Sequence, outClipId: ID, inClipId: ID, newFrame: n
   b.clip.sourceIn = Math.max(0, b.clip.sourceIn + delta * seq.fps.den / seq.fps.num * b.clip.speed);
   b.clip.start += delta;
   b.clip.duration -= delta;
+  shiftClipKeyframes(b.clip, delta);
   reconcileTransitions(a.track);
   return target;
 }
@@ -1124,6 +1131,7 @@ export function slideClip(seq: Sequence, clipId: ID, deltaFrames: number, mediaD
     const n = writableClip(track, index + 1);
     n.sourceIn = Math.max(0, n.sourceIn + d * seq.fps.den / seq.fps.num * n.speed);
     n.start += d; n.duration -= d;
+    shiftClipKeyframes(n, d);
   }
   clip.start += d;
   sortTrack(track);

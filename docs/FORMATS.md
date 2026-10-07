@@ -183,6 +183,12 @@ Export › Output › **Format** picks the file format; the file name's extensio
 | **WAV** | none | PCM 16- or 24-bit | The mix, or one file per audio track, for a mixer |
 | **FLAC** | none | FLAC 16- or 24-bit (lossless) | A smaller lossless soundtrack |
 
+Keyframes (Roadmap §11) export in every format: keyed position and scale through FFmpeg's `perspective` filter,
+keyed opacity through `sendcmd` + `lut`, keyed level through `volume` with a per-block expression
+([export-pipeline.md](export-pipeline.md#keyframed-clips-roadmap-11)). `perspective` exists only in GPL builds of
+FFmpeg: the bundled builds are GPL; an FFmpeg chosen with `RECUT_FFMPEG` must be one too, or exports of clips with keyed
+position or scale fail.
+
 MOV profiles and the pixel format each one is written in (FFmpeg's `-profile:v`):
 
 | Codec | Profile | `-profile:v` | Pixel format |

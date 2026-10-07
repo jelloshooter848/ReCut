@@ -10,6 +10,7 @@ import { makeTrack, defaultTransform, defaultAudio, reconcileTransitions, SPEED_
 import { isValidFps, parseFps } from './time';
 import { saneSar } from './media';
 import { CHANNEL_PROXY_KEY, normalizeChannelSelection } from './audioChannels';
+import { AUDIO_KEY_PROPS, normalizeKeyframeSet, shiftClipKeyframes, TRANSFORM_KEY_PROPS, type KeyProp } from './keyframes';
 import { formatProjectJson } from './projectJson';
 import { nestingRepairs } from './nest';
 import {
@@ -506,6 +507,7 @@ function resolveOverlaps(clips: Clip[], fps: Rational, displaced: Clip[]): Clip[
       c.start = end;
       c.duration -= cut;
       c.sourceIn += (cut * fps.den / fps.num) * c.speed;
+      shiftClipKeyframes(c, cut);
       note('overlapping clip shortened at its start');
     }
     kept.push(c);
@@ -586,12 +588,21 @@ function repairTransform(v: unknown): ClipTransform {
   const t = isObj(v) ? v : {};
   if (t.crop !== undefined && !isObj(t.crop)) note(FIELD_RESET);
   const crop = isObj(t.crop) ? t.crop : {};
-  return {
+  const out = {
     ...t,
     x: num(t.x, d.x), y: num(t.y, d.y), scale: num(t.scale, d.scale, positive), rotation: num(t.rotation, d.rotation),
     opacity: num(t.opacity, d.opacity, unit),
     crop: { ...crop, left: num(crop.left, 0, unit), top: num(crop.top, 0, unit), right: num(crop.right, 0, unit), bottom: num(crop.bottom, 0, unit) },
   } as ClipTransform;
+  // Keyframes (Roadmap §11): optional; unusable entries dropped (shared/keyframes.ts).
+  if ('keyframes' in out) repairKeyframes(out, TRANSFORM_KEY_PROPS);
+  return out;
+}
+
+function repairKeyframes(owner: ClipTransform | ClipAudio, props: readonly KeyProp[]): void {
+  const r = normalizeKeyframeSet(props, owner.keyframes);
+  if (r.repaired) note('invalid keyframes removed or fixed');
+  if (r.value) owner.keyframes = r.value; else delete owner.keyframes;
 }
 
 function repairClipAudio(v: unknown): ClipAudio {
@@ -609,6 +620,7 @@ function repairClipAudio(v: unknown): ClipAudio {
     if (sel.repaired) note(FIELD_RESET);
     if (sel.value) out.channelSelection = sel.value; else delete out.channelSelection;
   }
+  if ('keyframes' in out) repairKeyframes(out, AUDIO_KEY_PROPS);
   return out;
 }
 

@@ -24,7 +24,8 @@ in every release PR (docs/RELEASING.md).
 | 6 | Intermediate and audio-only export | Done | next release |
 | 7 | MKV packaging export | Done | next release |
 | 9 | Surround: centre-channel and channel-selection utility (the mixer comes after 1.0) | Quick utility done | next release |
-| 5, 8, 10–15, 17, 18 | Everything else | Not started | — |
+| 11 | Keyframes, first version (position, scale, opacity, volume; linear and ease) | Done | next release |
+| 5, 8, 10, 12–15, 17, 18 | Everything else | Not started | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
 the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
@@ -366,6 +367,13 @@ or `sendcmd`). Static transforms were made frame-exact first.
 **Plan:** per-property keyframe lists on `ClipTransform` / `ClipAudio`, evaluated in the planner and emitted as
 FFmpeg expressions. The first version covers opacity, volume, position and scale, with linear and ease
 interpolation. Rotation, crop, audio level curves and a graph editor follow later.
+**Status: first version implemented, pending release 0.8.0** (not done until 0.8.0 is published). Position, scale,
+opacity (`ClipTransform.keyframes`) and level (`ClipAudio.keyframes`) take keyframes in clip-relative frames with
+Linear or Ease (smoothstep), evaluated by `shared/keyframes.ts` in the preview and the export; the Inspector adds,
+edits, steps through and clears them at the playhead (one undo step each) and the timeline shows them as diamonds.
+The export places keyed motion per frame with `perspective`, keyed opacity with `sendcmd` + `lut` and keyed level
+with `volume` every 256 samples, measured against the evaluator with real FFmpeg. Still to come: rotation and crop
+keyframes, Bézier / hold interpolation, dragging keyframes on the timeline, and a graph editor.
 
 ## 12. Dialogue / music / effects stem separation
 

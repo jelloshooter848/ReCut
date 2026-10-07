@@ -172,7 +172,29 @@ export interface ClipTransform {
   rotation: number; // degrees
   opacity: number;  // 0..1
   crop: Crop;
+  /**
+   * Keyframes (Roadmap §11), optional: a property with a non-empty list is animated and its static value above is not
+   * used; absent or empty = the static value. See shared/keyframes.ts.
+   */
+  keyframes?: TransformKeyframes;
 }
+
+/** Interpolation from a keyframe to the next one: straight, or the fixed ease curve (shared/keyframes.ts easeCurve). */
+export type KeyframeInterp = 'linear' | 'ease';
+
+/**
+ * One keyframe of a clip property. `frame` is in clip-relative timeline frames (0 = the clip's first frame), so it
+ * stays attached when the clip moves; it may lie outside the clip after a trim (it still shapes the interpolation).
+ * `value` is in the property's own unit (pixels, scale factor, opacity 0..1, level 0..2). `interp` applies to the
+ * segment from this keyframe to the next; absent = 'linear'.
+ */
+export interface Keyframe { frame: number; value: number; interp?: KeyframeInterp }
+
+/** Animated transform properties: lists sorted by frame, one keyframe per frame. */
+export interface TransformKeyframes { x?: Keyframe[]; y?: Keyframe[]; scale?: Keyframe[]; opacity?: Keyframe[] }
+
+/** Animated audio properties (the level, `ClipAudio.volume`). */
+export interface AudioKeyframes { volume?: Keyframe[] }
 
 export interface ClipAudio {
   gain: number;      // dB applied first (clip gain)
@@ -185,6 +207,8 @@ export interface ClipAudio {
    * shared/audioChannels.ts. A selection the stream cannot honour plays the normal mix (with an export warning).
    */
   channelSelection?: AudioChannelSelection;
+  /** Keyframes (Roadmap §11), optional: a non-empty `volume` list animates the level. See shared/keyframes.ts. */
+  keyframes?: AudioKeyframes;
 }
 
 /**
