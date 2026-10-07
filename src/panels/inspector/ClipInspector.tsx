@@ -18,6 +18,8 @@ import { channelProxyJobId, rebuildChannelProxy } from '@/app/channelProxies';
 import { useJobsStore } from '@/app/jobsStore';
 import { Button, ColorSwatchPicker, IconButton, NumberField, Select, Slider, TagInput, TextField, Toggle, labelColorHex } from '@/components/ui';
 import { MIXED, Range, Row, Section, Value, allSame, audioStreamOptions, copyText, finish, framesLabel, openInFolder, secondsLabel, tc, transient } from './primitives';
+import { clipFrameAt, evaluateClipProperty, hasKeyframes, KEYFRAME_GROUPS, setClipKeyframes, transformAt, writeClipProperty, type KeyframeGroup, type KeyProp } from '@shared/keyframes';
+import { groupAnimated, KeyframeBar, KeyframeButton, playheadNow } from './KeyframeControls';
 
 export const TRANSITION_LABEL: Record<TransitionType, string> = { crossDissolve: 'Cross Dissolve', dipToBlack: 'Dip to Black', audioCrossfade: 'Audio Crossfade' };
 const SCRUB_HINT = 'Drag to scrub · Shift ×10 · Alt ×0.1 · Double-click or Alt-click resets';
@@ -188,38 +190,69 @@ function SourceSection({ seqId: _seqId, fps, clips, media }: { seqId: ID; fps: R
 }
 
 // ------------------------------------------------------------------ video / transform
+/**
+ * The playhead when any of `clips` is animated (keyframes, Roadmap §11), else null: an Inspector without keyframes
+ * does not re-render on every playhead step.
+ */
+function useKeyframePlayhead(clips: readonly Clip[]): number | null {
+  const keyed = clips.some((c) => hasKeyframes(c));
+  return useStore((s) => (keyed ? activeSequence(s)?.view.playhead ?? 0 : null));
+}
+
+/** Where an animated property of `c` is shown: the playhead, kept inside the clip. */
+const shownFrame = (c: Clip, playhead: number | null) => c.start + clipFrameAt(c, playhead ?? c.start);
+
 function VideoSection({ seqId, clips }: { seqId: ID; clips: Clip[] }) {
   const ids = clips.map((c) => c.id);
-  const t0 = clips[0].transform;
+  const playhead = useKeyframePlayhead(clips);
+  // Values at the playhead: an animated property shows its keyframed value there (transformAt returns the clip's own
+  // transform when nothing is animated).
+  const tOf = (c: Clip) => (playhead === null ? c.transform : transformAt(c, shownFrame(c, playhead)));
+  const t0 = tOf(clips[0]);
   const def = defaultTransform();
   const set = (fn: (t: ClipTransform) => void) => editClips(seqId, ids, (c) => fn(c.transform));
+  // An animatable property: the keyframe at the playhead when it is animated (added if there is none), else the value.
+  const setProp = (prop: KeyProp, v: number) => { const ph = playheadNow(); editClips(seqId, ids, (c) => writeClipProperty(c, prop, ph, v)); };
   const commit = () => finish('Transform');
-  const same = (pick: (t: ClipTransform) => number) => allSame(clips, (c) => pick(c.transform));
+  const same = (pick: (t: ClipTransform) => number) => allSame(clips, (c) => pick(tOf(c)));
   const reset = (fn: (t: ClipTransform) => void) => { set(fn); finish('Reset transform'); };
+  // Reset of an animatable row also removes its keyframes.
+  const resetGroup = (group: KeyframeGroup, fn: (t: ClipTransform) => void) => {
+    editClips(seqId, ids, (c) => { for (const p of KEYFRAME_GROUPS[group]) setClipKeyframes(c, p, []); fn(c.transform); });
+    finish('Reset transform');
+  };
   const changed = (pick: (t: ClipTransform) => number, d: number) => clips.some((c) => pick(c.transform) !== d);
+  const kfButton = (group: KeyframeGroup) => <KeyframeButton seqId={seqId} clips={clips} group={group} playhead={playhead} />;
+  const kfBar = (group: KeyframeGroup) => (playhead !== null && groupAnimated(clips, group) ? <KeyframeBar seqId={seqId} clips={clips} group={group} playhead={playhead} /> : null);
 
   return (
     <Section id="video" title="Video" badge={clips.length > 1 ? `${clips.length} clips` : undefined}
-      actions={<IconButton icon={RotateCcw} label="Reset all transform properties" size="sm" onClick={() => reset((t) => Object.assign(t, defaultTransform()))} />}>
-      <Row label="Position" prop="position" onReset={() => reset((t) => { t.x = 0; t.y = 0; })} canReset={changed((t) => t.x, 0) || changed((t) => t.y, 0)}>
+      actions={<IconButton icon={RotateCcw} label="Reset all transform properties" size="sm" onClick={() => reset((t) => { Object.assign(t, defaultTransform()); delete t.keyframes; })} />}>
+      <Row label="Position" prop="position" onReset={() => resetGroup('position', (t) => { t.x = 0; t.y = 0; })} canReset={changed((t) => t.x, 0) || changed((t) => t.y, 0) || groupAnimated(clips, 'position')}>
         <span className="insp-axis">X</span>
-        <NF value={t0.x} mixed={!same((t) => t.x)} unit="px" def={0} onChange={(v) => set((t) => { t.x = v; })} onCommit={commit} />
+        <NF value={t0.x} mixed={!same((t) => t.x)} unit="px" def={0} onChange={(v) => setProp('x', v)} onCommit={commit} />
         <span className="insp-axis">Y</span>
-        <NF value={t0.y} mixed={!same((t) => t.y)} unit="px" def={0} onChange={(v) => set((t) => { t.y = v; })} onCommit={commit} />
+        <NF value={t0.y} mixed={!same((t) => t.y)} unit="px" def={0} onChange={(v) => setProp('y', v)} onCommit={commit} />
+        {kfButton('position')}
       </Row>
-      <Row label="Scale" prop="scale" onReset={() => reset((t) => { t.scale = 1; })} canReset={changed((t) => t.scale, 1)} title="Uniform scale">
+      {kfBar('position')}
+      <Row label="Scale" prop="scale" onReset={() => resetGroup('scale', (t) => { t.scale = 1; })} canReset={changed((t) => t.scale, 1) || groupAnimated(clips, 'scale')} title="Uniform scale">
         <NF value={Math.round(t0.scale * 1000) / 10} mixed={!same((t) => t.scale)} unit="%" min={1} max={10000} precision={1} def={100}
-          onChange={(v) => set((t) => { t.scale = v / 100; })} onCommit={commit} />
+          onChange={(v) => setProp('scale', v / 100)} onCommit={commit} />
+        {kfButton('scale')}
       </Row>
+      {kfBar('scale')}
       <Row label="Rotation" prop="rotation" onReset={() => reset((t) => { t.rotation = 0; })} canReset={changed((t) => t.rotation, 0)}>
         <NF value={t0.rotation} mixed={!same((t) => t.rotation)} unit="°" min={-3600} max={3600} precision={1} def={0}
           onChange={(v) => set((t) => { t.rotation = v; })} onCommit={commit} />
       </Row>
-      <Row label="Opacity" prop="opacity" onReset={() => reset((t) => { t.opacity = 1; })} canReset={changed((t) => t.opacity, 1)}>
-        <Slider value={t0.opacity} min={0} max={1} step={0.01} defaultValue={1} title="Opacity" onChange={(v) => set((t) => { t.opacity = v; })} onCommit={commit} />
+      <Row label="Opacity" prop="opacity" onReset={() => resetGroup('opacity', (t) => { t.opacity = 1; })} canReset={changed((t) => t.opacity, 1) || groupAnimated(clips, 'opacity')}>
+        <Slider value={t0.opacity} min={0} max={1} step={0.01} defaultValue={1} title="Opacity" onChange={(v) => setProp('opacity', v)} onCommit={commit} />
         <NF value={Math.round(t0.opacity * 100)} mixed={!same((t) => t.opacity)} unit="%" min={0} max={100} def={100} fixed
-          onChange={(v) => set((t) => { t.opacity = v / 100; })} onCommit={commit} />
+          onChange={(v) => setProp('opacity', v / 100)} onCommit={commit} />
+        {kfButton('opacity')}
       </Row>
+      {kfBar('opacity')}
       <Row label="Crop L · R" prop="crop-lr" onReset={() => reset((t) => { t.crop.left = 0; t.crop.right = 0; })} canReset={changed((t) => t.crop.left, 0) || changed((t) => t.crop.right, 0)}>
         <span className="insp-axis">L</span>
         <NF value={Math.round(t0.crop.left * 1000) / 10} mixed={!same((t) => t.crop.left)} unit="%" min={0} max={100} precision={1} def={0}
@@ -282,21 +315,29 @@ function AudioSection({ seqId, fps, targets, selectedIds }: { seqId: ID; fps: Ra
   const commit = () => finish('Audio');
   const same = (pick: (a: ClipAudio) => number | boolean) => allSame(targets, (c) => pick(c.audio));
   const reset = (fn: (a: ClipAudio) => void) => { set(fn); finish('Reset audio'); };
+  // Level keyframes (Roadmap §11): the level shown is the one at the playhead; edits key it there when animated.
+  const playhead = useKeyframePlayhead(targets);
+  const levelOf = (c: Clip) => (playhead === null ? c.audio.volume : evaluateClipProperty('volume', c, shownFrame(c, playhead)));
+  const level0 = levelOf(targets[0]);
+  const setLevel = (v: number) => { const ph = playheadNow(); editClips(seqId, ids, (c) => writeClipProperty(c, 'volume', ph, v)); };
+  const levelAnimated = groupAnimated(targets, 'volume');
   let maxFade = Infinity; // a loop, not Math.min(...spread): huge selections would overflow the stack
   for (const c of targets) if (c.duration < maxFade) maxFade = c.duration;
   const linkedOnly = targets.every((t) => !selectedIds.includes(t.id));
   return (
     <Section id="audio" title="Audio" badge={linkedOnly ? 'linked audio' : targets.length > 1 ? `${targets.length} clips` : undefined}
-      actions={<IconButton icon={RotateCcw} label="Reset all audio properties" size="sm" onClick={() => reset((a) => Object.assign(a, defaultAudio()))} />}>
+      actions={<IconButton icon={RotateCcw} label="Reset all audio properties" size="sm" onClick={() => reset((a) => { Object.assign(a, defaultAudio()); delete a.keyframes; })} />}>
       <Row label="Gain" prop="gain" onReset={() => reset((a) => { a.gain = 0; })} canReset={targets.some((c) => c.audio.gain !== def.gain)} title="Clip gain in dB (applied before level)">
         <NF value={a0.gain} mixed={!same((a) => a.gain)} unit="dB" min={-60} max={24} step={0.5} precision={1} signed def={0}
           onChange={(v) => set((a) => { a.gain = v; })} onCommit={commit} />
       </Row>
-      <Row label="Level" prop="volume" onReset={() => reset((a) => { a.volume = 1; })} canReset={targets.some((c) => c.audio.volume !== 1)} title="Clip level 0–200%">
-        <Slider value={a0.volume} min={0} max={2} step={0.01} defaultValue={1} onChange={(v) => set((a) => { a.volume = v; })} onCommit={commit} />
-        <NF value={Math.round(a0.volume * 100)} mixed={!same((a) => a.volume)} unit="%" min={0} max={200} def={100} fixed
-          onChange={(v) => set((a) => { a.volume = v / 100; })} onCommit={commit} />
+      <Row label="Level" prop="volume" onReset={() => reset((a) => { a.volume = 1; delete a.keyframes; })} canReset={targets.some((c) => c.audio.volume !== 1) || levelAnimated} title="Clip level 0–200%">
+        <Slider value={level0} min={0} max={2} step={0.01} defaultValue={1} onChange={setLevel} onCommit={commit} />
+        <NF value={Math.round(level0 * 100)} mixed={!allSame(targets, levelOf)} unit="%" min={0} max={200} def={100} fixed
+          onChange={(v) => setLevel(v / 100)} onCommit={commit} />
+        <KeyframeButton seqId={seqId} clips={targets} group="volume" playhead={playhead} />
       </Row>
+      {playhead !== null && levelAnimated ? <KeyframeBar seqId={seqId} clips={targets} group="volume" playhead={playhead} /> : null}
       <Row label="Fade in" prop="fade-in" onReset={() => reset((a) => { a.fadeIn = 0; })} canReset={targets.some((c) => c.audio.fadeIn !== 0)}>
         <NF value={a0.fadeIn} mixed={!same((a) => a.fadeIn)} unit="fr" min={0} max={maxFade} def={0} onChange={(v) => set((a) => { a.fadeIn = v; })} onCommit={commit} />
         <Value dim>{tc(a0.fadeIn, fps)}</Value>
