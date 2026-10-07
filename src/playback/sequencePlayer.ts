@@ -706,7 +706,30 @@ export class SequencePlayer {
     };
     el.addEventListener('seeked', redraw);
     el.addEventListener('loadeddata', redraw);
-    this.listenerOffs.set(el, () => { el.removeEventListener('seeked', redraw); el.removeEventListener('loadeddata', redraw); });
+    // 'seeked' does not mean the landed frame is drawable yet: Chromium fires it from the main thread while the frame
+    // reaches the element's compositor from the media thread, so under load a draw at 'seeked' (or in the rAF after
+    // it) can still get the previous frame, which compositeKey (built from currentTime) then never replaces. The
+    // landed frame is drawable once the element presents it (requestVideoFrameCallback): redraw then, while paused.
+    const v = el as HTMLMediaElement & { requestVideoFrameCallback?(cb: () => void): number; cancelVideoFrameCallback?(id: number): void };
+    let vfc: number | null = null;
+    const presented = () => {
+      vfc = null;
+      if (this.destroyed) return;
+      vfc = v.requestVideoFrameCallback!(presented);
+      if (this.playing) return;
+      for (const slot of this.activeVideo.values()) {
+        if (slot.el !== el) continue;
+        this.drawPending = true;
+        redraw();
+        break;
+      }
+    };
+    if (typeof v.requestVideoFrameCallback === 'function') vfc = v.requestVideoFrameCallback(presented);
+    this.listenerOffs.set(el, () => {
+      el.removeEventListener('seeked', redraw); el.removeEventListener('loadeddata', redraw);
+      if (vfc !== null) v.cancelVideoFrameCallback?.(vfc);
+      vfc = null;
+    });
   }
 
   /** Source time -> clamped element currentTime (originals with a container start offset are absolute-pts based). */

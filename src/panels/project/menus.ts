@@ -5,6 +5,7 @@ import { toast } from '@/components/ui/toastStore';
 import { useStore } from '@/state';
 import { IS_MAC } from '@/keyboard/shortcuts';
 import { embeddedStreamEntry } from '@/ocr/ocrUi';
+import { openTranscribeDialog } from '@/whisper/whisperUi';
 import type { BinRow, GroupRow, SceneRow, SequenceRow } from './tree';
 import type { PanelDialog } from './dialogs';
 import {
@@ -51,6 +52,7 @@ export function mediaMenu(m: MediaItem, env: MenuEnv): MenuItem[] {
         return { label: e.label, disabled: e.disabled, onSelect: () => { void importEmbedded(m.id, s.index); } };
       }),
     },
+    { label: n('Transcribe with Whisper…'), disabled: m.offline || !m.probe?.audio?.length, onSelect: () => openTranscribeDialog(ids) },
     { separator: true },
     {
       label: n('Set Category'),

@@ -24,6 +24,8 @@ import { getFfmpegPath, getFfprobePath, getFfmpegVersion, runFfmpeg } from './me
 import { probeMedia } from './media/probe';
 import { LICENCE_FILES, licenceDirs, listLicenceFiles } from './licences';
 import { ocrWorkerPath, probeOcrCore } from './ocr/engine';
+import { getWhisperCliPath, whisperCliVersion } from './whisper/engine';
+import { manualRedirectFetch, type NetClientRequest } from './net/electronFetch';
 import { registerUpdateIpc } from './updateIpc';
 import type { UpdateChecker } from './updateCheck';
 
@@ -295,6 +297,19 @@ async function runSmoke(): Promise<void> {
   } catch (e) {
     log(`smoke: ocr core=FAILED ${e instanceof Error ? e.message : String(e)}`);
   }
+  // Speech-to-text: the bundled whisper-cli (resources/whisper) runs and reports its version; no model needed.
+  // "whisper engine=FAILED" fails the CI smoke checks (.github/workflows/windows.yml, scripts/windows/install-check.ps1),
+  // which require "whisper engine=<version> ok" from every package. A run from source ("Start ReCut.cmd", npm start)
+  // has no engine unless scripts/<platform>/get-whisper.* was run, which is not a failure there.
+  const whisperBin = getWhisperCliPath();
+  if (!whisperBin && !app.isPackaged) {
+    log('smoke: whisper engine=absent (not bundled in a source run)');
+  } else try {
+    const version = await whisperCliVersion(whisperBin);
+    log(`smoke: whisper engine=${version} ok path=${whisperBin}`);
+  } catch (e) {
+    log(`smoke: whisper engine=FAILED ${e instanceof Error ? e.message : String(e)}`);
+  }
   // Renderer: did the React app mount its layout?
   try {
     const mounted = win && !win.isDestroyed()
@@ -374,7 +389,10 @@ if (!gotLock) {
     const cacheDir = await resolveCacheDir(ud);
     const ff = resolveFfmpeg();
     try {
-      await mediaHandlers.init?.({ userData: ud, cacheDir, ffmpegPath: ff.ffmpegPath, ffprobePath: ff.ffprobePath, broadcast, fetch: net.fetch });
+      // Downloads (OCR languages, Whisper models) use net.request with manual redirects (electron/net/electronFetch.ts):
+    // net.fetch rejects a manual redirect instead of returning it.
+    const fetch = manualRedirectFetch((o) => net.request(o as Electron.ClientRequestConstructorOptions) as unknown as NetClientRequest);
+    await mediaHandlers.init?.({ userData: ud, cacheDir, ffmpegPath: ff.ffmpegPath, ffprobePath: ff.ffprobePath, broadcast, fetch, packaged: app.isPackaged });
     } catch (e) {
       console.error('media init failed:', e);
     }

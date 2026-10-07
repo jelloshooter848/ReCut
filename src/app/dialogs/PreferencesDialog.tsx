@@ -16,6 +16,8 @@ import type { ProjectSettings } from '@shared/model';
 import { toast } from '@/components/ui/toastStore';
 import { installedSummary, useOcrStatus } from '@/state/ocrStatus';
 import { openOcrLanguages } from '@/ocr/ocrUi';
+import { installedModelsSummary, useWhisperStatus } from '@/state/whisperStatus';
+import { openWhisperModels } from '@/whisper/whisperUi';
 import { checkForUpdatesNow, refreshUpdateStatus, setUpdateCheckSetting, useUpdateStore } from '@/app/updates';
 import type { UpdateCheckSetting, UpdateStatus } from '@shared/update';
 import {
@@ -67,6 +69,9 @@ export function PreferencesDialog() {
   useEffect(() => { if (open) setThreshold(settings.sceneThreshold); }, [open, settings.sceneThreshold]);
   const ocrLanguages = useOcrStatus((s) => s.languages);
   useEffect(() => { if (open) void useOcrStatus.getState().refresh(); }, [open]);
+  const whisperModels = useWhisperStatus((s) => s.models);
+  const whisperEngine = useWhisperStatus((s) => s.engine);
+  useEffect(() => { if (open) void useWhisperStatus.getState().refresh(); }, [open]);
   const update = useUpdateStore((s) => s.status);
   const checkingUpdates = useUpdateStore((s) => s.checking);
   useEffect(() => { if (open) void refreshUpdateStatus(); }, [open]);
@@ -132,6 +137,17 @@ export function PreferencesDialog() {
               {ocrLanguages ? installedSummary(ocrLanguages) : (recutApi() ? '…' : 'unavailable outside the desktop app')}
             </span>
             <Button size="sm" onClick={() => openOcrLanguages()}>Manage…</Button>
+          </Row>
+          <Row label="Speech-to-text" hint="Transcribes speech into searchable subtitles on this computer, offline">
+            <span className="text-sm ellipsis grow" data-testid="prefs-whisper-engine" title={whisperEngine?.path ?? whisperEngine?.error ?? ''}>
+              {whisperEngine ? (whisperEngine.version ? `whisper.cpp ${whisperEngine.version} (built in)` : whisperEngine.error ?? 'not available') : (recutApi() ? '…' : 'unavailable outside the desktop app')}
+            </span>
+          </Row>
+          <Row label="Transcription models" hint="Whisper models; downloaded only when you install one">
+            <span className="text-sm ellipsis grow" data-testid="prefs-whisper-models" title={installedModelsSummary(whisperModels)}>
+              {whisperModels ? installedModelsSummary(whisperModels) : (recutApi() ? '…' : 'unavailable outside the desktop app')}
+            </span>
+            <Button size="sm" onClick={() => openWhisperModels()} aria-label="Manage transcription models…" data-testid="prefs-whisper-manage">Manage…</Button>
           </Row>
           <Row label="Version"><span className="text-sm">{info ? `ReCut ${info.version} · ${info.platform}${info.isDev ? ' · dev' : ''}` : '…'}</span></Row>
           <Row label="Check for updates" hint="Asks GitHub for the latest ReCut release once a day and says when a newer one exists. Only that request is sent; nothing is downloaded or installed.">

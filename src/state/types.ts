@@ -192,6 +192,12 @@ export interface StoreActions {
    * Returns the id of the track that holds the cues.
    */
   putOcrSubtitleTrack(track: SubtitleTrack): ID;
+  /**
+   * Add a Whisper transcription as a media subtitle track (one undo step, "Transcribe"). When an `origin: 'whisper'`
+   * track of the same `mediaId`, `streamIndex` (the audio stream) and `language` exists, its cues and name are replaced
+   * and it keeps its id (a re-run, for example with a bigger model, replaces the earlier one). Returns the track's id.
+   */
+  putWhisperSubtitleTrack(track: SubtitleTrack): ID;
   removeMediaSubtitleTrack(trackId: ID): void;
 
   // ---- sequences ----

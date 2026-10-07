@@ -23,9 +23,11 @@ flowchart LR
   subgraph Main [Main process: Node]
     IPC[ipc.ts handlers]
     IO[project/io.ts: atomic save, .bak, autosave, prefs]
-    Q[JobQueue: media x2, background x1, network x2, export x1]
+    Q[JobQueue: media x2, background x1, transcribe x1, network x2, export x1]
     Media[media/*: probe, thumbs, waveform, proxy, sceneDetect, subtitlesExtract]
     Ocr[ocr/*: bitmap events, Tesseract worker pool, language installer]
+    Wsp[whisper/*: transcribe job, whisper-cli, model installer]
+    Net[net/download.ts: verified, resumable downloads]
     Exp[export/*: renderGraph, chunks, exporter]
     Proto[recut-media:// protocol with Range]
   end
@@ -38,6 +40,12 @@ flowchart LR
   Media --> Q
   Ocr --> Q
   Ocr --> FF
+  IPC --> Wsp
+  Wsp --> Q
+  Wsp --> FF
+  Wsp --> CLI[(whisper-cli)]
+  Ocr --> Net
+  Wsp --> Net
   Exp --> Q
   Q -- ev:jobs --> UI
   Media --> FF
@@ -62,12 +70,17 @@ flowchart LR
 | `media/sceneDetect.ts` | `select='gt(scene,T)'` + `showinfo` on a downscaled stream. Results are cached per threshold. |
 | `media/subtitlesExtract.ts` | Embedded text subtitle stream → SRT. Bitmap codecs ReCut can OCR (PGS, VobSub, DVB, XSUB) are refused with a pointer to **Read with OCR…**; teletext and ARIB captions are refused as unsupported. |
 | `media/cache.ts` + `identity.ts` | Cache root and keys. `cacheKeyForPath` is a **content key**: size + a SHA-1 of nine sampled 64 KiB blocks (first, last, evenly between; small files whole), with no path or mtime, so derived media survive moves, renames, copies and Collect. It is computed once per path + size + mtime (memory, then `<cache>/ids/<legacy key>`). Entries written by older versions under the legacy `sha1(path + size + mtime)` key are found by `findCachedFile` and adopted under the content key with a hard link. Thumbnails, waveforms, proxies, scene detection and OCR use it; new media caches should too. |
-| `jobs/jobQueue.ts` | Four lanes: **media** (proxies, waveforms, extraction; concurrency 2), **background** (scene detection, OCR; 1), **network** (OCR language downloads, kind `download`; 2), **export** (exports and Collect Project; 1). Progress, cancel and `AbortSignal` per job. Snapshots are pushed at most 10×/s on `ev:jobs`. `jobs/inFlight.ts` de-duplicates identical requests (same proxy output, same scene-detect key). |
+| `jobs/jobQueue.ts` | Five lanes: **media** (proxies, waveforms, extraction; concurrency 2), **background** (scene detection, OCR; 1), **transcribe** (speech-to-text; 1), **network** (OCR language and Whisper model downloads, kind `download`; 2), **export** (exports and Collect Project; 1). Progress, cancel and `AbortSignal` per job. Snapshots are pushed at most 10×/s on `ev:jobs`. `jobs/inFlight.ts` de-duplicates identical requests (same proxy output, same scene-detect key). |
 | `ocr/ocrJob.ts` | The `ocr` job (background lane): checks the language file's SHA-256, then the cache (`<cache>/ocr/<key>_s<stream>_<lang>-<sha8>_v<pipeline>-<core>.json`, `.part` + rename), starts the worker pool while FFmpeg isolates the stream, reads each new image's bands on the pool (a band read with confidence under 50 is read again with the polarity flipped), reuses the text of repeated images and merges touching identical lines. Progress: isolate 0–25 %, then "n/N events". Cancel kills FFmpeg and terminates the workers. De-duplicated per path + stream + language. |
 | `ocr/bitmapEvents.ts` | Bitmap subtitle stream → timed images: remux the stream alone into a temp file, `ffprobe -show_frames` for the timing, sub2video to raw `ya8` for the pixels (with stdout backpressure); pure `assembleEvents` pairs them, drops blank and < 40 ms events, merges back-to-back repeats and gives each distinct picture an `imageId`. |
 | `ocr/preprocess.ts`, `ocr/postprocess.ts` | Pure: crop to the ink, composite onto black and invert (black text on white), split into bands at empty rows, PGM; text clean-up (`|` → `I`, whitespace, punctuation-only lines). |
 | `ocr/engine.ts`, `ocr/worker.ts` | A pool of `min(3, cores − 1)` worker threads running Tesseract (tesseract.js 7.0.0 WebAssembly, LSTM-only core: relaxed SIMD when supported, else plain), unpacked from app.asar. The workers never touch the network. `probeOcrCore` feeds the packaged smoke test. |
-| `ocr/download.ts`, `ocr/languages.ts`, `ocr/dataDir.ts` | Language installer: `download` jobs (network lane, one per language) fetch pinned `tessdata_fast` files with `net.fetch` (resume, size cap, same-host redirects only, SHA-256 check, `.part` + rename) into `<userData>/ocr/tessdata`; remove; install from a local file; `verifyInstalled` before each OCR run. |
+| `ocr/download.ts`, `ocr/languages.ts`, `ocr/dataDir.ts` | Language installer: `download` jobs (network lane, one per language) fetch pinned `tessdata_fast` files with `net.fetch` through `net/download.ts` under the OCR policy (raw.githubusercontent.com, same-host redirects only) into `<userData>/ocr/tessdata`; remove; install from a local file; `verifyInstalled` before each OCR run. |
+| `net/download.ts` | `downloadVerified`: one pinned file into `<dest>.part` (HTTP Range resume, size cap, SHA-256 check, rename into place; cancel and a mismatch delete the `.part`, a network error keeps it). Each caller passes a `DownloadPolicy`: the https origins a download may start from and the exact hosts a redirect may go to (`redirectHosts`); everything else, plain http included, is refused. A loopback origin is accepted only for the test overrides `RECUT_OCR_LANG_URL` / `RECUT_WHISPER_MODEL_URL`. |
+| `net/electronFetch.ts` | The HTTP client main.ts gives the downloader: Electron's `net.request` (system proxy, certificates) behind a `fetch` shape. A redirect is returned as a 3xx response with its `location` and never followed (Electron's `net.fetch` rejects `redirect: 'manual'`, bugs/closed/2026-10-07-download-redirect-net-fetch-manual.md); the body is a pull-based stream. |
+| `whisper/engine.ts` | The bundled engine: `<resources>/whisper/whisper-cli(.exe)` (or `RECUT_WHISPER_CLI`; never `PATH`), `--version` for About / the smoke test, threads = cores − 1, `killTree` (taskkill /T on Windows). |
+| `whisper/models.ts` | Model installer, like the OCR one: `download` jobs fetch pinned ggml models (`shared/whisper.ts`) under the Hugging Face policy (https://huggingface.co, redirects only to `cas-bridge.xethub.hf.co`) into `<userData>/whisper/models`, resumable; remove (also a partial file); install from a local file; the list with partial sizes and disk usage; `verifyModel` (size + SHA-256, hashed once per session while size and mtime stay the same). |
+| `whisper/transcribeJob.ts`, `whisper/wav.ts`, `whisper/output.ts` | The `transcribe` job (its own lane): verify the model, cache lookup (`<cache>/whisper/<media key>_s<stream>_<model>-<settings hash>.json`; the media key comes from `transcriptionMediaKey`: the content key `cacheKeyForPath`, so it survives moves), FFmpeg → 16 kHz mono PCM WAV in a temp folder under `<userData>/whisper/tmp`, chunks of ≤ 30 min cut at the quietest 100 ms window in the 20 s before each boundary (streamed: memory does not grow with length), `whisper-cli -oj -pp` per chunk with relative ASCII paths (cwd = the temp folder), progress from `-pp` and the printed segment times, the JSON result repaired (raw control characters, cut UTF-8) and cleaned into cues (non-speech dropped, times clamped). Cancel kills the process; the temp folder is always removed. |
 | `export/renderGraph.ts` | Pure: `ExportRequest` → ffmpeg args + `filter_complex` script. Unit-tested. Also used by "Show FFmpeg command". Its segment and transition-handle planning lives in `shared/exportPlan.ts`. |
 | `export/chunks.ts` | Pure: decides when to chunk and where the chunk boundaries go. |
 | `export/exporter.ts` | Runs the graph (single pass or chunked), parses `-progress`, handles cancel, renders into an exclusively created `<name>.recut-part-<random>.mp4` and moves it onto the output (kept as `<name>.recut-unsaved-<time>.mp4` if that fails), writes the `.srt` sidecar through a temp, cleans temp files. Refuses an output that is a project source file, and an existing output unless the request says `overwrite` (see [export-pipeline.md](export-pipeline.md#output-files)). |
@@ -155,6 +168,9 @@ SyncGroup: two SequencePlayers on one clock with a frame offset (Compare)
   browser-playable, else a ready proxy, else nothing (reported as missing with a reason). It also applies the
   container start-time offset for originals.
 - The canvas renders at the sequence size × **playback resolution** (Full, 1/2, 1/4).
+- While paused, the Program redraws when a pooled `<video>` presents a new frame (`requestVideoFrameCallback`), not
+  only on `seeked` / `loadeddata`: Chromium can fire those before the landed frame is drawable, and a draw then paints
+  the previous frame.
 - The Program monitor's "Offline / Needs proxy / Can't play" chips come from the planner's `missing` list.
 
 ### Data flow: an insert edit
@@ -273,8 +289,14 @@ See `docs/attack/performance.md` for the measurements that drove these changes. 
 - **Transcript providers** (`src/transcript/providers.ts`): implement `TranscriptProvider` (`available`,
   `transcribe(mediaPath, opts, onProgress)` → `SubtitleCue[]`) and add it to `PROVIDERS`. It then appears under
   Transcript › Import › **Transcribe…**. `SubtitleFileProvider` (sidecar SRT/VTT) is the working example.
-  `LocalWhisperProvider` is a disabled placeholder. A real local provider should run as a main-process job (the
-  `'transcribe'` `JobKind` is reserved) that extracts audio with FFmpeg and streams progress.
+  `LocalWhisperProvider` runs as a main-process job, so it implements `openDialog()` instead: the panel opens the
+  Transcribe dialog (`src/panels/whisper/TranscribeDialog.tsx`), which starts one `transcribe` job per media, and
+  `jobsRouter.ts` adds each result with `putWhisperSubtitleTrack` (`origin: 'whisper'`; a re-run on the same media,
+  audio stream and language replaces the track in one undo step). `src/whisper/whisperUi.ts` holds the dialog state
+  and helpers, `src/state/whisperStatus.ts` the model list and engine.
+- **Whisper models:** the installable list is `WHISPER_MODELS` in `shared/whisper.ts` (pinned Hugging Face commit, size
+  and SHA-256 per model); the engine version is pinned in `scripts/whisper-source.mjs`. Changing the engine changes
+  `WHISPER_ENGINE_VERSION`, which is part of the transcription cache key.
 - **OCR languages:** the installable list is the manifest in `shared/ocr.ts` (`OCR_LANGUAGES`, generated by
   `scripts/ocr-manifest.mjs` with sizes and SHA-256 for the pinned commit). In the renderer, `src/ocr/ocrUi.ts` holds
   the OCR dialog state and menu helpers, `src/state/ocrStatus.ts` the installed list, and `jobsRouter.ts` turns a
