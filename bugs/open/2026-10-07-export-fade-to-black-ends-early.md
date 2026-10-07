@@ -6,7 +6,7 @@
 | Severity | low |
 | Area | export |
 | Reported by / date | agent claude/keyframes, 2026-10-07 |
-| Found on commit | b63b602 (claude/keyframes; the code path is unchanged from claude/mkv-export) |
+| Found on commit | b63b602 (claude/keyframes). Not caused by keyframes: the `fade=t=out` line dates from fdd0d4b (the first export pipeline) and is identical on main (dfe8a1e) |
 | Environment | Linux, FFmpeg 6.1.1-3ubuntu5, from source (vitest) |
 
 ## Report

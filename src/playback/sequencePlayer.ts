@@ -866,12 +866,6 @@ export class SequencePlayer {
     }
   }
 
-  /**
-   * Level keyframes (Roadmap §11) while playing: ramp the gain linearly from where it is now to the curve's value
-   * KEYFRAME_RAMP_SEC ahead of the exact clock position (not the whole frame), re-anchored on every tick. Between
-   * ticks the level follows the keyframe curve (a chord of it) instead of stepping once per frame, as the export
-   * evaluates it every 256 samples; starting from the current value keeps it click-free when the clip comes in.
-   */
   /** A keyframe ramp scheduled on `param` (rampKeyframedGain) is dropped before a plain level is set. */
   private endRamp(param: AudioParam, now: number): void {
     if (!this.rampedParams.delete(param)) return;
@@ -880,6 +874,12 @@ export class SequencePlayer {
     param.setValueAtTime(cur, now);
   }
 
+  /**
+   * Level keyframes (Roadmap §11) while playing: ramp the gain linearly from where it is now to the curve's value
+   * KEYFRAME_RAMP_SEC ahead of the exact clock position (not the whole frame), re-anchored on every tick. Between
+   * ticks the level follows the keyframe curve (a chord of it) instead of stepping once per frame, as the export
+   * evaluates it every 256 samples; starting from the current value keeps it click-free when the clip comes in.
+   */
   private rampKeyframedGain(param: AudioParam, a: AudioPlan, now: number): void {
     const fpsV = fpsValue(this.fps);
     const f1 = this.clock.now() * fpsV + this.frameOffset + KEYFRAME_RAMP_SEC * this.rate * fpsV;

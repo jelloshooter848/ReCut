@@ -24,12 +24,20 @@ checkout's own code and writes `tests/fixtures/projects/recut-<version>.recut` h
    (SRT sidecar, manual, and from 0.6.0 an OCR track with its `streamIndex`), bins, tags, non-default project
    settings, three sequences (23.976 fps stereo with linked picture and sound, a disabled clip, transitions of every
    type, a transform, audio levels and fades, clip tags, chapter / range / continuity markers, story blocks, carried
-   and manual subtitle cues, a snapshot, a locked track and a stored view; from 0.13.0 keyframed position, scale,
-   opacity and level; an alternate cut with lineage and a version
-   label; a 25 fps 5.1 sequence) and the scene library.
+   and manual subtitle cues, a snapshot, a locked track and a stored view, and from 0.13.0 keyframes (see below); an
+   alternate cut with lineage and a version label; a 25 fps 5.1 sequence) and the scene library.
 3. It serializes the project as that release saves it (`serializeForSave` and `projectJsonChunks`, as
    `src/state/mediaActions.ts` does) and writes it with that release's `saveProjectJson`.
 4. It opens the file again with that release's `loadProjectFile` and fails unless it opens without repairs.
+
+**Keyframes (from 0.13.0, Roadmap §11).** When the checkout's store has `addClipKeyframe`, the main sequence's title
+card (the PNG still on V2, frames 48–143) is animated: opacity eases in from 0 to 0.9 over clip frames 0–24, scale goes
+from 0.8 to 1.1 over frames 0–95 (the last segment eased), and position moves x 40 → -60 with y held at -20 between
+frames 12 and 90. The music clip on A2 has a level dip: 0.5 → 0.2 → 0.2 → 0.5 at clip frames 48, 72, 96 and 120 (ease
+on the first and third segments). The keyframes are added with the store action, then their values are set on the
+clips found with `findClip`. Frames are clip-relative, so the alternate cut and the snapshot, copied from the main
+sequence, carry the same lists. Every other clip has no `keyframes` field, and `project-compat.test.ts` checks that
+older fixtures open without any.
 
 Time and `Math.random` are fixed, so running the script twice on the same checkout writes the same bytes. Features a
 release did not have are left out (for example `proxy.audioStreams` before 0.4.0, OCR tracks before 0.6.0); the
