@@ -12,10 +12,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ensureDirSafe } from './safeMkdir';
 import { getFfmpegPath, getFfprobePath } from './media/ffmpeg';
+import { licenceDirs, listLicenceFiles, resolveLicenceFile } from './licences';
 import type { AppPreferences, ID, JobInfo, MediaProbe, Project } from '../shared/model';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import type {
-  AppInfo, ExportRequest, ExportStartResult, FilmstripRequest, LoadReply, MessageOptions, OpenFilesOptions,
+  AppInfo, ExportRequest, ExportStartResult, FilmstripRequest, LicenceFile, LoadReply, MessageOptions, OpenFilesOptions, OpenLicenceResult,
   ProxyRequest, RecoveryReply, RecutApi, RelinkScanRequest, SaveFileOptions, SaveResult, SceneDetectRequest, ThumbnailRequest, WaveformData,
 } from '../shared/ipc';
 import { encodeProjectWire, isAutosaveStreamRef, SAVE_STREAM_IPC as IPC_SAVE, type SaveBeginResult } from '../shared/projectWire';
@@ -183,6 +184,22 @@ export function registerIpc(deps: IpcDeps): void {
     await shell.openExternal(url);
   });
   ipcMain.handle(IPC.showItemInFolder, (_e, p: string) => { shell.showItemInFolder(assertString(p, 'path')); });
+  // Licence files: the renderer names one by id; main maps it to a fixed file in a fixed folder (electron/licences.ts).
+  const licDirs = () => licenceDirs({
+    packaged: app.isPackaged,
+    resourcesPath: (process as unknown as { resourcesPath?: string }).resourcesPath,
+    appPath: app.getAppPath(),
+    execPath: process.execPath,
+    cwd: process.cwd(),
+  });
+  ipcMain.handle(IPC.licenceFiles, (): LicenceFile[] => listLicenceFiles(licDirs()));
+  ipcMain.handle(IPC.openLicenceFile, async (_e, id: unknown): Promise<OpenLicenceResult> => {
+    const file = resolveLicenceFile(id, licDirs());
+    if (!file) return { ok: false, error: 'That licence file is not included in this build.' };
+    const err = await shell.openPath(file);
+    if (err) shell.showItemInFolder(file); // no app for .md / .txt: show the file in its folder instead
+    return { ok: true };
+  });
   ipcMain.handle(IPC.toggleFullscreen, () => {
     const w = parentWindow(deps);
     if (!w) return false;

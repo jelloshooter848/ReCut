@@ -11,7 +11,8 @@ build and must pass before anything is published) and the **Linux unpacked** bui
 - **Installer:** download `ReCut-Setup-<version>.exe` from the release marked **Latest** on
   [GitHub Releases](https://github.com/jelloshooter848/ReCut/releases) and run it (per-user install, no admin rights,
   Start-menu and desktop shortcuts, `.recut` files open in ReCut, uninstall from *Settings › Apps*).
-  `ReCut-Portable-<version>.exe` is the same app without installing. FFmpeg is bundled in both.
+  `ReCut-Portable-<version>.exe` is the same app without installing. FFmpeg is bundled in both (GPL; see
+  [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)).
   Builds are unsigned: if SmartScreen says "Windows protected your PC", choose **More info › Run anyway**.
 - **From a cloned repository:** double-click `Start ReCut.cmd`. It runs `scripts/windows/start-recut.ps1`, which
   checks for Node.js 20+ (offers `winget install OpenJS.NodeJS.LTS`), runs `npm ci` when the lockfile changed,
@@ -19,7 +20,7 @@ build and must pass before anything is published) and the **Linux unpacked** bui
   launches the app. `Start ReCut.cmd -Rebuild` forces a clean install and build.
 
 Releases are produced by `.github/workflows/windows.yml`, which builds on `windows-latest`, bundles the current FFmpeg release (gyan.dev essentials, BtbN as fallback;
-see `scripts/windows/get-ffmpeg.ps1`), smoke-tests both the unpacked app and a silent install (media protocol, FFmpeg encode + probe,
+see `scripts/windows/get-ffmpeg.ps1`) together with its licence and source information (`FFMPEG-LICENSE.txt`, `FFMPEG-BUILD.txt`), smoke-tests both the unpacked app and a silent install (media protocol, FFmpeg encode + probe,
 UI mounted), and publishes a release `v<version>` automatically when a release PR (version bump + changelog entry) is merged to
 `main`, or a test-build prerelease `v<version>-dev.<run>` for any other push (see [RELEASING.md](RELEASING.md)). On every
 build the same workflow also checks `Start ReCut.cmd` from a fresh clone and runs the unit and end-to-end suites on
@@ -112,12 +113,27 @@ npm run dist       # build + electron-builder         → AppImage (Linux), dmg 
 built without FFmpeg. To bundle FFmpeg:
 
 1. Download **static** builds of `ffmpeg` and `ffprobe` for the target platform, for example from johnvansickle.com
-   (Linux), evermeet.cx (macOS) or gyan.dev / BtbN (Windows). Use builds that include libx264. Check the licence
-   (GPL builds make the package GPL).
+   (Linux), evermeet.cx (macOS) or gyan.dev / BtbN (Windows). Use builds that include libx264. On Windows,
+   `scripts/windows/get-ffmpeg.ps1` does this step and step 2 for you, including the licence files below.
 2. Put them in `resources/ffmpeg/` at the repository root, named exactly `ffmpeg` and `ffprobe` (`ffmpeg.exe` and
    `ffprobe.exe` on Windows). On Linux and macOS, run `chmod +x resources/ffmpeg/*`.
-3. Run `npm run package` or `npm run dist`. The binaries end up in `release/linux-unpacked/resources/ffmpeg/` (or the
-   matching folder of the dmg / installer), and ReCut uses them unless `RECUT_FFMPEG` / `RECUT_FFPROBE` are set.
+3. Put the FFmpeg licence and source information next to them in `resources/ffmpeg/` (see the licensing note below):
+   `FFMPEG-LICENSE.txt` (the licence file that came with the build, unchanged), `FFMPEG-BUILD.txt` (where you
+   downloaded it, the build name, the output of `ffmpeg -version`, the date, and where to get the corresponding
+   source) and, if the build has one, its readme as `FFMPEG-README.txt`. Help › About › Licences opens these files.
+4. Run `npm run package` or `npm run dist`. Everything in `resources/ffmpeg/` ends up in
+   `release/linux-unpacked/resources/ffmpeg/` (or the matching folder of the dmg / installer), and ReCut uses the
+   binaries unless `RECUT_FFMPEG` / `RECUT_FFPROBE` are set. `LICENSE` and `THIRD_PARTY_NOTICES.md` are packaged into
+   `resources/` as well.
+
+**Licensing.** ReCut itself is MIT-licensed (`LICENSE`). FFmpeg is a separate program that ReCut runs as a child
+process; a bundled FFmpeg is distributed alongside ReCut under its own licence, and ReCut stays MIT. FFmpeg builds
+with libx264 are GPL (the gyan.dev and BtbN builds above are GPL-3.0-or-later), so whoever distributes a package with
+such a build bundled must, like any redistributor of GPL binaries, ship the GPL licence text with it and make the
+corresponding source of that exact FFmpeg build (FFmpeg and the GPL libraries compiled into it) available, for
+example with links in `FFMPEG-BUILD.txt` to the exact source release and the build provider's scripts, or by
+publishing the source next to the package. `THIRD_PARTY_NOTICES.md` describes what the Windows releases ship. This is
+a description of common practice, not legal advice.
 
 Build one package per platform: the binaries are platform-specific.
 

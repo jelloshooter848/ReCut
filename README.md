@@ -134,4 +134,10 @@ are responsible for having the rights to the material you edit and for how you s
 
 ## License
 
-MIT. See `package.json`.
+ReCut is licensed under the [MIT License](LICENSE).
+
+The Windows releases bundle FFmpeg (`ffmpeg.exe`, `ffprobe.exe`), which ReCut runs as a separate program. The bundled
+builds include libx264 and are licensed under the GPL version 3 or later, not under ReCut's licence; each release
+ships the FFmpeg licence and a record of the exact build with where to get its source. ReCut also ships Electron,
+Chromium and a few npm packages under their own licences. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), or
+**Help › About › Licences** in the app.
