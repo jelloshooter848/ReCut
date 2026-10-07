@@ -47,18 +47,22 @@ hand: agents cannot push tags (their git proxy drops tag pushes), and the owner 
 4. Check the release page: both `.exe` files are attached and the notes read correctly. In the installer job's log,
    the smoke test lists the licence files the build ships (see [Licence files every release ships](#licence-files-every-release-ships)).
 
-Every later push to `main` finds `v0.3.0` already tagged and publishes a dev prerelease, as usual, until the next
-release PR is merged.
+Every later push to `main` finds `v0.3.0` already tagged and makes a [test build](#test-builds) (all gates, installers
+kept as a CI artifact, nothing published) until the next release PR is merged.
+
+**Only real versions appear on the Releases page** (owner's decision, 7 October 2026). CI never publishes a dev
+prerelease and never creates a `-dev.` tag; every run that is not a release is a test build whose installers are only
+the run's `ReCut-windows` artifact.
 
 **Never create the release or the tag by hand before the release PR is merged**, not in the web UI ("Draft a new
 release" / "Choose a tag") and not with git. A tag made that way points at whatever commit was selected (twice so
 far, a release was created on the wrong target this way). If a `vX.Y.Z` tag exists when the release PR is merged, CI
-treats the version as already released and only makes a dev build.
+treats the version as already released and only makes a test build.
 
 Details:
 
 - Only pushes to `main` release automatically. Other branches and manual runs (*Run workflow*, `workflow_dispatch`)
-  always make dev prereleases.
+  always make test builds, which publish nothing.
 - A push to `main` that changes only `*.md` or `docs/**` files does not run the workflow, so it cannot release. A
   release PR always changes `package.json`, so its merge always runs.
 - Runs on `main` queue instead of cancelling each other, so a release run is never cancelled by a quick follow-up
@@ -66,7 +70,8 @@ Details:
   going, GitHub keeps only the newest waiting run: a release run that had not started yet can be replaced by the next
   merge's run, which then publishes the release from that newer commit (the version is still untagged).
 - Just before publishing, a release run checks the tag again. If `vX.Y.Z` appeared during the build (someone tagged or
-  released by hand), it publishes a dev prerelease instead and leaves that release alone.
+  released by hand), the version is already released: the publish job logs a warning, publishes nothing, leaves that
+  release alone and finishes successfully. The run's installers are still in its `ReCut-windows` artifact.
 - The tag is created by the workflow's `GITHUB_TOKEN`, and GitHub does not start workflows for events caused by
   `GITHUB_TOKEN`, so the new tag does not start a second build.
 
@@ -81,16 +86,17 @@ Details:
 | `e2e` (End-to-end tests on Windows) | The Playwright suite driving the built app. |
 | `launcher` (Start ReCut.cmd from a fresh clone) | `Start ReCut.cmd -Smoke`. |
 
-Publishing happens in a separate last job, `publish`, which needs all four and runs only when all four succeeded. It
-downloads the installer job's build and release notes, re-checks the tag, and publishes. If any gate fails, is
-cancelled or is skipped, `publish` is skipped. None of the gates is allowed to fail (`continue-on-error` is not used).
+Publishing happens in a separate last job, `publish`, which runs only on a release run and only when all four gates
+succeeded. It downloads the installer job's build and release notes, re-checks the tag, and publishes. If any gate
+fails, is cancelled or is skipped, `publish` is skipped. None of the gates is allowed to fail (`continue-on-error` is
+not used). On a test build `publish` is always skipped.
 
-This applies to every run: a release and a dev prerelease (`v<version>-dev.<run>`) are gated the same way. A run with
-any red gate publishes nothing, neither a release nor a dev prerelease, and creates no tag. `installer-stress` (manual
-only) is not a gate.
+Every run, release or test build, runs all four gates the same way. A run with any red gate publishes nothing and
+creates no tag. `installer-stress` (manual only) is not a gate.
 
 **On a red run:** nothing was published. Look at the failed job, fix the problem in a normal PR (or push the fix to
-the branch), and push again; the next run that passes every gate publishes. A test that is red because of the
+the branch), and push again; the next run that passes every gate publishes the release (or, for a test build, has
+an artifact worth testing). A test that is red because of the
 runner, not the code, can be re-run (see [If the release build fails](#if-the-release-build-fails)). Never make a
 gate pass by weakening, skipping or deleting a test, and never re-add `continue-on-error` to a gate.
 
@@ -140,8 +146,9 @@ git push origin v0.3.0
 Use a plain tag `v<MAJOR>.<MINOR>.<PATCH>`. The tag run checks that the tag equals `v` + the `package.json` version at
 that commit and that `CHANGELOG.md` has a `## [<version>]` section, fails within seconds if either is wrong, and
 otherwise builds, checks and (once every gate is green) publishes the same release as the automatic path. If a
-`main` run is building the same version at that moment, whichever publishes second sees the tag and falls back to a
-dev build.
+`main` run is building the same version at that moment, it sees your tag when it re-checks before publishing, logs a
+warning that the version is already released, and publishes nothing (the tag run publishes the release). If the
+`main` run published first, the tag already exists on the right commit and your push has nothing to do.
 
 ### If the release build fails
 
@@ -189,24 +196,39 @@ Rules:
 
 ## Build names
 
-| Trigger | Tag | Release name | Kind |
-|---|---|---|---|
-| Push to `main`; `CHANGELOG.md` has `## [<version>]`; no tag `v<version>` yet | `v<version>` (created by CI) | `ReCut <version>` | Release, marked Latest |
-| Push to `main`; `v<version>` already tagged, or no changelog section | `v<version>-dev.<run>` | `ReCut <version>-dev.<run> (Windows test build)` | Prerelease |
-| Push to another watched branch, or a manual run (`workflow_dispatch`) | `v<version>-dev.<run>` | `ReCut <version>-dev.<run> (Windows test build)` | Prerelease |
-| Push of tag `v<version>` (optional fallback) | `v<version>` | `ReCut <version>` | Release, marked Latest |
+| Trigger | Tag | Result |
+|---|---|---|
+| Push to `main`; `CHANGELOG.md` has `## [<version>]`; no tag `v<version>` yet | `v<version>` (created by CI) | Release `ReCut <version>`, marked Latest |
+| Push of tag `v<version>` (optional fallback) | `v<version>` (yours) | Release `ReCut <version>`, marked Latest |
+| Push to `main`; `v<version>` already tagged, or no changelog section | none | [Test build](#test-builds): `ReCut-windows` CI artifact only |
+| Push to another watched branch, or a manual run (`workflow_dispatch`) | none | [Test build](#test-builds): `ReCut-windows` CI artifact only |
 
-Every row is published only when all four gates pass ([What gates a release](#what-gates-a-release)).
+A release is published only when all four gates pass ([What gates a release](#what-gates-a-release)). Only real
+versions (`0.4.0`, `0.5.0`, …) ever appear on the Releases page: there are no prereleases.
 
-Dev prereleases are test builds of unreleased commits. Their `<version>` is the last released version (the version
-in `package.json` on that commit), so `0.2.0-dev.57` is a build made after 0.2.0, not before it. Users should install
-the release marked **Latest**.
+### Test builds
 
-The workflow only runs for plain semver tags (`v[0-9]+.[0-9]+.[0-9]+`), so the `-dev.` tags it creates for
-prereleases never start another build. The `v<version>` tag of an automatic release does match that pattern, but it
-is created with the workflow's `GITHUB_TOKEN`, and tags created with `GITHUB_TOKEN` do not trigger workflows, so it
-does not start a second build either. Documentation-only pushes to a branch skip the build (`paths-ignore`), but GitHub does not evaluate path
-filters for tag pushes, so a release tag always builds.
+Every run that is not a release is a test build of an unreleased commit. It runs every gate exactly like a release
+(installer build, smoke test, install check, unit tests, end-to-end tests, launcher check), but creates no tag and
+publishes nothing. Its installer and portable exe are kept only as the run's `ReCut-windows` workflow artifact, for 14
+days. The file names carry the last released version (the version in `package.json` on that commit), so
+`ReCut-Setup-0.5.0.exe` from a test build is a build made after 0.5.0, not 0.5.0 itself.
 
-Before this standard, CI published every branch build as `v0.1.0-win.<run>` ("ReCut 0.1.0 for Windows (build N)").
-Those prereleases and tags still exist. The owner may delete them from the GitHub Releases page; agents must not.
+To download a test build: open the repository's **Actions** tab → **Windows build** → the run (its summary says
+"Test build: download the installers from this run's Artifacts (ReCut-windows)") → **Artifacts** → **ReCut-windows**.
+GitHub downloads a zip with `ReCut-Setup-<version>.exe` and `ReCut-Portable-<version>.exe`; you must be signed in to
+GitHub. Use a test build only if every job in its run is green. Users should install the release marked **Latest**.
+
+To make a test build of a work branch, run the workflow by hand (*Run workflow*, `workflow_dispatch`) on that branch.
+
+### Tags
+
+The workflow only runs for plain semver tags (`v[0-9]+.[0-9]+.[0-9]+`). The `v<version>` tag of an automatic release
+does match that pattern, but it is created with the workflow's `GITHUB_TOKEN`, and tags created with `GITHUB_TOKEN`
+do not trigger workflows, so it does not start a second build. Documentation-only pushes to a branch skip the build
+(`paths-ignore`), but GitHub does not evaluate path filters for tag pushes, so a release tag always builds.
+
+Before this standard, CI published every branch build as `v0.1.0-win.<run>` ("ReCut 0.1.0 for Windows (build N)"),
+and until 7 October 2026 it published every non-release build as a dev prerelease `v<version>-dev.<run>`. Neither
+kind is created any more, and neither tag pattern starts a build. The existing ones still exist; the owner may delete
+them (release and tag) from the GitHub Releases page; agents must not.
