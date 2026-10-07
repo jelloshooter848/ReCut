@@ -203,6 +203,11 @@ describe('Windows workflow: the macOS dmg job (advisory during bring-up)', () =>
     expect(workflow).toContain('#   1. needs: [installer, tests, e2e, launcher, linux, macos, macos-e2e]');
     expect(workflow).toMatch(/^\s+#.*\brelease\/ReCut-\*-macos-arm64\.dmg/m);
     expect(workflow).toMatch(/^\s+#\s+name: ReCut-macos$/m);
+    // The Windows and Linux summaries say which jobs must be green: the five gates, not the advisory macOS jobs.
+    for (const block of [code(job('installer')), code(job('linux'))]) {
+      expect(block).toContain('the required jobs of this run (installer, tests, e2e, launcher, linux) are green');
+      expect(block).not.toContain('every job in this run is green');
+    }
   });
 
   it('tests with the bundled arm64 FFmpeg, then packages the arm64 dmg, signed only when all secrets are set', () => {

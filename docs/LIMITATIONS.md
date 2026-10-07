@@ -117,7 +117,7 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   Needs macOS 12 or newer (the bundled FFmpeg's minimum); tested in CI on macOS 14 only. Until the Developer ID
   signing secrets are set up ([MACOS-SIGNING](MACOS-SIGNING.md)) the dmg is ad-hoc signed and not notarized, so macOS
   blocks the first launch until it is allowed under System Settings › Privacy & Security. The end-to-end suite on
-  macOS is new and may still fail where a test assumes Windows / Linux keyboard shortcuts (Ctrl instead of Cmd).
+  macOS (advisory `macos-e2e` job) has not passed on a Mac yet.
 - **Linux: AppImage only, x86-64 only.** No `.deb`, `.rpm`, Flatpak or Snap, and no ARM build. The AppImage needs the
   FUSE 2 library (`libfuse2`) unless it is started with `--appimage-extract-and-run`, and it does not add itself to
   the application menu or register `.recut` files (an AppImage integration tool can). The bundled FFmpeg needs glibc

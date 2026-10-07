@@ -68,7 +68,7 @@ macOS is not an official platform yet (it is planned for ReCut 0.7.0, [ROADMAP.m
 dmg is a **test build**: it is not on the Releases page, only in CI.
 
 - **Requirements:** a Mac with Apple Silicon (M1 or newer) and macOS 12 Monterey or newer. There is no Intel build.
-- **Download:** open the repository's **Actions** tab › **Windows build** › a run whose jobs are green › **Artifacts**
+- **Download:** open the repository's **Actions** tab › **Windows build** › a run whose `macos` job is green › **Artifacts**
   › **ReCut-macos** (you must be signed in to GitHub). Unzip it to get `ReCut-<version>-macos-arm64.dmg`.
 - **Install:** open the dmg and drag **ReCut** into **Applications**. FFmpeg and FFprobe are bundled inside the app
   (GPL; see [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)), so you do not need Homebrew or a system FFmpeg.

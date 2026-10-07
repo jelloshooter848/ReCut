@@ -294,7 +294,7 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Value @(
             "**Test build: download the installers from this run's Artifacts (ReCut-windows).**",
             '',
-            "$env:NAME is not a release: nothing is published to GitHub Releases and no tag is created. Use it only if every job in this run is green. The artifact is kept for 14 days.")
+            "$env:NAME is not a release: nothing is published to GitHub Releases and no tag is created. Use it only if the required jobs of this run (installer, tests, e2e, launcher, linux) are green; the macOS jobs are advisory. The artifact is kept for 14 days.")
 
       # Five silent install / smoke / uninstall cycles plus one portable launch, because the installer crash in
       # bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md was intermittent. Prints the CPU first and, on a
@@ -539,7 +539,7 @@ jobs:
           {
             echo "**Linux AppImage: \`$f\` is in this run's Artifacts (ReCut-linux).**"
             echo ''
-            echo 'It passed the unit tests, the end-to-end tests and the AppImage smoke test on ubuntu-22.04. On a release run the publish job also attaches it to the release; otherwise it is a test build, kept for 14 days: use it only if every job in this run is green. Run it with `chmod +x` and `./'"$f"'` (needs libfuse2, or add `--appimage-extract-and-run`).'
+            echo 'It passed the unit tests, the end-to-end tests and the AppImage smoke test on ubuntu-22.04. On a release run the publish job also attaches it to the release; otherwise it is a test build, kept for 14 days: use it only if the required jobs of this run (installer, tests, e2e, launcher, linux) are green (the macOS jobs are advisory). Run it with `chmod +x` and `./'"$f"'` (needs libfuse2, or add `--appimage-extract-and-run`).'
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The macOS bring-up job (docs/ROADMAP.md §19, release 0.7.0): unit tests on macOS, the Apple Silicon (arm64) dmg

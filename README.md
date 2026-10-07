@@ -104,7 +104,7 @@ The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow 
 ## macOS (Apple Silicon): test builds
 
 - **Not released yet** (planned for 0.7.0). CI builds `ReCut-<version>-macos-arm64.dmg` on an Apple Silicon runner
-  and launches it from the mounted dmg on every push; download it from a green run's **ReCut-macos** artifact
+  and launches it from the mounted dmg on every push; download it from the **ReCut-macos** artifact of a run whose macos job is green
   (Actions › Windows build › the run › Artifacts). Apple Silicon (M1 or newer) and macOS 12 or newer only; no Intel
   build. FFmpeg is bundled.
 - Open the dmg and drag ReCut to Applications. Until the build is signed with a Developer ID, macOS refuses the first

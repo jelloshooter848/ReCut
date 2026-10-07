@@ -96,8 +96,8 @@ release gates. They run in parallel, four on `windows-latest` and one on `ubuntu
 Two more jobs run on every build but are **advisory** while macOS is in bring-up (docs/ROADMAP.md §19): `macos`
 (on `macos-14`: unit tests, the Apple Silicon dmg, code-signature checks and a smoke test of the app inside the
 mounted dmg; artifact `ReCut-macos`) and `macos-e2e` (the Playwright suite on macOS). They are not gates: `publish`
-does not need them and does not attach the dmg, so a red macOS job does not stop a release, and "every job green" in
-this document means the five gates. The dmg is signed and notarized when the signing secrets are set
+does not need them and does not attach the dmg, so a red macOS job does not stop a release, and "green" in this
+document and in the run summaries means the five required gates (installer, tests, e2e, launcher, linux). The dmg is signed and notarized when the signing secrets are set
 ([MACOS-SIGNING.md](MACOS-SIGNING.md)). When macOS becomes official, follow the TODO above the `publish` job.
 
 Publishing happens in a separate last job, `publish`, which runs only on a release run and only when all five gates
@@ -243,7 +243,8 @@ To download a test build: open the repository's **Actions** tab → **Windows bu
 "Test build: download the installers from this run's Artifacts (ReCut-windows)") → **Artifacts** → **ReCut-windows**.
 GitHub downloads a zip with `ReCut-Setup-<version>.exe` and `ReCut-Portable-<version>.exe`; you must be signed in to
 GitHub. The Linux build is the **ReCut-linux** artifact of the same run, a zip with
-`ReCut-<version>-linux-x86_64.AppImage` (unzipping drops the executable bit: run `chmod +x` on it). Use a test build only if every job in its run is green. Users should install the release marked **Latest**.
+`ReCut-<version>-linux-x86_64.AppImage` (unzipping drops the executable bit: run `chmod +x` on it). Use a test build only if the five required jobs of its run (installer, tests, e2e, launcher, linux) are green; the
+advisory macOS jobs do not count (for the macOS dmg itself, its `macos` job must be green). Users should install the release marked **Latest**.
 
 To make a test build of a work branch, run the workflow by hand (*Run workflow*, `workflow_dispatch`) on that branch.
 
