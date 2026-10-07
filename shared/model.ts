@@ -430,7 +430,27 @@ export interface ExportSettings {
   burnSubtitles: boolean;
   exportSubtitleSidecar: boolean;
   useProxies: false;   // export always uses originals
+  // --- Output format (0.8.0). All optional: settings saved before have none and export as MP4. See shared/exportFormat.ts.
+  /** File format; absent = 'mp4'. MP4 uses videoCodec / audioCodec; MOV the intermediate codec with PCM audio; WAV / FLAC are audio only. */
+  container?: ExportContainer;
+  /** MOV video codec; absent = 'prores'. */
+  intermediateCodec?: IntermediateCodec;
+  /** ProRes profile; absent = 'hq'. */
+  proresProfile?: ProResProfile;
+  /** DNxHR profile; absent = 'hq'. */
+  dnxhrProfile?: DnxhrProfile;
+  /** Sample depth of PCM (MOV, WAV) and FLAC audio; absent = 24. */
+  audioBitDepth?: AudioBitDepth;
+  /** Audio-only formats: one file per audio track instead of one mixed file. */
+  audioPerTrack?: boolean;
 }
+
+/** Export file formats (§6). MKV (§7) is a later addition here. */
+export type ExportContainer = 'mp4' | 'mov' | 'wav' | 'flac';
+export type IntermediateCodec = 'prores' | 'dnxhr';
+export type ProResProfile = 'proxy' | 'lt' | 'standard' | 'hq' | '4444';
+export type DnxhrProfile = 'lb' | 'sq' | 'hq' | 'hqx' | '444';
+export type AudioBitDepth = 16 | 24;
 
 export interface ExportPreset { name: string; settings: Partial<ExportSettings> }
 
@@ -440,4 +460,9 @@ export const EXPORT_PRESETS: ExportPreset[] = [
   { name: '4K High Quality', settings: { width: 3840, height: 2160, videoCodec: 'libx264', qualityMode: 'crf', crf: 18, preset: 'medium', audioCodec: 'aac', audioBitrateKbps: 320, audioChannels: 2 } },
   { name: '720p Preview', settings: { width: 1280, height: 720, videoCodec: 'libx264', qualityMode: 'crf', crf: 28, preset: 'veryfast', audioCodec: 'aac', audioBitrateKbps: 128, audioChannels: 2 } },
   { name: '1080p 5.1 Surround', settings: { width: 1920, height: 1080, videoCodec: 'libx264', qualityMode: 'crf', crf: 18, preset: 'medium', audioCodec: 'ac3', audioBitrateKbps: 640, audioChannels: 6 } },
+  // Intermediate and audio-only presets keep the frame size, rate and channels (a preset without `container` is MP4).
+  { name: 'ProRes 422 HQ (MOV)', settings: { container: 'mov', intermediateCodec: 'prores', proresProfile: 'hq', audioBitDepth: 24 } },
+  { name: 'DNxHR HQ (MOV)', settings: { container: 'mov', intermediateCodec: 'dnxhr', dnxhrProfile: 'hq', audioBitDepth: 24 } },
+  { name: 'WAV 24-bit (audio only)', settings: { container: 'wav', audioBitDepth: 24, audioPerTrack: false } },
+  { name: 'WAV per audio track', settings: { container: 'wav', audioBitDepth: 24, audioPerTrack: true } },
 ];
