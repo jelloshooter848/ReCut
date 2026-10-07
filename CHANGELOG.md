@@ -30,7 +30,7 @@ every release like the Windows downloads. No changes to editing features; projec
 - The AppImage is about 240 MB (the Linux FFmpeg build is larger than the Windows one). AppImage only: no `.deb`,
   `.rpm`, Flatpak, Snap or ARM build, and it does not add itself to the application menu (an AppImage integration tool
   can). Tested on Ubuntu 22.04. See [LIMITATIONS](docs/LIMITATIONS.md).
-- Unchanged from 0.6.0: moved media rebuilds its cache ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)),
+- Unchanged from 0.6.0: moved media rebuilds its cache ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)),
   unsigned builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
 
 ## [0.6.0] - 2026-10-07

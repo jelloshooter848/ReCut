@@ -20,7 +20,8 @@ in every release PR (docs/RELEASING.md).
 | 3 | Pre-export warnings | Done | 0.5.0 |
 | 4 | Bitmap subtitle OCR (PGS / VobSub / DVB) | Done | 0.6.0 |
 | 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS next | 0.6.1 (Linux), 0.7.0 (macOS) |
-| 5–18 | Everything else | Not started | — |
+| 16 | Collect / Consolidate Project (with the moved-media cache fix) | Done | next release |
+| 5–15, 17, 18 | Everything else | Not started | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
 the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
@@ -359,7 +360,7 @@ sequences, and optionally subtitle sidecars and proxies) into one folder, and sa
 that folder. It shares groundwork with relative media roots (§17). Derived media should survive the move: today the
 cache key includes the absolute path, so thumbnails, waveforms and proxies are rebuilt after media moves
 (see [LIMITATIONS](LIMITATIONS.md#projects)).
-**Status: done (7 October 2026, release 0.10.0).** **File › Collect Project…** copies the project and its media
+**Status: done (7 October 2026; ships in the next release).** **File › Collect Project…** copies the project and its media
 (media used in sequences, or all project media; optionally subtitle files and ready proxies) into
 `<destination>/<Project name>/` (`Media/`, `Subtitles/`, `Proxies/`), as a cancellable job with byte progress that
 verifies each copy (size and fingerprint) and writes the project, with absolute paths rewritten to the copies, last.
