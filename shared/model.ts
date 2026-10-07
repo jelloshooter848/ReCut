@@ -385,6 +385,15 @@ export interface AppPreferences {
   layout?: Record<string, number>;
   /** tessdata code (shared/ocr.ts) last used for OCR, the OCR dialog's default when the track language says nothing. */
   ocrLastLanguage?: string;
+  /** Update notice (shared/update.ts): Preferences › Check for updates. Absent means 'ask'. */
+  updateCheck?: 'ask' | 'on' | 'off';
+  /** When the last update check was made (ms since the epoch), and whether GitHub answered it. */
+  updateLastCheckAt?: number;
+  updateLastCheckOk?: boolean;
+  /** The release the last answered check found, when it was newer than the version running then. */
+  updateLatest?: { version: string; url: string };
+  /** "Skip this version": the release whose notice the user turned off. */
+  updateSkipVersion?: string;
 }
 
 // ------------------------------------------------------------------

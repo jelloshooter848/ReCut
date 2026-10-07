@@ -24,6 +24,8 @@ import { PreferencesDialog } from '@/app/dialogs/PreferencesDialog';
 import { SpeedDialog } from '@/app/dialogs/SpeedDialog';
 import { RelinkDialog } from '@/panels/project/RelinkDialog';
 import { FfmpegBanner } from '@/app/FfmpegBanner';
+import { UpdateBanner } from '@/app/UpdateBanner';
+import { initUpdates } from '@/app/updates';
 import { ExportDialog } from '@/panels/export/ExportDialog';
 import { OcrLanguagesDialog } from '@/panels/ocr/OcrLanguagesDialog';
 import { OcrDialog } from '@/panels/ocr/OcrDialog';
@@ -58,6 +60,7 @@ function initApp(): void {
   initJobsRouter();
   bridgeStoreToasts();
   recutApi()?.appInfo().then(setFfmpegAvailability).catch(() => undefined);
+  initUpdates();
 }
 
 function ProjectTitle() {
@@ -104,7 +107,7 @@ export function App() {
   useEffect(() => { initApp(); }, []);
   return (
     <>
-      <Layout projectSlot={<ProjectTitle />} rightSlot={<GlobalButtons />} toolbar={<FfmpegBanner />} />
+      <Layout projectSlot={<ProjectTitle />} rightSlot={<GlobalButtons />} toolbar={<><FfmpegBanner /><UpdateBanner /></>} />
       <ContextMenuHost />
       <ToastHost />
       <ShortcutsDialog />

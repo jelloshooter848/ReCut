@@ -9,7 +9,7 @@
  *  edit.undo, edit.redo, edit.cut, edit.copy, edit.paste, edit.delete, edit.rippleDelete, edit.selectAll
  *  sequence.new, sequence.duplicate, sequence.addEdit, (Render & Export → file.export)
  *  view.zoomIn, view.zoomOut, view.zoomFit
- *  help.shortcuts, help.about
+ *  help.shortcuts, help.checkForUpdates, help.about
  * Open Recent entries send `ev:openProjectPath` with the file path instead.
  */
 import { app, Menu, MenuItemConstructorOptions, shell } from 'electron';
@@ -126,6 +126,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       cmd('Keyboard Shortcuts', 'help.shortcuts'),
       { label: 'FFmpeg Documentation', click: () => { void shell.openExternal('https://ffmpeg.org/documentation.html'); } },
       { type: 'separator' },
+      cmd('Check for Updates…', 'help.checkForUpdates'),
       cmd(`About ${app.getName()}`, 'help.about'),
     ],
   };
