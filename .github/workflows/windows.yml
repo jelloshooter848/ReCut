@@ -395,11 +395,30 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # xvfb for headless Electron (e2e and smoke test); libfuse2 so the AppImage mounts itself as it does for users.
-      - name: System packages (xvfb, libfuse2)
+      # xvfb (on the GitHub image already) is required: headless Electron for the e2e and smoke tests. libfuse2 is only
+      # for the AppImage's mounted smoke run. The Ubuntu package mirror has stalled on it (run #108 hung for 12 minutes,
+      # run #110 again), so a mirror problem must not block a release: each apt call is time-limited, and when libfuse2
+      # still cannot be installed the smoke test runs the AppImage extracted only, with a warning. The mounted run is
+      # FUSE's own loader and identical for every AppImage; the extracted run exercises everything ReCut ships.
+      - name: System packages (xvfb; libfuse2 when the mirror allows)
+        timeout-minutes: 12
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb libfuse2
+          set -u
+          apt_opts='-o Acquire::Retries=2 -o Acquire::http::Timeout=20'
+          apt_install() {
+            timeout 150 sudo apt-get $apt_opts install -y --no-install-recommends "$@" ||
+              { timeout 150 sudo apt-get $apt_opts update && timeout 150 sudo apt-get $apt_opts install -y --no-install-recommends "$@"; }
+          }
+          if ! dpkg -s xvfb > /dev/null 2>&1; then
+            apt_install xvfb || { echo '::error::could not install xvfb'; exit 1; }
+          fi
+          if dpkg -s libfuse2 > /dev/null 2>&1 || apt_install libfuse2; then
+            echo 'APPIMAGE_FUSE=1' >> "$GITHUB_ENV"
+          else
+            echo '::warning::libfuse2 could not be installed (package mirror); the AppImage smoke test runs extracted only'
+            echo 'APPIMAGE_FUSE=0' >> "$GITHUB_ENV"
+          fi
+          echo "installed: $(dpkg-query -W -f='${Package} ${Version}, ' xvfb libfuse2 2> /dev/null)"
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
 
@@ -457,11 +476,12 @@ jobs:
           grep -q '^Corresponding source$' "$ff/FFMPEG-BUILD.txt" || { echo '::error::FFMPEG-BUILD.txt has no Corresponding source section'; exit 1; }
           sed -n '1,/^ffmpeg -version$/p' "$ff/FFMPEG-BUILD.txt"
 
-      # Launches the AppImage twice, the two ways users can run it: mounted with FUSE (the default) and with
-      # --appimage-extract-and-run (no FUSE needed). Each run must serve byte ranges over recut-media:// (206), encode
-      # and probe a clip with the FFmpeg inside the AppImage (its path must be the AppImage's resources/ffmpeg, never
-      # one on PATH: the run starts outside the checkout with the checkout's FFmpeg off PATH), ship the FFmpeg licence
-      # files, start the OCR worker from app.asar.unpacked and mount the UI. The smoke file is the AppImage itself.
+      # Launches the AppImage twice, the two ways users can run it: mounted with FUSE (the default; skipped with a warning
+      # when libfuse2 could not be installed, see System packages) and with --appimage-extract-and-run (no FUSE needed).
+      # Each run must serve byte ranges over recut-media:// (206), encode and probe a clip with the FFmpeg inside the
+      # AppImage (its path must be the AppImage's resources/ffmpeg, never one on PATH: the run starts outside the checkout
+      # with the checkout's FFmpeg off PATH), ship the FFmpeg licence files, start the OCR worker from app.asar.unpacked
+      # and mount the UI. The smoke file is the AppImage itself.
       - name: Smoke-test the AppImage
         run: |
           set +e -uo pipefail   # the runner starts bash with -e; each run's result is checked below instead
@@ -470,7 +490,9 @@ jobs:
           ls -la "$app"
           cd "$RUNNER_TEMP"
           bad=0
-          for mode in mounted extracted; do
+          modes='mounted extracted'
+          if [ "${APPIMAGE_FUSE:-0}" != 1 ]; then modes='extracted'; echo '::warning::no libfuse2: smoke-testing the extracted AppImage only'; fi
+          for mode in $modes; do
             out="$RUNNER_TEMP/smoke-$mode.txt"
             args=(--no-sandbox)
             if [ "$mode" = extracted ]; then args=(--appimage-extract-and-run --no-sandbox); fi
