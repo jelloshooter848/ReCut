@@ -139,6 +139,7 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   (the folder is left marked incomplete); there is no resume, so collect again into an empty folder. Media not used
   in any sequence (with **Media used in sequences only**) and offline media keep their original paths in the copy.
   Collected projects still store absolute paths (relative media roots are [roadmap §17](ROADMAP.md#17-cloud-free-collaboration)).
+  A FAT32 drive cannot hold a file over 4 GB, so collecting a large remux there fails at that file.
 - **Limits on load:** timeline positions and durations are capped at 86,400,000 frames (24 h at 1000 fps, far more
   at normal rates), clip speed at 1 %–10 000 %, and nesting at 64 levels. An invalid sequence frame rate becomes
   23.976.

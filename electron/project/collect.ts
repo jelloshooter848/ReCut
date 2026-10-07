@@ -22,7 +22,7 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { JobInfo, Project } from '../../shared/model';
 import {
-  COLLECT_INCOMPLETE_MARKER, collectTotalsByKind, formatCollectBytes, planCollect, rewriteCollectedProject,
+  COLLECT_INCOMPLETE_MARKER, collectSources, collectTotalsByKind, formatCollectBytes, planCollect, rewriteCollectedProject,
   type CollectOptions, type CollectPlan, type CollectRequest, type CollectResult, type CollectSourceStat,
   type CollectStartResult, type CollectSummary,
 } from '../../shared/collect';
@@ -124,10 +124,7 @@ export async function prepareCollect(req: CollectRequest, deps: CollectDeps = {}
   try { destOk = (await fsp.stat(destination)).isDirectory(); } catch { /* missing */ }
   if (!destOk) problems.push(`The destination ${destination} does not exist or is not a folder.`);
 
-  const paths = new Set<string>();
-  const probe = planCollect(project, options, () => ({ exists: true, isFile: true, size: 0 }));
-  for (const e of probe.entries) paths.add(e.source);
-  for (const m of probe.missing) paths.add(m.path);
+  const paths = new Set(collectSources(project, options).map((s) => s.path));
   const stats = new Map<string, CollectSourceStat>();
   await Promise.all([...paths].map(async (p) => { stats.set(p, path.isAbsolute(p) ? await statSource(p) : { exists: false }); }));
   const plan = planCollect(project, options, (p) => stats.get(p));
