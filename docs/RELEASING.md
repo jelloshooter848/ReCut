@@ -11,8 +11,8 @@ ReCut uses [semantic versioning](https://semver.org/). Before 1.0 the version is
 | `1.0.0` | The owner's call, when every item under **Ready for 1.0** in [ROADMAP → Road to 1.0](ROADMAP.md#road-to-10) holds. Release candidates (`1.0.0-rc.1`, `rc.2`, …) come first; the release workflow publishes only `X.Y.Z` today and needs pre-release support for them before rc.1. |
 
 The version lives in `package.json` (and `package-lock.json`). The app reads it from there through Electron's
-`app.getVersion()` (Preferences › Version and Help › About), the Windows file names use it
-(`ReCut-Setup-<version>.exe`), and CI names releases after it. Do not write the version anywhere else.
+`app.getVersion()` (Preferences › Version and Help › About), the release file names use it
+(`ReCut-Setup-<version>.exe`, `ReCut-<version>-linux-x86_64.AppImage`), and CI names releases after it. Do not write the version anywhere else.
 
 **The project file format is versioned separately.** `formatVersion` in `.recut` files (`PROJECT_FORMAT_VERSION` in
 `shared/model.ts`, read and migrated in `shared/project.ts`) changes only when the file format changes, never because
@@ -41,20 +41,22 @@ hand: agents cannot push tags (their git proxy drops tag pushes), and the owner 
 3. **CI publishes.** The merge is a push to `main`, so `.github/workflows/windows.yml` runs. Its first step sees that
    the `package.json` version (`0.3.0`) has a `## [0.3.0]` section in `CHANGELOG.md` and that no tag `v0.3.0` exists
    yet, and makes this run a release. It then builds, smoke-tests the unpacked app, installs and uninstalls the
-   installer and launches the portable exe, while the Windows unit tests, end-to-end tests and launcher check run in
-   parallel. Only when all of them have passed does the final `publish` job publish the release: tag `v0.3.0` on the
-   merge commit (created by the publish job), name `ReCut 0.3.0`, not a prerelease, marked **Latest**, body = that
-   version's changelog section plus the install / SmartScreen note, with the installer and portable exe attached.
+   installer and launches the portable exe, while the Windows unit tests, end-to-end tests and launcher check and the
+   Linux job (unit and end-to-end tests, AppImage build and AppImage smoke test) run in parallel. Only when all of
+   them have passed does the final `publish` job publish the release: tag `v0.3.0` on the merge commit (created by the
+   publish job), name `ReCut 0.3.0`, not a prerelease, marked **Latest**, body = that version's changelog section plus
+   the install / SmartScreen / AppImage note, with the installer, the portable exe and the AppImage attached.
    See [What gates a release](#what-gates-a-release).
-4. Check the release page: both `.exe` files are attached and the notes read correctly. In the installer job's log,
-   the smoke test lists the licence files the build ships (see [Licence files every release ships](#licence-files-every-release-ships)).
+4. Check the release page: both `.exe` files and the `.AppImage` are attached and the notes read correctly. In the
+   installer job's and the linux job's logs, the smoke tests list the licence files the builds ship (see
+   [Licence files every release ships](#licence-files-every-release-ships)).
 
 Every later push to `main` finds `v0.3.0` already tagged and makes a [test build](#test-builds) (all gates, installers
 kept as a CI artifact, nothing published) until the next release PR is merged.
 
 **Only real versions appear on the Releases page** (owner's decision, 7 October 2026). CI never publishes a dev
 prerelease and never creates a `-dev.` tag; every run that is not a release is a test build whose installers are only
-the run's `ReCut-windows` artifact.
+the run's `ReCut-windows` artifact (and its AppImage the `ReCut-linux` artifact).
 
 **Never create the release or the tag by hand before the release PR is merged**, not in the web UI ("Draft a new
 release" / "Choose a tag") and not with git. A tag made that way points at whatever commit was selected (twice so
@@ -73,13 +75,15 @@ Details:
   merge's run, which then publishes the release from that newer commit (the version is still untagged).
 - Just before publishing, a release run checks the tag again. If `vX.Y.Z` appeared during the build (someone tagged or
   released by hand), the version is already released: the publish job logs a warning, publishes nothing, leaves that
-  release alone and finishes successfully. The run's installers are still in its `ReCut-windows` artifact.
+  release alone and finishes successfully. The run's installers are still in its `ReCut-windows` artifact and its
+  AppImage in `ReCut-linux`.
 - The tag is created by the workflow's `GITHUB_TOKEN`, and GitHub does not start workflows for events caused by
   `GITHUB_TOKEN`, so the new tag does not start a second build.
 
 ### What gates a release
 
-`.github/workflows/windows.yml` has four required jobs, the release gates. They run in parallel on `windows-latest`:
+`.github/workflows/windows.yml` (display name "Windows build"; it builds Linux too) has five required jobs, the
+release gates. They run in parallel, four on `windows-latest` and one on `ubuntu-22.04`:
 
 | Job | Checks |
 |---|---|
@@ -87,13 +91,14 @@ Details:
 | `tests` (Unit tests on Windows) | The vitest suite. |
 | `e2e` (End-to-end tests on Windows) | The Playwright suite driving the built app. |
 | `launcher` (Start ReCut.cmd from a fresh clone) | `Start ReCut.cmd -Smoke`. |
+| `linux` (Linux AppImage + tests) | On `ubuntu-22.04`: typecheck, the vitest suite and the Playwright suite under xvfb, all with the FFmpeg that gets bundled; builds the x86-64 AppImage with that FFmpeg (`scripts/linux/get-ffmpeg.sh`), checks the OCR packaging budget and the bundled FFmpeg files, and smoke-tests the AppImage twice, mounted with FUSE and with `--appimage-extract-and-run` (media protocol, encode + probe with the FFmpeg inside the AppImage, licence files, OCR worker, UI mounted). Uploads the `ReCut-linux` artifact. |
 
-Publishing happens in a separate last job, `publish`, which runs only on a release run and only when all four gates
-succeeded. It downloads the installer job's build and release notes, re-checks the tag, and publishes. If any gate
-fails, is cancelled or is skipped, `publish` is skipped. None of the gates is allowed to fail (`continue-on-error` is
-not used). On a test build `publish` is always skipped.
+Publishing happens in a separate last job, `publish`, which runs only on a release run and only when all five gates
+succeeded. It downloads the installer job's build, the Linux job's AppImage and the release notes, re-checks the tag,
+and publishes. If any gate fails, is cancelled or is skipped, `publish` is skipped. None of the gates is allowed to
+fail (`continue-on-error` is not used). On a test build `publish` is always skipped.
 
-Every run, release or test build, runs all four gates the same way. A run with any red gate publishes nothing and
+Every run, release or test build, runs all five gates the same way. A run with any red gate publishes nothing and
 creates no tag. `installer-stress` (manual only) is not a gate.
 
 **On a red run:** nothing was published. Look at the failed job, fix the problem in a normal PR (or push the fix to
@@ -106,32 +111,38 @@ gate pass by weakening, skipping or deleting a test, and never re-add `continue-
 
 ReCut is MIT-licensed; the FFmpeg it bundles is GPL and is distributed alongside it with its licence and source
 information (see [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)). A release that bundles FFmpeg must contain all
-of these, in the installed app and in the portable exe:
+of these, in the installed app, in the portable exe and in the AppImage:
 
 | File in the packaged app | Comes from |
 |---|---|
 | `resources/LICENSE` | `LICENSE` (ReCut, MIT), via `package.json` → `build.extraResources` |
 | `resources/THIRD_PARTY_NOTICES.md` | `THIRD_PARTY_NOTICES.md`, via `build.extraResources` |
-| `resources/ffmpeg/ffmpeg.exe`, `ffprobe.exe` | `scripts/windows/get-ffmpeg.ps1`, via the `resources/ffmpeg` entry (`**/*`) |
-| `resources/ffmpeg/FFMPEG-LICENSE.txt` | the licence file in the downloaded FFmpeg archive, copied by `get-ffmpeg.ps1` |
-| `resources/ffmpeg/FFMPEG-BUILD.txt` | written by `get-ffmpeg.ps1`: source URL, build name, `ffmpeg -version`, date, where to get the corresponding source |
-| `resources/ffmpeg/FFMPEG-README.txt` | the archive's readme, when it has one (gyan.dev builds do) |
-| `LICENSE.electron.txt`, `LICENSES.chromium.html` (next to `ReCut.exe`) | added by electron-builder |
+| `resources/ffmpeg/ffmpeg.exe`, `ffprobe.exe` (Windows); `resources/ffmpeg/ffmpeg`, `ffprobe` (Linux) | `scripts/windows/get-ffmpeg.ps1` / `scripts/linux/get-ffmpeg.sh`, via the `resources/ffmpeg` entry (`**/*`) |
+| `resources/ffmpeg/FFMPEG-LICENSE.txt` | the licence file in the downloaded FFmpeg archive, copied by the script |
+| `resources/ffmpeg/FFMPEG-BUILD.txt` | written by the script: source URL, build name, `ffmpeg -version`, date, where to get the corresponding source (the Linux one also names the platform and how the binaries are linked) |
+| `resources/ffmpeg/FFMPEG-README.txt` | the archive's readme, when it has one (gyan.dev builds do; the BtbN builds, used for Linux, do not) |
+| `LICENSE.electron.txt`, `LICENSES.chromium.html` (next to `ReCut.exe` / inside the AppImage next to `recut`) | added by electron-builder |
 
-- `get-ffmpeg.ps1` refuses an FFmpeg download that has no licence file and tries the next source, so a build cannot
-  bundle FFmpeg without `FFMPEG-LICENSE.txt` and `FFMPEG-BUILD.txt`.
-- The installer job's smoke test logs `smoke: licences shipped=... absent=...` for the unpacked app; on a release run
-  `absent=` should list nothing but, at most, `FFMPEG-README.txt`.
+- Both scripts refuse an FFmpeg download that has no licence file and try the next source, so a build cannot bundle
+  FFmpeg without `FFMPEG-LICENSE.txt` and `FFMPEG-BUILD.txt`. `get-ffmpeg.sh` also refuses binaries that are not
+  x86-64 or that link to shared libraries other than glibc's own (and libgcc_s), so the AppImage does not depend on
+  libraries a user's distribution may lack.
+- The installer job's and the linux job's smoke tests log `smoke: licences shipped=... absent=...` for the unpacked
+  app and the AppImage; on a release run `absent=` should list nothing but, at most, `FFMPEG-README.txt` (always
+  absent on Linux).
 - After changing a runtime dependency (`package.json` → `dependencies`), run `node scripts/third-party-notices.mjs`
   and commit the updated `THIRD_PARTY_NOTICES.md`; the unit suite fails while it is out of date.
-- Do not remove any of these files from the packaging config. If FFmpeg is ever bundled for Linux or macOS, the same
-  files must go next to those binaries (see `docs/INSTALL.md`, "Bundling FFmpeg").
-- **Before every release, check the FFmpeg source link still works.** The release does not carry FFmpeg's source
-  code; `FFMPEG-BUILD.txt` points to where it can be downloaded (the owner's decision, 7 October 2026: a link, not an
-  attached copy). After the release run, open the latest release build's log or the installed `FFMPEG-BUILD.txt`,
-  and confirm that the "Corresponding source" link (for gyan.dev builds, `https://ffmpeg.org/releases/ffmpeg-<version>.tar.xz`)
-  still downloads. If it no longer does, attach that version's source archive to the release by hand or switch to
-  attaching it in CI. The GPL expects the source to stay available for as long as the release is offered.
+- Do not remove any of these files from the packaging config. If FFmpeg is ever bundled for macOS, the same files
+  must go next to those binaries (see `docs/INSTALL.md`, "Bundling FFmpeg").
+- **Before every release, check the FFmpeg source links still work**, for Windows and Linux. The release does not
+  carry FFmpeg's source code; `FFMPEG-BUILD.txt` points to where it can be downloaded (the owner's decision, 7 October
+  2026: a link, not an attached copy). After the release run, open the latest release build's logs (the linux job
+  prints the Linux `FFMPEG-BUILD.txt` in its "Bundled FFmpeg files" step) or the shipped `FFMPEG-BUILD.txt`, and
+  confirm that the "Corresponding source" links still download: for gyan.dev builds
+  `https://ffmpeg.org/releases/ffmpeg-<version>.tar.xz`, for BtbN builds the FFmpeg commit archive
+  `https://github.com/FFmpeg/FFmpeg/archive/<commit>.tar.gz`. If one no longer does, attach that version's source
+  archive to the release by hand or switch to attaching it in CI. The GPL expects the source to stay available for as
+  long as the release is offered.
 
 ### Fallback: pushing the tag yourself
 
@@ -202,24 +213,26 @@ Rules:
 |---|---|---|
 | Push to `main`; `CHANGELOG.md` has `## [<version>]`; no tag `v<version>` yet | `v<version>` (created by CI) | Release `ReCut <version>`, marked Latest |
 | Push of tag `v<version>` (optional fallback) | `v<version>` (yours) | Release `ReCut <version>`, marked Latest |
-| Push to `main`; `v<version>` already tagged, or no changelog section | none | [Test build](#test-builds): `ReCut-windows` CI artifact only |
-| Push to another watched branch, or a manual run (`workflow_dispatch`) | none | [Test build](#test-builds): `ReCut-windows` CI artifact only |
+| Push to `main`; `v<version>` already tagged, or no changelog section | none | [Test build](#test-builds): `ReCut-windows` and `ReCut-linux` CI artifacts only |
+| Push to another watched branch, or a manual run (`workflow_dispatch`) | none | [Test build](#test-builds): `ReCut-windows` and `ReCut-linux` CI artifacts only |
 
-A release is published only when all four gates pass ([What gates a release](#what-gates-a-release)). Only real
+A release is published only when all five gates pass ([What gates a release](#what-gates-a-release)). Only real
 versions (`0.4.0`, `0.5.0`, …) ever appear on the Releases page: there are no prereleases.
 
 ### Test builds
 
 Every run that is not a release is a test build of an unreleased commit. It runs every gate exactly like a release
-(installer build, smoke test, install check, unit tests, end-to-end tests, launcher check), but creates no tag and
-publishes nothing. Its installer and portable exe are kept only as the run's `ReCut-windows` workflow artifact, for 14
-days. The file names carry the last released version (the version in `package.json` on that commit), so
-`ReCut-Setup-0.5.0.exe` from a test build is a build made after 0.5.0, not 0.5.0 itself.
+(installer build, smoke test, install check, unit tests, end-to-end tests, launcher check, the Linux job), but
+creates no tag and publishes nothing. Its installer and portable exe are kept only as the run's `ReCut-windows`
+workflow artifact and its AppImage as the `ReCut-linux` artifact, for 14 days. The file names carry the last released
+version (the version in `package.json` on that commit), so `ReCut-Setup-0.5.0.exe` from a test build is a build made
+after 0.5.0, not 0.5.0 itself.
 
 To download a test build: open the repository's **Actions** tab → **Windows build** → the run (its summary says
 "Test build: download the installers from this run's Artifacts (ReCut-windows)") → **Artifacts** → **ReCut-windows**.
 GitHub downloads a zip with `ReCut-Setup-<version>.exe` and `ReCut-Portable-<version>.exe`; you must be signed in to
-GitHub. Use a test build only if every job in its run is green. Users should install the release marked **Latest**.
+GitHub. The Linux build is the **ReCut-linux** artifact of the same run, a zip with
+`ReCut-<version>-linux-x86_64.AppImage` (unzipping drops the executable bit: run `chmod +x` on it). Use a test build only if every job in its run is green. Users should install the release marked **Latest**.
 
 To make a test build of a work branch, run the workflow by hand (*Run workflow*, `workflow_dispatch`) on that branch.
 

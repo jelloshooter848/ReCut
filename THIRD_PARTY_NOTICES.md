@@ -4,23 +4,24 @@ ReCut is licensed under the MIT License (see `LICENSE`). ReCut is distributed to
 that keeps its own licence. This file lists that software, its licence and where to find more information.
 
 In a packaged build, `LICENSE` and this file are in the `resources` folder of the installation (for the Windows
-installer, by default `%LOCALAPPDATA%\Programs\ReCut\resources`). In the app, **Help › About › Licences** opens them
-and the other licence files listed below.
+installer, by default `%LOCALAPPDATA%\Programs\ReCut\resources`; in the Linux AppImage, `resources/` inside the
+AppImage, which `--appimage-extract` unpacks). In the app, **Help › About › Licences** opens them and the other
+licence files listed below.
 
-## FFmpeg (bundled with the Windows builds)
+## FFmpeg (bundled with the Windows builds and the Linux AppImage)
 
 | | |
 |---|---|
-| Files | `resources\ffmpeg\ffmpeg.exe`, `resources\ffmpeg\ffprobe.exe` |
+| Files | Windows: `resources\ffmpeg\ffmpeg.exe`, `resources\ffmpeg\ffprobe.exe`; Linux AppImage: `resources/ffmpeg/ffmpeg`, `resources/ffmpeg/ffprobe` |
 | Licence | GNU General Public License, version 3 or later (GPL-3.0-or-later), for the builds ReCut bundles |
-| Licence text | `resources\ffmpeg\FFMPEG-LICENSE.txt` (copied unchanged from the downloaded FFmpeg archive) |
-| Exact build and source | `resources\ffmpeg\FFMPEG-BUILD.txt` |
-| Build readme | `resources\ffmpeg\FFMPEG-README.txt`, when the build has one (gyan.dev builds list their libraries and versions there) |
+| Licence text | `resources/ffmpeg/FFMPEG-LICENSE.txt` (copied unchanged from the downloaded FFmpeg archive) |
+| Exact build and source | `resources/ffmpeg/FFMPEG-BUILD.txt` |
+| Build readme | `resources/ffmpeg/FFMPEG-README.txt`, when the build has one (gyan.dev builds list their libraries and versions there; the BtbN Linux builds have none) |
 | Project | <https://ffmpeg.org/> |
 
-FFmpeg is a separate program. ReCut does not link to it: ReCut starts `ffmpeg.exe` and `ffprobe.exe` as child
-processes and exchanges data with them through command-line arguments, pipes and files. They are distributed
-alongside ReCut, under their own licence. ReCut's MIT licence does not cover them.
+FFmpeg is a separate program. ReCut does not link to it: ReCut starts `ffmpeg` and `ffprobe` (`ffmpeg.exe` and
+`ffprobe.exe` on Windows) as child processes and exchanges data with them through command-line arguments, pipes and
+files. They are distributed alongside ReCut, under their own licence. ReCut's MIT licence does not cover them.
 
 The Windows release build downloads FFmpeg with `scripts/windows/get-ffmpeg.ps1`: the current
 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) "release essentials" build, or a
@@ -30,22 +31,30 @@ H.264 export), so the binaries as a whole are licensed under the GPL version 3 o
 libraries under their own licences (LGPL, BSD, MIT and others); the `configuration:` line in `FFMPEG-BUILD.txt` names
 every library compiled in.
 
-**Corresponding source.** `FFMPEG-BUILD.txt` is written by the same script when the build is downloaded. It records
+The Linux AppImage build downloads FFmpeg with `scripts/linux/get-ffmpeg.sh`: a
+[BtbN](https://github.com/BtbN/FFmpeg-Builds) `linux64-gpl` release-branch build (9.0, or 8.1 as a fallback) for
+x86-64 Linux. It is configured the same way (`--enable-gpl --enable-version3`, with libx264 and the other libraries
+named in its `configuration:` line) and is licensed under the GPL version 3 or later as a whole. Its libraries are
+linked into the two programs, which depend only on the system's C library (glibc); `FFMPEG-BUILD.txt` records the
+platform and the linking.
+
+**Corresponding source.** `FFMPEG-BUILD.txt` is written by the download script when the build is downloaded. It records
 the URL the build came from, the build name, the full `ffmpeg -version` output (version and configuration), the
 download date, and where to get the corresponding source:
 
 - gyan.dev builds: the FFmpeg release source, `https://ffmpeg.org/releases/ffmpeg-<version>.tar.xz`, and the build
   page <https://www.gyan.dev/ffmpeg/builds/>, which documents the build and its libraries;
-- BtbN builds: the FFmpeg commit the build was made from (`https://github.com/FFmpeg/FFmpeg/commit/<hash>`, from the
-  version string) and the build scripts at <https://github.com/BtbN/FFmpeg-Builds>, which pin the source revision of
-  every library.
+- BtbN builds (the Linux AppImage, and the Windows fallback): the FFmpeg commit the build was made from
+  (`https://github.com/FFmpeg/FFmpeg/commit/<hash>` and its source archive, from the version string) and the build
+  scripts at <https://github.com/BtbN/FFmpeg-Builds>, which pin the source revision of every library.
 
 If you cannot get the corresponding source for the FFmpeg build in a ReCut release from those links, open an issue at
 <https://github.com/jelloshooter848/ReCut/issues> naming the ReCut version, and the project will provide it.
 
 FFmpeg that you download yourself, including the copy `Start ReCut.cmd` downloads into `resources\ffmpeg` of a cloned
-repository, is not redistributed by ReCut; the same licence files are written next to it. Linux and macOS packages do
-not bundle FFmpeg unless you add it yourself (see `docs/INSTALL.md`, "Bundling FFmpeg", for what to include).
+repository, is not redistributed by ReCut; the same licence files are written next to it. macOS packages, and Linux
+packages you build yourself, do not bundle FFmpeg unless you add it (see `docs/INSTALL.md`, "Bundling FFmpeg", for
+what to include; on Linux, `scripts/linux/get-ffmpeg.sh` does it).
 
 ## Electron and Chromium
 
@@ -60,6 +69,18 @@ electron-builder ships their licences next to the executable (for example next t
 - `LICENSES.chromium.html`: the licences of Chromium and every third-party component it includes.
 
 Electron source: <https://github.com/electron/electron> (tag `v<version>`, the version listed below).
+
+### AppImage runtime and libraries (Linux AppImage only)
+
+electron-builder packs the Linux build as an AppImage. Besides ReCut and Electron, the AppImage file contains the
+[AppImage](https://github.com/AppImage/AppImageKit) type 2 runtime (the start of the file, which mounts or extracts
+the rest; MIT licence) and, in `usr/lib` inside the AppImage, a few desktop-integration libraries electron-builder adds
+to every AppImage so that Electron runs on systems that lack them: `libXss.so.1` and `libXtst.so.6` (X.Org, MIT/X11
+licence), `libnotify.so.4`, `libappindicator.so.1` and `libgconf-2.so.4` (LGPL) and `libindicator.so.7` (GPL-3.0).
+They are copied unchanged from electron-builder's AppImage tooling (`appimage-12.0.1`). Their sources are available
+from their projects (<https://gitlab.freedesktop.org/xorg/lib>, <https://gitlab.gnome.org/GNOME/libnotify>,
+<https://launchpad.net/libappindicator>, <https://gitlab.gnome.org/Archive/gconf>,
+<https://launchpad.net/libindicator>) and as the Ubuntu source packages of the same names.
 
 ## Tesseract OCR (built in, for reading bitmap subtitles)
 

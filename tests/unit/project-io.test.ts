@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createProject } from '../../shared/project';
 import {
   saveProjectFile, loadProjectFile, writeAutosave, checkRecovery, discardRecovery, autosavePathFor,
@@ -348,6 +349,13 @@ describe('projectPathFromArgv (QA-33)', () => {
   });
   it('relative paths resolve against the given working directory', () => {
     expect(projectPathFromArgv(['rel/p.recut'], '/work')).toBe(path.resolve('/work', 'rel/p.recut'));
+  });
+  it('file:// URIs from a Linux desktop entry (%U) become paths; other URIs are ignored', () => {
+    const url = pathToFileURL(path.resolve('/tmp/my cut/edit #2.recut')).href;
+    expect(projectPathFromArgv(['/opt/ReCut/recut', url])).toBe(path.resolve('/tmp/my cut/edit #2.recut'));
+    expect(projectPathFromArgv(['.', '--project', url])).toBe(path.resolve('/tmp/my cut/edit #2.recut'));
+    expect(projectPathFromArgv(['.', 'https://example.com/x.recut'])).toBeNull();
+    expect(projectPathFromArgv(['/a/one.recut', 'smb://host/share/two.recut'])).toBe(path.resolve('/a/one.recut'));
   });
 });
 
