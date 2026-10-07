@@ -208,17 +208,27 @@ describe('codec zoo through the real exporter', () => {
 describe('proxy audio stream choice', () => {
   const cacheDir = path.join(SCRATCH, 'cache');
   process.env.RECUT_CACHE_DIR = cacheDir;
-  it('multi.mkv with preferredAudioStream = 2 (jpn 5.1, 880 Hz): the proxy the editor plays should carry 880 Hz, like the export', async () => {
+  it('multi.mkv with preferredAudioStream = 2 (jpn 5.1, 880 Hz): the proxy carries every stream, track k = the k-th source stream, and the stream the export plays is in it', async () => {
     fs.mkdirSync(cacheDir, { recursive: true });
     const m = await makeMediaItem(mediaPath('multi.mkv'), { preferredAudioStream: 2 });
     expect(m.probe!.browserPlayable).toBe(false); // ac3 => preview MUST use the proxy
     const q = new JobQueue();
-    // The renderer passes media.preferredAudioStream (src/state/mediaActions.ts startProxy).
-    const { job, outputPath } = await startProxyJob(q, { mediaId: 'multi', path: m.path, height: 240, audioStream: m.preferredAudioStream });
+    const { job, outputPath } = await startProxyJob(q, { mediaId: 'multi', path: m.path, height: 240 });
     const final = await q.waitFor(job.id);
     expect(final.status).toBe('done');
+    expect(outputPath).toMatch(/_240p_all\.mp4$/);
+    expect((final.result as { audioStreams: number[] }).audioStreams).toEqual(m.probe!.audio.map((a) => a.index));
     const pp = await probeMedia(outputPath);
-    const proxyHz = await zeroCrossHz(outputPath, 0.5, 2.5);
+    expect(pp.audio.length).toBe(m.probe!.audio.length);
+    expect(pp.audio.every((a) => a.codec === 'aac')).toBe(true);
+    // Each proxy track has its source stream's tone: #1 440 Hz, #2 880 Hz.
+    const tones = await Promise.all(pp.audio.map((_, k) => zeroCrossHz(outputPath, 0.5, 2.5, `0:a:${k}`)));
+    console.log(`[proxy streams] source ${m.probe!.audio.map((a) => `#${a.index} ${a.codec}`).join(', ')} -> proxy tones ${tones.map((t) => t.toFixed(0)).join(', ')} Hz`);
+    expect(Math.abs(tones[0] - 440)).toBeLessThan(40);
+    expect(Math.abs(tones[1] - 880)).toBeLessThan(40);
+    // The renderer plays audio track ordinal(preferred) of the proxy (src/playback/mediaSource.ts audioTrackOrdinal).
+    const ordinal = m.probe!.audio.findIndex((a) => a.index === 2);
+    const proxyHz = tones[ordinal];
     const seq = makeSeq(FPS_24);
     vclip(seq, m, 0, 48, 1); aclip(seq, m, 0, 48, 1).audioStream = undefined; // falls back to media.preferredAudioStream
     const { outputPath: ex } = await exportSeq(seq, [m]);

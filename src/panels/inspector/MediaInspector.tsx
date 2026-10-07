@@ -104,7 +104,7 @@ function SingleMedia({ m }: { m: MediaItem }) {
             onBlur={(e) => { if (e.target.value !== m.notes) updateMedia(m.id, { notes: e.target.value }); }} onKeyDown={(e) => e.stopPropagation()} />
         </Row>
         {p && p.audio.length > 0 ? (
-          <Row label="Audio stream" prop="preferred-audio" title="Audio stream used for new clips">
+          <Row label="Audio stream" prop="preferred-audio" title="Audio stream for new clips and the Source Monitor (each clip can pick its own in the Clip Inspector)">
             <Select size="sm" value={m.preferredAudioStream === undefined ? 'auto' : String(m.preferredAudioStream)} options={audioOptions}
               onChange={(v) => setMediaAudioStream(m.id, v === 'auto' ? undefined : Number(v))} />
           </Row>

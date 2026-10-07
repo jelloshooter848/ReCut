@@ -106,14 +106,13 @@ describe('probe fields per codec/container', () => {
 });
 
 describe('proxy stream selection', () => {
-  it('proxy args map 0:a:0 even when the preferred/clip audio stream is the second one (no way to pass a stream)', () => {
-    const args = buildProxyArgs({ mediaId: 'x', path: mediaPath('multi.mkv'), height: 540 }, { targetHeight: 240, hasVideo: true, hasAudio: true, outPart: '/tmp/x.part' });
-    const i = args.indexOf('-map', args.indexOf('-map') + 1);
-    console.log(`[proxy args] ${args.join(' ')}`);
-    expect(args[i + 1]).toBe('0:a:0?');
-    // ProxyRequest has no field for the audio stream => the jpn/5.1 stream (index 2) can never be proxied.
-    const reqKeys = Object.keys({ mediaId: 'x', path: 'p', height: 540 } as import('@shared/ipc').ProxyRequest);
-    expect(reqKeys).not.toContain('audioStream');
+  it('proxy args map every audio stream, whatever stream is requested, so any clip stream can be previewed', () => {
+    for (const audioStream of [undefined, 1, 2]) {
+      const args = buildProxyArgs({ mediaId: 'x', path: mediaPath('multi.mkv'), height: 540, audioStream }, { targetHeight: 240, hasVideo: true, hasAudio: true, outPart: '/tmp/x.part' });
+      console.log(`[proxy args] ${args.join(' ')}`);
+      expect(args.filter((a, i) => args[i - 1] === '-map')).toEqual(['0:v:0', '0:a?']);
+      expect(args[args.indexOf('-c:a') + 1]).toBe('aac');
+    }
   });
   it('cover art: mkv attachment and mp3 APIC are skipped by the probe; the proxy/thumbnail 0:v:0 mapping is then consistent', async () => {
     const mkv = await probeMedia(mediaPath('attach.mkv'));
