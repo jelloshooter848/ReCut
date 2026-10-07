@@ -5,6 +5,55 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
+## [0.7.0] - 2026-10-07
+
+Portability and trust (the 0.10.0 milestone of the [Road to 1.0](docs/ROADMAP.md#road-to-10), shipped early): projects
+move between drives and machines without rebuilding anything, every release keeps opening older projects, and ReCut
+can tell you when a new version is out. Project files stay `formatVersion` 1.
+
+### Added
+
+- **File › Collect Project…** copies the project and the media it uses (only media in sequences, or all project media;
+  optionally subtitle files and ready proxies) into one folder, `<destination>/<Project name>/`, and saves the copy
+  with its paths pointing at the copies. Before copying it shows the total size against the free space and lists
+  offline media; files with the same name from different folders get their own subfolders (`Media/Disc 1/…`,
+  `Media/Disc 2/…`). Every copy is checked against the original. The copy runs as a job you can cancel; if it fails or
+  is cancelled, a `COLLECT-INCOMPLETE.txt` file stays in the folder and your original project and media are never
+  touched.
+- **Update notice** (opt-in): on first start ReCut asks once whether it may check GitHub for a new version once a
+  day. If you say yes and a newer release exists, a bar offers **Release notes** and **Skip this version**. Nothing is
+  downloaded or installed automatically. **Help › Check for Updates…** checks once on demand; Preferences shows the
+  setting and the last check. See [USER-GUIDE](docs/USER-GUIDE.md) for exactly what the check sends.
+
+### Fixed
+
+- Moving, renaming, copying or relinking media no longer rebuilds its thumbnails, filmstrip, waveform, proxy, scene
+  cuts or OCR results: they are now keyed by the file's content (its size and a sample of its bytes, read once) instead
+  of its path and modification time. Caches made by earlier versions are still found and reused
+  ([report](bugs/closed/2026-10-05-moved-media-cache-miss.md)).
+
+### Development
+
+- **Compatibility promise** ([project-format](docs/project-format.md#compatibility-promise)): 1.x opens projects saved
+  by every earlier stable release, or refuses them with a clear message, and never silently damages them. Projects
+  saved by each release from 0.3.0 on (`tests/fixtures/projects/`, made by that release's own code) are opened on
+  every build, and each release PR adds its own (`scripts/make-project-fixture.mjs`).
+- **macOS:** the Apple Silicon dmg (`ReCut-<version>-macos-arm64.dmg`, macOS 12 or later, FFmpeg from jellyfin-ffmpeg
+  8.1) is built, mounted and smoke-tested, and the end-to-end suite runs on macOS, on every build. These jobs are
+  advisory and the dmg is not on the release page yet: it becomes official once it is signed and notarised
+  ([signing guide](docs/MACOS-SIGNING.md)). Help › About › Licences finds the Electron and Chromium licences in the
+  macOS app.
+- CI: a stalled Ubuntu package mirror no longer holds up a release (the Linux AppImage smoke test runs extracted only,
+  with a warning, when libfuse2 cannot be installed).
+
+### Known issues
+
+- Collect Project copies only (no move), cannot resume an interrupted copy, and cannot write files over 4 GB to a
+  FAT32 drive. A media file edited in place without changing its size, where every change falls between the sampled
+  blocks, keeps its old thumbnails and proxy until the cache folder is cleared. See [LIMITATIONS](docs/LIMITATIONS.md).
+- Unchanged: unsigned builds (Windows SmartScreen warns on first start), NSIS 3.0.4 (CVE-2025-43715, only when an
+  installer runs as SYSTEM), no macOS download yet.
+
 ## [0.6.1] - 2026-10-07
 
 ReCut on Linux ([Roadmap](docs/ROADMAP.md) §19): an official x86-64 AppImage with FFmpeg built in, built and tested on

@@ -20,7 +20,8 @@ export async function launchApp(opts: { tmp?: string; env?: Record<string, strin
   const app = await electron.launch({
     args: [path.join(ROOT, 'dist/electron/main.js'), '--no-sandbox'],
     cwd: ROOT,
-    env: { ...process.env, RECUT_USER_DATA: userData, RECUT_CACHE_DIR: cacheDir, RECUT_DISABLE_GPU: '1', ...(opts.env ?? {}) },
+    // RECUT_UPDATE_CHECK=0: no update opt-in prompt and no update check (tests/e2e/update.spec.ts turns it back on).
+    env: { ...process.env, RECUT_USER_DATA: userData, RECUT_CACHE_DIR: cacheDir, RECUT_DISABLE_GPU: '1', RECUT_UPDATE_CHECK: '0', ...(opts.env ?? {}) },
   });
   // Closing a project with unsaved changes now (correctly) asks Save/Don't Save/Cancel, which would hang
   // teardown. Tests that care about the prompt drive it explicitly; plain close() discards changes.

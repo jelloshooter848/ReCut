@@ -25,7 +25,7 @@ if (!noBuild) {
 const hasMain = !forceFallback && fs.existsSync(path.join(root, 'dist/electron/main.js'));
 const args = hasMain ? ['.', '--no-sandbox'] : ['scripts/dev-shell-main.cjs', '--no-sandbox'];
 console.log(`[screenshot] launching electron ${args[0]}`);
-const app = await electron.launch({ args, cwd: root, env: { ...process.env, RECUT_HEADLESS: '1' }, timeout: 60000 });
+const app = await electron.launch({ args, cwd: root, env: { ...process.env, RECUT_HEADLESS: '1', RECUT_UPDATE_CHECK: '0' }, timeout: 60000 });
 app.process().stderr?.on('data', (d) => { const s = String(d); if (/error/i.test(s)) process.stderr.write(s); });
 const page = await app.firstWindow();
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log(`[renderer:${m.type()}]`, m.text()); });
