@@ -68,9 +68,10 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **Anamorphic (non-square pixel) media:** export and thumbnails un-squeeze it from the probed sample aspect ratio.
   The preview relies on Chromium applying the pixel aspect ratio itself (the `<video>` display size); this has not
   been compared with the export for every container.
-- **VFR sources** are flagged in the Media Inspector ("timecodes may drift; consider a proxy"). In the media attack
-  suite, exports of VFR clips match the editor's frame model, but Chromium's own seeking on VFR files has not been
-  measured. For frame-critical work on VFR material, use a proxy or a constant-frame-rate transcode.
+- **VFR sources** are flagged in the Media Inspector ("timecodes may drift; consider a proxy") and in the Export
+  dialog's Checks. In the media attack suite, exports of VFR clips match the editor's frame model, but Chromium's own
+  seeking on VFR files has not been measured. For frame-critical work on VFR material, use a proxy or a
+  constant-frame-rate transcode.
 - No dedicated GPU decode or render path. Decoding is whatever Chromium does for `<video>`. Set
   `RECUT_DISABLE_GPU=1` if the GPU misbehaves.
 
@@ -91,6 +92,8 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **Frame-rate conversion** (an export frame rate other than the sequence's) repeats or drops whole frames. There is
   no frame blending or motion interpolation, so 23.976 → 30 shows a regular repeat cadence and 23.976 ↔ 24 repeats
   or drops one frame about every 42 s. Duration and audio sync are not affected.
+- **Pre-export warnings** (Export dialog › Checks) do not cover abrupt level jumps at cuts or subtitle timing drift:
+  both need an analysis pass over the media.
 - **AC-3 audio** is limited to 32, 44.1 and 48 kHz (the FFmpeg encoder's rates). 96 kHz is available with AAC only.
 - **Output names are compared case-insensitively on every platform.** An export (video, sidecar `.srt`, or a
   Subtitles panel SRT/VTT export) whose path differs from a project source file only in letter case is refused,
