@@ -819,8 +819,9 @@ describe('proxy vs preferred audio stream', () => {
       setMediaAudioStream(undecodable.id, 2);
       setMediaAudioStream(playable.id, 2);
       await Promise.resolve();
-      expect(reqs.map((r) => [r.mediaId, r.audioStream])).toEqual([[undecodable.id, 2]]);
-      expect(S().project.media[undecodable.id].proxy).toMatchObject({ status: 'queued', audioStream: 2 });
+      // The new proxy carries every audio stream: the request names none and the queued proxy records none.
+      expect(reqs.map((r) => [r.mediaId, r.audioStream])).toEqual([[undecodable.id, undefined]]);
+      expect(S().project.media[undecodable.id].proxy).toEqual({ status: 'queued', progress: 0 });
       expect(S().project.media[playable.id].proxy.status).toBe('none');
     } finally {
       g.window = prev;

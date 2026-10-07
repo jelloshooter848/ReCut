@@ -1,6 +1,8 @@
 /**
- * Proxy transcodes: small, GOP-12 H.264 + stereo AAC copies used for smooth scrubbing.
- * Output `proxies/<key>_<height>p.mp4` (audio-only sources produce an audio-only mp4 at the same path).
+ * Proxy transcodes: small, GOP-12 H.264 + AAC copies used for smooth scrubbing. Every audio stream of the source is
+ * carried, in source order (one AAC track each), so the preview can play any clip's stream from one proxy.
+ * Output `proxies/<key>_<height>p_all.mp4` (audio-only sources produce an audio-only mp4 at the same path).
+ * Older proxies carried one stream: `<key>_<height>p_a<N>.mp4` (stream N) or `<key>_<height>p.mp4` (the first).
  * Written to a `.part` file and renamed on success so interrupted proxies never look complete.
  */
 import fsp from 'node:fs/promises';
@@ -19,8 +21,8 @@ export interface ProxyResult {
   height?: number;
   /** True when a finished proxy was already in the cache. */
   cached: boolean;
-  /** Absolute audio stream index baked into the proxy (undefined: the source's first audio stream). */
-  audioStream?: number;
+  /** Absolute ffprobe indexes of the source audio streams the proxy carries, in its track order (all of them). */
+  audioStreams: number[];
 }
 
 function evenDown(n: number): number {
@@ -28,14 +30,12 @@ function evenDown(n: number): number {
   return n % 2 ? n - 1 : n;
 }
 
-function validStream(n: number | undefined): n is number {
-  return typeof n === 'number' && Number.isInteger(n) && n >= 0;
-}
-
-/** Cache path of a proxy; the selected audio stream is part of the key (a proxy carries one audio stream). */
-export function proxyOutputPath(key: string, height: number, audioStream?: number): string {
-  const a = validStream(audioStream) ? `_a${audioStream}` : '';
-  return path.join(cacheSubdir('proxies'), `${key}_${evenDown(height > 0 ? height : 540)}p${a}.mp4`);
+/**
+ * Cache path of a proxy. `_all`: it carries every audio stream. The suffix keeps it apart from the older
+ * single-stream proxies (`_<h>p.mp4` = first stream, `_<h>p_a<N>.mp4` = stream N), which stay valid for their stream.
+ */
+export function proxyOutputPath(key: string, height: number): string {
+  return path.join(cacheSubdir('proxies'), `${key}_${evenDown(height > 0 ? height : 540)}p_all.mp4`);
 }
 
 /** Build the ffmpeg argument list for a proxy transcode (exported for inspection/tests). */
@@ -58,8 +58,9 @@ export function buildProxyArgs(req: ProxyRequest, opts: { targetHeight: number; 
   }
   if (opts.hasAudio) {
     const ch = req.audioChannels && req.audioChannels > 0 ? Math.min(req.audioChannels, 2) : 2;
-    // The media's selected stream (absolute index) so the preview plays what the export renders (M-05).
-    args.push('-map', validStream(req.audioStream) ? `0:${req.audioStream}` : '0:a:0?', '-c:a', 'aac', '-b:a', '160k', '-ac', String(ch));
+    // Every audio stream in source order (track k of the proxy = the k-th audio stream of the probe), so the preview
+    // plays each clip's selected stream, as the export does (M-05). `-c:a`, `-b:a` and `-ac` apply to each of them.
+    args.push('-map', '0:a?', '-c:a', 'aac', '-b:a', '160k', '-ac', String(ch));
   } else {
     args.push('-an');
   }
@@ -80,11 +81,9 @@ async function removeStaleParts(out: string): Promise<void> {
 }
 
 /** The actual transcode. Exposed so other job kinds can reuse it; prefer `startProxyJob`. */
-export async function runProxy(req0: ProxyRequest, ctx: JobRunContext): Promise<ProxyResult> {
-  const probe = await probeMedia(req0.path);
-  // A stream index that is not an audio stream of this file falls back to the first audio stream.
-  const req: ProxyRequest = validStream(req0.audioStream) && !probe.audio.some((a) => a.index === req0.audioStream)
-    ? { ...req0, audioStream: undefined } : req0;
+export async function runProxy(req: ProxyRequest, ctx: JobRunContext): Promise<ProxyResult> {
+  const probe = await probeMedia(req.path);
+  const audioStreams = probe.audio.map((a) => a.index);
   const hasVideo = !!probe.video && probe.duration > 0;
   const hasAudio = probe.audio.length > 0;
   if (!hasVideo && !hasAudio) throw new Error('source has neither video nor audio');
@@ -93,13 +92,13 @@ export async function runProxy(req0: ProxyRequest, ctx: JobRunContext): Promise<
   const reqHeight = evenDown(req.height > 0 ? req.height : 540);
   const srcHeight = probe.video?.height ?? 0;
   const targetHeight = Math.max(2, hasVideo && srcHeight > 0 ? Math.min(reqHeight, evenDown(srcHeight)) : reqHeight);
-  const out = proxyOutputPath(key, reqHeight, req0.audioStream);
+  const out = proxyOutputPath(key, reqHeight);
 
   if (await fileExists(out)) {
     const info = await probeMedia(out).catch(() => undefined);
     if (info && info.duration > 0) {
       ctx.setProgress(1, 'Cached');
-      return { path: out, width: info.video?.width, height: info.video?.height, cached: true, audioStream: validStream(req.audioStream) ? req.audioStream : undefined };
+      return { path: out, width: info.video?.width, height: info.video?.height, cached: true, audioStreams };
     }
     await removeQuietly(out); // corrupt leftover
   }
@@ -133,7 +132,7 @@ export async function runProxy(req0: ProxyRequest, ctx: JobRunContext): Promise<
   await fsp.rename(outPart, out);
   const info = await probeMedia(out).catch(() => undefined);
   ctx.setProgress(1, 'Done');
-  return { path: out, width: info?.video?.width, height: info?.video?.height, cached: false, audioStream: validStream(req.audioStream) ? req.audioStream : undefined };
+  return { path: out, width: info?.video?.width, height: info?.video?.height, cached: false, audioStreams };
 }
 
 /**
@@ -146,7 +145,7 @@ export async function startProxyJob(
   onDone?: (job: JobInfo, result: ProxyResult | null, error: string | null) => void,
 ): Promise<{ job: JobInfo; outputPath: string }> {
   const key = await cacheKeyForPath(req.path);
-  const outputPath = proxyOutputPath(key, evenDown(req.height > 0 ? req.height : 540), req.audioStream);
+  const outputPath = proxyOutputPath(key, evenDown(req.height > 0 ? req.height : 540));
   // De-dupe: a proxy for this output is already queued/running -> hand back that job.
   const existing = inFlightJob(queue, inFlightProxies, outputPath);
   if (existing) return { job: existing, outputPath };

@@ -218,6 +218,11 @@ export interface StoreActions {
   unlinkSelected(seqId?: ID): void;
   setClipTransform(seqId: ID, clipId: ID, patch: Partial<ClipTransform>): void;
   setClipAudio(seqId: ID, clipId: ID, patch: Partial<ClipAudio>): void;
+  /**
+   * Audio stream of audio clips (absolute ffprobe index; undefined = the media's preferred stream). One undo step;
+   * a proxy that lacks the stream is marked stale (status 'none'), as updateMedia does for the preferred stream.
+   */
+  setClipAudioStream(seqId: ID, clipIds: ID[], index: number | undefined): void;
   setClipSpeed(seqId: ID, clipId: ID, speed: number, opts?: { ripple?: boolean }): void;
   setClipTags(seqId: ID, clipId: ID, patch: ClipTagsPatch): void;
   addTransitionAtCut(seqId: ID, trackId: ID, frame: number, type: TransitionType, frames?: number): Transition | null;

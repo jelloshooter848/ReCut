@@ -50,7 +50,7 @@ export interface MediaHandlers {
   thumbnail(req: ThumbnailRequest): Promise<string>;
   filmstrip(req: FilmstripRequest): Promise<string[]>;
   cancelThumbnails(requestIds: string[]): Promise<void>;
-  waveform(path: string, mediaId?: ID): Promise<WaveformData>;
+  waveform(path: string, mediaId?: ID, streamIndex?: number): Promise<WaveformData>;
   startProxy(req: ProxyRequest): Promise<JobInfo>;
   startSceneDetect(req: SceneDetectRequest): Promise<JobInfo>;
   extractSubtitles(path: string, streamIndex: number): Promise<string>;
@@ -79,7 +79,8 @@ export function registerMediaIpc(h: MediaHandlers): void {
   ipcMain.handle(IPC.mediaThumbnail, (_e, req: ThumbnailRequest) => h.thumbnail(req));
   ipcMain.handle(IPC.mediaFilmstrip, (_e, req: FilmstripRequest) => h.filmstrip(req));
   ipcMain.handle(IPC.mediaThumbCancel, (_e, ids: unknown) => h.cancelThumbnails(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : []));
-  ipcMain.handle(IPC.mediaWaveform, (_e, p: string, mediaId?: ID) => h.waveform(assertString(p, 'path'), mediaId));
+  ipcMain.handle(IPC.mediaWaveform, (_e, p: string, mediaId?: ID, streamIndex?: unknown) =>
+    h.waveform(assertString(p, 'path'), mediaId, typeof streamIndex === 'number' && Number.isInteger(streamIndex) && streamIndex >= 0 ? streamIndex : undefined));
   ipcMain.handle(IPC.mediaProxyStart, (_e, req: ProxyRequest) => h.startProxy(req));
   ipcMain.handle(IPC.mediaSceneDetectStart, (_e, req: SceneDetectRequest) => h.startSceneDetect(req));
   ipcMain.handle(IPC.mediaExtractSubtitles, (_e, p: string, streamIndex: number) => h.extractSubtitles(assertString(p, 'path'), Number(streamIndex)));

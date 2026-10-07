@@ -290,7 +290,7 @@ describe('jobs', () => {
     q.subscribe((jobs) => snapshots.push(jobs.length));
     const { job, outputPath } = await startProxyJob(q, { mediaId: 'm1', path: files.aac, height: 180 });
     expect(['queued', 'running']).toContain(job.status); // add() starts immediately when a lane is free
-    expect(outputPath).toMatch(/_180p\.mp4$/);
+    expect(outputPath).toMatch(/_180p_all\.mp4$/);
     const final = await q.waitFor(job.id);
     expect(final.status).toBe('done');
     expect(final.progress).toBe(1);
@@ -532,15 +532,19 @@ describe('media timing fixes (docs/attack/media.md M-05, M-06, M-10)', () => {
     expect(p.startTime).toBeCloseTo(9.978, 6);
   });
 
-  it('proxy maps the requested audio stream and keys the cache on it', () => {
+  it('proxy carries every audio stream (any requested stream is ignored) and its cache name says so', () => {
     const base = { mediaId: 'm', path: '/x/multi.mkv', height: 240 };
     const opts = { targetHeight: 240, hasVideo: true, hasAudio: true, outPart: '/tmp/x.part' };
-    const a2 = buildProxyArgs({ ...base, audioStream: 2 }, opts);
-    expect(a2[a2.indexOf('-c:a') - 1]).toBe('0:2');
-    const def = buildProxyArgs(base, opts);
-    expect(def[def.indexOf('-c:a') - 1]).toBe('0:a:0?');
-    expect(proxyOutputPath('k', 240, 2)).toMatch(/k_240p_a2\.mp4$/);
-    expect(proxyOutputPath('k', 240)).toMatch(/k_240p\.mp4$/);
+    for (const args of [buildProxyArgs({ ...base, audioStream: 2 }, opts), buildProxyArgs(base, opts)]) {
+      expect(args.filter((a, i) => args[i - 1] === '-map')).toEqual(['0:v:0', '0:a?']);
+      expect(args.slice(args.indexOf('-c:a'), args.indexOf('-c:a') + 6)).toEqual(['-c:a', 'aac', '-b:a', '160k', '-ac', '2']);
+    }
+    const audioOnly = buildProxyArgs(base, { ...opts, hasVideo: false });
+    expect(audioOnly.filter((a, i) => audioOnly[i - 1] === '-map')).toEqual(['0:a?']);
+    expect(audioOnly).toContain('-vn');
+    // `_all` keeps new proxies apart from the older single-stream ones (`_240p.mp4` = first stream, `_a<N>` = stream N).
+    expect(proxyOutputPath('k', 240)).toMatch(/k_240p_all\.mp4$/);
+    expect(proxyOutputPath('k', 241)).toMatch(/k_240p_all\.mp4$/);
   });
 
   it('thumbnail seek lands a quarter frame before the covering frame', () => {

@@ -4,7 +4,7 @@
  */
 import React, { useSyncExternalStore } from 'react';
 import { ChevronDown, ChevronRight, Copy, RotateCcw } from 'lucide-react';
-import type { Rational } from '@shared/model';
+import type { MediaProbe, Rational } from '@shared/model';
 import { formatSequenceTimecode, formatClock } from '@shared/time';
 import { toast } from '@/components/ui/toastStore';
 import { useStore } from '@/state';
@@ -141,6 +141,11 @@ export function finish(label: string): void { useStore.getState().endTransaction
 
 // ------------------------------------------------------------------ formatting helpers
 export const MIXED = '—';
+
+/** Select options for a file's audio streams: value = absolute stream index, label = "#<n> codec layout lang — title". */
+export function audioStreamOptions(probe: MediaProbe | undefined): { value: string; label: string }[] {
+  return (probe?.audio ?? []).map((a, i) => ({ value: String(a.index), label: `#${i + 1} ${a.codec} ${a.layout || `${a.channels}ch`}${a.language ? ` ${a.language}` : ''}${a.title ? ` — ${a.title}` : ''}` }));
+}
 
 export function allSame<T, V>(items: T[], pick: (t: T) => V): boolean {
   if (items.length <= 1) return true;

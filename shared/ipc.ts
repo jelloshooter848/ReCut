@@ -148,7 +148,7 @@ export interface WaveformData {
 
 export interface ProxyRequest {
   mediaId: ID; path: string; height: number; audioChannels?: number;
-  /** Absolute ffprobe index of the audio stream to carry (the media's preferredAudioStream); default: first audio stream. */
+  /** Ignored: a proxy carries every audio stream (kept so older callers still type-check). */
   audioStream?: number;
 }
 export interface SceneDetectRequest { mediaId: ID; path: string; threshold: number; duration: number; minSceneSeconds?: number }
@@ -237,7 +237,8 @@ export interface RecutApi {
   filmstrip(req: FilmstripRequest): Promise<string[]>;
   /** Drop the still-queued frames of filmstrip requests (by `requestId`); running extractions finish and are cached. */
   cancelThumbnails(requestIds: string[]): Promise<void>;
-  waveform(path: string, mediaId?: ID): Promise<WaveformData>;
+  /** Peaks of one audio stream (`streamIndex`: absolute ffprobe index; default the first audio stream). */
+  waveform(path: string, mediaId?: ID, streamIndex?: number): Promise<WaveformData>;
   startProxy(req: ProxyRequest): Promise<JobInfo>;
   startSceneDetect(req: SceneDetectRequest): Promise<JobInfo>;
   /** Extracts embedded text subtitle stream to SRT text. */

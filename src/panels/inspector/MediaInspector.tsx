@@ -9,7 +9,7 @@ import { mediaNeedsProxyForPreview, previewPlaybackLabel } from '@/playback/medi
 import type { StoreState } from '@/state';
 import { useJobsStore } from '@/app/jobsStore';
 import { Button, ColorSwatchPicker, IconButton, ProgressBar, Select, TagInput, TextField } from '@/components/ui';
-import { MIXED, Row, Section, Value, clock, finish, formatBytes, openInFolder, pluralize, transient } from './primitives';
+import { MIXED, Row, Section, Value, audioStreamOptions, clock, finish, formatBytes, openInFolder, pluralize, transient } from './primitives';
 
 type IdentityKey = keyof SourceIdentity;
 const TEXT_IDENTITY: { key: IdentityKey; label: string; placeholder: string }[] = [
@@ -56,7 +56,7 @@ function SingleMedia({ m }: { m: MediaItem }) {
   const setIdentity = (patch: Partial<SourceIdentity>) => updateMedia(m.id, { identity: { ...idn, ...patch } });
   const audioOptions = useMemo(() => [
     { value: 'auto', label: 'Auto (first stream)' },
-    ...(p?.audio ?? []).map((a, i) => ({ value: String(a.index), label: `#${i + 1} ${a.codec} ${a.layout || `${a.channels}ch`}${a.language ? ` ${a.language}` : ''}${a.title ? ` — ${a.title}` : ''}` })),
+    ...audioStreamOptions(p),
   ], [p]);
   const cancelJob = (id: ID) => { void window.recut?.cancelJob?.(id); };
 

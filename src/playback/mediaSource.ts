@@ -54,25 +54,76 @@ export function mediaNeedsProxyForPreview(media: MediaItem | undefined): boolean
 const DEFAULT_FPS: Rational = { num: 24, den: 1 };
 
 /**
- * Audio stream the media's proxy carries: recorded on the proxy, else parsed from the cache file name
- * (`<key>_<h>p_a<N>.mp4`), else the first audio stream (what ffmpeg maps by default).
+ * The audio stream the export renders for a requested one (renderGraph.ts `audioStreamIndex`): `want` when it is an
+ * audio stream of the probed file, otherwise the first audio stream; null when the file has no audio. Unprobed media
+ * keeps `want` (null when unset). `want` is `clip.audioStream ?? media.preferredAudioStream` for a clip.
  */
-export function proxyAudioStream(media: MediaItem): number | undefined {
-  if (typeof media.proxy.audioStream === 'number') return media.proxy.audioStream;
-  const m = media.proxy.path ? /_a(\d+)\.mp4$/i.exec(media.proxy.path) : null;
-  if (m) return Number(m[1]);
-  return media.probe?.audio[0]?.index;
+export function resolveAudioStream(media: MediaItem | undefined, want: number | undefined): number | null {
+  const probe = media?.probe;
+  if (!probe) return want ?? null;
+  if (probe.audio.length === 0) return null;
+  if (want !== undefined && probe.audio.some((a) => a.index === want)) return want;
+  return probe.audio[0].index;
+}
+
+/** File-name suffix of a proxy that carries every audio stream (electron/media/proxy.ts proxyOutputPath). */
+const ALL_STREAMS_PROXY = /_all\.mp4$/i;
+/** Older single-stream proxies: `<key>_<h>p_a<N>.mp4` carries stream N. */
+const ONE_STREAM_PROXY = /_a(\d+)\.mp4$/i;
+
+/**
+ * Absolute indexes of the source audio streams the media's proxy carries, in the proxy's track order. A `_all` proxy
+ * carries every stream of the probe; an older one carries one: its `_a<N>` suffix, else the stream recorded on the
+ * proxy, else the first audio stream (what ffmpeg mapped by default).
+ */
+export function proxyAudioStreams(media: MediaItem): number[] {
+  const all = media.probe?.audio.map((a) => a.index) ?? [];
+  const p = media.proxy.path ?? '';
+  if (ALL_STREAMS_PROXY.test(p)) return all;
+  const m = ONE_STREAM_PROXY.exec(p);
+  if (m) return [Number(m[1])];
+  if (typeof media.proxy.audioStream === 'number') return [media.proxy.audioStream];
+  return all.slice(0, 1);
 }
 
 /**
- * True when the media has a proxy (ready / failed) that was built for a different audio stream than the media's
- * preferred one, so the preview would play the wrong language / commentary track.
+ * Which audio track of the played file (`usingProxy`: the proxy, else the original) carries the stream the export
+ * renders for `want` (see resolveAudioStream): its ordinal among the file's audio tracks. Chromium lists a file's
+ * audio tracks in stream order, and direct-play files have only decodable streams (evaluatePlayability), so the
+ * ordinal among `probe.audio` is the HTMLMediaElement.audioTracks index. A proxy lacking the stream plays its first
+ * track. -1: nothing to choose (no audio, one audio track, or not probed), keep the element's default track.
  */
-export function proxyStreamStale(media: MediaItem): boolean {
+export function audioTrackOrdinal(media: MediaItem, usingProxy: boolean, want: number | undefined): number {
+  const audio = media.probe?.audio;
+  if (!audio || audio.length < 2) return -1; // a proxy never carries more streams than the source
+  const abs = resolveAudioStream(media, want);
+  if (abs === null) return -1;
+  if (!usingProxy) return Math.max(0, audio.findIndex((a) => a.index === abs)); // runs per frame: no allocation
+  const tracks = proxyAudioStreams(media);
+  return tracks.length < 2 ? -1 : Math.max(0, tracks.indexOf(abs));
+}
+
+/**
+ * Audio stream to draw a clip's waveform from: the stream the export renders for `want` (see resolveAudioStream), or
+ * undefined for the file's first audio stream (the waveform cached before streams were selectable).
+ */
+export function waveformStream(media: MediaItem | undefined, want: number | undefined): number | undefined {
+  const audio = media?.probe?.audio;
+  if (!audio || audio.length < 2) return undefined;
+  const abs = resolveAudioStream(media, want);
+  return abs === null || abs === audio[0].index ? undefined : abs;
+}
+
+/**
+ * True when the media has a proxy (ready / failed) that does not carry a stream the preview needs, so it would play
+ * the wrong language / commentary track. `wants`: the requested streams (each resolved as the export does); default
+ * the media's preferred stream. Proxies carrying every stream are never stale.
+ */
+export function proxyStreamStale(media: MediaItem, wants: readonly (number | undefined)[] = [media.preferredAudioStream]): boolean {
   if (media.proxy.status !== 'ready' && media.proxy.status !== 'failed') return false;
-  const want = media.preferredAudioStream ?? media.probe?.audio[0]?.index;
-  const have = proxyAudioStream(media);
-  return want !== undefined && have !== undefined && want !== have;
+  const have = proxyAudioStreams(media);
+  if (have.length === 0) return false;
+  return wants.some((w) => { const abs = resolveAudioStream(media, w); return abs !== null && !have.includes(abs); });
 }
 
 /** One-line preview status for the Media Inspector / info footer: direct, still image, or needs a proxy. */

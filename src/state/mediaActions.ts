@@ -251,8 +251,9 @@ export async function startProxy(mediaId: ID): Promise<JobInfo | null> {
   if (!api || !m) return null;
   const noFfmpeg = ffmpegUnavailable('ffmpeg', 'ffprobe');
   if (noFfmpeg) throw new Error(noFfmpeg);
-  st.setProxy(mediaId, { status: 'queued', progress: 0, ...(m.preferredAudioStream !== undefined ? { audioStream: m.preferredAudioStream } : {}) });
-  return api.startProxy({ mediaId, path: m.path, height: st.project.settings.proxyHeight, audioStream: m.preferredAudioStream });
+  // A proxy carries every audio stream (electron/media/proxy.ts), so it is not tied to one.
+  st.setProxy(mediaId, { status: 'queued', progress: 0 });
+  return api.startProxy({ mediaId, path: m.path, height: st.project.settings.proxyHeight });
 }
 
 /** Queue a proxy when proxies are on and the preview cannot decode the original (errors mark the proxy failed). */
@@ -264,12 +265,27 @@ function requeueProxyIfNeeded(mediaId: ID): void {
 }
 
 /**
- * The media's proxy was built for another audio stream than its preferred one: mark it stale (status 'none') and
- * requeue it when proxies are on and the media needs one. Returns true when the proxy was stale.
+ * Audio streams the preview needs from a media item: its preferred stream (Source Monitor, new clips) and the stream
+ * of each of its audio clips in every sequence (`clip.audioStream ?? media.preferredAudioStream`, as export reads it).
+ */
+export function wantedAudioStreams(project: Project, mediaId: ID): (number | undefined)[] {
+  const m = project.media[mediaId];
+  const out = new Set<number | undefined>([m?.preferredAudioStream]);
+  for (const seq of Object.values(project.sequences)) {
+    for (const t of seq.audioTracks) for (const c of t.clips) if (c.mediaId === mediaId && c.kind === 'audio') out.add(c.audioStream ?? m?.preferredAudioStream);
+  }
+  return [...out];
+}
+
+/**
+ * The media's proxy lacks an audio stream the preview needs (an older single-stream proxy; see wantedAudioStreams):
+ * mark it stale (status 'none') and requeue it when proxies are on and the media needs one. Returns true when the
+ * proxy was stale.
  */
 export function requeueStaleProxy(mediaId: ID): boolean {
-  const m = useStore.getState().project.media[mediaId];
-  if (!m || !proxyStreamStale(m)) return false;
+  const project = useStore.getState().project;
+  const m = project.media[mediaId];
+  if (!m || !proxyStreamStale(m, wantedAudioStreams(project, mediaId))) return false;
   useStore.getState().setProxy(mediaId, { status: 'none' });
   requeueProxyIfNeeded(mediaId);
   return true;
@@ -283,6 +299,20 @@ export function setMediaAudioStream(mediaId: ID, stream: number | undefined): vo
   const hadProxy = before.proxy.status !== 'none';
   st.updateMedia(mediaId, { preferredAudioStream: stream }); // marks a stale proxy 'none'
   if (hadProxy && useStore.getState().project.media[mediaId]?.proxy.status === 'none') requeueProxyIfNeeded(mediaId);
+}
+
+/**
+ * Change the audio stream of audio clips (one undo step; undefined = follow the media's preferred stream). A proxy
+ * lacking the stream goes stale and is rebuilt (carrying every stream) when the media needs one.
+ */
+export function setClipsAudioStream(seqId: ID, clipIds: ID[], index: number | undefined): void {
+  const st = useStore.getState();
+  const before = st.project.media;
+  st.setClipAudioStream(seqId, clipIds, index); // marks a stale proxy 'none'
+  const after = useStore.getState().project.media;
+  for (const id of Object.keys(after)) {
+    if (before[id] && before[id].proxy.status !== 'none' && after[id].proxy.status === 'none') requeueProxyIfNeeded(id);
+  }
 }
 
 export async function startSceneDetect(mediaId: ID, threshold?: number): Promise<JobInfo | null> {
