@@ -819,8 +819,10 @@ describe('proxy vs preferred audio stream', () => {
       setMediaAudioStream(undecodable.id, 2);
       setMediaAudioStream(playable.id, 2);
       await Promise.resolve();
+      // The new proxy carries every audio stream, so the queued proxy records none. The request names the preferred
+      // stream only as the one a fallback proxy keeps when FFmpeg cannot proxy every stream (electron/media/proxy.ts).
       expect(reqs.map((r) => [r.mediaId, r.audioStream])).toEqual([[undecodable.id, 2]]);
-      expect(S().project.media[undecodable.id].proxy).toMatchObject({ status: 'queued', audioStream: 2 });
+      expect(S().project.media[undecodable.id].proxy).toEqual({ status: 'queued', progress: 0 });
       expect(S().project.media[playable.id].proxy.status).toBe('none');
     } finally {
       g.window = prev;

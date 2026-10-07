@@ -32,6 +32,8 @@ const QUIT_FALLBACK_MS = 3000;
 
 app.setName('ReCut'); // before any getPath('userData') so dev and packaged share a location
 if (process.argv.includes('--no-sandbox')) app.commandLine.appendSwitch('no-sandbox');
+// HTMLMediaElement.audioTracks, so the preview plays each clip's selected audio stream (the one export renders).
+app.commandLine.appendSwitch('enable-blink-features', 'AudioVideoTracks');
 if (process.env.RECUT_DISABLE_GPU === '1' || smoke) app.disableHardwareAcceleration();
 if (process.env.RECUT_USER_DATA) app.setPath('userData', path.resolve(process.env.RECUT_USER_DATA));
 

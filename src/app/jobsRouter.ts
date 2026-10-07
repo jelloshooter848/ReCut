@@ -18,7 +18,7 @@ import { invalidateMediaPath } from './media';
 import { requeueStaleProxy } from '@/state/mediaActions';
 import { toast } from '@/components/ui/toastStore';
 
-interface ProxyResultLike { path: string; width?: number; height?: number; cached?: boolean; audioStream?: number }
+interface ProxyResultLike { path: string; width?: number; height?: number; cached?: boolean; audioStreams?: number[] }
 interface ExportResultLike { outputPath?: string; sidecarPath?: string; warnings?: string[] }
 
 const handled = new Set<string>();
@@ -52,7 +52,8 @@ function routeProxy(job: JobInfo): void {
       // acquires a fresh element for the proxy path; invalidating afterwards disposed that element (BUG-6).
       invalidateMediaPath(media.path);
       invalidateMediaPath(r.path);
-      st.setProxy(media.id, { status: 'ready', path: r.path, progress: 1, width: r.width, height: r.height, ...(typeof r.audioStream === 'number' ? { audioStream: r.audioStream } : {}) });
+      // Record the streams the proxy carries: a fallback proxy lacks the ones FFmpeg could not decode or encode.
+      st.setProxy(media.id, { status: 'ready', path: r.path, progress: 1, width: r.width, height: r.height, ...(Array.isArray(r.audioStreams) ? { audioStreams: [...r.audioStreams] } : {}) });
       // The media's audio stream changed while this proxy was being built: it carries the old track.
       if (requeueStaleProxy(media.id)) break;
       if (!r.cached) toast('ok', `Proxy ready: ${media.name}`);

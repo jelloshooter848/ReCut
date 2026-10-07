@@ -8,9 +8,10 @@ import { FolderOpen, Link2, Plus, RotateCcw, Unlink2, X } from 'lucide-react';
 import type { Clip, ClipAudio, ClipTransform, ID, MediaItem, Rational, TagVocabulary, Track, Transition, TransitionType } from '@shared/model';
 import { clampSpeedPercent, clipEnd, clipSourceOut, defaultAudio, defaultTransform, findClip, linkedClips, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN, transitionsForClip } from '@shared/timeline';
 import { formatSequenceSecondsTimecode, fpsEquals, fpsLabel, validFpsOr } from '@shared/time';
-import { activeSequence, identityLabel, originalTimecode, selectedAudioTargets, selectedClips, selectedClipTracks, selectedLinkedCount, useStore } from '@/state';
-import { Button, ColorSwatchPicker, IconButton, NumberField, Slider, TagInput, TextField, Toggle, labelColorHex } from '@/components/ui';
-import { MIXED, Range, Row, Section, Value, allSame, copyText, finish, framesLabel, openInFolder, secondsLabel, tc, transient } from './primitives';
+import { activeSequence, identityLabel, originalTimecode, selectedAudioTargets, selectedClips, selectedClipTracks, selectedLinkedCount, setClipsAudioStream, useStore } from '@/state';
+import { resolveAudioStream } from '@/playback/mediaSource';
+import { Button, ColorSwatchPicker, IconButton, NumberField, Select, Slider, TagInput, TextField, Toggle, labelColorHex } from '@/components/ui';
+import { MIXED, Range, Row, Section, Value, allSame, audioStreamOptions, copyText, finish, framesLabel, openInFolder, secondsLabel, tc, transient } from './primitives';
 
 export const TRANSITION_LABEL: Record<TransitionType, string> = { crossDissolve: 'Cross Dissolve', dipToBlack: 'Dip to Black', audioCrossfade: 'Audio Crossfade' };
 const SCRUB_HINT = 'Drag to scrub · Shift ×10 · Alt ×0.1 · Double-click or Alt-click resets';
@@ -301,9 +302,35 @@ function AudioSection({ seqId, fps, targets, selectedIds }: { seqId: ID; fps: Ra
       <Row label="Mute" prop="mute">
         <Toggle checked={targets.every((c) => c.audio.muted)} title="Mute clip audio" onChange={(on) => { set((a) => { a.muted = on; }); finish(on ? 'Mute clip' : 'Unmute clip'); }} />
         {!same((a) => a.muted) ? <span className="text-faint text-xs">mixed</span> : null}
-        {targets.length === 1 && targets[0].audioStream !== undefined ? <span className="text-faint text-xs ml-auto">stream #{targets[0].audioStream}</span> : null}
       </Row>
+      <AudioStreamRow seqId={seqId} targets={targets} />
     </Section>
+  );
+}
+
+/**
+ * Per-clip audio stream picker (the stream export renders for the clip), shown when every target clip comes from one
+ * file with several audio streams. "Media default" follows the media's preferred stream.
+ */
+function AudioStreamRow({ seqId, targets }: { seqId: ID; targets: Clip[] }) {
+  const media = useStore((s) => s.project.media[targets[0].mediaId]);
+  const probe = media?.probe;
+  const options = useMemo(() => {
+    const def = resolveAudioStream(media, media?.preferredAudioStream);
+    const defIdx = probe?.audio.findIndex((a) => a.index === def) ?? -1;
+    return [{ value: 'auto', label: `Media default${defIdx >= 0 ? ` (#${defIdx + 1})` : ''}` }, ...audioStreamOptions(probe)];
+  }, [media, probe]);
+  if (!probe || probe.audio.length < 2 || targets.some((c) => c.mediaId !== targets[0].mediaId)) return null;
+  const mixed = !allSame(targets, (c) => c.audioStream);
+  const cur = targets[0].audioStream;
+  const value = mixed ? 'mixed' : cur === undefined ? 'auto' : String(cur);
+  const opts = [...(mixed ? [{ value: 'mixed', label: MIXED, disabled: true }] : []), ...options];
+  if (!mixed && cur !== undefined && !probe.audio.some((a) => a.index === cur)) opts.push({ value: String(cur), label: `#${cur} (missing — first stream plays)`, disabled: true });
+  return (
+    <Row label="Stream" prop="audio-stream" title="Audio stream this clip plays and exports">
+      <Select size="sm" value={value} options={opts} data-testid="clip-audio-stream"
+        onChange={(v) => { if (v !== 'mixed') setClipsAudioStream(seqId, targets.map((c) => c.id), v === 'auto' ? undefined : Number(v)); }} />
+    </Row>
   );
 }
 

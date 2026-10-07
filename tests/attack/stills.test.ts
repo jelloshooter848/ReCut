@@ -186,7 +186,7 @@ describe('still export matches the preview proxy', () => {
     expect(item.kind).toBe('video');
     expect(item.probe!.duration).toBeGreaterThan(1.5);
     const { job, outputPath: proxyOut } = await startProxyJob(queue, { mediaId: item.id, path: gif, height: 144 });
-    expect(proxyOut).toMatch(/_144p\.mp4$/);
+    expect(proxyOut).toMatch(/_144p_all\.mp4$/); // the video proxy (every audio stream), not the still PNG
     expect((await queue.waitFor(job.id)).status).toBe('done');
     const seq = makeSeq(FPS_24, W, H);
     vclip(seq, item, 0, 24, 0.5);

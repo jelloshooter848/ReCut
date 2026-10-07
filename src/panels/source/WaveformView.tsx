@@ -4,6 +4,7 @@ import type { MediaItem } from '@shared/model';
 import type { WaveformData } from '@shared/ipc';
 import { clamp } from '@shared/time';
 import { peaksForRange } from '@/playback';
+import { waveformStream } from '@/playback/mediaSource';
 import { waves } from '@/app/media';
 
 export interface WaveformViewProps {
@@ -14,23 +15,27 @@ export interface WaveformViewProps {
   outPoint: number | null;
 }
 
-/** Audio-only media: draws the whole file's waveform across the stage with a moving playhead. */
+/**
+ * Audio-only media: draws the whole file's waveform across the stage with a moving playhead. It shows the media's
+ * preferred audio stream, the one the Source Monitor plays and inserts take (resolved as the export does).
+ */
 export function WaveformView({ media, duration, time, inPoint, outPoint }: WaveformViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [data, setData] = useState<WaveformData | null | undefined>(() => waves.peek(media.path));
+  const stream = waveformStream(media, media.preferredAudioStream);
+  const [data, setData] = useState<WaveformData | null | undefined>(() => waves.peek(media.path, stream));
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let alive = true;
     setFailed(false);
-    const hit = waves.peek(media.path);
+    const hit = waves.peek(media.path, stream);
     if (hit) { setData(hit); return; }
     setData(undefined);
-    waves.get(media.path, media.id).then((d) => { if (!alive) return; setData(d); if (!d) setFailed(true); });
+    waves.get(media.path, media.id, stream).then((d) => { if (!alive) return; setData(d); if (!d) setFailed(true); });
     return () => { alive = false; };
-  }, [media.path, media.id, media.waveformStatus]);
+  }, [media.path, media.id, media.waveformStatus, stream]);
 
   useEffect(() => {
     const el = ref.current; if (!el) return;

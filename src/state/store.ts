@@ -18,13 +18,14 @@ import type {
 import { uid } from '../../shared/ids';
 import { isValidFps, secondsToFrames } from '../../shared/time';
 import { createProject, LiveView } from '../../shared/project';
+import { STILL_IMAGE_CODECS, STILL_IMAGE_EXTS } from '../../shared/media';
 import {
   MIN_CLIP_FRAMES, allTracks, clipEnd, clipSourceOut, findClip, maxDurationFrom, findTrack, linkedClips, makeClip, placeClips,
   razorAt, removeClips as tlRemoveClips, rippleDeleteClips, rippleDeleteDisabledClips, removableDisabledClipIds, liftRange, extractRange, trimStart, trimEnd,
   rippleTrimStart, rippleTrimEnd, rollEdit as tlRollEdit, slipClip, slideClip, moveClips as tlMoveClips, readItems, clipsWithIds,
   addTransition as tlAddTransition, removeTransition as tlRemoveTransition, addTrack as tlAddTrack,
   removeTrack as tlRemoveTrack, reconcileTransitions, reconcileAll, rippleShift, addMarker as tlAddMarker,
-  followClipMarkers, transitionLimit, type NewClipSpec, type MediaDurationLookup,
+  followClipMarkers, transitionLimit, setClipAudioStream as tlSetClipAudioStream, type NewClipSpec, type MediaDurationLookup,
 } from '../../shared/timeline';
 import { emptyHistory, pushHistory, undoHistory, redoHistory, changedSequenceIds, undoLabel, redoLabel } from './history';
 import { proxyStreamStale } from '../playback/mediaSource';
@@ -93,15 +94,8 @@ function resetSelectionUi(ui: UIState): UIState {
   };
 }
 
-/** Still-image extensions; the same list as IMAGE_EXT in electron/media/probe.ts (tests/unit/stills.test.ts). */
-export const STILL_IMAGE_EXTS: readonly string[] = [
-  'png', 'apng', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'bmp', 'tif', 'tiff', 'gif', 'heic', 'heif', 'avif',
-  'jxl', 'tga', 'exr', 'psd', 'dpx', 'sgi', 'pcx', 'ppm', 'pgm', 'pbm', 'pam', 'qoi', 'hdr', 'jp2', 'j2k',
-];
-const STILL_IMAGE_CODECS: readonly string[] = [
-  'png', 'apng', 'mjpeg', 'jpegls', 'webp', 'bmp', 'tiff', 'gif', 'jpegxl', 'targa', 'exr', 'psd', 'dpx', 'sgi', 'pcx',
-  'ppm', 'pgm', 'pgmyuv', 'pbm', 'pam', 'qoi', 'hdr', 'jpeg2000', 'av1', 'hevc',
-];
+/** Still-image extensions and codecs: one list for the main process and the renderer (shared/media.ts). */
+export { STILL_IMAGE_EXTS };
 
 /**
  * Media kind from a probe; mirrors classifyKind in electron/media/probe.ts. The main process marks stills (an image
@@ -1122,6 +1116,18 @@ export const useStore = create<RecutStore>()((set, get) => {
     },
     setClipAudio(seqId, clipId, patch) {
       commit('Audio', (d) => { const loc = d.sequences[seqId] && findClip(d.sequences[seqId], clipId); if (loc) Object.assign(loc.clip.audio, patch); });
+    },
+    setClipAudioStream(seqId, clipIds, index) {
+      commit('Audio stream', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const changed = tlSetClipAudioStream(seq, clipIds, index);
+        // A proxy without a stream these clips now play would preview the wrong track: mark it stale (Generate again).
+        for (const mediaId of new Set(changed.map((c) => c.mediaId))) {
+          const m = d.media[mediaId];
+          if (m && proxyStreamStale(m, changed.filter((c) => c.mediaId === mediaId).map((c) => c.audioStream ?? m.preferredAudioStream))) m.proxy = { status: 'none' };
+        }
+      });
     },
     setClipSpeed(seqId, clipId, speed, opts = {}) {
       if (!(speed > 0) || !Number.isFinite(speed)) return;

@@ -17,7 +17,7 @@
  */
 import type { Clip, ClipTransform, ID, MediaItem, Rational, Sequence, Track, Transition } from '../../shared/model';
 import { clipEnd, sourceTimeAt } from '../../shared/timeline';
-import { resolvePlaybackPath, mediaFps, mediaSize } from './mediaSource';
+import { audioTrackOrdinal, mediaFps, mediaSize, mediaTimeOffset, proxyAudioStreams, resolveAudioStream, resolvePlaybackPath } from './mediaSource';
 
 export interface LayerPlan {
   clipId: ID;
@@ -59,7 +59,13 @@ export interface AudioPlan {
   /** Track volume (linear) so the player can keep a per-track GainNode. */
   trackVolume: number;
   speed: number;
+  /** Absolute index of the source audio stream played: the one the export renders (clip's, else the media's). */
   audioStream?: number;
+  /**
+   * Index into the element's audioTracks of that stream (see audioTrackOrdinal); -1 = keep the default track (the
+   * file has one audio track, or nothing is known).
+   */
+  audioTrack: number;
   handle: boolean;
 }
 
@@ -265,19 +271,27 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
       const res = resolvePlaybackPath(m, useProxies);
       if (res.isImage) continue; // still images are silent
       if (!res.path) { report(clip, res.reason ?? 'not playable'); continue; }
+      const stream = resolveAudioStream(m, clip.audioStream ?? m.preferredAudioStream);
+      let { path, usingProxy } = res;
+      let timeOffset = res.timeOffset ?? 0;
+      // An older single-stream proxy without the clip's stream: play the original when the browser can decode it.
+      if (usingProxy && stream !== null && m.probe?.browserPlayable && m.probe.audio.length > 1 && !proxyAudioStreams(m).includes(stream)) {
+        path = m.path; usingProxy = false; timeOffset = mediaTimeOffset(m, false);
+      }
       const gain = dbToLinear(clip.audio.gain) * Math.max(0, clip.audio.volume) * fadeEnvelope(clip, frame) * weight;
       audio.push({
         clipId: clip.id,
         mediaId: clip.mediaId,
         trackId: track.id,
-        path: res.path,
-        usingProxy: res.usingProxy,
+        path,
+        usingProxy,
         sourceTime: sourceTimeAt(clip, frame, fps),
-        timeOffset: res.timeOffset ?? 0,
+        timeOffset,
         gain,
         trackVolume: Math.max(0, track.volume),
         speed: clip.speed,
-        audioStream: clip.audioStream,
+        audioStream: stream ?? undefined,
+        audioTrack: audioTrackOrdinal(m, usingProxy, stream ?? undefined),
         handle,
       });
     }

@@ -225,6 +225,29 @@ export function clipsWithIds(seq: Sequence, ids: Iterable<ID>): Clip[] {
   return out;
 }
 
+/**
+ * Set the audio stream played by the audio clips among `clipIds`: an absolute ffprobe index, or undefined to follow the
+ * media's preferred stream (what export does for a clip without one). Video clips have no stream and clips on locked
+ * tracks never change; an invalid index changes nothing. Returns the changed clips (writable inside a recipe).
+ */
+export function setClipAudioStream(seq: Sequence, clipIds: Iterable<ID>, index: number | undefined): Clip[] {
+  const out: Clip[] = [];
+  if (index !== undefined && !(Number.isInteger(index) && index >= 0)) return out;
+  const ids = clipIds instanceof Set ? clipIds as Set<ID> : new Set(clipIds);
+  for (const t of seq.audioTracks) {
+    if (t.locked) continue;
+    const items = readItems(t.clips);
+    for (let i = 0; i < items.length; i++) {
+      const c = items[i];
+      if (!ids.has(c.id) || c.kind !== 'audio' || c.audioStream === index) continue;
+      const w = writableClip(t, i);
+      if (index === undefined) delete w.audioStream; else w.audioStream = index;
+      out.push(w);
+    }
+  }
+  return out;
+}
+
 export function clipsInRange(track: Track, start: number, end: number, except: Set<ID> = new Set()): Clip[] {
   return track.clips.filter((c) => !except.has(c.id) && c.start < end && clipEnd(c) > start);
 }

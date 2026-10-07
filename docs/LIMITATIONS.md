@@ -33,11 +33,15 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   channels) or downmix to stereo through FFmpeg's resampler. There is no surround positioning, and 7.1 output is
   not available.
 - **Preview of surround:** proxies are stereo, and the browser downmixes directly-played 5.1 to your output device.
-- **Multi-stream originals:** export renders each clip's selected audio stream. The preview does not: a
-  directly-playable file plays Chromium's default (first) audio track, and a proxied file plays the single stream
-  baked into its proxy. Changing the **media's** Audio stream in the Inspector marks a proxy built for another stream
-  stale and, with proxies on, rebuilds it for files that need one. Changing a single **clip's** stream does not change
-  what you hear in the preview.
+- **Multi-stream originals** preview the stream the export renders for each clip. This relies on Chromium's
+  `HTMLMediaElement.audioTracks`, which sits behind the `AudioVideoTracks` Blink feature; ReCut turns it on at
+  startup (`electron/main.ts`). If a future Electron drops that feature, the preview would fall back to each file's
+  first audio track while the export still renders the selected one. Proxies made before 0.4 carry a single stream:
+  they keep working for that stream and are rebuilt (with every stream) when a clip or the media needs another one,
+  with proxies on.
+- **A proxy can lack a stream FFmpeg cannot decode or encode.** The proxy then carries only the streams it could
+  make (or, failing that, the media's selected stream alone), and a clip set to a missing stream previews the
+  proxy's first track. Such a stream usually fails in the export too.
 
 ## Preview (Chromium) and proxies
 
@@ -47,9 +51,18 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   [FORMATS](FORMATS.md).
 - **Proxies off does not mean originals only.** For an original Chromium cannot decode, a ready proxy is still used
   (Program shows the **Proxy** chip). This is deliberate. "Needs proxy" appears only when no proxy exists.
-- **Still images** in PNG, JPEG, WebP, GIF and BMP are drawn directly (no proxy). Other image formats (TIFF, HEIC,
-  AVIF, JPEG XL, ...) export correctly, but the Program monitor lists them as missing ("convert to PNG or JPEG"). An
-  animated GIF shows its first frame in the preview.
+- **Still images** in PNG, JPEG, WebP, GIF and BMP are drawn directly. Every other still is previewed from a PNG
+  proxy that FFmpeg makes on import, so a format previews and exports only if your FFmpeg build decodes it:
+  - **HEIC / HEIF** needs FFmpeg 7.1 or later (phone photos are tile grids). It works with the FFmpeg bundled in
+    the Windows release. FFmpeg 6.1 (e.g. Ubuntu 24.04) cannot read HEIF, so there a HEIC neither previews nor
+    exports.
+  - **PSD**: FFmpeg 6.1 rejects the RLE-compressed PSD files ImageMagick writes ("Not enough data for rle
+    scanline"); uncompressed PSD works.
+  - **JPEG XL** needs an FFmpeg built with libjxl.
+  - **Rotated AVIF** (`irot`): FFmpeg 6.1 ignores the rotation, so the preview and the export both show the picture
+    unrotated (they agree, because both use FFmpeg's decode). EXIF orientation in JPEG is applied by both.
+- **An animated GIF is a video**: it plays through an MP4 proxy and exports all its frames. A one-frame GIF is a
+  still.
 - **Still images whose file name contains a printf pattern** such as `x%03d.png` fail with FFmpeg 6.1: its image
   reader takes the name as a numbered image sequence. Rename the file.
 - **Anamorphic (non-square pixel) media:** export and thumbnails un-squeeze it from the probed sample aspect ratio.

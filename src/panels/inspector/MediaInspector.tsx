@@ -9,7 +9,7 @@ import { isDisplayableImage, isStillImage, mediaNeedsProxyForPreview, previewPla
 import type { StoreState } from '@/state';
 import { useJobsStore } from '@/app/jobsStore';
 import { Button, ColorSwatchPicker, IconButton, ProgressBar, Select, TagInput, TextField } from '@/components/ui';
-import { MIXED, Row, Section, Value, clock, finish, formatBytes, openInFolder, pluralize, transient } from './primitives';
+import { MIXED, Row, Section, Value, audioStreamOptions, clock, finish, formatBytes, openInFolder, pluralize, transient } from './primitives';
 
 type IdentityKey = keyof SourceIdentity;
 const TEXT_IDENTITY: { key: IdentityKey; label: string; placeholder: string }[] = [
@@ -56,7 +56,7 @@ function SingleMedia({ m }: { m: MediaItem }) {
   const setIdentity = (patch: Partial<SourceIdentity>) => updateMedia(m.id, { identity: { ...idn, ...patch } });
   const audioOptions = useMemo(() => [
     { value: 'auto', label: 'Auto (first stream)' },
-    ...(p?.audio ?? []).map((a, i) => ({ value: String(a.index), label: `#${i + 1} ${a.codec} ${a.layout || `${a.channels}ch`}${a.language ? ` ${a.language}` : ''}${a.title ? ` — ${a.title}` : ''}` })),
+    ...audioStreamOptions(p),
   ], [p]);
   const cancelJob = (id: ID) => { void window.recut?.cancelJob?.(id); };
 
@@ -104,7 +104,7 @@ function SingleMedia({ m }: { m: MediaItem }) {
             onBlur={(e) => { if (e.target.value !== m.notes) updateMedia(m.id, { notes: e.target.value }); }} onKeyDown={(e) => e.stopPropagation()} />
         </Row>
         {p && p.audio.length > 0 ? (
-          <Row label="Audio stream" prop="preferred-audio" title="Audio stream used for new clips">
+          <Row label="Audio stream" prop="preferred-audio" title="Audio stream for new clips and the Source Monitor (each clip can pick its own in the Clip Inspector)">
             <Select size="sm" value={m.preferredAudioStream === undefined ? 'auto' : String(m.preferredAudioStream)} options={audioOptions}
               onChange={(v) => setMediaAudioStream(m.id, v === 'auto' ? undefined : Number(v))} />
           </Row>

@@ -201,31 +201,43 @@ export class ThumbnailCache {
   get size(): number { return this.cache.size; }
 }
 
+/** Cache key of one stream's waveform (`stream` undefined: the first audio stream). */
+function waveKey(mediaPath: string, stream: number | undefined): string {
+  return stream === undefined ? mediaPath : `${mediaPath}\u0000s${stream}`;
+}
+
 export class WaveformCache {
   private cache = new Map<string, WaveformData | null>();
   private inflight = new Map<string, Promise<WaveformData | null>>();
 
-  peek(mediaPath: string): WaveformData | null | undefined { return this.cache.get(mediaPath); }
+  /** `stream`: absolute ffprobe index of the audio stream (undefined: the first one; see waveformStream). */
+  peek(mediaPath: string, stream?: number): WaveformData | null | undefined { return this.cache.get(waveKey(mediaPath, stream)); }
 
-  get(mediaPath: string, mediaId?: string): Promise<WaveformData | null> {
-    if (this.cache.has(mediaPath)) return Promise.resolve(this.cache.get(mediaPath) ?? null);
-    const pending = this.inflight.get(mediaPath);
+  get(mediaPath: string, mediaId?: string, stream?: number): Promise<WaveformData | null> {
+    const key = waveKey(mediaPath, stream);
+    if (this.cache.has(key)) return Promise.resolve(this.cache.get(key) ?? null);
+    const pending = this.inflight.get(key);
     if (pending) return pending;
     const recut = api();
     if (!recut) return Promise.resolve(null);
-    const p = recut.waveform(mediaPath, mediaId)
+    const p = (stream === undefined ? recut.waveform(mediaPath, mediaId) : recut.waveform(mediaPath, mediaId, stream))
       .then((data) => {
         const norm = normalizeWaveform(data);
-        if (norm) this.cache.set(mediaPath, norm);
+        if (norm) this.cache.set(key, norm);
         return norm;
       })
       .catch(() => null)
-      .finally(() => { this.inflight.delete(mediaPath); });
-    this.inflight.set(mediaPath, p);
+      .finally(() => { this.inflight.delete(key); });
+    this.inflight.set(key, p);
     return p;
   }
 
-  invalidate(mediaPath: string): void { this.cache.delete(mediaPath); }
+  /** Drop every stream's waveform of a file. */
+  invalidate(mediaPath: string): void {
+    this.cache.delete(mediaPath);
+    const prefix = `${mediaPath}\u0000`;
+    for (const k of [...this.cache.keys()]) if (k.startsWith(prefix)) this.cache.delete(k);
+  }
   clear(): void { this.cache.clear(); }
 }
 

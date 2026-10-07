@@ -9,6 +9,7 @@ import { formatSequenceSecondsTimecode, validFpsOr } from '@shared/time';
 import type { WaveformData } from '@shared/ipc';
 import { thumbs, waves } from '@/app/media';
 import { peaksForRange } from '@/playback/thumbnails';
+import { waveformStream } from '@/playback/mediaSource';
 import { labelColorHex } from '@/components/ui/ColorSwatch';
 import { CLIP_BAR_H, COMPACT_ROW_H } from './types';
 import { MEDIA_MIN_CLIP_PX } from './viewMath';
@@ -144,21 +145,23 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
 
   // ---- waveform --------------------------------------------------------------------------
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // Tagged with its media path: a ClipView reused for another clip (ClipLane slots) never shows the previous clip's
-  // waveform, and a cached one appears in the same render.
-  const [waveState, setWaveState] = useState<{ path: string; data: WaveformData | null }>(() => ({ path, data: path ? waves.peek(path) ?? null : null }));
-  const wave = waveState.path === path ? waveState.data : (path ? waves.peek(path) ?? null : null);
+  // The clip's audio stream (the one export renders; undefined = the first, see waveformStream).
+  const waveSt = isVideo ? undefined : waveformStream(media, clip.audioStream ?? media?.preferredAudioStream);
+  // Tagged with its media path and stream: a ClipView reused for another clip (ClipLane slots) never shows the previous
+  // clip's waveform, and a cached one appears in the same render.
+  const [waveState, setWaveState] = useState<{ path: string; stream?: number; data: WaveformData | null }>(() => ({ path, stream: waveSt, data: path ? waves.peek(path, waveSt) ?? null : null }));
+  const wave = waveState.path === path && waveState.stream === waveSt ? waveState.data : (path ? waves.peek(path, waveSt) ?? null : null);
   useEffect(() => {
     if (!wantMedia || isVideo || offline || !media || !path) return;
-    const hit = waves.peek(path);
+    const hit = waves.peek(path, waveSt);
     // Only when it differs: a same-value setState right after mount still costs a (bailed-out) render and commit.
-    if (hit !== undefined) { if (hit !== wave) setWaveState({ path, data: hit }); return; }
+    if (hit !== undefined) { if (hit !== wave) setWaveState({ path, stream: waveSt, data: hit }); return; }
     let alive = true;
     const cancel = afterMediaSettle(() => {
-      waves.get(path, media.id).then((d) => { if (alive) setWaveState((w) => (w.path === path && w.data === d ? w : { path, data: d })); }).catch(() => { /* ignore */ });
+      waves.get(path, media.id, waveSt).then((d) => { if (alive) setWaveState((w) => (w.path === path && w.stream === waveSt && w.data === d ? w : { path, stream: waveSt, data: d })); }).catch(() => { /* ignore */ });
     });
     return () => { alive = false; cancel(); };
-  }, [wantMedia, isVideo, offline, path, media]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [wantMedia, isVideo, offline, path, media, waveSt]); // eslint-disable-line react-hooks/exhaustive-deps
   const waveX = visFrom;
   const waveW = wantMedia ? Math.min(MAX_WAVE_CANVAS_PX, Math.max(0, visTo - visFrom)) : 0;
   const dpr = validDpr(p.dpr ?? 1);

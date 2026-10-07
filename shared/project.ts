@@ -817,6 +817,7 @@ function repairProxy(v: unknown): ProxyInfo {
   }
   optional(v, 'path', isStr); optional(v, 'error', isStr);
   for (const k of ['progress', 'width', 'height', 'audioStream']) optional(v, k, isFiniteNum);
+  optional(v, 'audioStreams', (x: unknown) => Array.isArray(x) && x.every((n) => Number.isSafeInteger(n) && (n as number) >= 0));
   return v as unknown as ProxyInfo;
 }
 

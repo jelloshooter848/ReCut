@@ -7,6 +7,27 @@
  */
 import type { Rational, VideoStreamInfo } from './model';
 
+/**
+ * Still-image file extensions (lower case, no dot). FFmpeg decodes all of them; Chromium draws only some
+ * (src/playback/mediaSource.ts DISPLAYABLE_IMAGE_EXTS), the rest preview from a PNG proxy. The one list behind the
+ * main-process classifier (electron/media/probe.ts IMAGE_EXT), the renderer's (src/state/store.ts kindFromProbe,
+ * src/playback/mediaSource.ts isStillImage) and the import dialog's Images filter / default bin
+ * (src/state/parseIdentity.ts IMAGE_EXTS).
+ */
+export const STILL_IMAGE_EXTS: readonly string[] = [
+  'png', 'apng', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'bmp', 'tif', 'tiff', 'gif', 'heic', 'heif', 'avif',
+  'jxl', 'tga', 'exr', 'psd', 'dpx', 'sgi', 'pcx', 'ppm', 'pgm', 'pbm', 'pam', 'qoi', 'hdr', 'jp2', 'j2k',
+];
+
+/**
+ * ffprobe codec names of still pictures. av1 / hevc count only without duration (AVIF / HEIC items in a mov
+ * container); the classifiers apply that rule.
+ */
+export const STILL_IMAGE_CODECS: readonly string[] = [
+  'png', 'apng', 'mjpeg', 'jpegls', 'webp', 'bmp', 'tiff', 'gif', 'jpegxl', 'targa', 'exr', 'psd', 'dpx', 'sgi', 'pcx',
+  'ppm', 'pgm', 'pgmyuv', 'pbm', 'pam', 'qoi', 'hdr', 'jpeg2000', 'av1', 'hevc',
+];
+
 /** Smallest / largest SAR treated as real; anything outside (or not a ratio of positive safe integers) is square. */
 export const MIN_SAR = 1 / 16;
 export const MAX_SAR = 16;
