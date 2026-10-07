@@ -22,6 +22,7 @@ import { evaluateClipProperty, evaluateKeyframes } from '@shared/keyframes';
 import { adaptFfmpegArgs, ffmpegMajorVersionSync } from '../../electron/media/ffmpeg';
 import { buildRenderGraph, LEVEL_BLOCK_SAMPLES } from '../../electron/export/renderGraph';
 import { runExport } from '../../electron/export/exporter';
+import { keyframedScaleRatio, sequenceExportWarnings } from '../../src/panels/export/settings';
 
 const exec = promisify(execFile);
 const FFMPEG = process.env.RECUT_FFMPEG || 'ffmpeg';
@@ -188,6 +189,35 @@ describe('render graph', () => {
     expect(script).toContain('volume=-6dB');
     expect(script).not.toContain('volume=0.3');
     expect(script).toContain("asetnsamples=n=256:p=0,volume=volume='st(0,(if(isnan(t),0,t)+128/sample_rate)*24/1+0);1+(-0.5)*clip((ld(0)-0)/24,0,1)*clip((ld(0)-0)/24,0,1)*(3-2*clip((ld(0)-0)/24,0,1))':eval=frame");
+  });
+});
+
+describe('pre-export warnings', () => {
+  const m: MediaItem = {
+    id: 'm', name: 'm', path: '/media/m.mp4', kind: 'video', category: 'Other', identity: {}, binId: null, offline: false,
+    probe: { container: 'mp4', duration: 60, size: 1, startTime: 0, browserPlayable: true, subtitles: [],
+      video: { index: 0, codec: 'h264', width: 1920, height: 1080, fps: F24, avgFps: F24, isVfr: false }, audio: [] },
+    proxy: { status: 'none' }, detectedScenes: [], subtitleTrackIds: [], notes: '', tags: [], addedAt: 0,
+  };
+  it('lists keyframed clips (info) and warns when a keyframed scale shrinks below half of what the export pre-filters', () => {
+    const s = createSequence('w', F24, 1920, 1080);
+    const plain = vclip(m, 0, 24, { name: 'plain' });
+    const gentle = vclip(m, 24, 24, { name: 'gentle' });
+    gentle.transform.keyframes = { scale: [kf(0, 1), kf(23, 1.6)], opacity: [kf(0, 0), kf(10, 1)] };
+    const shrink = vclip(m, 48, 24, { name: 'shrink' });
+    shrink.transform.keyframes = { scale: [kf(0, 0.8), kf(23, 0.3)] };
+    s.videoTracks[0].clips.push(plain, gentle, shrink);
+    expect(keyframedScaleRatio(plain)).toBe(1);
+    expect(keyframedScaleRatio(gentle)).toBe(1);
+    expect(keyframedScaleRatio(shrink)).toBeCloseTo(0.375, 9);
+    const items = sequenceExportWarnings(s, { m }, 0, 72);
+    const info = items.find((i) => i.text.startsWith('Keyframes on 2 clips'))!;
+    expect(info.level).toBe('info');
+    expect(info.target!.clipIds).toEqual([gentle.id, shrink.id]);
+    const warn = items.find((i) => i.text.startsWith('Keyframed scale shrinks'))!;
+    expect(warn.level).toBe('warning');
+    expect(warn.target).toEqual({ frame: 48, clipIds: [shrink.id] });
+    expect(sequenceExportWarnings(s, { m }, 0, 24).some((i) => /Keyframe/.test(i.text))).toBe(false);
   });
 });
 
