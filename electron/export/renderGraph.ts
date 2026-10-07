@@ -43,7 +43,7 @@ export interface RenderGraph {
   /** Duration of the output video stream (`outputFrameCount / outputFps`; `durationSec` at the sequence rate). */
   outputDurationSec: number;
   /**
-   * Final output path (absolute outputDir/fileName.mp4). This is the last element of `args`; the exporter runs
+   * Final output path (absolute outputDir/fileName.<format extension>). This is the last element of `args`; the exporter runs
    * ffmpeg on a `file:` URL of a temp next to it instead (exporter.ts).
    */
   outputPath: string;
@@ -61,9 +61,9 @@ export interface RenderGraph {
   inputCount: number;
   /** The `-i` input args alone (flattened), as they appear in `args`. */
   inputArgs: string[];
-  /** Video encoder args (`-c:v` .. `-fps_mode cfr`), as they appear in `args`. */
+  /** Video encoder args (`-c:v` .. `-fps_mode cfr`), as they appear in `args`; empty for an audio-only format. */
   videoCodecArgs: string[];
-  /** Audio encoder args (`-c:a` .. `-ac N`), as they appear in `args`. */
+  /** Audio encoder args (`-c:a` .. `-ac N`: AAC / AC-3, PCM or FLAC), as they appear in `args`. */
   audioCodecArgs: string[];
   /** Output audio sample rate and channel count. */
   sampleRate: number;
