@@ -19,7 +19,7 @@ in every release PR (docs/RELEASING.md).
 | 2 | Fix the remaining preview gaps | Done | 0.4.0 |
 | 3 | Pre-export warnings | Done | 0.5.0 |
 | 4 | Bitmap subtitle OCR (PGS / VobSub / DVB) | Done | 0.6.0 |
-| 19 | Official Linux and macOS releases | In progress: Linux AppImage and CI gate implemented (ships in 0.6.1); macOS next | 0.6.1 (Linux), 0.7.0 (macOS) |
+| 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS next | 0.6.1 (Linux), 0.7.0 (macOS) |
 | 5–18 | Everything else | Not started | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
@@ -42,7 +42,7 @@ at franchise scale), on Windows, Linux and macOS. It is not feature parity with 
 | Release | Milestone | Entries |
 |---|---|---|
 | 0.6.0 | Bitmap subtitle OCR | §4 (done) |
-| 0.6.1 | Official Linux release (AppImage) | §19, Linux part |
+| 0.6.1 | Official Linux release (AppImage) | §19, Linux part (done) |
 | 0.7.0 | Official macOS release (dmg, signed and notarised) | §19, macOS part |
 | 0.8.0 | Delivery 1: intermediates and audio | §6 (ProRes, DNxHR, WAV / audio-only, one file per audio track) and the centre-channel utility from §9 |
 | 0.9.0 | Delivery 2: MKV packaging | §7 (MKV, more than one audio track, soft subtitle tracks, chapters) |
@@ -394,7 +394,7 @@ server.
 Bitmap subtitle OCR (§4, 0.6.0). Order: **Linux first, in 0.6.1; macOS in 0.7.0.** Source of the decision: the owner's
 review of the "ReCut Cross-Platform Release Support Proposal". The section keeps its number because other documents
 and bug files cite § numbers.
-**Linux part implemented, pending release 0.6.1** (not done until 0.6.1 is published): the x86-64 AppImage
+**Linux part done (7 October 2026, release 0.6.1):** the x86-64 AppImage
 `ReCut-<version>-linux-x86_64.AppImage` with a bundled BtbN `linux64-gpl` FFmpeg and its `FFMPEG-LICENSE.txt` /
 `FFMPEG-BUILD.txt` (`scripts/linux/get-ffmpeg.sh`; the BtbN builds have no readme), listed in
 `THIRD_PARTY_NOTICES.md`; the blocking `linux` job in `.github/workflows/windows.yml` on `ubuntu-22.04` (unit tests,

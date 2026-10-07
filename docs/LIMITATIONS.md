@@ -1,6 +1,6 @@
 # Known limitations
 
-This page describes ReCut 0.6.0 as of 7 October 2026. Every item was checked against the code. Items marked **bug** are
+This page describes ReCut 0.6.1 as of 7 October 2026. Every item was checked against the code. Items marked **bug** are
 defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.md)).
 
 ## Editing and effects
