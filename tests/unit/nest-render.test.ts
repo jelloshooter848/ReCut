@@ -1,7 +1,9 @@
 /**
  * Nested sequences (Roadmap §8) exported with real FFmpeg: a nested timeline renders frame for frame (per-frame luma
  * of a frame-numbered ramp) and sample for sample (per-frame audio RMS) what the equivalent flat timeline renders,
- * in one pass and in chunks; transitions at a nested clip's edge render the preview's alpha / gain ramps.
+ * in one pass and in chunks; transitions at a nested clip's edge render the preview's alpha / gain ramps; keyframes
+ * on the nested clip (position, level) and inside it (opacity, level) render what the flat timeline with the same
+ * motion renders (centroid within 0.25 px, mean luma within 1.5 levels, level within 0.5 dB).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFile } from 'node:child_process';
@@ -9,10 +11,11 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { Clip, ExportSettings, MediaItem, MediaProbe, Rational, Sequence } from '@shared/model';
+import type { Clip, ExportSettings, Keyframe, MediaItem, MediaProbe, Rational, Sequence } from '@shared/model';
 import type { ExportRequest } from '@shared/ipc';
 import { createSequence } from '@shared/project';
 import { makeClip } from '@shared/timeline';
+import { evaluateClipProperty } from '@shared/keyframes';
 import { flattenSequence } from '@shared/nest';
 import { planFrame } from '../../src/playback/planner';
 import { runExport, type ExportRunOptions } from '../../electron/export/exporter';
@@ -181,5 +184,105 @@ describe('nested sequence export equals the flat timeline export', () => {
     }
     // Sound is continuous through the crossfade (no dip to silence, no doubled level).
     for (let f = 18; f < 30; f++) expect(out.rms[f], `rms ${f}`).toBeGreaterThan(0.02);
+  }, 180000);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Keyframes inside nested sequences
+// ---------------------------------------------------------------------------------------------------
+
+/** Raw Y planes of every output frame. */
+async function yPlanes(file: string, w: number, h: number): Promise<Buffer[]> {
+  const { stdout } = await exec(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-i', file, '-map', '0:v:0', '-fps_mode', 'passthrough', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-'],
+    { encoding: 'buffer', maxBuffer: 512 * 1024 * 1024 });
+  const buf = stdout as unknown as Buffer;
+  const size = (w * h * 3) / 2; const frames: Buffer[] = [];
+  for (let i = 0; i + size <= buf.length; i += size) frames.push(buf.subarray(i, i + w * h));
+  return frames;
+}
+/** Coverage-weighted centroid (pixel centres at +0.5) and mean luma of a white-on-black frame (as keyframes-export). */
+function measure(y: Buffer, w: number): { cx: number; cy: number; mean: number } {
+  let sw = 0, sx = 0, sy = 0, sum = 0;
+  for (let i = 0; i < y.length; i++) {
+    sum += y[i];
+    const c = Math.min(1, Math.max(0, (y[i] - 16) / 219));
+    if (c <= 0) continue;
+    const px = i % w, py = (i - px) / w;
+    sw += c; sx += c * (px + 0.5); sy += c * (py + 0.5);
+  }
+  return { cx: sx / sw, cy: sy / sw, mean: sum / y.length };
+}
+
+describe('keyframes inside a nested sequence export like the flat timeline', () => {
+  let white: MediaItem;
+  beforeAll(async () => {
+    const wf = path.join(dir, 'white.mp4');
+    await ff(['-f', 'lavfi', '-i', 'color=c=white:s=64x36:r=24:d=4', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=4',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-qp', '0', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-ac', '2', '-shortest', wf]);
+    const item = async (id: string, file: string): Promise<MediaItem> => ({
+      id, name: id, path: file, kind: 'video', category: 'Other', identity: {}, binId: null, probe: await probe(file),
+      offline: false, proxy: { status: 'none' }, detectedScenes: [], subtitleTrackIds: [], notes: '', tags: [], addedAt: 0,
+    });
+    white = await item('white', wf);
+  }, 120000);
+
+  const kf = (frame: number, value: number, interp?: 'ease'): Keyframe => (interp ? { frame, value, interp } : { frame, value });
+
+  it('the nested clip keyed for position and level, inner clip keyed for opacity and level: centroid, luma and level match', async () => {
+    const W = 320, H = 180;
+    const media = { white };
+    // Inner: the white picture at 25 %, its opacity keyed; its sound, its level keyed.
+    const I = createSequence('Inner', F24, W, H);
+    const iv = makeClip({ mediaId: white.id, name: 'w', sourceIn: 0, duration: 72, kind: 'video' }, 0);
+    iv.transform.scale = 0.25;
+    iv.transform.keyframes = { opacity: [kf(0, 0.2), kf(40, 1, 'ease'), kf(71, 0.5)] };
+    const ia = makeClip({ mediaId: white.id, name: 'w', sourceIn: 0, duration: 72, kind: 'audio', audioStream: white.probe!.audio[0].index }, 0);
+    ia.audio.keyframes = { volume: [kf(0, 1), kf(36, 0.2), kf(71, 1.2)] };
+    I.videoTracks[0].clips.push(iv);
+    I.audioTracks[0].clips.push(ia);
+    // Outer: the inner sequence from 0.5 s (inner frame 12) for 2 s, moved and its level keyed.
+    const O = createSequence('Outer', F24, W, H);
+    const nv: Clip = { ...makeClip({ mediaId: I.id, name: 'Nest', sourceIn: 0.5, duration: 48, kind: 'video' }, 0), sequenceId: I.id, linkId: 'L' };
+    nv.transform.keyframes = { x: [kf(0, -100), kf(47, 100, 'ease')], y: [kf(0, 30), kf(47, -30)] };
+    const na: Clip = { ...makeClip({ mediaId: I.id, name: 'Nest', sourceIn: 0.5, duration: 48, kind: 'audio' }, 0), sequenceId: I.id, linkId: 'L' };
+    na.audio.keyframes = { volume: [kf(0, 0.5), kf(47, 1.5)] };
+    O.videoTracks[0].clips.push(nv);
+    O.audioTracks[0].clips.push(na);
+    // Flat, by hand: N's position keys as they are, the inner opacity keys shifted by -12, the level product per frame.
+    const F = createSequence('Flat', F24, W, H);
+    const fv = makeClip({ mediaId: white.id, name: 'w', sourceIn: 0.5, duration: 48, kind: 'video' }, 0);
+    fv.transform.scale = 0.25;
+    fv.transform.keyframes = { x: nv.transform.keyframes.x, y: nv.transform.keyframes.y, opacity: [kf(-12, 0.2), kf(28, 1, 'ease'), kf(59, 0.5)] };
+    const fa = makeClip({ mediaId: white.id, name: 'w', sourceIn: 0.5, duration: 48, kind: 'audio', audioStream: white.probe!.audio[0].index }, 0);
+    const level: Keyframe[] = [];
+    for (let f = 0; f < 48; f++) level.push(kf(f, evaluateClipProperty('volume', ia, f + 12) * evaluateClipProperty('volume', na, f)));
+    fa.audio.keyframes = { volume: level };
+    F.videoTracks[0].clips.push(fv);
+    F.audioTracks[0].clips.push(fa);
+
+    const run = async (req: ExportRequest) => {
+      const res = await runExport(req, undefined, undefined, NO_CHUNKS);
+      return { frames: await yPlanes(res.outputPath, W, H), rms: await rmsPerFrame(res.outputPath) };
+    };
+    const ref = await run({ sequence: F, media, settings: settings({ width: W, height: H }) });
+    const got = await run({ sequence: O, sequences: { [I.id]: I }, media, settings: settings({ width: W, height: H }) });
+    expect(ref.frames).toHaveLength(48);
+    expect(got.frames).toHaveLength(48);
+    for (let f = 0; f < 48; f++) {
+      const a = measure(got.frames[f], W), b = measure(ref.frames[f], W);
+      expect.soft(Math.abs(a.cx - b.cx), `x at frame ${f}`).toBeLessThan(0.25);
+      expect.soft(Math.abs(a.cy - b.cy), `y at frame ${f}`).toBeLessThan(0.25);
+      expect.soft(Math.abs(a.mean - b.mean), `luma at frame ${f}`).toBeLessThan(1.5);
+      // The flat reference itself follows the keyframes (the picture moves, its opacity changes).
+      expect.soft(Math.abs(b.cx - (W / 2 + evaluateClipProperty('x', fv, f))), `flat x at frame ${f}`).toBeLessThan(0.25);
+    }
+    expect(measure(ref.frames[28], W).mean - measure(ref.frames[0], W).mean).toBeGreaterThan(2);
+    let checked = 0;
+    for (let f = 1; f < 47; f++) {
+      if (ref.rms[f] < 0.005) continue;
+      expect.soft(Math.abs(20 * Math.log10(got.rms[f] / ref.rms[f])), `level at frame ${f}`).toBeLessThan(0.5);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(40);
   }, 180000);
 });
