@@ -323,6 +323,10 @@ own sequence and drop it into as many cuts as you like: an edit made inside it s
   level, fades, mute, tags. Its **speed is always 100 %**. It shows a **NEST** badge and a striped body instead of
   thumbnails and a waveform. A nested clip on a video track shows the inner sequence's picture (its video tracks); one
   on an audio track plays its sound (its audio tracks, with their volume, mute and solo).
+- **Keyframes** work inside nested sequences and on the nested clip itself. Keyframes on inner clips play where
+  they are on the inner timeline. Keyframes on the nested clip (position, scale, opacity, level, added in the Inspector
+  as on any clip) animate the whole inner picture or sound on top of them, frame for frame in the Program monitor and
+  the export. Like the nested clip's other settings, its keyframes count frames of the outer sequence.
 - **Frame rate and size:** the inner sequence plays in real time at the outer sequence's frame rate (a 25 fps reel in
   a 23.976 fps cut keeps its duration), and a different frame size is fitted like a media file.
 - **When the inner sequence changes length,** nested clips keep their own length. If the inner sequence gets shorter,
