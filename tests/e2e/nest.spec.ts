@@ -7,6 +7,8 @@
  *     shows the edit: 0–2 s red, 2–4 s yellow.
  *  2. A sequence dragged from the Project panel and dropped on the timeline is nested there; dropping a sequence on
  *     itself is refused.
+ *  3. Keyframes on the compound clip: its opacity keyed 0 -> 1 in the Inspector over the first 2 s; the export fades
+ *     the nested picture in (frame brightness rises).
  */
 import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs';
@@ -165,4 +167,61 @@ test('a sequence dropped on the timeline is nested there; a sequence cannot be n
   await drop(outerId, 0);
   await expect.poll(() => st<string>(`(s) => s.ui.toasts.map((t) => t.text).join(' | ')`)).toContain('Cannot nest the sequence here');
   expect(await clipsOf(innerId, 'video')).toEqual([[0, 48, null], [48, 48, null]]);
+});
+
+test('keyframes on the compound clip: opacity keyed 0 -> 1 in the Inspector fades the exported picture in', async () => {
+  const insp = page.getByTestId('inspector');
+  const typeNumber = async (selector: string, value: string) => {
+    const field = insp.locator(selector).first();
+    await field.scrollIntoViewIfNeeded();
+    await field.click();
+    await expect(field.locator('input')).toBeVisible();
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.type(value);
+    await page.keyboard.press('Enter');
+  };
+  const setPlayhead = (f: number) => st(`(s, f) => s.setView(s.project.activeSequenceId, { playhead: f })`, f);
+  const nestedClipId = await st<string>(`(s, id) => { s.setActiveSequence(id); return s.project.sequences[id].videoTracks[0].clips[0].id; }`, outerId);
+  expect(await clipsOf(outerId, 'video')).toEqual([[0, 96, innerId]]);
+  await st(`(s, id) => s.select([id], 'set')`, nestedClipId);
+  await expect(insp).toHaveAttribute('data-mode', 'clip');
+  await expect(insp).toContainText('Sequence: Nested Sequence 01');
+
+  // Opacity keyframes on the nested clip: 0 at frame 0, 100 % at frame 47.
+  await setPlayhead(0);
+  await insp.getByTestId('kf-opacity').click();
+  await typeNumber('[data-prop="opacity"] .numfield', '0');
+  await setPlayhead(47);
+  await typeNumber('[data-prop="opacity"] .numfield', '100');
+  const keys = () => st<unknown>(`(s, a) => s.project.sequences[a.seq].videoTracks[0].clips.find((c) => c.id === a.clip).transform.keyframes.opacity`, { seq: outerId, clip: nestedClipId });
+  expect(await keys()).toEqual([{ frame: 0, value: 0 }, { frame: 47, value: 1 }]);
+  await expect(page.locator(`.tl-clip[data-clip-id="${nestedClipId}"] .tl-keyframe`)).toHaveCount(2);
+
+  // Export: the nested picture (red for its first 2 s) fades in from black.
+  const exportsBefore = await page.evaluate(() => (window as unknown as W).__recut.jobsStore.getState().jobs.filter((j) => j.kind === 'export').length);
+  await st(`(s) => { s.select([], 'set'); s.openDialog('export'); }`);
+  await expect(page.getByTestId('export-dialog')).toBeVisible();
+  await page.getByTestId('export-outdir').fill(outDir);
+  await page.getByTestId('export-filename').fill('nested-keyed.mp4');
+  await page.getByTestId('export-preset').selectOption('720p Preview');
+  await expect(page.getByTestId('export-checklist')).not.toContainText('missing');
+  const start = page.getByTestId('export-start');
+  await expect(start).toBeEnabled();
+  await start.click();
+  await page.waitForFunction((n) => {
+    const jobs = (window as unknown as W).__recut.jobsStore.getState().jobs.filter((j) => j.kind === 'export');
+    return jobs.length > n && jobs.every((j) => j.status === 'done' || j.status === 'failed' || j.status === 'canceled');
+  }, exportsBefore, { timeout: 150_000 });
+  const failed = await page.evaluate(() => (window as unknown as W).__recut.jobsStore.getState().jobs.filter((j) => j.kind === 'export' && j.status !== 'done').map((j) => j.error ?? j.status));
+  expect(failed).toEqual([]);
+  await expect(page.getByTestId('export-done')).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  const out = path.join(outDir, 'nested-keyed.mp4');
+  const c0 = frameColor(out, 0.05), c1 = frameColor(out, 1.0), c2 = frameColor(out, 1.9);
+  const all = JSON.stringify({ c0, c1, c2 });
+  expect(c0.r, all).toBeLessThan(40);
+  expect(c1.r, all).toBeGreaterThan(c0.r + 40);
+  expect(c2.r, all).toBeGreaterThan(c1.r + 40);
+  expect(c2.g, all).toBeLessThan(90); // still the red shot, not yet the yellow one
 });
