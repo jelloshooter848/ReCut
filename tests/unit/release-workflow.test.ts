@@ -133,6 +133,11 @@ describe('Windows workflow: the Linux AppImage gate', () => {
     }
     expect(linux).toContain("grep -E 'FAILED|layout=MISSING'");
     expect(linux).toContain('exit "$bad"');
+    // A stalled package mirror never blocks a release: without libfuse2 the smoke test runs the extracted AppImage only.
+    expect(linux).toContain("modes='mounted extracted'");
+    expect(linux).toContain("modes='extracted'");
+    expect(linux).toMatch(/timeout \d+ sudo apt-get/);
+    expect(linux).not.toMatch(/^\s+sudo apt-get update$/m);
   });
 
   it('keeps the AppImage as the ReCut-linux artifact on every run', () => {
