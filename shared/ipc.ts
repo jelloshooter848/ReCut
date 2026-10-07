@@ -180,6 +180,11 @@ export interface ExportRequest {
   /** Sequence subtitle cues, already resolved to seconds. */
   subtitles?: { start: number; end: number; text: string }[];
   /**
+   * The sequence's subtitle tracks one by one (cues resolved to seconds), for soft subtitle streams
+   * (`settings.subtitleOutputs`, MKV). Hidden (disabled) tracks are included: the settings choose.
+   */
+  subtitleTracks?: { id: ID; name: string; language: string; cues: { start: number; end: number; text: string }[] }[];
+  /**
    * Every project source asset the export must never write over (or next to, via its `.part` temp or
    * sidecar `.srt`): all project media paths and proxy paths (used by this sequence or not) and imported
    * subtitle track files. Filled by the Export dialog; optional for other callers (the sequence's own

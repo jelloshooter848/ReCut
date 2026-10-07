@@ -443,10 +443,43 @@ export interface ExportSettings {
   audioBitDepth?: AudioBitDepth;
   /** Audio-only formats: one file per audio track instead of one mixed file. */
   audioPerTrack?: boolean;
+  // --- Packaging (0.9.0, ROADMAP §7). Optional, MKV only: absent = one main mix and no soft subtitles (as before).
+  /** MKV: the output audio tracks, in order (the first is the default track); absent or empty = one main mix with audioCodec / audioBitrateKbps / audioChannels. */
+  audioOutputs?: ExportAudioOutput[];
+  /** MKV: sequence subtitle tracks muxed as soft subtitle streams, in order; absent or empty = none. */
+  subtitleOutputs?: ExportSubtitleOutput[];
 }
 
-/** Export file formats (§6). MKV (§7) is a later addition here. */
-export type ExportContainer = 'mp4' | 'mov' | 'wav' | 'flac';
+/** Export file formats (§6, §7). */
+export type ExportContainer = 'mp4' | 'mov' | 'wav' | 'flac' | 'mkv';
+/** Channel layout of one output audio track (§7). */
+export type ExportAudioLayout = 'mono' | 'stereo' | '5.1';
+/** Codec of one output audio track (§7); PCM and FLAC take ExportSettings.audioBitDepth. */
+export type ExportAudioCodec = 'aac' | 'ac3' | 'flac' | 'pcm';
+/** One output audio track of an MKV export: a mix of some of the sequence's audio tracks (shared/exportFormat.ts). */
+export interface ExportAudioOutput {
+  /** Sequence audio track ids mixed into this track; absent = every track the export renders (the main mix). */
+  sources?: ID[];
+  layout: ExportAudioLayout;
+  codec: ExportAudioCodec;
+  /** AAC / AC-3 bitrate in kbit/s; absent = a default for the layout. */
+  bitrateKbps?: number;
+  /** ISO 639-2 language code; absent or empty = 'und'. */
+  language?: string;
+  /** Stream title shown by players; absent = none. */
+  title?: string;
+}
+/** One soft subtitle stream of an MKV export: a sequence subtitle track. */
+export interface ExportSubtitleOutput {
+  /** SequenceSubtitleTrack id. */
+  trackId: ID;
+  /** ISO 639-2 language code; absent = from the track's language. */
+  language?: string;
+  /** Stream title; absent = the track's name. */
+  title?: string;
+  default?: boolean;
+  forced?: boolean;
+}
 export type IntermediateCodec = 'prores' | 'dnxhr';
 export type ProResProfile = 'proxy' | 'lt' | 'standard' | 'hq' | '4444';
 export type DnxhrProfile = 'lb' | 'sq' | 'hq' | 'hqx' | '444';
