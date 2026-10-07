@@ -103,7 +103,7 @@ const INTERMEDIATE_OPTIONS = INTERMEDIATE_CODECS.map((c) => ({ value: c.id, labe
 const PRORES_OPTIONS = PRORES_PROFILES.map((p) => ({ value: p.id, label: p.label }));
 const DNXHR_OPTIONS = DNXHR_PROFILES.map((p) => ({ value: p.id, label: p.label }));
 const BIT_DEPTH_OPTIONS = [{ value: '24', label: '24-bit' }, { value: '16', label: '16-bit' }];
-const AUDIO_FILES_OPTIONS = [{ value: 'mix', label: 'One mixed file' }, { value: 'tracks', label: 'One file per audio track' }];
+const AUDIO_FILES_OPTIONS = [{ value: 'mix', label: 'One mixed file' }, { value: 'tracks', label: 'One per track' }];
 const ENCODER_OPTIONS = ENCODER_PRESETS.map((p) => ({ value: p, label: p }));
 
 type Phase = { kind: 'edit' } | { kind: 'job'; jobId: string; outputPath: string; outputPaths?: string[] };

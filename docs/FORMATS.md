@@ -146,7 +146,7 @@ inserting a clip copies its cues into the sequence's subtitle tracks, attached t
   `.srt` / `.vtt` paths, refuses any file the project reads from (media, proxies, subtitle files imported to media
   or to a sequence track, or read by the Transcript; compared case-insensitively and by file identity, so links are
   caught), and writes through a temp file in the same folder that is renamed into place.
-- Export dialog › Subtitles › **Sidecar** writes `<name>.srt` next to the MP4 with the sequence's subtitle cues
+- Export dialog › Subtitles › **Sidecar** writes `<name>.srt` next to the exported file with the sequence's subtitle cues
   (all tracks merged), re-timed to the exported range.
 - Export dialog › Subtitles › **Burn in** renders them into the picture with FFmpeg's `subtitles` filter (needs
   libass). Cues are snapped to the sequence frames the Program monitor shows them on, so they appear and disappear on
@@ -160,7 +160,46 @@ printf pattern such as `x%03d.png` fails with FFmpeg 6.1 (see [LIMITATIONS](LIMI
 
 ## Export formats
 
-- Container: **MP4** only (`+faststart`).
+Export › Output › **Format** picks the file format; the file name's extension follows it.
+
+| Format | Video | Audio | Use |
+|---|---|---|---|
+| **MP4** (default) | H.264 (libx264) or H.265 / HEVC (libx265), yuv420p | AAC or AC-3 | Delivery, playback, upload |
+| **MOV** | Apple ProRes (`prores_ks`) or Avid DNxHR (`dnxhd`), intra-only | PCM 16- or 24-bit (`pcm_s16le` / `pcm_s24le`) | Intermediate for grading and finishing in another editor |
+| **WAV** | none | PCM 16- or 24-bit | The mix, or one file per audio track, for a mixer |
+| **FLAC** | none | FLAC 16- or 24-bit (lossless) | A smaller lossless soundtrack |
+
+MOV profiles and the pixel format each one is written in (FFmpeg's `-profile:v`):
+
+| Codec | Profile | `-profile:v` | Pixel format |
+|---|---|---|---|
+| ProRes | 422 Proxy, 422 LT, 422, 422 HQ | 0, 1, 2, 3 | yuv422p10le |
+| ProRes | 4444 (no alpha) | 4 | yuv444p10le |
+| DNxHR | LB, SQ, HQ | dnxhr_lb, dnxhr_sq, dnxhr_hq | yuv422p (8-bit) |
+| DNxHR | HQX | dnxhr_hqx | yuv422p10le |
+| DNxHR | 444 | dnxhr_444 | yuv444p10le |
+
+- ProRes is tagged with the Apple vendor id (`-vendor apl0`). DNxHR works at any frame size from 256×120 up (an FFmpeg
+  encoder limit); the legacy fixed-size DNxHD profiles are not offered. Both are intra-only: every frame is a key
+  frame.
+- MOV keeps the MP4 rules otherwise: frame size, frame rate (and its conversion), range, chapters, burn-in and sidecar
+  subtitles, no metadata from the sources. It is written without `+faststart` (rewriting a 100 GB file at the end
+  would take minutes). Colour tags are what the MP4 export writes (none for ProRes, as for H.264); FFmpeg's DNxHR
+  encoder always marks its stream BT.709, limited range.
+- **WAV / FLAC (audio only):** stereo or 5.1, at the sample rate chosen (44.1 / 48 / 96 kHz, or the sequence's). The
+  file has exactly the samples of the range (frames × rate ÷ fps, rounded). A WAV larger than 4 GB is written as
+  RF64. FLAC carries the chapters; WAV has none. Burn-in does not apply; the sidecar `.srt` does.
+- **One file per audio track** (WAV or FLAC, Export › Audio › Files › **One per track**): one file for every audio
+  track the mixed export plays (not muted; only the soloed ones when any track is soloed) that has an enabled clip in
+  the range, named `<name> - A1 <track name>.wav` (`<name> - A2.wav` for a track that keeps its default name). Every
+  file covers the whole range, so all are the same length and line up sample for sample. Each carries its clips'
+  gain, level and fades and the track's volume, exactly as in the mix; there is no master level in ReCut (the
+  Program monitor's volume is only for listening), so the files add up to the mixed export. The sidecar `.srt`,
+  when on, is written once as `<name>.srt`.
+
+MP4 details:
+
+- Container: **MP4** (`+faststart`).
 - Video: **H.264 (libx264)** or **H.265 / HEVC (libx265)**, yuv420p, constant frame rate. Quality is either **CRF**
   (14–32) or **Target bitrate**. Encoder preset ultrafast…slow. Frame size 16–8192 px (even). Frame rate is the
   sequence's or 23.976 / 24 / 25 / 29.97 / 30 / 50 / 59.94 / 60 (NTSC rates stay exact rationals, e.g. 30000/1001).
@@ -189,6 +228,10 @@ printf pattern such as `x%03d.png` fails with FFmpeg 6.1 (see [LIMITATIONS](LIMI
 | 4K High Quality | 3840×2160 | H.264 CRF 18, medium | AAC 320 kb/s stereo |
 | 720p Preview | 1280×720 | H.264 CRF 28, veryfast | AAC 128 kb/s stereo |
 | 1080p 5.1 Surround | 1920×1080 | H.264 CRF 18, medium | AC-3 640 kb/s 5.1 |
+| ProRes 422 HQ (MOV) | (keeps the size) | ProRes 422 HQ | PCM 24-bit |
+| DNxHR HQ (MOV) | (keeps the size) | DNxHR HQ | PCM 24-bit |
+| WAV 24-bit (audio only) | — | none | PCM 24-bit, one mixed file |
+| WAV per audio track | — | none | PCM 24-bit, one file per track |
 | Match Sequence | sequence size | (keeps current codec settings) | sequence rate / channels |
 
 Exports are frame-exact: the output has exactly the frame count of the exported range, and each frame is the one the

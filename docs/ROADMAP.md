@@ -246,6 +246,12 @@ frame-exact and safe first.
 **Plan:** ProRes (`prores_ks`) and DNxHR (`dnxhd`) in MOV, PCM audio in MOV, audio-only WAV (PCM) and other audio
 containers, and per-track or per-stem export (one WAV per audio track, or per stem once §12 exists). The render graph
 already builds video and audio separately; this adds containers, codecs and a "no video" mode.
+**Status: done (7 October 2026, release 0.8.0).** Export › Format offers MP4, MOV (ProRes Proxy / LT / 422 / HQ /
+4444 with `prores_ks`, DNxHR LB / SQ / HQ / HQX / 444 with `dnxhd`, PCM 16- or 24-bit audio), WAV and FLAC (audio
+only, the mix or one file per audio track, sample-aligned and the length of the range); the file extension follows
+the format, and settings saved before load as MP4. Formats and encoder arguments live in `shared/exportFormat.ts`.
+Not done: per-stem export (needs §12), MKV (§7), and a higher-precision compositing path for 10-bit / 4:2:2 sources
+(see [LIMITATIONS](LIMITATIONS.md#export)).
 
 ## 7. MKV packaging export
 

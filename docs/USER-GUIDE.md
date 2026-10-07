@@ -245,21 +245,48 @@ Scenes in the library are reusable, tagged source ranges.
 ## 15. Export
 
 1. **File › Export…** (Ctrl+M).
-2. Pick a **Preset**: 1080p High Quality, 1080p Smaller File, 4K High Quality, 720p Preview, 1080p 5.1 Surround, or
-   Match Sequence.
-3. Set the **File name** and **Folder** (Browse…). The folder must be a full path (`/home/me/Videos`,
-   `C:\Videos`). Optionally adjust Video (frame size, frame rate, H.264/H.265, CRF or bitrate, encoder preset), Audio
-   (AAC/AC-3, Stereo or **5.1 Surround** when a source has 6+ channels; AC-3 offers 32, 44.1 and 48 kHz only) and
-   **Range** (Entire sequence or In to Out).
+2. Pick a **Preset**: 1080p High Quality, 1080p Smaller File, 4K High Quality, 720p Preview, 1080p 5.1 Surround,
+   ProRes 422 HQ (MOV), DNxHR HQ (MOV), WAV 24-bit (audio only), WAV per audio track, or Match Sequence.
+3. Choose the **Format** (see **Formats** below; MP4 unless you change it), then set the **File name** and **Folder**
+   (Browse…). The file name's extension follows the format. The folder must be a full path (`/home/me/Videos`,
+   `C:\Videos`). Optionally adjust Video (frame size, frame rate, and the codec settings of the format), Audio
+   (codec or bit depth, Stereo or **5.1 Surround** when a source has 6+ channels, sample rate; AC-3 offers 32, 44.1
+   and 48 kHz only) and **Range** (Entire sequence or In to Out).
 4. **Subtitles:** **Burn in** renders them into the picture, on exactly the frames where the Program monitor shows
-   them. **Sidecar** writes a `.srt` next to the MP4.
+   them. **Sidecar** writes a `.srt` next to the exported file. Burn-in is off for the audio-only formats (there is
+   no picture); the sidecar still works.
 5. The **Checks** list blocks the export with a reason when something is wrong (an empty sequence, offline or missing
    media, an invalid file name, folder or size). It also warns, without blocking, about what would only show when
    the result is watched (see **Pre-export warnings** below). **Show FFmpeg command** previews the exact command.
-6. Click **Export**. If the MP4 (or its `.srt`) already exists, ReCut asks **Replace it?** first. Progress shows in
+6. Click **Export**. If the file (or its `.srt`) already exists, ReCut asks **Replace it?** first. Progress shows in
    the dialog and in Jobs. When it finishes, use **Reveal in Folder** or **Export another**.
 
-The MP4 has exactly the frame count of the exported range, and each frame is the one the Program monitor showed.
+**Formats.**
+
+- **MP4** (the default): H.264 or H.265 with AAC or AC-3, for watching and sharing. Settings saved by an earlier
+  version open as MP4.
+- **MOV**: an intermediate for grading or finishing in another editor. **Codec** is Apple ProRes or Avid DNxHR, and
+  **Profile** picks the quality: ProRes 422 Proxy, 422 LT, 422, 422 HQ or 4444; DNxHR LB, SQ, HQ, HQX (10-bit) or
+  444 (10-bit). Every frame is a key frame, so the file is large but quick to edit: about 160 GB for two hours of
+  1080p in ProRes 422 HQ. Audio is uncompressed PCM, 24-bit or 16-bit. DNxHR needs a frame of at least 256×120.
+- **WAV** or **FLAC**: sound only, uncompressed (WAV) or lossless (FLAC), 24-bit or 16-bit, at the sample rate you
+  choose. **Files** is **One mixed file** (the soundtrack, as in a video export) or **One per track**.
+
+**One file per audio track** writes a file for each audio track the mix plays, for a mixer or a sound editor:
+`<name> - A1 Dialogue.wav`, `<name> - A2 Music.wav`, and so on (`<name> - A3.wav` when a track keeps its default
+name). The dialog lists the files before you export. Every file covers the whole range, so they are all the same
+length and line up sample for sample when placed at the same start. Each file has the track as the mix has it: clip
+gain, level and fades, and the track's volume. Mute and solo decide which tracks get a file: a muted track gets
+none, and when a track is soloed only the soloed tracks get one. A track with no enabled clip in the range gets none
+either; the Checks list says which tracks are left out and why. There is no master level to apply (the Program
+monitor's volume only changes what you hear), so the files add up to the mixed export.
+
+**Checks for the formats.** The Checks list also says when a MOV export will be very large (over 100 GB, for example
+two hours of ProRes 4444), when a WAV will pass 4 GB (it is then written as RF64, which some older programs cannot
+open), and when an audio-only export has no enabled audio clip in the range (the export is blocked). Frame-rate, VFR
+and sync warnings are about the picture, so they are left out for the audio-only formats.
+
+The exported video has exactly the frame count of the exported range, and each frame is the one the Program monitor showed.
 An In/Out range that starts or ends inside a transition renders those frames exactly as the full export does.
 Anamorphic (non-square pixel) sources are un-squeezed, so they fill the frame as they do in the preview.
 If you pick a **Frame rate** other than the sequence's (for example 30 fps for a 23.976 sequence), the video is
@@ -287,7 +314,7 @@ muted, inside the chosen range) and warns about:
 Each warning names the media or clips (the first three, then "and N more"). **Show** closes the dialog, selects
 them (or the transition) on the timeline and moves the playhead to the first one. Warnings never block the export.
 
-**Chapters:** markers of kind **Chapter** (marker dialog or Markers panel) become the MP4's chapters, with their
+**Chapters:** markers of kind **Chapter** (marker dialog or Markers panel) become the chapters of an MP4, MOV or FLAC file (WAV has none), with their
 names. Only chapter markers inside the exported range count; times are measured from the start of the range. A chapter
 marker before the In point that is still current at In becomes the first chapter, starting at the beginning of the
 file. If no chapter marker is at or before the start of the range (for example, you marked only the act breaks), the
@@ -299,9 +326,10 @@ or languages.
 
 Export never writes over a file the project reads from: media, proxies, and subtitle files (imported to media or to
 a sequence track, or read by the Transcript). Such a name is refused, also when it differs only in letter case or is
-a link to the same file. ReCut renders into `<name>.recut-part-<random>.mp4` next to the output and renames it at the
-end. If that final rename fails, the finished render is kept as `<name>.recut-unsaved-<time>.mp4` and the error says
-so, so you do not have to render again.
+a link to the same file. ReCut renders into `<name>.recut-part-<random>.mp4` (`.mov`, `.wav`, ...) next to the output
+and renames it at the end; a per-track export renders every file before renaming any. If that final rename fails, the
+finished render is kept as `<name>.recut-unsaved-<time>.mp4` and the error says so, so you do not have to render
+again.
 
 ## Saving
 

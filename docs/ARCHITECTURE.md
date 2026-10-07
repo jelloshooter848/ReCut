@@ -86,6 +86,7 @@ flowchart LR
 | `limits.ts` | Ranges a loaded project must stay within (`MAX_TIMELINE_FRAMES` = 86,400,000, `MAX_SOURCE_SECONDS`, zoom, Preferences ranges, `MAX_PROJECT_DEPTH` = 64). The UI takes its ranges from here too. |
 | `media.ts` | Sample aspect ratio rules (`saneSar`: positive safe integers, 1/16–16) and `videoDisplaySize` for the export graph and the preview compositor. |
 | `exportPlan.ts` | Export planning shared by the render graph and the Export dialog's checklist: per-track segments, transition handles (`transitionHandles`: rendered length, or why a transition is shortened or dropped), the range widened so no transition is cut, clips that run past their media. The dialog's pre-export warnings predict exactly what the export renders. |
+| `exportFormat.ts` | Export file formats: containers, encoder arguments (H.264 / H.265, ProRes, DNxHR, AAC / AC-3, PCM, FLAC), extensions, size-estimate rates and the per-track audio file plan, shared by the render graph and the Export dialog. |
 | `linkSync.ts` | Linked-clip sync offsets (`linkedSyncOffsets`), used by the timeline's out-of-sync badge and the Export dialog's warning. |
 | `pathKey.ts` | Lexical `path.resolve` + case folding for the renderer's early "is this a project source?" check (subtitle export). The main process repeats the check with realpath and inode (`electron/pathSafety.ts`). |
 | `subtitles.ts`, `ipc.ts`, `ids.ts`, `peaks.ts` | SRT / VTT parse + serialize, the IPC contract and `recut-media://` helpers, ids, waveform peaks. |
@@ -167,9 +168,10 @@ key ','  →  useShortcuts → runCommand('edit.insert')
 Export dialog → window.recut.startExport({ sequence, media, settings, subtitles, protectedPaths[, overwrite] })
   main: validate (absolute folder, not a project source, exists? → code 'exists' → dialog asks "Replace it?")
         → JobQueue('export') → exporter
-        shouldChunk? ── no ─→ buildRenderGraph → ffmpeg -filter_complex_script → <name>.recut-part-<random>.mp4
-                     └─ yes ─→ per-chunk video (.mp4, closed GOP) + audio (.wav f32) → concat demuxer join
-        → move onto <name>.mp4, write .srt sidecar (temp + rename), delete temp dir
+        per output file (one; or one per audio track for a per-track WAV / FLAC export):
+        shouldChunk? ── no ─→ buildRenderGraph → ffmpeg -filter_complex_script → <name>.recut-part-<random>.<ext>
+                     └─ yes ─→ per-chunk video (.mp4 / .mov) + audio (.wav f32) → concat demuxer join
+        → move onto <name>.<ext> (mp4, mov, wav, flac), write .srt sidecar (temp + rename), delete temp dir
   progress: ffmpeg -progress → job.progress → ev:jobs → jobsStore → Export dialog / Jobs panel
 ```
 
