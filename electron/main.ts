@@ -23,6 +23,7 @@ import { getFfmpegPath, getFfprobePath, getFfmpegVersion, runFfmpeg } from './me
 import { probeMedia } from './media/probe';
 import { LICENCE_FILES, licenceDirs, listLicenceFiles } from './licences';
 import { ocrWorkerPath, probeOcrCore } from './ocr/engine';
+import { getWhisperCliPath, whisperCliVersion } from './whisper/engine';
 
 const isDev = Boolean(process.env.RECUT_DEV_URL) || !app.isPackaged;
 const smoke = process.env.RECUT_SMOKE === '1';
@@ -290,6 +291,15 @@ async function runSmoke(): Promise<void> {
     log(`smoke: ocr core=${core} ok worker=${ocrWorkerPath()}`);
   } catch (e) {
     log(`smoke: ocr core=FAILED ${e instanceof Error ? e.message : String(e)}`);
+  }
+  // Speech-to-text: the bundled whisper-cli (resources/whisper) runs and reports its version; no model needed.
+  // "whisper engine=FAILED" fails the CI smoke checks (.github/workflows/windows.yml, scripts/windows/install-check.ps1).
+  try {
+    const bin = getWhisperCliPath();
+    const version = await whisperCliVersion(bin);
+    log(`smoke: whisper engine=${version} ok path=${bin}`);
+  } catch (e) {
+    log(`smoke: whisper engine=FAILED ${e instanceof Error ? e.message : String(e)}`);
   }
   // Renderer: did the React app mount its layout?
   try {

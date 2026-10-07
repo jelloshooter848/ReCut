@@ -51,7 +51,7 @@ describe('licence files (Help › About › Licences)', () => {
     ];
     for (const id of hostile) expect(resolveLicenceFile(id, dirs), String(id)).toBeNull();
     // Every path it can ever return is <search dir>/<fixed name>.
-    const allowed = new Set(LICENCE_FILES.flatMap((d) => [...dirs.app, ...dirs.ffmpeg, ...dirs.exe, ...dirs.ocr].map((dir) => path.join(dir, d.fileName))));
+    const allowed = new Set(LICENCE_FILES.flatMap((d) => [...dirs.app, ...dirs.ffmpeg, ...dirs.exe, ...dirs.ocr, ...(dirs.whisper ?? [])].map((dir) => path.join(dir, d.fileName))));
     for (const d of LICENCE_FILES) {
       const p = resolveLicenceFile(d.id, dirs, () => true);
       expect(p && allowed.has(p)).toBe(true);
@@ -75,6 +75,14 @@ describe('licence files (Help › About › Licences)', () => {
     expect(resolveLicenceFile('tesseract', dirs)).toBeNull();
     expect(dirs.ocr).toEqual([path.join(cwd, 'nothing-here', 'app.asar.unpacked', 'dist', 'electron', 'ocr', 'core')]);
     expect(resolveLicenceFile('tesseract', dev)).toBe(path.join(ocrDev, 'LICENSE'));
+    // The speech-to-text engine's files: packaged <resources>/whisper; development <root>/resources/whisper.
+    expect(dirs.whisper).toEqual([path.join(cwd, 'nothing-here', 'whisper')]);
+    const whisperDev = path.join(cwd, 'resources', 'whisper');
+    fs.mkdirSync(whisperDev, { recursive: true });
+    for (const f of ['WHISPER-LICENSE.txt', 'WHISPER-BUILD.txt']) fs.writeFileSync(path.join(whisperDev, f), f);
+    expect(resolveLicenceFile('whisperLicense', dirs)).toBeNull();
+    expect(resolveLicenceFile('whisperLicense', dev)).toBe(path.join(whisperDev, 'WHISPER-LICENSE.txt'));
+    expect(listLicenceFiles(dev).map((f) => f.id)).toEqual(expect.arrayContaining(['whisperLicense', 'whisperBuild']));
     fs.rmSync(cwd, { recursive: true, force: true });
   });
 });
@@ -86,15 +94,17 @@ describe('licence files in the repository and the package config', () => {
     expect(fs.readFileSync(path.join(repo, 'LICENSE'), 'utf8')).toMatch(/^MIT License\s+Copyright \(c\) \d{4} ReCut contributors/);
   });
 
-  it('electron-builder ships LICENSE, THIRD_PARTY_NOTICES.md and everything in resources/ffmpeg', () => {
+  it('electron-builder ships LICENSE, THIRD_PARTY_NOTICES.md and everything in resources/ffmpeg and resources/whisper', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8'));
     const extra = pkg.build.extraResources as { from: string; to: string; filter?: string[] }[];
     expect(extra).toEqual(expect.arrayContaining([
       { from: 'LICENSE', to: 'LICENSE' },
       { from: 'THIRD_PARTY_NOTICES.md', to: 'THIRD_PARTY_NOTICES.md' },
       { from: 'resources/ffmpeg', to: 'ffmpeg', filter: ['**/*'] },
+      { from: 'resources/whisper', to: 'whisper', filter: ['**/*'] },
     ]));
-    for (const e of extra) if (e.from !== 'resources/ffmpeg') expect(fs.existsSync(path.join(repo, e.from)), e.from).toBe(true);
+    // resources/ffmpeg and resources/whisper are filled by the build scripts (get-ffmpeg, get-whisper), not committed.
+    for (const e of extra) if (!e.from.startsWith('resources/')) expect(fs.existsSync(path.join(repo, e.from)), e.from).toBe(true);
   });
 
   it('get-ffmpeg.ps1 writes the licence, readme and build files that About and the notices point to', () => {
