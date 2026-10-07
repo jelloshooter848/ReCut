@@ -5,6 +5,60 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
+## [0.4.0] - 2026-10-07
+
+The preview matches the export ([Roadmap](docs/ROADMAP.md) §2): every clip plays the audio stream export renders,
+and every still image FFmpeg can decode shows in the monitors. Project files are unchanged (`formatVersion` 1).
+
+### Added
+
+- **Per-clip audio stream:** Clip Inspector › Audio › **Stream** picks which audio stream of a multi-stream file a clip
+  plays (undoable; linked clips follow).
+- **Still images in every format FFmpeg reads** (TIFF, TGA, EXR, PSD, HEIC, AVIF, JPEG XL, DPX and more) preview in
+  the Program and Source monitors from a PNG proxy made on import. The import dialog's Images filter and the Graphics
+  bin accept all of them.
+
+### Changed
+
+- **The preview plays each clip's selected audio stream**, the same one export renders. It used to play the first
+  stream (or the one stream baked into the proxy). The Source monitor plays the media's Audio stream, and waveforms
+  show the selected stream.
+- **Proxies carry every audio stream**, so changing a stream no longer rebuilds the proxy. When FFmpeg cannot proxy
+  one stream, the proxy keeps the ones it can. Proxies from earlier versions are still used and rebuilt only when a
+  clip needs a stream they lack.
+- **An animated GIF is imported as a video**, so it plays in the preview as it does in the export.
+
+### Fixed
+
+- On Windows, opening a project at startup (double-clicking a `.recut` file or `--project`) or saving could fail with
+  "EPERM … prefs.json" while ReCut was reading its preferences
+  ([report](bugs/closed/2026-10-07-startup-open-fails-prefs-rename-windows.md)).
+- Export failed for AVIF and single-frame GIF stills ("Option loop not found")
+  ([report](bugs/closed/2026-10-07-still-export-loop-option-non-image2.md)).
+- TGA, EXR, PSD and JPEG XL files were imported as zero-length videos, and AVIF as a playable video
+  ([report](bugs/closed/2026-10-07-still-classifier-mismatch.md)).
+- An EXIF-rotated JPEG got its sideways size ([report](bugs/closed/2026-10-07-exif-rotated-still-probe-size.md)).
+- A rotated AVIF previewed rotated but exported unrotated
+  ([report](bugs/closed/2026-10-07-avif-preview-orientation-differs-from-export.md)).
+
+### Development
+
+- Releases and dev prereleases publish only when the installer, unit, end-to-end and launcher jobs all pass on
+  Windows ([report](bugs/closed/2026-10-07-release-publishes-on-red-tests.md)). 0.3.0 was published while the Windows
+  end-to-end suite was red; that suite is fixed
+  ([report](bugs/closed/2026-10-07-windows-program-e2e-failing-since-pr18.md)).
+
+### Known issues
+
+- HEIC needs FFmpeg 7.1 or later (the Windows build bundles 9.0.2). With FFmpeg 6.1, a rotated AVIF is unrotated in
+  preview and export alike. See [LIMITATIONS](docs/LIMITATIONS.md).
+- The bundled FFmpeg's licence is not yet shipped with the Windows build; 0.4.1 fixes this
+  ([open report](bugs/open/2026-10-07-bundled-ffmpeg-licence-not-shipped.md)).
+- The performance gate's verdict depends on the speed of the machine
+  ([open report](bugs/open/2026-10-07-perf-gate-verdict-not-reproducible.md)).
+- Unchanged: moved media rebuilds its cache ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned
+  builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
+
 ## [0.3.0] - 2026-10-07
 
 Performance at franchise scale ([Roadmap](docs/ROADMAP.md) §1): a 2,500-clip project and a 3-hour, 6,700-clip
