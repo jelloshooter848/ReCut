@@ -8,6 +8,7 @@ import { framesToSeconds } from '@shared/time';
 import { resolveSubtitleCues } from '@shared/timeline';
 import { sidecarCandidates } from '@/transcript/providers';
 import { sequenceHasSubtitles } from './settings';
+import { subtitleOutputPlan } from '@shared/exportFormat';
 
 /**
  * The parts of the project an export request is built from. `sequences` (for files imported into the
@@ -60,12 +61,29 @@ export function projectSourcePaths(project: ExportProjectSources): string[] {
   return [...out];
 }
 
+/**
+ * The subtitle tracks an MKV export muxes as soft subtitle streams (`settings.subtitleOutputs`), each with its cues
+ * resolved to seconds like the sidecar's. A hidden (disabled) track is included when chosen. Undefined when none.
+ */
+export function softSubtitleTracks(seq: Sequence, settings: ExportSettings): ExportRequest['subtitleTracks'] {
+  const plan = subtitleOutputPlan(seq.subtitleTracks, settings);
+  if (plan.length === 0) return undefined;
+  const chosen = new Set(plan.map((p) => p.track.id));
+  const tracks = seq.subtitleTracks.filter((t) => chosen.has(t.id));
+  const cues = resolveSubtitleCues({ ...seq, subtitleTracks: tracks.map((t) => ({ ...t, enabled: true })) });
+  return tracks.map((t) => ({
+    id: t.id, name: t.name, language: t.language,
+    cues: cues.filter((c) => c.trackId === t.id).map((c) => ({ start: framesToSeconds(c.start, seq.fps), end: framesToSeconds(c.end, seq.fps), text: c.text })),
+  }));
+}
+
 export function buildExportRequest(project: ExportProjectSources, seq: Sequence, settings: ExportSettings): ExportRequest {
   const subtitles = sequenceHasSubtitles(seq)
     ? resolveSubtitleCues(seq).map((c) => ({ start: framesToSeconds(c.start, seq.fps), end: framesToSeconds(c.end, seq.fps), text: c.text }))
     : undefined;
+  const subtitleTracks = softSubtitleTracks(seq, settings);
   return {
-    sequence: seq, media: project.media, settings: { ...settings, useProxies: false }, subtitles,
+    sequence: seq, media: project.media, settings: { ...settings, useProxies: false }, subtitles, ...(subtitleTracks ? { subtitleTracks } : {}),
     // `seq` may be an edited copy of the project's sequence: its own imported subtitle files count too.
     protectedPaths: [...new Set([...projectSourcePaths(project), ...sequenceSubtitleSources(seq.subtitleTracks)])],
   };

@@ -17,8 +17,8 @@ import { framesToSeconds, isValidFps } from '@shared/time';
 import { serializeSrt } from '@shared/subtitles';
 import { videoDisplaySize } from '@shared/media';
 import {
-  audioEncoder, CONTAINERS, DNXHR_MIN_HEIGHT, DNXHR_MIN_WIDTH, exportContainer, isPerTrackAudio, PER_TRACK_SKIP_REASON, perTrackAudioPlan,
-  usesAc3, videoEncoder, withExportExtension,
+  audioEncoder, audioOutputPlan, audioStreamArgs, CONTAINERS, dispositionValue, DNXHR_MIN_HEIGHT, DNXHR_MIN_WIDTH, exportContainer, isPerTrackAudio,
+  PER_TRACK_SKIP_REASON, perTrackAudioPlan, subtitleOutputPlan, supportsPackaging, usesAc3, videoEncoder, withExportExtension, workingLayout,
 } from '@shared/exportFormat';
 
 /** Placeholder in `args` for the path of the filter script file (see exporter.ts). */
@@ -63,11 +63,25 @@ export interface RenderGraph {
   inputArgs: string[];
   /** Video encoder args (`-c:v` .. `-fps_mode cfr`), as they appear in `args`; empty for an audio-only format. */
   videoCodecArgs: string[];
-  /** Audio encoder args (`-c:a` .. `-ac N`: AAC / AC-3, PCM or FLAC), as they appear in `args`. */
+  /**
+   * Audio encoder args (`-c:a` .. `-ac N`: AAC / AC-3, PCM or FLAC), as they appear in `args`. MKV: every output
+   * track's args with stream specifiers (`-c:a:0 ac3 -b:a:0 640k -ac:a:0 6 -c:a:1 aac ...`) and one `-ar`.
+   */
   audioCodecArgs: string[];
-  /** Output audio sample rate and channel count. */
+  /** Output audio sample rate and channel count (of the first output audio track). */
   sampleRate: number;
   channels: number;
+  /**
+   * The output audio streams in order: their graph label (`[aout]`, then `[aout1]`, `[aout2]`, ...), channel count and
+   * description. One for every format but MKV with several output tracks (shared/exportFormat.ts audioOutputPlan).
+   */
+  audioOutputs: RenderAudioOutput[];
+  /** MKV: soft subtitle streams (range-relative SRT); empty for other formats and for a sub-range (chunk) graph. */
+  softSubtitles: SoftSubtitleStream[];
+  /** Subtitle encoder args (`-c:s subrip`) when there are soft subtitles, as they appear in `args`. */
+  subtitleCodecArgs: string[];
+  /** MKV: per-stream language / title metadata and default / forced flags, as they appear in `args`. */
+  streamArgs: string[];
   /** Rendered range in absolute sequence frames `[startF, endF)`. */
   startF: number;
   endF: number;
@@ -107,6 +121,8 @@ export interface RenderGraphOptions {
   range?: { startF: number; endF: number };
   /** Path of the FFMETADATA file the caller wrote `chaptersContent` to; enables chapters in the output. */
   chaptersFilePath?: string;
+  /** Paths the caller wrote the `softSubtitles` contents to, in order; enables the soft subtitle streams (MKV). */
+  softSubtitleFilePaths?: string[];
   /** Build only the video (`[vout]`) or only the audio (`[aout]`) part of the graph. Default: both. */
   streams?: 'video' | 'audio';
   /** Make `[aout]` exactly this many samples long (padded with silence / trimmed). */
@@ -117,6 +133,31 @@ export interface RenderGraphOptions {
    * up sample for sample with each other and with the mixed export.
    */
   audioTrackId?: ID;
+}
+
+/** One output audio stream of a render graph. */
+export interface RenderAudioOutput {
+  /** Filter graph label, `[aout]` for the first, `[aout1]`, `[aout2]`, ... for the others. */
+  label: string;
+  channels: number;
+  /** `Track 2 "Commentary" (A3)` (shared/exportFormat.ts AudioOutputPlan.name). */
+  name: string;
+}
+
+/** One soft subtitle stream (MKV): a sequence subtitle track's cues in the range, as SRT. */
+export interface SoftSubtitleStream {
+  trackId: ID;
+  /** Range-relative SRT (exact cue times, like the sidecar). */
+  content: string;
+  language: string;
+  title: string;
+  isDefault: boolean;
+  forced: boolean;
+}
+
+/** Label of output audio stream `i` in the filter graph. */
+export function audioOutputLabel(i: number): string {
+  return i === 0 ? '[aout]' : `[aout${i}]`;
 }
 
 /** Result of RenderGraphOptions.statPath. */
@@ -600,10 +641,15 @@ export function buildSubtitleSrt(req: ExportRequest, range?: { startF: number; e
   if (!cues || cues.length === 0) return null;
   const warnings: string[] = [];
   const { startF, endF } = range ?? resolveRange(req.sequence, req.settings, warnings);
+  return rangeSrt(req, cues, startF, endF);
+}
+
+/** SRT of `cues` (sequence seconds) in `[startF, endF)`, relative to startF with exact times; null when none is in it. */
+function rangeSrt(req: ExportRequest, cues: { start: number; end: number; text: string }[], startF: number, endF: number): string | null {
   const s0 = framesToSeconds(startF, req.sequence.fps);
   const s1 = framesToSeconds(endF, req.sequence.fps);
   const out = cues
-    .filter((c) => c.end > s0 && c.start < s1 && c.text.trim().length > 0)
+    .filter((c) => c && Number.isFinite(c.start) && Number.isFinite(c.end) && typeof c.text === 'string' && c.end > s0 && c.start < s1 && c.text.trim().length > 0)
     .map((c) => ({ start: Math.max(0, c.start - s0), end: Math.min(s1, c.end) - s0, text: c.text }))
     .filter((c) => c.end > c.start)
     .sort((a, b) => a.start - b.start);
@@ -696,9 +742,9 @@ export function sanitizeExportFileName(name: string): string {
   return cleaned || 'export';
 }
 
-/** The output's extension (`.mp4`, `.mov`, `.wav`, `.flac`), or '' when it has none of those. */
+/** The output's extension (`.mp4`, `.mov`, `.wav`, `.flac`, `.mkv`), or '' when it has none of those. */
 function outputExt(outputPath: string): string {
-  const m = /\.(mp4|mov|wav|flac)$/i.exec(outputPath);
+  const m = /\.(mp4|mov|wav|flac|mkv)$/i.exec(outputPath);
   return m ? m[0] : '';
 }
 
@@ -889,8 +935,15 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
     warnings.push(`AC-3 audio supports 32, 44.1 and 48 kHz only; exporting at ${to} Hz instead of ${SR} Hz.`);
     SR = to;
   }
-  const channels = settings.audioChannels === 6 ? 6 : 2;
-  const layout = channels === 6 ? '5.1' : 'stereo';
+  // Output audio tracks (shared/exportFormat.ts): one main mix, or (MKV) one mix per output track. MKV always writes
+  // stream-addressed codec args, languages and default flags (`packaging`); the other formats keep one `[aout]` with
+  // `-c:a ... -ac N`. Every sequence track is rendered once, at the widest output layout (`layout`), and each output
+  // mixes its tracks from there into its own layout.
+  const packaging = supportsPackaging(settings) && opts.audioTrackId === undefined;
+  const outPlans = audioOutputPlan(seq.audioTracks ? seq : { audioTracks: [] }, settings);
+  if (!packaging) outPlans.splice(1);
+  const channels = packaging ? outPlans[0].channels : settings.audioChannels === 6 ? 6 : 2;
+  const layout = packaging ? workingLayout(outPlans) : channels === 6 ? '5.1' : 'stereo';
 
   let { startF, endF } = resolveRange(seq, settings, warnings);
   const exportStartF = startF, exportEndF = endF;
@@ -981,29 +1034,47 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   }
 
   // ---- Audio
+  const audioOutputs: RenderAudioOutput[] = outPlans.map((p, i) => ({ label: audioOutputLabel(i), channels: packaging ? p.channels : channels, name: p.name }));
   if (wantAudio) {
-    const audioLabels: string[] = [];
+    // The sequence tracks each output mixes: per-track audio export, that one track; otherwise the plan's (only
+    // tracks the export renders).
+    const mixes: { ids: Set<ID>; layout: string }[] = trackFilter !== undefined
+      ? [{ ids: new Set([trackFilter]), layout }]
+      : outPlans.map((p) => ({ ids: new Set(p.mixed), layout: packaging ? p.layout : layout }));
+    const trackLabels = new Map<ID, string[]>();
     for (const track of activeTracks(seq.audioTracks)) {
-      if (trackFilter !== undefined && track.id !== trackFilter) continue;
+      const uses = mixes.filter((m) => m.ids.has(track.id)).length;
+      if (uses === 0) continue;
       const plan = planTrackSegments(track, seq, media, renderStartF, renderEndF, 'audio', warnings);
       const label = audioTrack(ctx, plan);
-      if (label) audioLabels.push(label);
+      if (!label) continue;
+      if (uses === 1) { trackLabels.set(track.id, [label]); continue; }
+      // A track in several outputs: render it once and split it.
+      const copies = Array.from({ length: uses }, () => newLabel(ctx, 'as'));
+      ctx.chains.push(`${label}asplit=${uses}${copies.join('')}`);
+      trackLabels.set(track.id, copies);
     }
     // Exact sample count (chunked export: sample-exact chunk boundaries). Audio-only files always have exactly the
-    // range's samples, so per-track files have equal lengths.
+    // range's samples, so per-track files have equal lengths; so do all output tracks of an MKV.
     const rangeSamples = Math.round((frameCount * SR * seq.fps.den) / seq.fps.num);
-    const N = opts.audioSamples !== undefined ? Math.max(0, Math.round(opts.audioSamples)) : audioOnly ? rangeSamples : -1;
+    const N = opts.audioSamples !== undefined ? Math.max(0, Math.round(opts.audioSamples)) : audioOnly || packaging ? rangeSamples : -1;
     const tail = N >= 0 ? `,apad=whole_len=${N},atrim=end_sample=${N}` : '';
     // Widened render (D2): keep the samples of [startF, endF).
     const sampleAt = (f: number) => Math.round((f * SR * seq.fps.den) / seq.fps.num);
     const cut = renderFrames !== frameCount ? `,atrim=start_sample=${sampleAt(lead)}:end_sample=${sampleAt(lead + frameCount)},asetpts=PTS-STARTPTS` : '';
-    if (audioLabels.length === 0) {
-      ctx.chains.push(`anullsrc=r=${SR}:cl=${layout}:d=${sec(durationSec + 0.1)},aformat=sample_fmts=fltp,atrim=duration=${sec(durationSec)},asetpts=PTS-STARTPTS${tail}[aout]`);
-    } else if (audioLabels.length === 1) {
-      ctx.chains.push(`${audioLabels[0]}aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=${layout}${cut}${tail}[aout]`);
-    } else {
-      ctx.chains.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:normalize=0:duration=longest,aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=${layout}${cut}${tail}[aout]`);
-    }
+    mixes.forEach((mix, i) => {
+      const out = audioOutputLabel(i);
+      const labels: string[] = [];
+      for (const track of activeTracks(seq.audioTracks)) if (mix.ids.has(track.id)) { const l = trackLabels.get(track.id)?.shift(); if (l) labels.push(l); }
+      const ml = mix.layout;
+      if (labels.length === 0) {
+        ctx.chains.push(`anullsrc=r=${SR}:cl=${ml}:d=${sec(durationSec + 0.1)},aformat=sample_fmts=fltp,atrim=duration=${sec(durationSec)},asetpts=PTS-STARTPTS${tail}${out}`);
+      } else if (labels.length === 1) {
+        ctx.chains.push(`${labels[0]}aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=${ml}${cut}${tail}${out}`);
+      } else {
+        ctx.chains.push(`${labels.join('')}amix=inputs=${labels.length}:normalize=0:duration=longest,aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=${ml}${cut}${tail}${out}`);
+      }
+    });
   }
 
   // ---- Args
@@ -1012,9 +1083,37 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   for (const inp of ctx.inputs) inputArgs.push(...inp);
   // Encoder args (shared/exportFormat.ts): H.264 / H.265 (MP4), ProRes / DNxHR (MOV); AAC / AC-3, PCM or FLAC.
   const videoCodecArgs: string[] = vEnc ? [...vEnc.args, '-pix_fmt', vEnc.pixFmt, '-r', fpsStr(outFps), '-fps_mode', 'cfr'] : [];
-  const audioCodecArgs = [...audioEncoder(settings).args, '-ar', String(SR), '-ac', String(channels)];
+  const audioCodecArgs = packaging
+    ? [...outPlans.flatMap((p, i) => [...audioStreamArgs(p.encoder.args, i), `-ac:a:${i}`, String(p.channels)]), '-ar', String(SR)]
+    : [...audioEncoder(settings).args, '-ar', String(SR), '-ac', String(channels)];
   const cinfo = CONTAINERS[container];
   const muxArgs = [...cinfo.muxArgs, '-f', cinfo.muxer];
+
+  // Soft subtitle streams (MKV): the whole export only (a chunked export adds them when joining the chunks).
+  const softSubtitles: SoftSubtitleStream[] = [];
+  if (packaging && !opts.range && !opts.streams) {
+    const tracks = Array.isArray(req.subtitleTracks) ? req.subtitleTracks.filter((t) => t && typeof t.id === 'string') : [];
+    for (const p of subtitleOutputPlan(tracks.map((t) => ({ id: t.id, name: String(t.name ?? ''), language: String(t.language ?? '') })), settings)) {
+      const t = tracks.find((x) => x.id === p.track.id)!;
+      const content = rangeSrt(req, Array.isArray(t.cues) ? t.cues : [], startF, endF);
+      if (!content) { warnings.push(`Subtitle track "${p.track.name}" has no cues in the export range; it is not included.`); continue; }
+      softSubtitles.push({ trackId: t.id, content, language: p.language, title: p.title, isDefault: p.isDefault, forced: p.forced });
+    }
+  }
+  const subtitleCodecArgs = softSubtitles.length ? ['-c:s', 'subrip'] : [];
+  // MKV stream tags and flags: the picture and the first audio track are the default ones, every other audio track
+  // is not; subtitles as chosen. Nothing else is tagged (no metadata comes from the sources).
+  const streamArgs: string[] = [];
+  if (packaging) {
+    if (wantVideo) streamArgs.push('-disposition:v:0', 'default');
+    if (wantAudio) {
+      outPlans.forEach((p, i) => {
+        streamArgs.push(`-metadata:s:a:${i}`, `language=${p.language}`);
+        if (p.title) streamArgs.push(`-metadata:s:a:${i}`, `title=${p.title}`);
+        streamArgs.push(`-disposition:a:${i}`, dispositionValue(p.isDefault));
+      });
+    }
+  }
 
   // A converted video can end up to half an output frame after the audio: never cut its last frame.
   const outputSec = wantVideo ? Math.max(durationSec, outputDurationSec) : durationSec;
@@ -1031,18 +1130,40 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
       warnings.push('Chapter markers present but no chapters file path was provided; chapters are not written.');
     }
   }
+  // Soft subtitle files follow the chapters file: `-f srt -i <file>`, one input each.
+  let subtitleInput = ctx.inputs.length + (chaptersInput !== null ? 1 : 0);
+  const subtitleMaps: string[] = [];
+  if (softSubtitles.length) {
+    const paths = opts.softSubtitleFilePaths;
+    if (paths && paths.length >= softSubtitles.length) {
+      softSubtitles.forEach((sub, i) => {
+        args.push('-f', 'srt', '-i', paths[i]);
+        subtitleMaps.push('-map', `${subtitleInput++}:s:0`);
+        streamArgs.push(`-metadata:s:s:${i}`, `language=${sub.language}`);
+        if (sub.title) streamArgs.push(`-metadata:s:s:${i}`, `title=${sub.title}`);
+        streamArgs.push(`-disposition:s:${i}`, dispositionValue(sub.isDefault, sub.forced));
+      });
+    } else {
+      warnings.push('Subtitle tracks chosen but no subtitle file paths were provided; soft subtitles are not written.');
+      softSubtitles.length = 0;
+      subtitleCodecArgs.length = 0;
+    }
+  }
   args.push('-filter_complex_script', FILTER_SCRIPT_TOKEN);
   if (wantVideo) args.push('-map', '[vout]');
-  if (wantAudio) args.push('-map', '[aout]');
+  if (wantAudio) for (const o of audioOutputs) args.push('-map', o.label);
+  args.push(...subtitleMaps);
   args.push(...outputMetadataArgs(chaptersInput));
   if (wantVideo) args.push(...videoCodecArgs); else args.push('-vn');
   if (wantAudio) args.push(...audioCodecArgs); else args.push('-an');
+  args.push(...subtitleCodecArgs, ...streamArgs);
   args.push(...cinfo.muxArgs, '-t', sec(outputSec), '-f', cinfo.muxer, outputPath);
 
   return {
     args, filterGraph: ctx.chains.join(';\n'), durationSec, frameCount, outputFps: outFps, outputFrameCount, outputDurationSec, outputPath, warnings,
     subtitleContent, chapters, chaptersContent, inputCount: ctx.inputs.length,
     inputArgs, videoCodecArgs, audioCodecArgs, sampleRate: SR, channels, startF, endF, container, audioOnly, muxArgs,
+    audioOutputs: wantAudio ? audioOutputs : [], softSubtitles, subtitleCodecArgs, streamArgs,
   };
 }
 

@@ -157,8 +157,17 @@ export type ExportProgress = (progress: number, message?: string) => void;
  * export runs one command per file: this is the first file's.
  */
 export function buildExportCommand(req: ExportRequest): string[] {
-  const { graphs } = buildExportGraphs(req, { subtitleFilePath: graphSubtitlePathPreview(req), chaptersFilePath: path.join(os.tmpdir(), 'recut-export', 'chapters.txt') });
+  const { graphs } = buildExportGraphs(req, {
+    subtitleFilePath: graphSubtitlePathPreview(req), chaptersFilePath: path.join(os.tmpdir(), 'recut-export', 'chapters.txt'),
+    softSubtitleFilePaths: softSubtitlePaths(req, path.join(os.tmpdir(), 'recut-export')),
+  });
   return inlineFilter(graphs[0]);
+}
+
+/** Temp paths for the soft subtitle streams of `req` (MKV): `<dir>/subtitles-<n>.srt`, one per chosen track. */
+function softSubtitlePaths(req: ExportRequest, dir: string): string[] {
+  const n = Array.isArray(req.settings.subtitleOutputs) ? Math.min(256, req.settings.subtitleOutputs.length) : 0;
+  return Array.from({ length: n }, (_, i) => path.join(dir, `subtitles-${i}.srt`));
 }
 
 function graphSubtitlePathPreview(req: ExportRequest): string | undefined {
@@ -264,10 +273,13 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
   try {
     if (signal?.aborted) throw new Error('Export canceled');
     // One graph per output file: one file, or one per audio track (per-track audio export).
-    const { outputs, graphs } = buildExportGraphs(req, { subtitleFilePath, chaptersFilePath, canonicalPath, statPath: exportStatPath });
+    const softSubtitleFilePaths = softSubtitlePaths(req, tmpDir);
+    const { outputs, graphs } = buildExportGraphs(req, { subtitleFilePath, chaptersFilePath, softSubtitleFilePaths, canonicalPath, statPath: exportStatPath });
     // The sequence's Chapter markers (FFMETADATA input of the single pass or of the chunk join); the same for every file.
     const chaptersContent = graphs[0].chaptersContent;
     if (chaptersContent) fs.writeFileSync(chaptersFilePath, chaptersContent, 'utf8');
+    // Soft subtitle streams (MKV): inputs of the single pass or of the chunk join.
+    graphs[0].softSubtitles.forEach((sub, i) => fs.writeFileSync(softSubtitleFilePaths[i], sub.content, 'utf8'));
     try { await ensureDirSafe(path.dirname(graphs[0].outputPath)); } catch (e) {
       throw new Error(`Cannot create output folder: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -282,7 +294,8 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
         ? (p, msg) => onProgress((i + p) / n, `${file.label ?? `File ${i + 1}`} (${i + 1}/${n}): ${msg ?? ''}`.trim())
         : onProgress;
       const fileDir = n > 1 ? fs.mkdtempSync(path.join(tmpDir, `file-${i}-`)) : tmpDir;
-      const used = await renderOutputFile(file.req, graph, file.audioTrackId, reserved.path, fileDir, chaptersContent ? chaptersFilePath : null, subtitleFilePath, fileProgress, signal, opts);
+      const used = await renderOutputFile(file.req, graph, file.audioTrackId, reserved.path, fileDir, chaptersContent ? chaptersFilePath : null, subtitleFilePath,
+        softSubtitleFilePaths.slice(0, graph.softSubtitles.length), fileProgress, signal, opts);
       chunks = Math.max(chunks, used.chunks);
       audioChunks = Math.max(audioChunks, used.audioChunks);
     }
@@ -350,14 +363,14 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
  */
 async function renderOutputFile(
   req: ExportRequest, graph: RenderGraph, audioTrackId: ID | undefined, partPath: string, tmpDir: string, chaptersFile: string | null, subtitleFilePath: string,
-  onProgress: ExportProgress | undefined, signal: AbortSignal | undefined, opts: ExportRunOptions,
+  softSubtitleFiles: string[], onProgress: ExportProgress | undefined, signal: AbortSignal | undefined, opts: ExportRunOptions,
 ): Promise<{ chunks: number; audioChunks: number }> {
   const planInput = { req, startF: graph.startF, endF: graph.endF };
   const chunked = opts.chunked ?? (graph.audioOnly ? graph.inputCount > CHUNK_MAX_AUDIO_SEGMENTS : shouldChunk(planInput, graph.inputCount));
   const chunks = chunked && !graph.audioOnly ? mergeChunksWithoutOutputFrames(planExportChunks(planInput, opts.maxSegmentsPerChunk ?? CHUNK_MAX_SEGMENTS, 'video'), req, graph) : [];
   const audioChunks = chunked ? planExportChunks(planInput, opts.maxAudioSegmentsPerChunk ?? CHUNK_MAX_AUDIO_SEGMENTS, 'audio') : [];
   if (chunked) {
-    await runChunkedExport(req, graph, chunks, audioChunks, tmpDir, chaptersFile, partPath, onProgress, signal, opts.onSpawn, audioTrackId);
+    await runChunkedExport(req, graph, chunks, audioChunks, tmpDir, chaptersFile, softSubtitleFiles, partPath, onProgress, signal, opts.onSpawn, audioTrackId);
   } else {
     if (graph.subtitleContent) fs.writeFileSync(subtitleFilePath, graph.subtitleContent, 'utf8');
     const scriptPath = path.join(tmpDir, 'filter.txt');
@@ -418,15 +431,18 @@ function concatList(files: string[]): string {
  * 1. video per chunk -> chunk-NNN.mp4 (chunk-NNN.mov for MOV) with the same encoder settings, exact frame count
  *    (H.264 / H.265: closed GOP, IDR at 0; ProRes / DNxHR are intra-only and need nothing more);
  * 2. audio per chunk -> chunk-NNN.wav (32-bit float PCM, exactly S(end) - S(start) samples where
- *    S(f) = round((f - startF) * SR * den/num), so the chunks join with no drift);
- * 3. one final process: concat demuxer (video stream copy + PCM) -> one audio encode (AAC / AC-3 / PCM / FLAC) in the
- *    output container, with the chapters (`chaptersFile`, FFMETADATA) and no metadata from the chunk files or the sources.
+ *    S(f) = round((f - startF) * SR * den/num), so the chunks join with no drift); an MKV with several output audio
+ *    tracks writes one WAV per output track from the same chunk process (chunk-NNN-a1.wav, ...);
+ * 3. one final process: concat demuxer (video stream copy + PCM) -> one audio encode per output track (AAC / AC-3 / PCM /
+ *    FLAC) in the output container, with the chapters (`chaptersFile`, FFMETADATA), the soft subtitle files (MKV) and
+ *    no metadata from the chunk files or the sources.
  * An audio-only export has no video chunks (`chunks` is empty). Every chunk graph is buildRenderGraph over the chunk's
  * sub-range (and `audioTrackId` for a per-track file), so frame choice and timing are the single-pass ones;
  * boundaries never split a transition or fade (chunks.ts).
  */
 async function runChunkedExport(
-  req: ExportRequest, full: RenderGraph, chunks: ExportChunk[], audioChunks: ExportChunk[], tmpDir: string, chaptersFile: string | null, partPath: string,
+  req: ExportRequest, full: RenderGraph, chunks: ExportChunk[], audioChunks: ExportChunk[], tmpDir: string, chaptersFile: string | null,
+  softSubtitleFiles: string[], partPath: string,
   onProgress: ExportProgress | undefined, signal: AbortSignal | undefined, onSpawn: ExportRunOptions['onSpawn'], audioTrackId?: ID,
 ): Promise<void> {
   const n = chunks.length;
@@ -440,7 +456,9 @@ async function runChunkedExport(
   const report = (w: number, p: number, msg: string) => onProgress?.(Math.min(0.999, done + w * p), msg);
 
   const videoFiles: string[] = [];
-  const audioFiles: string[] = [];
+  /** Per output audio track, its chunk files in order. */
+  const outs = full.audioOutputs.length ? full.audioOutputs : [{ label: '[aout]', channels: full.channels, name: '' }];
+  const audioFiles: string[][] = outs.map(() => []);
   const step = async (i: number, c: ExportChunk, kind: 'video' | 'audio', args: string[], dur: number, w: number) => {
     if (signal?.aborted) throw new Error('Export canceled');
     const of = kind === 'video' ? n : na;
@@ -484,28 +502,36 @@ async function runChunkedExport(
     const g = buildRenderGraph(req, { range: { startF: c.startF, endF: c.endF }, streams: 'audio', audioSamples: samples, canonicalPath, audioTrackId });
     const script = path.join(tmpDir, `a-${tag}.txt`);
     fs.writeFileSync(script, g.filterGraph, 'utf8');
-    const out = path.join(tmpDir, `chunk-${tag}.wav`);
-    const args = ['-hide_banner', '-nostdin', '-y', '-filter_complex_threads', '2', ...fileInputs(oneThread(g.inputArgs)), '-filter_complex_script', script, '-map', '[aout]', ...outputMetadataArgs(null),
-      '-c:a', 'pcm_f32le', '-ar', String(g.sampleRate), '-ac', String(g.channels), '-vn', '-f', 'wav', ffmpegFileArg(out)];
+    // One WAV per output audio track, all from this one process (the tracks are decoded once).
+    const args = ['-hide_banner', '-nostdin', '-y', '-filter_complex_threads', '2', ...fileInputs(oneThread(g.inputArgs)), '-filter_complex_script', script];
+    outs.forEach((o, k) => {
+      const out = path.join(tmpDir, k === 0 ? `chunk-${tag}.wav` : `chunk-${tag}-a${k}.wav`);
+      args.push('-map', o.label, ...outputMetadataArgs(null), '-c:a', 'pcm_f32le', '-ar', String(g.sampleRate), '-ac', String(o.channels), '-vn', '-f', 'wav', ffmpegFileArg(out));
+      audioFiles[k].push(out);
+    });
     await step(i, c, 'audio', args, (c.endF - c.startF) * fd, W_AUDIO * (c.endF - c.startF) / total);
     try { fs.unlinkSync(script); } catch { /* best effort */ }
-    audioFiles.push(out);
   }
 
   const vList = path.join(tmpDir, 'video.ffconcat');
-  const aList = path.join(tmpDir, 'audio.ffconcat');
+  const aLists = outs.map((_, k) => path.join(tmpDir, k === 0 ? 'audio.ffconcat' : `audio-${k}.ffconcat`));
   if (n) fs.writeFileSync(vList, concatList(videoFiles), 'utf8');
-  fs.writeFileSync(aList, concatList(audioFiles), 'utf8');
-  const hevc = full.videoCodecArgs.includes('libx265');
+  aLists.forEach((l, k) => fs.writeFileSync(l, concatList(audioFiles[k]), 'utf8'));
+  // The hvc1 tag of the H.265 stream (MP4 / MOV); Matroska has no codec tags.
+  const hevcTag = full.videoCodecArgs.includes('libx265') && full.container !== 'mkv';
   const inputs = [
     ...(n ? ['-f', 'concat', '-safe', '0', '-i', ffmpegFileArg(vList)] : []),
-    '-f', 'concat', '-safe', '0', '-i', ffmpegFileArg(aList),
+    ...aLists.flatMap((l) => ['-f', 'concat', '-safe', '0', '-i', ffmpegFileArg(l)]),
     ...(chaptersFile ? ['-f', 'ffmetadata', '-i', ffmpegFileArg(chaptersFile)] : []),
+    ...softSubtitleFiles.flatMap((f) => ['-f', 'srt', '-i', ffmpegFileArg(f)]),
   ];
   const aIn = n ? 1 : 0;
+  const chIn = aIn + aLists.length;
+  const subIn = chIn + (chaptersFile ? 1 : 0);
   const args = ['-hide_banner', '-nostdin', '-y', ...inputs,
-    ...(n ? ['-map', '0:v:0'] : []), '-map', `${aIn}:a:0`, ...outputMetadataArgs(chaptersFile ? aIn + 1 : null),
-    ...(n ? ['-c:v', 'copy', ...(hevc ? ['-tag:v', 'hvc1'] : [])] : ['-vn']), ...full.audioCodecArgs,
+    ...(n ? ['-map', '0:v:0'] : []), ...aLists.flatMap((_, k) => ['-map', `${aIn + k}:a:0`]), ...softSubtitleFiles.flatMap((_, k) => ['-map', `${subIn + k}:s:0`]),
+    ...outputMetadataArgs(chaptersFile ? chIn : null),
+    ...(n ? ['-c:v', 'copy', ...(hevcTag ? ['-tag:v', 'hvc1'] : [])] : ['-vn']), ...full.audioCodecArgs, ...full.subtitleCodecArgs, ...full.streamArgs,
     ...full.muxArgs.slice(0, -2), '-t', sec(n ? Math.max(full.durationSec, full.outputDurationSec) : full.durationSec), ...full.muxArgs.slice(-2), ffmpegFileArg(partPath)];
   try {
     if (signal?.aborted) throw new Error('Export canceled');
