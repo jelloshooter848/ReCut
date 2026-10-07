@@ -46,7 +46,7 @@ at franchise scale), on Windows, Linux and macOS. It is not feature parity with 
 | 0.7.0 | Official macOS release (dmg, signed and notarised) | §19, macOS part |
 | 0.8.0 | Delivery 1: intermediates and audio | §6 (ProRes, DNxHR, WAV / audio-only, one file per audio track) and the centre-channel utility from §9 |
 | 0.9.0 | Delivery 2: MKV packaging | §7 (MKV, more than one audio track, soft subtitle tracks, chapters) |
-| 0.10.0 | Portability and trust | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/open/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
+| 0.10.0 | Portability and trust | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/closed/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
 | 0.11.0 | Local transcription (Whisper) | §5 |
 | 0.12.0 | Nested sequences and compound clips | §8 |
 | 0.13.0 | Keyframes, first version | §11 (position, scale, opacity, volume) |
