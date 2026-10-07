@@ -26,7 +26,7 @@ Project files are unchanged (`formatVersion` 1).
 ### Known issues
 
 - Unchanged from 0.4.0: the performance gate's verdict depends on the speed of the machine
-  ([open report](bugs/open/2026-10-07-perf-gate-verdict-not-reproducible.md)), moved media rebuilds its cache
+  ([report](bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md)), moved media rebuilds its cache
   ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned builds, NSIS 3.0.4 (CVE-2025-43715, only
   when an installer runs as SYSTEM).
 
@@ -80,7 +80,7 @@ and every still image FFmpeg can decode shows in the monitors. Project files are
 - The bundled FFmpeg's licence is not yet shipped with the Windows build; 0.4.1 fixes this
   ([report](bugs/closed/2026-10-07-bundled-ffmpeg-licence-not-shipped.md)).
 - The performance gate's verdict depends on the speed of the machine
-  ([open report](bugs/open/2026-10-07-perf-gate-verdict-not-reproducible.md)).
+  ([report](bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md)).
 - Unchanged: moved media rebuilds its cache ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned
   builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
 

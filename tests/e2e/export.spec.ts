@@ -2,7 +2,9 @@
  * Export dialog + Jobs/Proxies panel e2e: real Electron app, real ffmpeg.
  *  1. Import "Galaxy Saga 1", cut [2,4]s at 0 and [6,8]s at 48 (24 fps), export with the 720p Preview preset,
  *     then verify the file with ffprobe/ffmpeg (duration, size, audio, frame colors red → orange).
- *  2. Proxies tab: generate missing proxies, wait for 'ready' + file; start and cancel a proxy job.
+ *  2. Pre-export warnings: a 25 fps sequence cut from 24 fps media with a dissolve short of source handles shows
+ *     the frame-rate and transition warnings, Export stays enabled, and "Show" selects the transition.
+ *  3. Proxies tab: generate missing proxies, wait for 'ready' + file; start and cancel a proxy job.
  */
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
@@ -102,6 +104,47 @@ test('exports the active sequence with the 720p Preview preset', async () => {
   await expect(page.getByTestId('export-dialog')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('export-dialog')).toHaveCount(0);
+});
+
+test('pre-export warnings: another source frame rate and a short-handle transition warn but do not block', async () => {
+  const { page } = ctx;
+  const ids = await page.evaluate((mediaId) => {
+    const w = window as unknown as { __recut: { store: { getState(): any } } };
+    const st = () => w.__recut.store.getState();
+    const seqId = st().project.activeSequenceId as string;
+    const all = (s: any) => [...s.videoTracks, ...s.audioTracks].flatMap((t: any) => t.clips.map((c: any) => c.id));
+    st().select(all(st().project.sequences[seqId]));
+    st().deleteSelected(seqId);
+    // A 25 fps sequence cut from 24 fps media: A = source 2–4 s at 0, B = source 0.2–2.2 s at 50 (5 frames of
+    // source before B, so a 24-frame dissolve renders 10 frames).
+    st().updateSequenceSettings(seqId, { fps: { num: 25, den: 1 } });
+    st().insertFromSource(seqId, { mediaId, in: 2, out: 4, atFrame: 0, mode: 'insert' });
+    st().insertFromSource(seqId, { mediaId, in: 0.2, out: 2.2, atFrame: 50, mode: 'insert' });
+    const trackId = st().project.sequences[seqId].videoTracks[0].id;
+    const tr = st().addTransitionAtCut(seqId, trackId, 50, 'crossDissolve', 24);
+    st().setView(seqId, { playhead: 0 });
+    st().openDialog('export');
+    return { seqId, transitionId: tr?.id as string };
+  }, movie1Id);
+  expect(ids.transitionId).toBeTruthy();
+
+  const checklist = page.getByTestId('export-checklist');
+  await expect(checklist).toContainText('Source frame rate differs from the sequence (25 fps): Galaxy Saga 1 - A New Dawn.mp4 (24 fps).');
+  await expect(checklist).toContainText('Transitions shortened: "Galaxy Saga 1 - A New Dawn.mp4" → "Galaxy Saga 1 - A New Dawn.mp4" (24 → 10 frames, not enough source media past the cut).');
+  await expect(checklist.locator('[data-level="warning"]')).toHaveCount(2);
+  await expect(checklist.locator('[data-level="error"]')).toHaveCount(0);
+  await expect(page.getByTestId('export-start')).toBeEnabled();
+  await expect(page.getByTestId('export-preset')).toBeFocused(); // not the first "Show" link
+
+  // "Show" on the transition warning selects it on the timeline and moves the playhead to its cut.
+  await checklist.locator('[data-level="warning"]', { hasText: 'Transitions shortened' }).getByTestId('export-check-show').click();
+  await expect(page.getByTestId('export-dialog')).toHaveCount(0);
+  const after = await page.evaluate((seqId) => {
+    const w = window as unknown as { __recut: { store: { getState(): any } } };
+    const st = w.__recut.store.getState();
+    return { selected: st.ui.selectedTransitionId as string | null, playhead: st.project.sequences[seqId].view.playhead as number };
+  }, ids.seqId);
+  expect(after).toEqual({ selected: ids.transitionId, playhead: 50 });
 });
 
 test('Jobs panel lists the finished export', async () => {

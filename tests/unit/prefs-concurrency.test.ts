@@ -138,3 +138,150 @@ describe('project open / save do not depend on the recent list', () => {
     expect(fs.existsSync(file)).toBe(true);
   });
 });
+
+describe('window bounds go through the prefs queue (follow-up)', () => {
+  const bounds = (x: number) => ({ 'window.x': x, 'window.y': 20, 'window.width': 1400, 'window.height': 900, 'window.maximized': 0 });
+
+  it('a bounds write among reads and updates never renames over an open prefs.json, and keeps every other change', async () => {
+    await io.updateLayoutPrefs(dir, { 'panel.left': 300 });
+    const win = emulateWindowsRename();
+    const w = new io.LayoutPrefsWriter(dir, 10);
+    const a = path.join(dir, 'a.recut');
+    w.set(bounds(10));
+    const ops = Promise.allSettled([io.readPrefs(dir), io.addRecentProject(dir, a), io.readPrefs(dir)]);
+    w.set(bounds(30)); // the window moved again before the debounce fired
+    const closing = w.flush(); // the window closes while the other operations are queued
+    expect(w.pending).toBe(true);
+    expect((await ops).filter((r) => r.status === 'rejected')).toEqual([]);
+    await closing;
+    expect(w.pending).toBe(false);
+    expect(win.refused()).toBe(0);
+    const prefs = await io.readPrefs(dir);
+    expect(prefs.layout).toEqual({ 'panel.left': 300, ...bounds(30) });
+    expect(prefs.recentProjects).toEqual([a]);
+  });
+
+  it('coalesces moves within the debounce into one write; flush writes the latest at once', async () => {
+    const renames = vi.spyOn(fsp, 'rename');
+    const w = new io.LayoutPrefsWriter(dir, 60_000);
+    w.set(bounds(1)); w.set(bounds(2)); w.set(bounds(3));
+    expect(w.pending).toBe(true);
+    expect(fs.existsSync(io.prefsPath(dir))).toBe(false); // still waiting for the debounce
+    await w.flush();
+    expect(w.pending).toBe(false);
+    expect(renames).toHaveBeenCalledTimes(1);
+    expect((await io.readPrefs(dir)).layout).toEqual(bounds(3));
+    await w.flush(); // nothing new: no write
+    expect(renames).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes after the debounce without a flush', async () => {
+    const w = new io.LayoutPrefsWriter(dir, 5);
+    w.set(bounds(7));
+    await vi.waitFor(() => expect(w.pending).toBe(false));
+    expect((await io.readPrefs(dir)).layout).toEqual(bounds(7));
+  });
+
+  it('a failed bounds write is reported, never thrown, and does not block later prefs operations', async () => {
+    fs.mkdirSync(path.join(dir, 'prefs.json', 'x'), { recursive: true });
+    const onError = vi.fn();
+    const w = new io.LayoutPrefsWriter(dir, 60_000, onError);
+    w.set(bounds(1));
+    await expect(w.flush()).resolves.toBeUndefined();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(w.pending).toBe(false);
+    await expect(io.readPrefs(dir)).resolves.toEqual(io.defaultPrefs());
+  });
+});
+
+describe('atomic rename retry (Windows: a scan holds the destination for a moment)', () => {
+  const saved = { enabled: io.RENAME_RETRY.enabled, delaysMs: [...io.RENAME_RETRY.delaysMs] };
+  afterEach(() => { io.RENAME_RETRY.enabled = saved.enabled; io.RENAME_RETRY.delaysMs = [...saved.delaysMs]; });
+
+  /** Fails the first `n` renames onto prefs.json with `code`, then renames for real. */
+  function refuseRenames(n: number, code: string): { attempts: () => number } {
+    const realRename = fsp.rename.bind(fsp);
+    let attempts = 0;
+    vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      if (!isPrefs(to)) return realRename(from, to);
+      attempts++;
+      if (attempts <= n) throw Object.assign(new Error(`${code}: rename '${String(from)}' -> '${String(to)}'`), { code });
+      return realRename(from, to);
+    });
+    return { attempts: () => attempts };
+  }
+
+  it('is bounded: at most 5 attempts within 1 s, and Windows-only by default', () => {
+    expect(io.RENAME_RETRY.delaysMs.length + 1).toBeLessThanOrEqual(5);
+    expect(io.RENAME_RETRY.delaysMs.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1000);
+    expect(io.RENAME_RETRY.enabled).toBe(process.platform === 'win32');
+  });
+
+  it.each(['EPERM', 'EACCES', 'EBUSY'])('retries a rename refused with %s and succeeds', async (code) => {
+    io.RENAME_RETRY.enabled = true;
+    const r = refuseRenames(2, code);
+    await io.writePrefs(dir, { ...io.defaultPrefs(), cacheDir: '/c' });
+    expect(r.attempts()).toBe(3);
+    expect((await io.readPrefs(dir)).cacheDir).toBe('/c');
+    expect(fs.readdirSync(dir).filter((f) => f.includes('.tmp-'))).toEqual([]);
+  });
+
+  it('gives up after the last attempt, removes its temp file, and leaves the old file', async () => {
+    io.RENAME_RETRY.enabled = true;
+    io.RENAME_RETRY.delaysMs = [1, 1, 1, 1];
+    await io.writePrefs(dir, { ...io.defaultPrefs(), cacheDir: '/old' });
+    const r = refuseRenames(99, 'EBUSY');
+    await expect(io.writePrefs(dir, { ...io.defaultPrefs(), cacheDir: '/new' })).rejects.toMatchObject({ code: 'EBUSY' });
+    expect(r.attempts()).toBe(5);
+    vi.restoreAllMocks();
+    expect((await io.readPrefs(dir)).cacheDir).toBe('/old');
+    expect(fs.readdirSync(dir).filter((f) => f.includes('.tmp-'))).toEqual([]);
+  });
+
+  it('does not retry other errors, nor anything when disabled (POSIX)', async () => {
+    io.RENAME_RETRY.enabled = true;
+    const r = refuseRenames(1, 'ENOSPC');
+    await expect(io.writePrefs(dir, io.defaultPrefs())).rejects.toMatchObject({ code: 'ENOSPC' });
+    expect(r.attempts()).toBe(1);
+    vi.restoreAllMocks();
+    io.RENAME_RETRY.enabled = false;
+    const r2 = refuseRenames(1, 'EPERM');
+    await expect(io.writePrefs(dir, io.defaultPrefs())).rejects.toMatchObject({ code: 'EPERM' });
+    expect(r2.attempts()).toBe(1);
+  });
+
+  it('retries in atomicWriteFileSync too, and gives up after 5 attempts', () => {
+    io.RENAME_RETRY.enabled = true;
+    io.RENAME_RETRY.delaysMs = [1, 1, 1, 1];
+    const realRename = fs.renameSync.bind(fs);
+    let attempts = 0, failFirst = 2;
+    vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+      attempts++;
+      if (attempts <= failFirst) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      return realRename(from, to);
+    });
+    const target = path.join(dir, 'sync.json');
+    io.atomicWriteFileSync(target, '{"a":1}');
+    expect(attempts).toBe(3);
+    expect(fs.readFileSync(target, 'utf8')).toBe('{"a":1}');
+    attempts = 0; failFirst = 99;
+    expect(() => io.atomicWriteFileSync(target, '{"a":2}')).toThrow('EACCES');
+    expect(attempts).toBe(5);
+    expect(fs.readFileSync(target, 'utf8')).toBe('{"a":1}');
+    expect(fs.readdirSync(dir).filter((f) => f.includes('.tmp-'))).toEqual([]);
+  });
+
+  it('retries the project save rename too (finishAtomic)', async () => {
+    io.RENAME_RETRY.enabled = true;
+    const realRename = fsp.rename.bind(fsp);
+    let refused = 0;
+    vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      if (String(to).endsWith('show.recut') && refused < 2) { refused++; throw Object.assign(new Error('EPERM'), { code: 'EPERM' }); }
+      return realRename(from, to);
+    });
+    const file = path.join(dir, 'show.recut');
+    expect((await io.saveProjectFile(file, createProject('Show'))).ok).toBe(true);
+    expect(refused).toBe(2);
+    expect((await io.loadProjectFile(file)).ok).toBe(true);
+  });
+});

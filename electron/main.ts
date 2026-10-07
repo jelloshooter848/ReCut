@@ -148,46 +148,21 @@ function savedBounds(prefs: { layout?: Record<string, number> }): SavedBounds | 
   return out;
 }
 
-let boundsTimer: NodeJS.Timeout | null = null;
-function rememberBounds(w: BrowserWindow, immediate = false): void {
-  const write = async () => {
-    boundsTimer = null;
-    if (w.isDestroyed()) return;
-    const maximized = w.isMaximized();
-    const b = maximized ? w.getNormalBounds() : w.getBounds();
-    const prefs = await io.readPrefs(userData());
-    await io.updatePrefs(userData(), {
-      layout: {
-        ...(prefs.layout ?? {}),
-        'window.x': b.x, 'window.y': b.y, 'window.width': b.width, 'window.height': b.height,
-        'window.maximized': maximized ? 1 : 0,
-      },
-    });
-  };
-  if (boundsTimer) clearTimeout(boundsTimer);
-  if (immediate) void write();
-  else boundsTimer = setTimeout(() => void write(), 500);
-}
+/**
+ * Window bounds: kept in memory and written to prefs.json through the prefs queue (io.LayoutPrefsWriter), debounced
+ * while the window moves and at once when it closes; will-quit waits for that last write (BOUNDS_FLUSH_MS at most).
+ */
+const BOUNDS_FLUSH_MS = 1000;
+let windowPrefs: io.LayoutPrefsWriter | null = null;
+let boundsFlushWaited = false;
+const boundsWriter = () => (windowPrefs ??= new io.LayoutPrefsWriter(userData()));
 
-/** Synchronous variant for the close path, where an async write would not finish before quit. */
-function rememberBoundsSync(w: BrowserWindow): void {
+function rememberBounds(w: BrowserWindow, now = false): void {
   if (w.isDestroyed()) return;
-  try {
-    if (boundsTimer) { clearTimeout(boundsTimer); boundsTimer = null; }
-    const maximized = w.isMaximized();
-    const b = maximized ? w.getNormalBounds() : w.getBounds();
-    const file = io.prefsPath(userData());
-    let prefs = io.defaultPrefs();
-    try { prefs = io.normalizePrefs(JSON.parse(fs.readFileSync(file, 'utf8'))); } catch { /* defaults */ }
-    prefs.layout = {
-      ...(prefs.layout ?? {}),
-      'window.x': b.x, 'window.y': b.y, 'window.width': b.width, 'window.height': b.height,
-      'window.maximized': maximized ? 1 : 0,
-    };
-    io.atomicWriteFileSync(file, JSON.stringify(prefs, null, 2)); // temp + rename: a crash never leaves half a prefs.json
-  } catch (e) {
-    console.error('could not save window bounds:', e);
-  }
+  const maximized = w.isMaximized();
+  const b = maximized ? w.getNormalBounds() : w.getBounds();
+  boundsWriter().set({ 'window.x': b.x, 'window.y': b.y, 'window.width': b.width, 'window.height': b.height, 'window.maximized': maximized ? 1 : 0 });
+  if (now) void boundsWriter().flush();
 }
 
 async function createWindow(): Promise<BrowserWindow> {
@@ -226,7 +201,7 @@ async function createWindow(): Promise<BrowserWindow> {
 
   // Closing the window is a quit on every platform except macOS; route it through the quit flow.
   w.on('close', (e) => {
-    rememberBoundsSync(w);
+    rememberBounds(w, true);
     if (quitConfirmed) return;
     e.preventDefault();
     requestQuit(false);
@@ -343,7 +318,14 @@ if (!gotLock) {
     requestQuit(false);
   });
 
-  app.on('will-quit', () => {
+  app.on('will-quit', (e) => {
+    if (windowPrefs?.pending && !boundsFlushWaited) {
+      // The window bounds written on close go through the prefs queue: let that write finish (bounded), then quit.
+      boundsFlushWaited = true;
+      e.preventDefault();
+      void Promise.race([windowPrefs.flush(), new Promise((r) => setTimeout(r, BOUNDS_FLUSH_MS))]).then(() => app.quit());
+      return;
+    }
     void mediaHandlers.shutdown?.();
   });
 

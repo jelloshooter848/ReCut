@@ -257,7 +257,8 @@ describe('electron/fs writeSubtitleFile is atomic', () => {
   it('a failed rename leaves the target untouched and no temp file behind (the error is thrown)', async () => {
     const out = path.join(dir, 'keep.srt');
     fs.writeFileSync(out, ORIGINAL_SRT);
-    vi.spyOn(fsp, 'rename').mockRejectedValueOnce(Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' }));
+    // Every attempt fails: on Windows a refused rename (EBUSY) is retried a few times before the error is thrown.
+    vi.spyOn(fsp, 'rename').mockRejectedValue(Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' }));
     await expect(writeSubtitleFile(out, 'new\n', [])).rejects.toThrow(/EBUSY/);
     expect(fs.readFileSync(out, 'utf8')).toBe(ORIGINAL_SRT);
     expect(fs.readdirSync(dir).sort()).toEqual(['clip.mp4', 'clip.proxy.mp4', 'imported.en.srt', 'keep.srt']);

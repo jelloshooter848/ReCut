@@ -11,10 +11,10 @@ recorded under [Ordering decisions](#ordering-decisions) at the end.
 ## 1. Performance at franchise scale
 
 **Why:** ReCut is for franchise-scale work: thousands of timeline clips, thousands of scenes, multi-hour
-sequences. Re-measured on 5 October 2026 with the 2,500-clip, 60-media project from the performance attack,
-playback, search and autosave now meet their budgets, but every edit still takes 80–120 ms from commit to paint
-(budget 32 ms), scrubbing at working zoom runs at 32–35 fps (budget 50), and opening the project freezes the window
-for about 3 s. Every new feature adds work to the same commit and render path, so this comes first.
+sequences. Before this work, re-measured on 5 October 2026 with the 2,500-clip, 60-media project from the
+performance attack, playback, search and autosave met their budgets, but every edit took 80–120 ms from commit to
+paint (budget 32 ms), scrubbing at working zoom ran at 32–35 fps (budget 50), and opening the project froze the window
+for about 3 s. Every new feature adds work to the same commit and render path, so this came first.
 **Why deferred:** the first round of fixes (in-place playhead, unmounted hidden panels, level-of-detail lane,
 virtualized lists, idle autosave, chunked export) went in on 4 October 2026, and the benchmarks had not been re-run
 until now.
@@ -84,6 +84,13 @@ media involved:
 
 Not in the first version: abrupt level jumps at cuts and subtitle timing drift. Both need analysis passes over the
 media.
+**Status: done (7 October 2026, release 0.5.0).** The Export dialog's Checks list warns, for the clips the export
+renders in the chosen range, about video at another frame rate than the sequence, VFR media, out-of-sync linked
+clips, transitions dropped or shortened for lack of source handles (with the set and rendered lengths) and clips past
+the end of their media; each names the first three media or clips and has a **Show** link to the timeline. The
+segment and handle planning moved from `buildRenderGraph` into `shared/exportPlan.ts`, which both call, so the dialog
+predicts what the export renders (its output is unchanged; a 1,500-sequence parity test checks the prediction
+against the filter graph).
 
 ## 4. Bitmap subtitle OCR (PGS / VobSub / DVB)
 

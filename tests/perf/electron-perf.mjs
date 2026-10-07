@@ -43,8 +43,9 @@ const results = [];
 const r2 = (v, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
 // Tier of a budgeted row (tests/perf/_report.ts, docs/DEVELOPMENT.md → Performance gate): a row with no tiering is a gate.
 const GUARDRAIL = { tier: 'guardrail' }, GUARDRAIL_REF = { tier: 'guardrail', reference: true }, DIAGNOSTIC = { tier: 'diagnostic', reference: true };
-function rec(section, metric, value, unit = '', threshold, pass, note, tiering) {
-  const row = { section, metric, value: typeof value === 'number' ? r2(value) : value, unit, threshold, pass: pass ?? null, note, ...tiering };
+// `extra`: the tiering, and/or more fields for perf-check, e.g. lt(list) on a long-task count row.
+function rec(section, metric, value, unit = '', threshold, pass, note, extra) {
+  const row = { section, metric, value: typeof value === 'number' ? r2(value) : value, unit, threshold, pass: pass ?? null, note, ...extra };
   if (typeof row.pass === 'boolean' && !row.tier) row.tier = 'gate';
   results.push(row);
   console.log(`${section.padEnd(10)} ${metric.padEnd(66).slice(0, 66)} ${String(row.value).padStart(12)} ${unit.padEnd(6)} ${(threshold ?? '').padEnd(14)} ${pass === undefined || pass === null ? '' : pass ? 'PASS' : 'FAIL'} ${note ?? ''}`);
@@ -169,6 +170,9 @@ const rendererMB = async () => (await metrics()).filter((m) => m.type === 'Tab')
 const lt = async (since) => page.evaluate((since) => window.__perf.lt.filter((e) => e.t >= since), since);
 const nowPage = () => page.evaluate(() => performance.now());
 const ltSummary = (list) => `${list.length} long tasks, max ${r2(Math.max(0, ...list.map((e) => e.d)))} ms, total ${r2(list.reduce((a, e) => a + e.d, 0))} ms`;
+// Durations of the long tasks behind a long-task count row: perf-check re-counts them against 50 ms x the calibration
+// ratio to normalize the count to the reference machine (tests/perf/_gate.mjs, metricClass 'longtasks').
+const ltRow = (list, tiering) => ({ ...tiering, longTasks: list.map((e) => r2(e.d)) });
 const ffmpegCount = () => { try { return Number(execFileSync('bash', ['-c', 'pgrep -c -x ffmpeg || true']).toString().trim()) || 0; } catch { return 0; } };
 
 // ---------------------------------------------------------------- import real media
@@ -260,7 +264,7 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
     rec('timeline', `DOM nodes in tracks content @ ${label}`, c.all, 'nodes', '<= 5000', c.all <= 5000, `${c.clips} clips, ${c.transitions} transitions, page total ${c.page}`, GUARDRAIL);
     await sleep(2500);
     const long = await lt(t0);
-    rec('timeline', `long tasks in 2.5 s after switch @ ${label}`, long.length, '', '<= 1', long.length <= 1, ltSummary(long));
+    rec('timeline', `long tasks in 2.5 s after switch @ ${label}`, long.length, '', '<= 1', long.length <= 1, ltSummary(long), ltRow(long));
     const ipc = await ipcStats(true);
     const strips = ipc.counts['media:filmstrip'] || 0, thumbs = ipc.counts['media:thumbnail'] || 0, waves = ipc.counts['media:waveform'] || 0;
     rec('timeline', `IPC filmstrip / thumbnail / waveform calls in 3 s after switch @ ${label}`, `${strips} / ${thumbs} / ${waves}`, 'calls', 'filmstrip <= 60', strips <= 60, `ffmpeg processes now: ${ffmpegCount()} (was ${ff0})`, GUARDRAIL);
@@ -344,7 +348,7 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
       rec(section, `playhead scrub fps (rAF-driven setView) ${label}`, r2(time.fps, 1), 'fps', '>= 50', noFlip && time.fps >= 50, `${inv}${time.frames} frames; timing pass (render counter off)`);
       rec(section, `DOM mutations per frame ${label} (tracks col / clips content)`, `${perFrame(cnt.mutAll)} / ${perFrame(cnt.mutContent)}`, '', 'content == 0', noFlip && cnt.mutContent === 0, inv ? `${inv}counting pass` : 'counting pass');
       rec(section, `ClipView renders per frame ${label}`, perFrame(cnt.clipRendered), '', '== 0', noFlip && cnt.clipRendered === 0, `${inv}${cnt.commits} React commits, TimelineBody renders ${cnt.tb}, ${cnt.clipTotal} clip fibers; counting pass`);
-      rec(section, `long tasks during scrub ${label}`, long.length, '', '== 0', noFlip && long.length === 0, `${inv}${ltSummary(long)}; timing pass`);
+      rec(section, `long tasks during scrub ${label}`, long.length, '', '== 0', noFlip && long.length === 0, `${inv}${ltSummary(long)}; timing pass`, ltRow(long));
       refFps(inv);
       return;
     }
@@ -361,7 +365,7 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
       rec(section, `ClipView renders per frame ${label}`, perFrame(cnt.clipRendered), '', '== 0', cnt.clipRendered === 0, `${cnt.commits} React commits, TimelineBody renders ${cnt.tb}, ${cnt.clipTotal} clip fibers; counting pass`);
     }
     ms(section, `setView call cost ${label} (median / max)`, time.setViewMedian, 1, `max ${r2(time.setViewMax)} ms; timing pass`, GUARDRAIL);
-    rec(section, `long tasks during scrub ${label}`, long.length, '', '== 0', long.length === 0, `${ltSummary(long)}; timing pass`);
+    rec(section, `long tasks during scrub ${label}`, long.length, '', '== 0', long.length === 0, `${ltSummary(long)}; timing pass`, ltRow(long));
     refFps();
   };
 {
@@ -400,7 +404,7 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
     const ipc = await ipcStats(true);
     ms('scroll', `wheel x100 @ ${label}: event -> store -> render (median)`, out.median, 8, `p95 ${r2(out.p95)} max ${r2(out.max)}`);
     rec('scroll', `wheel x100 @ ${label}: achieved frame rate`, r2(100 / (out.elapsed / 1000), 1), 'fps', '>= 50', 100 / (out.elapsed / 1000) >= 50);
-    rec('scroll', `wheel x100 @ ${label}: long tasks`, long.length, '', '== 0', long.length === 0, ltSummary(long));
+    rec('scroll', `wheel x100 @ ${label}: long tasks`, long.length, '', '== 0', long.length === 0, ltSummary(long), ltRow(long));
     rec('scroll', `wheel x100 @ ${label}: filmstrip / thumbnail / waveform IPC calls`, `${ipc.counts['media:filmstrip'] || 0} / ${ipc.counts['media:thumbnail'] || 0} / ${ipc.counts['media:waveform'] || 0}`, 'calls');
   };
   await wheel('1 px/frame', 1);
@@ -413,7 +417,7 @@ rec('timeline', 'timeline viewport width (px)', await tlWidth(), 'px');
   for (let i = 0; i < 30; i++) await page.mouse.wheel(60, 0);
   await sleep(500);
   const long = await lt(t0);
-  rec('scroll', 'real mouse.wheel x30 horizontal: long tasks', long.length, '', '== 0', long.length === 0, ltSummary(long));
+  rec('scroll', 'real mouse.wheel x30 horizontal: long tasks', long.length, '', '== 0', long.length === 0, ltSummary(long), ltRow(long));
   // Zoom changes
   const zc = await paintAfter((id) => { const st = window.__recut.store.getState(); const w = document.querySelector('.tl-tracks-col').clientWidth; st.setView(id, { zoom: 0.01 + Math.random() * 0.0001, scroll: 0 }); void w; }, SEQ);
   ms('scroll', 'zoom-to-fit transition (setView zoom -> paint)', zc, 100);
@@ -530,7 +534,7 @@ console.log('\n--- panels ---');
   rec('project', 'virtual list total height (px) / mounted rows / thumbs loaded', `${rows.height} / ${rows.mounted} / ${rows.thumbs}`, '');
   const ev = await page.evaluate(() => window.__perf.ev.filter((e) => e.name === 'click' || e.name === 'pointerup' || e.name === 'mousedown'));
   if (ev.length) { const s = stats(ev.map((e) => e.d)); ms('project', 'chevron click event duration (Event Timing >=16ms entries; median)', s.median, 50, `${ev.length} slow clicks, max ${s.max}`); } else rec('project', 'chevron clicks over 16 ms', 0, '', '== 0', true);
-  const long = await lt(t0); rec('project', 'long tasks while expanding', long.length, '', '<= 5', long.length <= 5, ltSummary(long));
+  const long = await lt(t0); rec('project', 'long tasks while expanding', long.length, '', '<= 5', long.length <= 5, ltSummary(long), ltRow(long));
   // Scroll through the fully expanded list
   const t1 = await nowPage();
   const sc = await page.evaluate(async () => {
@@ -600,7 +604,7 @@ const playFor = async (label, seconds, before, seqId = SEQ, section = 'playback'
   }, { id: seqId, seconds });
   const long = await lt(t0);
   rec(section, `program fps ${label} (store playhead updates/s over ${seconds} s)`, r2(out.fps, 1), 'fps', '>= 23', out.fps >= 23, `rAF ${r2(out.rafs, 1)}/s, per-second ${out.perSec.join(',')}; playing=${out.playing}`);
-  rec(section, `long tasks ${label}`, long.length, '', '<= 2', long.length <= 2, ltSummary(long));
+  rec(section, `long tasks ${label}`, long.length, '', '<= 2', long.length <= 2, ltSummary(long), ltRow(long));
   return out;
 };
 const poolState = () => page.evaluate(() => { const v = window.__perf.videos; return { created: v.length, live: v.filter((e) => e.getAttribute('src')).length, playing: v.filter((e) => !e.paused).length, inDom: document.querySelectorAll('video').length, audio: { ...window.__perf.audio } }; });
@@ -796,7 +800,7 @@ console.log('\n--- multi-hour sequence ---');
     rec('long', `DOM nodes in tracks content, multi-hour @ ${label}`, c.all, 'nodes', '<= 5000', c.all <= 5000, `${c.clips} clips, ${c.transitions} transitions, page total ${c.page}`, GUARDRAIL);
     await sleep(2500);
     const lg = await lt(t0);
-    rec('long', `long tasks in 2.5 s after switch to multi-hour @ ${label}`, lg.length, '', '<= 1', lg.length <= 1, ltSummary(lg));
+    rec('long', `long tasks in 2.5 s after switch to multi-hour @ ${label}`, lg.length, '', '<= 1', lg.length <= 1, ltSummary(lg), ltRow(lg));
   }
   // Let thumbnail / filmstrip requests drain before measuring interaction (bounded wait).
   { const tD = Date.now(); let settle = 0; while (Date.now() - tD < 60_000) { if (ffmpegCount() === 0) { if (++settle >= 3) break; } else settle = 0; await sleep(1000); } }
@@ -893,7 +897,7 @@ console.log('\n--- multi-hour sequence ---');
     rec(section, `opened project fully frozen (idle) after openProject resolved${label}`, r.frozenAt >= 0 ? r.frozenAt : `not within ${FIRST_EDIT_DELAY_MS} ms`, r.frozenAt >= 0 ? 'ms' : '');
     ms(section, `first edit ${FIRST_EDIT_DELAY_MS / 1000} s after open -> paint (moveClips 1 clip overwrite)${label}`, r.first.paint, 50,
       `commit ${r2(r.first.commit)} ms; second edit -> paint ${r2(r.second.paint)} ms (commit ${r2(r.second.commit)} ms); open ok ${r.ok}, edited sequence active ${r.active}`);
-    rec(section, `long tasks during first edit after open -> paint${label}`, r.lt.length, '', '== 0', r.lt.length === 0, ltSummary(r.lt));
+    rec(section, `long tasks during first edit after open -> paint${label}`, r.lt.length, '', '== 0', r.lt.length === 0, ltSummary(r.lt), ltRow(r.lt));
   };
   await firstEditAfterOpen('long', ' incl. multi-hour (3 h sequence)', savePath, LSEQ);
   await sleep(1500);

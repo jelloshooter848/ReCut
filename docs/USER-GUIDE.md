@@ -232,7 +232,8 @@ Scenes in the library are reusable, tagged source ranges.
 4. **Subtitles:** **Burn in** renders them into the picture, on exactly the frames where the Program monitor shows
    them. **Sidecar** writes a `.srt` next to the MP4.
 5. The **Checks** list blocks the export with a reason when something is wrong (an empty sequence, offline or missing
-   media, an invalid file name, folder or size). **Show FFmpeg command** previews the exact command.
+   media, an invalid file name, folder or size). It also warns, without blocking, about what would only show when
+   the result is watched (see **Pre-export warnings** below). **Show FFmpeg command** previews the exact command.
 6. Click **Export**. If the MP4 (or its `.srt`) already exists, ReCut asks **Replace it?** first. Progress shows in
    the dialog and in Jobs. When it finishes, use **Reveal in Folder** or **Export another**.
 
@@ -242,6 +243,27 @@ Anamorphic (non-square pixel) sources are un-squeezed, so they fill the frame as
 If you pick a **Frame rate** other than the sequence's (for example 30 fps for a 23.976 sequence), the video is
 converted when it is written: frames are repeated or dropped, while the duration and audio sync stay the same. The
 dialog shows the resulting frame count; **Use <sequence rate>** switches back.
+
+**Pre-export warnings.** The Checks list looks at the clips the export renders (enabled clips on tracks that are not
+muted, inside the chosen range) and warns about:
+
+- **Source frame rate differs from the sequence**: video media at another frame rate, for example 25 fps footage
+  in a 23.976 sequence. Its frames are repeated or dropped to fit, so motion may stutter. Stills, audio and VFR
+  media are not compared.
+- **Variable frame rate (VFR) media in the sequence**: typically phone or screen recordings. Converting such a
+  file to a constant frame rate before editing avoids uneven motion and sync problems.
+- **Linked clips out of sync**: a linked video and audio clip that were moved or slipped apart, with the offset
+  the timeline's red **+N / −N** badge shows.
+- **Transitions dropped (hard cut)** and **Transitions shortened**: a transition is centered on its cut, so it
+  needs half its length of source media past the end of the outgoing clip and before the start of the incoming one.
+  When the media runs out, the export renders a shorter transition, or a hard cut, and the warning gives the set
+  and the rendered length (for example `24 → 10 frames`) and the reason. These are the same numbers the export
+  uses.
+- **Clips run past the end of their media**: the last frame is held and the sound is silent for the rest of the
+  clip.
+
+Each warning names the media or clips (the first three, then "and N more"). **Show** closes the dialog, selects
+them (or the transition) on the timeline and moves the playhead to the first one. Warnings never block the export.
 
 **Chapters:** markers of kind **Chapter** (marker dialog or Markers panel) become the MP4's chapters, with their
 names. Only chapter markers inside the exported range count; times are measured from the start of the range. A chapter
