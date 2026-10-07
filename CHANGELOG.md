@@ -5,6 +5,31 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
+## [0.4.1] - 2026-10-07
+
+Licences: the Windows build now ships ReCut's licence and the bundled FFmpeg's licence and source information.
+Project files are unchanged (`formatVersion` 1).
+
+### Added
+
+- **Help › About › Licences…** opens the licence files that ship with ReCut: ReCut's own (MIT), the third-party notices
+  (FFmpeg, Electron / Chromium and the npm packages ReCut uses), the bundled FFmpeg's licence, readme and build
+  information, and Electron's and Chromium's licences.
+
+### Fixed
+
+- The Windows build bundled FFmpeg without its licence or a pointer to its source code. It now ships
+  `FFMPEG-LICENSE.txt`, `FFMPEG-README.txt` and `FFMPEG-BUILD.txt` (which FFmpeg build it is, and where to download its
+  source), plus `LICENSE` and `THIRD_PARTY_NOTICES.md`
+  ([report](bugs/closed/2026-10-07-bundled-ffmpeg-licence-not-shipped.md)).
+
+### Known issues
+
+- Unchanged from 0.4.0: the performance gate's verdict depends on the speed of the machine
+  ([open report](bugs/open/2026-10-07-perf-gate-verdict-not-reproducible.md)), moved media rebuilds its cache
+  ([open report](bugs/open/2026-10-05-moved-media-cache-miss.md)), unsigned builds, NSIS 3.0.4 (CVE-2025-43715, only
+  when an installer runs as SYSTEM).
+
 ## [0.4.0] - 2026-10-07
 
 The preview matches the export ([Roadmap](docs/ROADMAP.md) §2): every clip plays the audio stream export renders,
