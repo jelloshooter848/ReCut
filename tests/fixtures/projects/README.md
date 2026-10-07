@@ -35,7 +35,7 @@ release did not have are left out (for example `proxy.audioStreams` before 0.4.0
 scenario detects them from the checkout's `shared/model.ts` and store.
 
 The files from 0.3.0 to 0.6.0 were made on 7 October 2026 from detached `git worktree`s of the tags `v0.3.0`,
-`v0.4.0`, `v0.4.1`, `v0.5.0` and `v0.6.0`, with `node_modules` symlinked from the main checkout (no install). `recut-0.6.1.recut` was made the same day from the 0.6.1 release commit on `main` (f90c419), before its tag existed.
+`v0.4.0`, `v0.4.1`, `v0.5.0` and `v0.6.0`, with `node_modules` symlinked from the main checkout (no install). `recut-0.6.1.recut` was made the same day from the 0.6.1 release commit on `main` (f90c419), before its tag existed. `recut-0.7.0.recut` was made by the 0.7.0 release PR, as every later one is.
 
 ## Adding the fixture for a new release
 

@@ -19,8 +19,8 @@ in every release PR (docs/RELEASING.md).
 | 2 | Fix the remaining preview gaps | Done | 0.4.0 |
 | 3 | Pre-export warnings | Done | 0.5.0 |
 | 4 | Bitmap subtitle OCR (PGS / VobSub / DVB) | Done | 0.6.0 |
-| 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS next | 0.6.1 (Linux), 0.7.0 (macOS) |
-| 16 | Collect / Consolidate Project (with the moved-media cache fix) | Done | next release |
+| 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS dmg built as a CI test build, waiting for signing | 0.6.1 (Linux), macOS once signed |
+| 16 | Collect / Consolidate Project (with the moved-media cache fix) | Done | 0.7.0 |
 | 5–15, 17, 18 | Everything else | Not started | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
@@ -44,10 +44,11 @@ at franchise scale), on Windows, Linux and macOS. It is not feature parity with 
 |---|---|---|
 | 0.6.0 | Bitmap subtitle OCR | §4 (done) |
 | 0.6.1 | Official Linux release (AppImage) | §19, Linux part (done) |
-| 0.7.0 | Official macOS release (dmg, signed and notarised) | §19, macOS part |
+| 0.7.0 | Collect Project, the moved-media cache fix, the project compatibility promise and the update notice (all of 0.10.0, shipped early) | §16 (done), 0.10.0 (done) |
+| next | Official macOS release (dmg, signed and notarised) | §19, macOS part (built; waits for signing) |
 | 0.8.0 | Delivery 1: intermediates and audio | §6 (ProRes, DNxHR, WAV / audio-only, one file per audio track) and the centre-channel utility from §9 |
 | 0.9.0 | Delivery 2: MKV packaging | §7 (MKV, more than one audio track, soft subtitle tracks, chapters) |
-| 0.10.0 | Portability and trust | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/closed/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
+| 0.10.0 | Portability and trust (done early, in 0.7.0) | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/closed/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
 | 0.11.0 | Local transcription (Whisper) | §5 |
 | 0.12.0 | Nested sequences and compound clips | §8 |
 | 0.13.0 | Keyframes, first version | §11 (position, scale, opacity, volume) |
@@ -360,7 +361,7 @@ sequences, and optionally subtitle sidecars and proxies) into one folder, and sa
 that folder. It shares groundwork with relative media roots (§17). Derived media should survive the move: today the
 cache key includes the absolute path, so thumbnails, waveforms and proxies are rebuilt after media moves
 (see [LIMITATIONS](LIMITATIONS.md#projects)).
-**Status: done (7 October 2026; ships in the next release).** **File › Collect Project…** copies the project and its media
+**Status: done (7 October 2026, release 0.7.0).** **File › Collect Project…** copies the project and its media
 (media used in sequences, or all project media; optionally subtitle files and ready proxies) into
 `<destination>/<Project name>/` (`Media/`, `Subtitles/`, `Proxies/`), as a cancellable job with byte progress that
 verifies each copy (size and fingerprint) and writes the project, with absolute paths rewritten to the copies, last.
