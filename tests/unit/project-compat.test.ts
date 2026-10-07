@@ -97,8 +97,11 @@ describe('saved-project fixtures', () => {
     it('opens through the real open path without repairs, losing nothing it saved', async () => {
       const { project, raw } = await openFixture(file);
       expect(project.formatVersion).toBe(PROJECT_FORMAT_VERSION);
-      expect(raw.formatVersion).toBe(1);
-      expect(lostValues(raw, plain(project))).toEqual([]);
+      expect(raw.formatVersion).toBeGreaterThanOrEqual(1);
+      expect(raw.formatVersion).toBeLessThanOrEqual(PROJECT_FORMAT_VERSION);
+      // Same format: every saved value is still there. (Once a migration reshapes an older format, the spot checks
+      // below, and new ones for the migrated fields, are what proves that nothing was lost.)
+      if (raw.formatVersion === PROJECT_FORMAT_VERSION) expect(lostValues(raw, plain(project))).toEqual([]);
     });
 
     it('keeps media, probe data, proxies, scenes and media subtitle tracks', async () => {
