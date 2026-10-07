@@ -274,13 +274,23 @@ const hasFlite = hasFfmpeg && (() => {
   try { return /\bflite\b/.test(execFileSync(getFfmpegPath()!, ['-hide_banner', '-filters']).toString()); } catch { return false; }
 })();
 
+const hasEspeak = (() => {
+  try { execFileSync('espeak-ng', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
+})();
+const SENTENCE = 'Hello there. This is a short test of the speech recognition engine.';
+
 describe.skipIf(!hasEngine || !hasFfmpeg)('transcription with the bundled whisper.cpp engine', () => {
   let speech = '';
   beforeAll(() => {
     speech = path.join(tmp, 'speech.mka');
-    // A spoken sentence when this FFmpeg has the flite voice; a tone otherwise (the pipeline is still checked end to end).
-    if (hasFlite) ffmpeg(['-f', 'lavfi', '-i', "flite=text='Hello there. This is a short test of the speech recognition engine.':voice=slt", '-c:a', 'flac', speech]);
-    else ffmpeg(['-f', 'lavfi', '-i', 'sine=frequency=300:duration=4', '-c:a', 'flac', speech]);
+    // A spoken sentence from FFmpeg's flite voice or espeak-ng when one is there; a tone otherwise (the pipeline is
+    // still checked end to end).
+    if (hasFlite) ffmpeg(['-f', 'lavfi', '-i', `flite=text='${SENTENCE}':voice=slt`, '-c:a', 'flac', speech]);
+    else if (hasEspeak) {
+      const wav = path.join(tmp, 'espeak.wav');
+      execFileSync('espeak-ng', ['-s', '150', '-w', wav, SENTENCE]);
+      ffmpeg(['-i', wav, '-c:a', 'flac', speech]);
+    } else ffmpeg(['-f', 'lavfi', '-i', 'sine=frequency=300:duration=4', '-c:a', 'flac', speech]);
   });
 
   it('runs whisper-cli with a generated model and returns a well-formed result', async () => {
@@ -303,7 +313,7 @@ describe.skipIf(!hasEngine || !hasFfmpeg)('transcription with the bundled whispe
   }, 120_000);
 
   const tiny = process.env.RECUT_WHISPER_TINY_MODEL;
-  it.skipIf(!tiny || !hasFlite)('recognizes speech with the real tiny model', async () => {
+  it.skipIf(!tiny || !(hasFlite || hasEspeak))('recognizes speech with the real tiny model', async () => {
     const dir = path.join(tmp, 'real-models');
     fs.mkdirSync(dir, { recursive: true });
     fs.copyFileSync(tiny!, path.join(dir, 'ggml-tiny.bin'));

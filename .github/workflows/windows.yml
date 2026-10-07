@@ -12,9 +12,13 @@ name: Windows build
 #   tests      unit tests (vitest) on Windows
 #   e2e        end-to-end tests (Playwright + Electron) on Windows
 #   launcher   "Start ReCut.cmd" self-test from a fresh clone
-#   linux      on ubuntu-22.04: typecheck, unit tests and the e2e suite (xvfb) with the bundled FFmpeg, the x86-64
-#              AppImage (scripts/linux/get-ffmpeg.sh bundles FFmpeg and its licence files), an AppImage smoke test
-#              (FUSE-mounted and --appimage-extract-and-run), and the ReCut-linux artifact (every run)
+#   linux      on ubuntu-22.04: typecheck, unit tests and the e2e suite (xvfb) with the bundled FFmpeg and speech-to-text
+#              engine, the x86-64 AppImage (scripts/linux/get-ffmpeg.sh bundles FFmpeg and its licence files,
+#              scripts/linux/get-whisper.sh builds whisper.cpp), an AppImage smoke test (FUSE-mounted and
+#              --appimage-extract-and-run), and the ReCut-linux artifact (every run)
+# The speech-to-text engine (whisper.cpp, docs/ROADMAP.md §5) is compiled from its pinned, hash-checked source by
+# scripts/windows/get-whisper.ps1 and scripts/linux/get-whisper.sh in every job that bundles or tests it, cached per
+# pinned source and build script (actions/cache), so a cache hit skips the compile.
 #   publish    needs installer, tests, e2e, launcher and linux. Runs only on a real release run (installer output
 #              release == 'true') and only when all five succeeded (default success() semantics: a failed, cancelled
 #              or skipped gate skips it), then re-checks the tag and publishes the release from the installer job's
@@ -213,6 +217,19 @@ jobs:
         shell: pwsh
         run: ./scripts/windows/get-ffmpeg.ps1 -Dest resources/ffmpeg
 
+      # The speech-to-text engine (whisper.cpp), bundled like FFmpeg (resources/whisper -> <resources>/whisper). Built from
+      # the pinned, hash-checked source; cached per pinned source and build script, so a cache hit skips the compile.
+      - name: Speech-to-text engine cache
+        id: whisper-cache
+        uses: actions/cache@v4
+        with:
+          path: resources/whisper
+          key: whisper-windows-${{ hashFiles('scripts/whisper-source.mjs', 'scripts/windows/get-whisper.ps1') }}
+      - name: Build the speech-to-text engine (whisper.cpp)
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: ./scripts/windows/get-whisper.ps1 -Dest resources/whisper -Jobs 4
+
       - name: Build app and Windows packages
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
@@ -242,6 +259,24 @@ jobs:
           if ($bad.Count -gt 0) { $bad | Select-Object -First 10 | ForEach-Object { Write-Host $_ }; throw 'app.asar contains tesseract.js or tesseract.js-core' }
           Write-Host "app.asar: $($list.Count) entries, no tesseract.js / tesseract.js-core"
 
+      # The speech-to-text engine in the package: whisper-cli.exe with its DLLs, licence and build record, within a
+      # 16 MB budget (about 10 MB today: the engine, ggml and five CPU-variant kernels; no model is ever bundled).
+      - name: Speech-to-text packaging budget
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = 'release/win-unpacked/resources/whisper'
+          foreach ($f in @('whisper-cli.exe', 'whisper.dll', 'ggml.dll', 'ggml-base.dll', 'ggml-cpu-x64.dll', 'WHISPER-LICENSE.txt', 'WHISPER-BUILD.txt')) {
+            if (-not (Test-Path "$dir/$f")) { throw "speech-to-text engine file missing: $dir/$f" }
+          }
+          $files = @(Get-ChildItem -File $dir)
+          $files | ForEach-Object { Write-Host ('{0,12:N0}  {1}' -f $_.Length, $_.Name) }
+          $bytes = ($files | Measure-Object -Sum Length).Sum
+          Write-Host ('Speech-to-text engine: {0:N0} bytes ({1:N2} MB, budget 16 MB)' -f $bytes, ($bytes / 1MB))
+          if ($bytes -gt 16MB) { throw "speech-to-text engine folder is $bytes bytes, over the 16 MB budget" }
+          if (@(Get-ChildItem -File $dir -Filter '*.bin').Count) { throw 'a model file is in the package' }
+          Get-Content "$dir/WHISPER-BUILD.txt" -TotalCount 12
+
       - name: Smoke-test the unpacked app
         shell: pwsh
         run: |
@@ -252,7 +287,8 @@ jobs:
           Get-Content $out
           $r = Get-Content $out -Raw
           # "ocr core=<variant> ok worker=<path>": the OCR worker started from app.asar.unpacked and loaded the Tesseract core.
-          if ($r -cmatch 'FAILED|layout=MISSING' -or $r -notmatch 'encode\+probe ok' -or $r -notmatch 'status=206' -or $r -notmatch 'resources\\ffmpeg' -or $r -notmatch 'ocr core=(relaxedsimd-lstm|lstm) ok worker=.*app\.asar\.unpacked') { throw 'smoke test failed' }
+          # "whisper engine=<version> ok path=<path>": the bundled whisper-cli.exe ran (--version, no model needed).
+          if ($r -cmatch 'FAILED|layout=MISSING' -or $r -notmatch 'encode\+probe ok' -or $r -notmatch 'status=206' -or $r -notmatch 'resources\\ffmpeg' -or $r -notmatch 'ocr core=(relaxedsimd-lstm|lstm) ok worker=.*app\.asar\.unpacked' -or $r -notmatch 'whisper engine=[0-9.]+ ok path=.*resources\\whisper\\whisper-cli\.exe') { throw 'smoke test failed' }
 
       # Uploaded on every run (release or test build), before the install check so a failed install can still be
       # inspected, and so the installer-stress and publish jobs can reuse the build. On a test build this artifact is
@@ -350,6 +386,19 @@ jobs:
         run: |
           ./scripts/windows/get-ffmpeg.ps1 -Dest "$env:RUNNER_TEMP\ff"
           "$env:RUNNER_TEMP\ff" >> $env:GITHUB_PATH
+      # tests/unit/whisper-job.test.ts runs the real engine (resources/whisper) with a generated model.
+      # The speech-to-text engine (whisper.cpp), bundled like FFmpeg (resources/whisper -> <resources>/whisper). Built from
+      # the pinned, hash-checked source; cached per pinned source and build script, so a cache hit skips the compile.
+      - name: Speech-to-text engine cache
+        id: whisper-cache
+        uses: actions/cache@v4
+        with:
+          path: resources/whisper
+          key: whisper-windows-${{ hashFiles('scripts/whisper-source.mjs', 'scripts/windows/get-whisper.ps1') }}
+      - name: Build the speech-to-text engine (whisper.cpp)
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: ./scripts/windows/get-whisper.ps1 -Dest resources/whisper -Jobs 4
       - run: npx vitest run
 
   e2e:
@@ -369,6 +418,19 @@ jobs:
           ./scripts/windows/get-ffmpeg.ps1 -Dest "$env:RUNNER_TEMP\ff"
           "$env:RUNNER_TEMP\ff" >> $env:GITHUB_PATH
           'C:\Program Files\Git\bin' >> $env:GITHUB_PATH
+      # tests/e2e/whisper.spec.ts transcribes with the engine the app finds in resources/whisper.
+      # The speech-to-text engine (whisper.cpp), bundled like FFmpeg (resources/whisper -> <resources>/whisper). Built from
+      # the pinned, hash-checked source; cached per pinned source and build script, so a cache hit skips the compile.
+      - name: Speech-to-text engine cache
+        id: whisper-cache
+        uses: actions/cache@v4
+        with:
+          path: resources/whisper
+          key: whisper-windows-${{ hashFiles('scripts/whisper-source.mjs', 'scripts/windows/get-whisper.ps1') }}
+      - name: Build the speech-to-text engine (whisper.cpp)
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: ./scripts/windows/get-whisper.ps1 -Dest resources/whisper -Jobs 4
       - run: npm run build
       - run: npx playwright test -c tests/e2e/playwright.config.ts
       - uses: actions/upload-artifact@v4
@@ -395,11 +457,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # xvfb for headless Electron (e2e and smoke test); libfuse2 so the AppImage mounts itself as it does for users.
-      - name: System packages (xvfb, libfuse2)
+      # xvfb for headless Electron (e2e and smoke test); libfuse2 so the AppImage mounts itself as it does for users;
+      # ninja-build to compile the speech-to-text engine; espeak-ng to synthesize the speech the real-model test hears.
+      - name: System packages (xvfb, libfuse2, ninja-build, espeak-ng)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb libfuse2
+          sudo apt-get install -y --no-install-recommends xvfb libfuse2 ninja-build espeak-ng
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
 
@@ -410,6 +473,41 @@ jobs:
         run: |
           ./scripts/linux/get-ffmpeg.sh --dest resources/ffmpeg
           echo "$GITHUB_WORKSPACE/resources/ffmpeg" >> "$GITHUB_PATH"
+
+      # The speech-to-text engine (whisper.cpp), bundled into the AppImage (resources/whisper -> <resources>/whisper) and
+      # used by the unit, e2e and smoke tests. Built from the pinned, hash-checked source on this image (so its glibc
+      # floor is the gate's); cached per pinned source and build script, so a cache hit skips the compile.
+      - name: Speech-to-text engine cache
+        id: whisper-cache
+        uses: actions/cache@v4
+        with:
+          path: resources/whisper
+          key: whisper-linux-ubuntu-22.04-${{ hashFiles('scripts/whisper-source.mjs', 'scripts/linux/get-whisper.sh') }}
+      - name: Build the speech-to-text engine (whisper.cpp)
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
+        run: JOBS="$(nproc)" NICE=0 ./scripts/linux/get-whisper.sh --dest resources/whisper
+
+      # The pinned tiny model (78 MB, the only model CI ever downloads), for the real-recognition test in
+      # tests/unit/whisper-job.test.ts. Cached by its SHA-256; checked against it after every download or restore.
+      - name: Tiny Whisper model for the tests (cache)
+        id: tiny-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/recut-ci/ggml-tiny.bin
+          key: whisper-model-tiny-${{ hashFiles('shared/whisper.ts') }}
+      - name: Tiny Whisper model for the tests
+        run: |
+          set -euo pipefail
+          rev="$(sed -n "s/^export const WHISPER_MODELS_REVISION = '\([0-9a-f]\{40\}\)';$/\1/p" shared/whisper.ts)"
+          sha="$(grep "id: 'tiny'," shared/whisper.ts | sed -n "s/.*sha256: '\([0-9a-f]\{64\}\)'.*/\1/p")"
+          test -n "$rev" && test -n "$sha" || { echo '::error::could not read the tiny model pin from shared/whisper.ts'; exit 1; }
+          f="$HOME/.cache/recut-ci/ggml-tiny.bin"
+          mkdir -p "$(dirname "$f")"
+          if ! echo "$sha  $f" | sha256sum -c --quiet 2>/dev/null; then
+            curl -fsSL --retry 3 -o "$f" "https://huggingface.co/ggerganov/whisper.cpp/resolve/$rev/ggml-tiny.bin"
+            echo "$sha  $f" | sha256sum -c
+          fi
+          echo "RECUT_WHISPER_TINY_MODEL=$f" >> "$GITHUB_ENV"
 
       - name: Unit tests
         run: npx vitest run
@@ -444,6 +542,22 @@ jobs:
           fi
           echo "app.asar: $(wc -l < "$RUNNER_TEMP/asar-list.txt") entries, no tesseract.js / tesseract.js-core"
 
+      # The speech-to-text engine that went into the AppImage: whisper-cli and its libraries, the licence and the build
+      # record, within a 16 MB budget (about 10 MB today), linked only to glibc and its own libraries, no model.
+      - name: Speech-to-text packaging budget
+        run: |
+          set -euo pipefail
+          dir=release/linux-unpacked/resources/whisper
+          ls -la "$dir"
+          test -x "$dir/whisper-cli" || { echo "::error::$dir/whisper-cli is missing or not executable"; exit 1; }
+          for f in WHISPER-LICENSE.txt WHISPER-BUILD.txt libggml-cpu-x64.so; do test -s "$dir/$f" || { echo "::error::$dir/$f is missing or empty"; exit 1; }; done
+          if ldd "$dir/whisper-cli" | grep -q 'not found'; then ldd "$dir/whisper-cli"; echo '::error::whisper-cli has an unresolved library'; exit 1; fi
+          if ls "$dir"/*.bin >/dev/null 2>&1; then echo '::error::a model file is in the package'; exit 1; fi
+          bytes=$(find "$dir" -type f -printf '%s\n' | awk '{ s += $1 } END { print s + 0 }')
+          echo "Speech-to-text engine: $bytes bytes (budget 16 MB)"
+          if [ "$bytes" -gt $((16 * 1024 * 1024)) ]; then echo "::error::the speech-to-text engine is $bytes bytes, over the 16 MB budget"; exit 1; fi
+          sed -n '1,14p' "$dir/WHISPER-BUILD.txt"
+
       # The FFmpeg folder that went into the AppImage: both programs, the licence and the build record (the BtbN Linux
       # builds have no readme, so FFMPEG-README.txt is optional, as in get-ffmpeg.sh).
       - name: Bundled FFmpeg files
@@ -461,7 +575,8 @@ jobs:
       # --appimage-extract-and-run (no FUSE needed). Each run must serve byte ranges over recut-media:// (206), encode
       # and probe a clip with the FFmpeg inside the AppImage (its path must be the AppImage's resources/ffmpeg, never
       # one on PATH: the run starts outside the checkout with the checkout's FFmpeg off PATH), ship the FFmpeg licence
-      # files, start the OCR worker from app.asar.unpacked and mount the UI. The smoke file is the AppImage itself.
+      # files, start the OCR worker from app.asar.unpacked, run the AppImage's own speech-to-text engine
+      # (resources/whisper/whisper-cli --version) and mount the UI. The smoke file is the AppImage itself.
       - name: Smoke-test the AppImage
         run: |
           set +e -uo pipefail   # the runner starts bash with -e; each run's result is checked below instead
@@ -490,6 +605,7 @@ jobs:
               'smoke: ffmpeg encode\+probe ok ' \
               'smoke: licences shipped=[^ ]*FFMPEG-BUILD\.txt,FFMPEG-LICENSE\.txt' \
               'smoke: ocr core=(relaxedsimd-lstm|lstm) ok worker=.*app\.asar\.unpacked' \
+              'smoke: whisper engine=[0-9.]+ ok path=[^ ]*/(\.mount_[^/ ]+|appimage_extracted_[^/ ]+)/resources/whisper/whisper-cli$' \
               'smoke: window loaded=.* layout=mounted'; do
               grep -qE "$want" "$out" || { echo "::error::AppImage smoke test ($mode): no line matching: $want"; bad=1; }
             done

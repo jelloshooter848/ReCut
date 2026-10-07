@@ -171,3 +171,40 @@ describe('Windows workflow: the Linux AppImage gate', () => {
     expect(sh).not.toMatch(/master-latest/);
   });
 });
+
+describe('speech-to-text engine in CI (Roadmap §5)', () => {
+  const wf = fs.readFileSync(path.join(repo, '.github', 'workflows', 'windows.yml'), 'utf8');
+  const jobText = (name: string) => {
+    const lines = wf.split('\n');
+    const start = lines.findIndex((l) => l === `  ${name}:`);
+    const end = lines.findIndex((l, i) => i > start && /^  [a-z][a-z-]*:$/.test(l));
+    return lines.slice(start, end < 0 ? undefined : end).join('\n');
+  };
+
+  it('every job that bundles or tests the engine builds it from the pinned source, cached', () => {
+    for (const job of ['installer', 'tests', 'e2e']) {
+      expect(jobText(job), job).toContain('./scripts/windows/get-whisper.ps1 -Dest resources/whisper');
+      expect(jobText(job), job).toContain("hashFiles('scripts/whisper-source.mjs', 'scripts/windows/get-whisper.ps1')");
+    }
+    expect(jobText('linux')).toContain('./scripts/linux/get-whisper.sh --dest resources/whisper');
+    expect(jobText('linux')).toContain("hashFiles('scripts/whisper-source.mjs', 'scripts/linux/get-whisper.sh')");
+  });
+
+  it('the smoke tests require the engine line, and the packages stay within the budget with no model', () => {
+    expect(jobText('installer')).toContain("'whisper engine=[0-9.]+ ok path=.*resources\\\\whisper\\\\whisper-cli\\.exe'");
+    expect(jobText('linux')).toContain("'smoke: whisper engine=[0-9.]+ ok path=");
+    for (const job of ['installer', 'linux']) {
+      expect(jobText(job), job).toContain('Speech-to-text packaging budget');
+      expect(jobText(job), job).toMatch(/16 MB/);
+    }
+    const check = fs.readFileSync(path.join(repo, 'scripts', 'windows', 'install-check.ps1'), 'utf8');
+    expect(check.match(/whisper engine=\[0-9\.\]\+ ok/g)).toHaveLength(2);
+  });
+
+  it('CI downloads only the pinned tiny model, checked against its SHA-256 and cached', () => {
+    const linux = jobText('linux');
+    expect(linux).toContain('ggml-tiny.bin');
+    expect(linux).toContain('sha256sum -c');
+    expect(wf).not.toMatch(/ggml-(base|small|medium|large)[a-z0-9.-]*\.bin/);
+  });
+});
