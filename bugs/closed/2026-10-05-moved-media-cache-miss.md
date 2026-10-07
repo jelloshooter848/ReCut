@@ -176,8 +176,8 @@ the end). The old key had the opposite weakness (a same-size in-place change tha
 ### Tests run
 
 - `npm run typecheck`: clean.
-- `npx vitest run` (full unit suite, 2 workers): 85 files, 1543 tests passed (see the branch's final report for the
-  last run).
+- `npm test` (full unit suite, after merging origin/main 38c46ec): 85 files, 1551 tests passed.
+- `npm run test:e2e` (under xvfb): 68 passed, including the new `tests/e2e/collect.spec.ts`.
 - `tests/unit/media-move-cache.test.ts` (2), `tests/unit/media-identity.test.ts` (8), plus the existing cache users
   `media.test.ts`, `media-input-safety.test.ts`, `sceneDetect.test.ts`, `thumbs-cache-cancel.test.ts`,
   `proxy-fallback.test.ts`, `ocr-job.test.ts`: all pass.
