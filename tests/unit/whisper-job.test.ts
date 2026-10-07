@@ -108,7 +108,8 @@ describe.skipIf(!hasFfmpeg)('transcription job (fake engine)', () => {
     // whisper-cli ran in the temp folder with relative, ASCII file names and every core but one.
     const [call] = engineRuns();
     expect(call.args).toEqual(whisperArgs({ model: path.join('..', '..', 'models', MODEL.file), input: 'audio.wav', outBase: 'out', threads: 2, language: 'auto', translate: false }));
-    expect(path.dirname(call.cwd)).toBe(tempRoot);
+    // realpath: on macOS the temp folder is /var/... but the engine may report it as /private/var/... (a symlink).
+    expect(fs.realpathSync(path.dirname(call.cwd))).toBe(fs.realpathSync(tempRoot));
     expect(leftovers()).toEqual([]);
 
     const again = await run(q, req(), ctx());
