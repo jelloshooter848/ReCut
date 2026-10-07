@@ -26,17 +26,12 @@ import {
   type FfmpegRun,
 } from '../media/ffmpeg';
 import { ffmpegMissingMessage } from '../../shared/ipc';
+import { isOcrCodec } from '../../shared/ocr';
 import { upscaleYa8 } from './preprocess';
 
 // ------------------------------------------------------------------
 // Constants
 // ------------------------------------------------------------------
-
-/**
- * Bitmap subtitle codecs this pipeline reads (ffprobe codec_name). Local copy: the shared OCR contract
- * (shared/ocr.ts) is expected to export the same set; reconcile when it lands.
- */
-export const OCR_BITMAP_CODECS: ReadonlySet<string> = new Set(['hdmv_pgs_subtitle', 'dvd_subtitle', 'dvb_subtitle', 'xsub']);
 
 /** end_display_time values that mean "unknown" (PGS reports UINT32_MAX; 0 means "until the next one"). */
 export const UNKNOWN_END_DISPLAY = new Set([0, 4294967295]);
@@ -456,7 +451,7 @@ export interface ExtractBitmapEventsOptions {
   path: string;
   /** ffprobe stream index of the bitmap subtitle stream. */
   streamIndex: number;
-  /** ffprobe codec_name; must be in OCR_BITMAP_CODECS. */
+  /** ffprobe codec_name; must be one of OCR_SUBTITLE_CODECS (shared/ocr.ts). */
   codec: string;
   /** Media duration in seconds (ends are capped at it); <= 0 or omitted = unknown. */
   duration?: number;
@@ -609,7 +604,7 @@ export function sub2videoGraph(inputStream: number, ranges?: [number, number][])
 export async function extractBitmapEvents(opts: ExtractBitmapEventsOptions): Promise<ExtractBitmapEventsResult> {
   const { signal } = opts;
   const codec = (opts.codec ?? '').toLowerCase();
-  if (!OCR_BITMAP_CODECS.has(codec)) throw new Error(`subtitle codec ${codec || 'unknown'} cannot be read with OCR`);
+  if (!isOcrCodec(codec)) throw new Error(`subtitle codec ${codec || 'unknown'} cannot be read with OCR`);
   if (!Number.isInteger(opts.streamIndex) || opts.streamIndex < 0) throw new Error(`bad stream index ${opts.streamIndex}`);
   const srcArg = ffmpegFileArg(opts.path); // asserts an absolute path
   if (signal?.aborted) throw canceledError();

@@ -16,6 +16,7 @@ import type { MediaContext, MediaFetch, MediaHandlers } from '../ipc';
 import { listOcrLanguages, ocrDataDir } from '../ocr/dataDir';
 import { parseLangUrlOverride } from '../ocr/download';
 import { installFromFile, removeLanguage, startInstallJob } from '../ocr/languages';
+import { startOcrJob } from '../ocr/ocrJob';
 import { JobQueue } from '../jobs/jobQueue';
 import { ensureDirSafe } from '../safeMkdir';
 import { buildExportCommand, cancelExportJob, startExportJob } from '../export/exporter';
@@ -53,8 +54,6 @@ function activeDownloadJob(code: string): ID | undefined {
   const job = id ? jobQueue.get(id) : undefined;
   return job && (job.status === 'queued' || job.status === 'running') ? job.id : undefined;
 }
-
-const notImplemented = (what: string) => new Error(`${what} is not implemented yet`);
 
 export const mediaHandlers: MediaHandlers = {
   init(ctx: MediaContext): void {
@@ -111,8 +110,9 @@ export const mediaHandlers: MediaHandlers = {
     return extractSubtitles(path, streamIndex);
   },
 
-  async startOcr(_req: OcrRequest): Promise<JobInfo> {
-    throw notImplemented('Reading subtitles with OCR');
+  async startOcr(req: OcrRequest): Promise<JobInfo> {
+    if (!getFfmpegPath()) throw new Error(ffmpegMissingMessage('ffmpeg'));
+    return startOcrJob(jobQueue, req, { dataDir: ocrContext().dataDir });
   },
 
   async ocrLanguages(): Promise<OcrLanguageState[]> {
