@@ -490,6 +490,7 @@ describe('jobs', () => {
     expect(q.get(ocr.id)?.status).toBe('queued'); // background lane limit 1
     expect([d1, d2, d3].map((j) => q.get(j.id)?.status)).toEqual(['running', 'running', 'queued']);
     expect(q.get(proxy.id)?.status).toBe('running'); // neither lane takes a media slot
+    expect(q.activeCount).toBe(4); // detect + two downloads + proxy: the network lane counts too
     expect((await q.waitFor(proxy.id)).status).toBe('done');
     releases.splice(0).forEach((r) => r());
     await Promise.all([q.waitFor(detect.id), q.waitFor(d1.id), q.waitFor(d2.id)]);

@@ -171,7 +171,7 @@ export class JobQueue {
   }
 
   /** Number of jobs currently running (all lanes). */
-  get activeCount(): number { return this.running.media + this.running.export + this.running.background; }
+  get activeCount(): number { return Object.values(this.running).reduce((a, b) => a + b, 0); }
 
   // ------------------------------------------------------------------
 
