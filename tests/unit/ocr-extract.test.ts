@@ -110,6 +110,13 @@ describe.each(BITMAP_FIXTURE_CODECS)('extractBitmapEvents: %s', (codec) => {
     expect(events.map((e) => e.imageId)).toEqual([0, 1, 2, 3, 4, 0]);
     expect(events.map((e) => e.isNewImage)).toEqual([true, true, true, true, true, false]);
     expect(result.uniqueImages).toBe(5);
+
+    // The fallback when the remux fails (passes 2-3 read the source, with its own stream index and start_time)
+    // gives the same events.
+    const direct = await collect(fx, { isolate: false });
+    expect(direct.result.isolated).toBe(false);
+    expect(direct.events.map((e) => [+e.start.toFixed(3), +e.end.toFixed(3), e.imageId, e.image.width, e.image.height]))
+      .toEqual(events.map((e) => [+e.start.toFixed(3), +e.end.toFixed(3), e.imageId, e.image.width, e.image.height]));
     expect(tempLeftovers()).toEqual([]);
   }, 60_000);
 
@@ -170,6 +177,18 @@ describe('extractBitmapEvents: cancel and errors', () => {
     expect(starts).toEqual([...starts].sort((a, b) => a - b));
     const boom = collect(f, { onEvent: (e) => { if (e.index === 5) throw new Error('consumer failed'); } });
     await expect(boom).rejects.toThrow('consumer failed');
+    // ... also while FFmpeg is paused on a full queue (slow consumer, queue of 1)
+    const slowBoom = collect(f, { maxQueuedEvents: 1, onEvent: async (e) => {
+      await new Promise((r) => setTimeout(r, 30));
+      if (e.index === 4) throw new Error('slow consumer failed');
+    } });
+    await expect(slowBoom).rejects.toThrow('slow consumer failed');
+    const ac = new AbortController();
+    const slowAbort = collect(f, { maxQueuedEvents: 1, signal: ac.signal, onEvent: async (e) => {
+      if (e.index === 3) setTimeout(() => ac.abort(), 5);
+      await new Promise((r) => setTimeout(r, 30));
+    } });
+    await expect(slowAbort).rejects.toSatisfy((e: unknown) => e instanceof FfmpegError && e.canceled);
     expect(tempLeftovers()).toEqual([]);
     expect(processesMentioning(tmp)).toEqual([]);
   }, 60_000);

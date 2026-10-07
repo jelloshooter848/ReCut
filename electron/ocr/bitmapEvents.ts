@@ -474,6 +474,8 @@ export interface ExtractBitmapEventsOptions {
   tempDir?: string;
   /** Default 8. */
   maxQueuedEvents?: number;
+  /** false skips pass 1 and reads the source directly (the remux-failure fallback; for tests). Default true. */
+  isolate?: boolean;
 }
 
 export interface ExtractBitmapEventsResult {
@@ -628,17 +630,20 @@ export async function extractBitmapEvents(opts: ExtractBitmapEventsOptions): Pro
     // ---- pass 1: isolate
     const isoPath = path.join(tmp, codec === 'xsub' ? 'stream.avi' : 'stream.mks');
     let isolated = false;
-    const iso = runFfmpeg(['-copyts', '-i', srcArg, '-map', `0:${opts.streamIndex}`, '-c', 'copy', '-f', codec === 'xsub' ? 'avi' : 'matroska', ffmpegFileArg(isoPath)], {
-      duration: duration > 0 ? duration + offset : undefined,
-      signal,
-      onProgress: (p) => opts.onProgress?.('isolate', p),
-    });
-    try {
-      await iso.promise;
-      isolated = true;
-    } catch (e) {
-      if ((e instanceof FfmpegError && e.canceled) || signal?.aborted) throw canceledError();
-      isolated = false; // fall back to the source
+    if (opts.isolate !== false) {
+      const iso = runFfmpeg(['-copyts', '-i', srcArg, '-map', `0:${opts.streamIndex}`, '-c', 'copy', '-f', codec === 'xsub' ? 'avi' : 'matroska', ffmpegFileArg(isoPath)], {
+        duration: duration > 0 ? duration + offset : undefined,
+        signal,
+        onProgress: (p) => opts.onProgress?.('isolate', p),
+      });
+      try {
+        await iso.promise;
+        isolated = true;
+      } catch (e) {
+        if ((e instanceof FfmpegError && e.canceled) || signal?.aborted) throw canceledError();
+        isolated = false; // fall back to the source
+        await fsp.rm(isoPath, { force: true }).catch(() => undefined);
+      }
     }
     opts.onProgress?.('isolate', 1);
     const readArg = isolated ? ffmpegFileArg(isoPath) : srcArg;
@@ -695,9 +700,10 @@ export async function extractBitmapEvents(opts: ExtractBitmapEventsOptions): Pro
     });
 
     let paused = false;
+    let discard = false;
     const updateFlow = () => {
       const stdout = render?.child?.stdout;
-      if (!stdout) return;
+      if (!stdout || discard) return;
       const shouldPause = queue.length >= maxQueued;
       if (shouldPause && !paused) { paused = true; stdout.pause(); } else if (!shouldPause && paused) { paused = false; stdout.resume(); }
     };
@@ -724,12 +730,24 @@ export async function extractBitmapEvents(opts: ExtractBitmapEventsOptions): Pro
       // stderr normally runs ahead of stdout. Frames piling up without a pts means showinfo output is not being
       // parsed (a changed log format): fail rather than pair frames with the wrong times.
       if (pendingFrames.length > MAX_FRAMES_WITHOUT_PTS && !failure) {
-        failure = new Error('could not read frame times from FFmpeg (showinfo output not recognised)');
-        render?.cancel();
+        fail(new Error('could not read frame times from FFmpeg (showinfo output not recognised)'));
       }
     };
 
+    // On failure or cancel: keep stdout flowing (and drop it) so the killed process can close its pipes.
+    const stopFlow = () => {
+      discard = true;
+      paused = false;
+      render?.child?.stdout?.resume();
+    };
+    const fail = (e: unknown) => {
+      failure = failure ?? e;
+      stopFlow();
+      render?.cancel();
+    };
+
     const onStdout = (chunk: Buffer) => {
+      if (discard) return;
       let off = 0;
       while (off < chunk.length) {
         const n = Math.min(frameBytes - filled, chunk.length - off);
@@ -763,10 +781,8 @@ export async function extractBitmapEvents(opts: ExtractBitmapEventsOptions): Pro
         await opts.onEvent(ev);
       }
     })();
-    consumer.catch((e) => {
-      failure = failure ?? e;
-      render?.cancel();
-    });
+    consumer.catch(fail);
+    signal?.addEventListener('abort', stopFlow, { once: true });
 
     const graphFile = path.join(tmp, 'graph.txt');
     await fsp.writeFile(graphFile, sub2videoGraph(readStream, selectRanges(windows)), 'utf8');
@@ -790,6 +806,7 @@ export async function extractBitmapEvents(opts: ExtractBitmapEventsOptions): Pro
       if ((e instanceof FfmpegError && e.canceled) || signal?.aborted) throw canceledError();
       throw e;
     } finally {
+      signal?.removeEventListener('abort', stopFlow);
       render = null;
     }
     // Frames still waiting for a pts (should not happen) are dropped.
