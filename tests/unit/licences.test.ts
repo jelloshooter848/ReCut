@@ -18,6 +18,9 @@ function fakeInstall(): { dirs: ReturnType<typeof licenceDirs>; root: string; re
   for (const f of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) fs.writeFileSync(path.join(resources, f), f);
   for (const f of ['FFMPEG-LICENSE.txt', 'FFMPEG-BUILD.txt', 'ffmpeg.exe']) fs.writeFileSync(path.join(resources, 'ffmpeg', f), f);
   for (const f of ['LICENSE.electron.txt', 'LICENSES.chromium.html', 'secret.txt']) fs.writeFileSync(path.join(root, f), f);
+  const ocr = path.join(resources, 'app.asar.unpacked', 'dist', 'electron', 'ocr', 'core');
+  fs.mkdirSync(ocr, { recursive: true });
+  for (const f of ['LICENSE', 'tesseract-core-lstm.wasm']) fs.writeFileSync(path.join(ocr, f), f);
   const dirs = licenceDirs({ packaged: true, resourcesPath: resources, appPath: path.join(resources, 'app.asar'), execPath: path.join(root, 'ReCut.exe'), cwd: os.tmpdir() });
   return { dirs, root, resources };
 }
@@ -31,9 +34,10 @@ describe('licence files (Help › About › Licences)', () => {
     expect(resolveLicenceFile('ffmpegBuild', dirs)).toBe(path.join(resources, 'ffmpeg', 'FFMPEG-BUILD.txt'));
     expect(resolveLicenceFile('electron', dirs)).toBe(path.join(root, 'LICENSE.electron.txt'));
     expect(resolveLicenceFile('chromium', dirs)).toBe(path.join(root, 'LICENSES.chromium.html'));
+    expect(resolveLicenceFile('tesseract', dirs)).toBe(path.join(resources, 'app.asar.unpacked', 'dist', 'electron', 'ocr', 'core', 'LICENSE'));
     // Not in this build (no readme in the archive): absent, not an error.
     expect(resolveLicenceFile('ffmpegReadme', dirs)).toBeNull();
-    expect(listLicenceFiles(dirs).map((f) => f.id)).toEqual(['recut', 'notices', 'ffmpegBuild', 'ffmpegLicense', 'electron', 'chromium']);
+    expect(listLicenceFiles(dirs).map((f) => f.id)).toEqual(['recut', 'notices', 'ffmpegBuild', 'ffmpegLicense', 'electron', 'chromium', 'tesseract']);
     fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -42,11 +46,12 @@ describe('licence files (Help › About › Licences)', () => {
     const hostile: unknown[] = [
       '../secret.txt', 'secret.txt', path.join(root, 'secret.txt'), 'LICENSE', 'ffmpeg.exe', 'FFMPEG-LICENSE.txt',
       '__proto__', 'constructor', 'toString', '', 'RECUT', ' recut', 'recut/../..', null, undefined, 1, {}, ['recut'],
+      'tesseract-core-lstm.wasm', 'ocr', 'Tesseract', 'tesseract/../../LICENSE',
       { id: 'recut' },
     ];
     for (const id of hostile) expect(resolveLicenceFile(id, dirs), String(id)).toBeNull();
     // Every path it can ever return is <search dir>/<fixed name>.
-    const allowed = new Set(LICENCE_FILES.flatMap((d) => [...dirs.app, ...dirs.ffmpeg, ...dirs.exe].map((dir) => path.join(dir, d.fileName))));
+    const allowed = new Set(LICENCE_FILES.flatMap((d) => [...dirs.app, ...dirs.ffmpeg, ...dirs.exe, ...dirs.ocr].map((dir) => path.join(dir, d.fileName))));
     for (const d of LICENCE_FILES) {
       const p = resolveLicenceFile(d.id, dirs, () => true);
       expect(p && allowed.has(p)).toBe(true);
@@ -63,6 +68,13 @@ describe('licence files (Help › About › Licences)', () => {
     // Development: the repository root (working directory) stands in for <resources>.
     const dev = licenceDirs({ packaged: false, appPath: cwd, execPath: path.join(cwd, 'x', 'electron'), cwd });
     expect(resolveLicenceFile('recut', dev)).toBe(path.join(cwd, 'LICENSE'));
+    // The OCR core folder: packaged only <resources>/app.asar.unpacked/…; development <root>/dist/electron/ocr/core.
+    const ocrDev = path.join(cwd, 'dist', 'electron', 'ocr', 'core');
+    fs.mkdirSync(ocrDev, { recursive: true });
+    fs.writeFileSync(path.join(ocrDev, 'LICENSE'), 'Apache');
+    expect(resolveLicenceFile('tesseract', dirs)).toBeNull();
+    expect(dirs.ocr).toEqual([path.join(cwd, 'nothing-here', 'app.asar.unpacked', 'dist', 'electron', 'ocr', 'core')]);
+    expect(resolveLicenceFile('tesseract', dev)).toBe(path.join(ocrDev, 'LICENSE'));
     fs.rmSync(cwd, { recursive: true, force: true });
   });
 });
@@ -101,5 +113,17 @@ describe('licence files in the repository and the package config', () => {
     for (const dep of Object.keys(pkg.dependencies)) expect(notices).toContain(`| ${dep} |`);
     expect(notices).toMatch(/GPL-3\.0-or-later/);
     expect(notices).toContain('LICENSES.chromium.html');
+  });
+
+  it('the OCR licence is the Tesseract core licence the build copies (Apache-2.0), and the notices cover the wasm core', () => {
+    const build = fs.readFileSync(path.join(repo, 'scripts/build-electron.mjs'), 'utf8');
+    expect(build).toMatch(/'LICENSE',?\s*\]/); // copied next to the core files
+    const coreLicence = path.join(repo, 'node_modules', 'tesseract.js-core', 'LICENSE');
+    expect(fs.readFileSync(coreLicence, 'utf8')).toMatch(/Apache License\s+Version 2\.0/);
+    expect(LICENCE_FILES.find((d) => d.id === 'tesseract')).toMatchObject({ fileName: 'LICENSE', label: 'Tesseract OCR licence (Apache-2.0)' });
+    const notices = fs.readFileSync(path.join(repo, 'THIRD_PARTY_NOTICES.md'), 'utf8');
+    for (const lib of ['Tesseract', 'Leptonica', 'libpng', 'zlib', 'Independent JPEG Group', 'libtiff', 'libwebp', 'giflib', 'OpenLibm', 'Emscripten', 'tessdata_fast']) {
+      expect(notices, lib).toContain(lib);
+    }
   });
 });
