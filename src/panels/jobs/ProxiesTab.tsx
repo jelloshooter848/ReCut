@@ -10,16 +10,17 @@ import { useJobsStore } from '@/app/jobsStore';
 import { Button, EmptyState, ProgressBar, Select, Toggle } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
 import { jobEq, useJobsSelect } from './useJobsSelect';
-import { isStillImage, mediaNeedsProxyForPreview } from '@/playback/mediaSource';
+import { isDisplayableImage, isStillImage, mediaNeedsProxyForPreview } from '@/playback/mediaSource';
 import { PROXY_HEIGHTS } from '@shared/limits';
 
 const PROXY_HEIGHT_OPTIONS = PROXY_HEIGHTS.map((h) => ({ value: String(h), label: `${h}p` }));
 
 const isActiveJob = (j: JobInfo) => j.status === 'queued' || j.status === 'running';
 
-/** Media that can have a proxy: online video/audio with (or awaiting) a probe. */
+/** Media that can have a proxy: online video/audio with (or awaiting) a probe, or a still Chromium cannot draw (PNG proxy). */
 export function proxyEligible(m: MediaItem): boolean {
-  if (m.offline || isStillImage(m)) return false;
+  if (m.offline) return false;
+  if (isStillImage(m)) return !!m.probe && !isDisplayableImage(m);
   if (m.probe) return !!m.probe.video || m.probe.audio.length > 0;
   return m.kind === 'video' || m.kind === 'audio' || m.kind === 'unknown';
 }

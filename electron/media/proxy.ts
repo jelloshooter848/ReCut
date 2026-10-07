@@ -1,11 +1,13 @@
 /**
  * Proxy transcodes: small, GOP-12 H.264 + stereo AAC copies used for smooth scrubbing.
  * Output `proxies/<key>_<height>p.mp4` (audio-only sources produce an audio-only mp4 at the same path).
+ * Still images get a PNG instead (`proxies/<key>_still.png`, see runStillProxy): the preview draws it when Chromium
+ * cannot decode the original (TIFF, TGA, EXR, PSD, JPEG XL, HEIC, ...).
  * Written to a `.part` file and renamed on success so interrupted proxies never look complete.
  */
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { JobInfo } from '@shared/model';
+import type { JobInfo, MediaProbe } from '@shared/model';
 import type { ProxyRequest } from '@shared/ipc';
 import type { JobQueue, JobRunContext } from '../jobs/jobQueue';
 import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
@@ -37,6 +39,104 @@ export function proxyOutputPath(key: string, height: number, audioStream?: numbe
   const a = validStream(audioStream) ? `_a${audioStream}` : '';
   return path.join(cacheSubdir('proxies'), `${key}_${evenDown(height > 0 ? height : 540)}p${a}.mp4`);
 }
+
+// ------------------------------------------------------------------ still images
+
+/** Longest side of a still-image proxy (pixels); smaller stills keep their size. */
+export const STILL_PROXY_MAX_SIDE = 3840;
+
+/** Cache path of a still image's PNG proxy (one per source file version; the height setting does not apply). */
+export function stillProxyOutputPath(key: string): string {
+  return path.join(cacheSubdir('proxies'), `${key}_still.png`);
+}
+
+/** A probed picture without duration (an image demuxer, or a single AVIF / HEIC / GIF frame): proxied as a PNG. */
+export function isStillProbe(probe: MediaProbe): boolean {
+  return !!probe.video && (probe.playabilityReason === 'still image' || (!(probe.duration > 0) && probe.audio.length === 0));
+}
+
+/** Pixel formats that carry alpha (palette formats may: a GIF / PNG palette can hold transparent entries). */
+export function pixFmtHasAlpha(pixFmt: string | undefined): boolean {
+  return /^(rgba|bgra|argb|abgr|ya\d|yuva|gbrap|ayuv|pal8)/.test(pixFmt ?? '');
+}
+
+/**
+ * ffmpeg arguments for a still's PNG proxy: the first picture, un-squeezed to its display shape (a non-square SAR
+ * widens or heightens, as the export's fit and the thumbnails do), the long side capped at STILL_PROXY_MAX_SIDE
+ * (never enlarged), RGBA when the source has alpha, else RGB. FFmpeg applies the EXIF / display-matrix orientation
+ * while decoding (autorotate), as the export does, so the PNG is upright.
+ */
+export function buildStillProxyArgs(src: string, opts: { alpha: boolean; outPart: string; maxSide?: number }): string[] {
+  const max = opts.maxSide && opts.maxSide > 0 ? Math.floor(opts.maxSide) : STILL_PROXY_MAX_SIDE;
+  const vf = [
+    "scale=w='if(gt(sar,1.000001),max(1,round(iw*sar)),iw)':h='if(lt(sar,0.999999),max(1,round(ih/sar)),ih)':flags=bicubic",
+    'setsar=1',
+    `scale=w='min(iw,${max})':h='min(ih,${max})':force_original_aspect_ratio=decrease:flags=bicubic`,
+    'setsar=1',
+  ].join(',');
+  return [
+    '-i', ffmpegFileArg(src),
+    '-map', '0:v:0', '-an', '-sn', '-dn',
+    '-frames:v', '1',
+    '-vf', vf,
+    '-c:v', 'png', '-pix_fmt', opts.alpha ? 'rgba' : 'rgb24',
+    '-map_metadata', '-1',
+    '-f', 'image2', '-update', '1',
+    ffmpegFileArg(opts.outPart),
+  ];
+}
+
+/** True when `file` is a decodable picture (a usable cached still proxy). */
+async function validStill(file: string): Promise<{ width?: number; height?: number } | null> {
+  const info = await probeMedia(file).catch(() => undefined);
+  return info?.video && info.video.width > 0 && info.video.height > 0 ? { width: info.video.width, height: info.video.height } : null;
+}
+
+/** The still-image branch of runProxy: one PNG per source file version, same `.part` + rename discipline. */
+async function runStillProxy(req: ProxyRequest, probe: MediaProbe, ctx: JobRunContext): Promise<ProxyResult> {
+  const key = await cacheKeyForPath(req.path);
+  const out = stillProxyOutputPath(key);
+  if (await fileExists(out)) {
+    const info = await validStill(out);
+    if (info) {
+      ctx.setProgress(1, 'Cached');
+      return { path: out, ...info, cached: true };
+    }
+    await removeQuietly(out); // corrupt leftover
+  }
+  const outPart = `${out}.part-${ctx.jobId}`;
+  await removeStaleParts(out);
+  const args = buildStillProxyArgs(req.path, { alpha: pixFmtHasAlpha(probe.video?.pixFmt), outPart });
+  ctx.setProgress(0, 'Decoding still image');
+  const run = runFfmpeg(args, { stdout: 'ignore', signal: ctx.signal });
+  ctx.onCancel(() => run.cancel());
+  try {
+    await run.promise;
+  } catch (e) {
+    await removeQuietly(outPart);
+    throw e;
+  }
+  if (ctx.signal.aborted) {
+    await removeQuietly(outPart);
+    throw new FfmpegError('proxy canceled', { canceled: true });
+  }
+  const info = await validStill(outPart);
+  if (!info) {
+    await removeQuietly(outPart);
+    throw new Error('ffmpeg produced no picture for this image');
+  }
+  await fsp.rename(outPart, out);
+  ctx.setProgress(1, 'Done');
+  return { path: out, ...info, cached: false };
+}
+
+/** Output path a proxy request writes: the PNG for a still, else the mp4 (probe failures fall through to the mp4). */
+async function stillProxyTarget(req: ProxyRequest, key: string): Promise<string | null> {
+  const probe = await probeMedia(req.path).catch(() => undefined);
+  return probe && isStillProbe(probe) ? stillProxyOutputPath(key) : null;
+}
+
+// ------------------------------------------------------------------ video / audio
 
 /** Build the ffmpeg argument list for a proxy transcode (exported for inspection/tests). */
 export function buildProxyArgs(req: ProxyRequest, opts: { targetHeight: number; hasVideo: boolean; hasAudio: boolean; outPart: string }): string[] {
@@ -82,6 +182,7 @@ async function removeStaleParts(out: string): Promise<void> {
 /** The actual transcode. Exposed so other job kinds can reuse it; prefer `startProxyJob`. */
 export async function runProxy(req0: ProxyRequest, ctx: JobRunContext): Promise<ProxyResult> {
   const probe = await probeMedia(req0.path);
+  if (isStillProbe(probe)) return runStillProxy(req0, probe, ctx);
   // A stream index that is not an audio stream of this file falls back to the first audio stream.
   const req: ProxyRequest = validStream(req0.audioStream) && !probe.audio.some((a) => a.index === req0.audioStream)
     ? { ...req0, audioStream: undefined } : req0;
@@ -146,11 +247,11 @@ export async function startProxyJob(
   onDone?: (job: JobInfo, result: ProxyResult | null, error: string | null) => void,
 ): Promise<{ job: JobInfo; outputPath: string }> {
   const key = await cacheKeyForPath(req.path);
-  const outputPath = proxyOutputPath(key, evenDown(req.height > 0 ? req.height : 540), req.audioStream);
+  const outputPath = (await stillProxyTarget(req, key)) ?? proxyOutputPath(key, evenDown(req.height > 0 ? req.height : 540), req.audioStream);
   // De-dupe: a proxy for this output is already queued/running -> hand back that job.
   const existing = inFlightJob(queue, inFlightProxies, outputPath);
   if (existing) return { job: existing, outputPath };
-  const title = `Proxy ${req.height}p · ${path.basename(req.path)}`;
+  const title = outputPath.endsWith('_still.png') ? `Preview image · ${path.basename(req.path)}` : `Proxy ${req.height}p · ${path.basename(req.path)}`;
   const job = queue.add<ProxyResult>({
     kind: 'proxy',
     title,

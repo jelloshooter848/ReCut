@@ -14,7 +14,7 @@ import { uid } from '../../shared/ids';
 import { useStore } from './store';
 import { fileNameOf } from './selectors';
 import { classifyPath, importIdentity, sidecarLanguage, LONG_FORM_MOVIE_SEC, type ImportBinKind } from './parseIdentity';
-import { mediaNeedsProxyForPreview, proxyStreamStale } from '../playback/mediaSource';
+import { isStillImage, mediaNeedsProxyForPreview, proxyStreamStale } from '../playback/mediaSource';
 import { ffmpegUnavailable } from './ffmpegStatus';
 
 export function recutApi(): RecutApi | null {
@@ -130,7 +130,7 @@ export async function importMedia(paths: string[], binId: ID | null = null, opts
 /** Probe freshly imported items; reclassify audio-only containers; queue proxies for undecodable media (one toast). */
 async function probeImported(list: { id: ID; category: string; auto: boolean }[]): Promise<void> {
   if (!list.length) return;
-  const needProxy: ID[] = [];
+  const needProxy: { id: ID; still: boolean }[] = [];
   await Promise.all(list.map(async ({ id, category, auto }) => {
     const probe = await probeMedia(id);
     if (!probe) return;
@@ -142,11 +142,15 @@ async function probeImported(list: { id: ID; category: string; auto: boolean }[]
       // BUG-3: long-form video without an episode marker is a movie.
       useStore.getState().updateMedia(id, { category: 'Movie', ...(auto && m.binId === null && useStore.getState().project.bins['bin-movies'] ? { binId: 'bin-movies' } : {}) });
     }
-    if (mediaNeedsProxyForPreview({ ...m, probe }) && (m.kind === 'video' || m.kind === 'audio') && m.proxy.status === 'none') needProxy.push(id);
+    // A still Chromium cannot draw gets its PNG proxy even with proxies off: without it the preview shows nothing.
+    const still = isStillImage({ ...m, probe });
+    if (mediaNeedsProxyForPreview({ ...m, probe }) && (m.kind === 'video' || m.kind === 'audio' || still) && m.proxy.status === 'none') needProxy.push({ id, still });
   }));
-  if (!needProxy.length || !useStore.getState().project.settings.useProxies) return;
+  const useProxies = useStore.getState().project.settings.useProxies;
+  const queue = needProxy.filter((x) => x.still || useProxies).map((x) => x.id);
+  if (!queue.length) return;
   let started = 0;
-  for (const id of needProxy) {
+  for (const id of queue) {
     try { if (await startProxy(id)) started++; }
     catch (e) { useStore.getState().setProxy(id, { status: 'failed', error: e instanceof Error ? e.message : String(e) }); }
   }

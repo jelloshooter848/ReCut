@@ -179,6 +179,15 @@ function isImageMedia(m: MediaItem): boolean {
   return !!(p && p.video && (!p.duration || p.duration <= 0) && p.audio.length === 0);
 }
 
+/**
+ * Whether a still can be opened with `-loop 1` (the image2 demuxer and its `*_pipe` variants accept it). Unprobed
+ * stills keep the loop input (an image file by extension, usually image2).
+ */
+function loopableStill(m: MediaItem): boolean {
+  const c = (m.probe?.container ?? '').toLowerCase();
+  return !c || c === 'image2' || c.startsWith('image2') || /_pipe$/.test(c);
+}
+
 function mediaDurationSec(m: MediaItem): number {
   if (isImageMedia(m)) return Infinity;
   const d = m.probe?.duration;
@@ -441,7 +450,11 @@ function addInput(ctx: Ctx, seg: ClipSeg, kind: 'video' | 'audio'): InputInfo {
   const tlLen = totalFrames * ctx.fd;
   const srcLen = tlLen * seg.speed;
   if (seg.isImage && kind === 'video') {
-    ctx.inputs.push(['-loop', '1', '-framerate', fpsStr(ctx.fps), '-t', sec(tlLen + 0.5), '-i', seg.media.path]);
+    // `-loop` is an image2-family demuxer option: a still in another container (AVIF / HEIC demux as mov, a GIF as
+    // gif) fails with "Option loop not found". Those decode their one picture and videoSegment's tpad holds it.
+    ctx.inputs.push(loopableStill(seg.media)
+      ? ['-loop', '1', '-framerate', fpsStr(ctx.fps), '-t', sec(tlLen + 0.5), '-i', seg.media.path]
+      : ['-i', seg.media.path]);
     return { index: ctx.inputs.length - 1, srcStart: 0, srcLen: tlLen, lead: 0 };
   }
   const srcStart = Math.max(0, seg.srcStart - seg.extBefore * ctx.fd * seg.speed);
