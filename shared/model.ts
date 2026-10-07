@@ -81,7 +81,11 @@ export interface ProxyInfo {
   error?: string;
   width?: number;
   height?: number;
-  /** Audio stream index baked into the proxy (undefined: the source's first audio stream / unknown). */
+  /**
+   * Older single-stream proxies only: the audio stream baked into it (undefined: its `_a<N>` file suffix, else the
+   * source's first audio stream). Proxies named `*_all.mp4` carry every audio stream (src/playback/mediaSource.ts
+   * proxyAudioStreams).
+   */
   audioStream?: number;
 }
 
