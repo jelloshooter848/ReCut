@@ -181,7 +181,7 @@ describe('clip-relative time through edits', () => {
     const s2 = seqWith();
     const d = put(s2.videoTracks[0], 0, 100);
     d.transform.keyframes = { scale: [kf(30, 1), kf(60, 2)] };
-    const orig = d.transform.keyframes.scale;
+    const orig = d.transform.keyframes.scale!;
     clearRange(s2.videoTracks[0], 0, 40, FPS);
     const kept = s2.videoTracks[0].clips[0];
     expect(kept.start).toBe(40);

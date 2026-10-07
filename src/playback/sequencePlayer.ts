@@ -92,6 +92,8 @@ export const MAX_NATIVE_RATE = 4;
 export const DRIFT_TOLERANCE = 0.08;
 /** While paused, a playhead move less than this long ago (ms) means the user is scrubbing (see scrubTick). */
 export const SCRUB_REST_MS = 150;
+/** Look-ahead of the gain ramp of a clip with level keyframes (seconds of wall time; re-anchored every tick). */
+export const KEYFRAME_RAMP_SEC = 0.05;
 
 const RESOLUTION_FACTOR: Record<SequencePlayerSettings['playbackResolution'], number> = { full: 1, '1/2': 0.5, '1/4': 0.25 };
 
@@ -199,6 +201,8 @@ export class SequencePlayer {
   /** Audio graph per pooled element (created once per element, dropped when the pool disposes the element). */
   private audioNodes = new Map<HTMLMediaElement, AudioNodes>();
   private master: GainNode | null = null;
+  /** Gains that carry a level-keyframe ramp (rampKeyframedGain). */
+  private rampedParams = new WeakSet<AudioParam>();
   /** Pool keys this player acquired (released on destroy when the player's role id is not reusable). */
   private acquired = new Map<string, { path: string; role: string }>();
   private readonly ownsRoles: boolean;
@@ -680,6 +684,8 @@ export class SequencePlayer {
       const { layer, el, vw, vh } = comp.drawable[i];
       key += layer.isImage ? `|${layer.clipId}:i` : `|${layer.clipId}:${Math.floor((el as HTMLVideoElement).currentTime * fpsValue(layer.mediaFps) + 1e-6)}:${vw}x${vh}`;
       if (layer.alpha < 1) key += `@${Math.round(layer.alpha * 1024)}`;
+      // Keyframed motion changes the picture with the timeline frame even when the media frame does not (a still).
+      if (layer.animated) { const t = layer.transform; key += `~${t.x.toFixed(2)},${t.y.toFixed(2)},${t.scale.toFixed(5)}`; }
     }
     if (this.drawSubtitles) {
       const sk = this.subtitleKey; // the cue scan runs once per timeline frame, not on every rAF tick
@@ -806,7 +812,9 @@ export class SequencePlayer {
     const now = ctx.currentTime;
     const items = plan.audio.filter((a) => !this.pool.getError(a.path));
     this.assignSlots('audio', items, this.activeAudio, (path, role) => this.pool.acquire(path, role), (slot) => {
-      this.audioNodes.get(slot.el)?.gain.gain.setTargetAtTime(0, now, 0.01);
+      const param = this.audioNodes.get(slot.el)?.gain.gain;
+      if (param) this.endRamp(param, now);
+      param?.setTargetAtTime(0, now, 0.01);
       if (!slot.el.paused) slot.el.pause();
     });
     for (const a of items) {
@@ -830,8 +838,33 @@ export class SequencePlayer {
       // Scrubbing / reverse / fast shuttle (not native): silent, but keep the element parked near the frame.
       this.syncElement(slot, target, a.speed, native, native ? DRIFT_TOLERANCE : 0.25);
       // Track volume is folded into the element's gain: one GainNode per pooled element, none per track (P-12).
-      nodes.gain.gain.setTargetAtTime(slot.settled ? a.gain * a.trackVolume : 0, now, 0.01);
+      if (a.gainAt && slot.settled && native) this.rampKeyframedGain(nodes.gain.gain, a, now);
+      else { this.endRamp(nodes.gain.gain, now); nodes.gain.gain.setTargetAtTime(slot.settled ? a.gain * a.trackVolume : 0, now, 0.01); }
     }
+  }
+
+  /**
+   * Level keyframes (Roadmap §11) while playing: ramp the gain linearly from where it is now to the curve's value
+   * KEYFRAME_RAMP_SEC ahead of the exact clock position (not the whole frame), re-anchored on every tick. Between
+   * ticks the level follows the keyframe curve (a chord of it) instead of stepping once per frame, as the export
+   * evaluates it every 256 samples; starting from the current value keeps it click-free when the clip comes in.
+   */
+  /** A keyframe ramp scheduled on `param` (rampKeyframedGain) is dropped before a plain level is set. */
+  private endRamp(param: AudioParam, now: number): void {
+    if (!this.rampedParams.delete(param)) return;
+    const cur = param.value;
+    param.cancelScheduledValues(now);
+    param.setValueAtTime(cur, now);
+  }
+
+  private rampKeyframedGain(param: AudioParam, a: AudioPlan, now: number): void {
+    const fpsV = fpsValue(this.fps);
+    const f1 = this.clock.now() * fpsV + this.frameOffset + KEYFRAME_RAMP_SEC * this.rate * fpsV;
+    const cur = param.value;
+    this.rampedParams.add(param);
+    param.cancelScheduledValues(now);
+    param.setValueAtTime(cur, now);
+    param.linearRampToValueAtTime(a.gainAt!(f1) * a.trackVolume, now + KEYFRAME_RAMP_SEC);
   }
 
   /** The element's source -> gain -> master chain, created on first use (null if the element cannot be routed). */
