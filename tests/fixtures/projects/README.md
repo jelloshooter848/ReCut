@@ -24,7 +24,8 @@ checkout's own code and writes `tests/fixtures/projects/recut-<version>.recut` h
    (SRT sidecar, manual, and from 0.6.0 an OCR track with its `streamIndex`), bins, tags, non-default project
    settings, three sequences (23.976 fps stereo with linked picture and sound, a disabled clip, transitions of every
    type, a transform, audio levels and fades, clip tags, chapter / range / continuity markers, story blocks, carried
-   and manual subtitle cues, a snapshot, a locked track and a stored view; an alternate cut with lineage and a version
+   and manual subtitle cues, a snapshot, a locked track and a stored view; from 0.13.0 keyframed position, scale,
+   opacity and level; an alternate cut with lineage and a version
    label; a 25 fps 5.1 sequence) and the scene library.
 3. It serializes the project as that release saves it (`serializeForSave` and `projectJsonChunks`, as
    `src/state/mediaActions.ts` does) and writes it with that release's `saveProjectJson`.

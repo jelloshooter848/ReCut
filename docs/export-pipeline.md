@@ -141,6 +141,44 @@ clips whose media lacks the needed stream are skipped with a warning (black / si
 Gaps are `color=black@0.0` (transparent) sources of exactly the gap's frame count; the opaque black base is
 added at compositing time, so V1 gaps are black.
 
+#### Keyframed clips (Roadmap §11)
+
+Values come from `shared/keyframes.ts`, the evaluation the preview uses. The segment's first frame (transition
+handle included) is clip frame `k0 = seg.start + rangeStart - clip.start - extBefore`, so an In/Out range or a
+transition handle starts the curve at the right place; keyframes count timeline frames, so speed does not matter.
+
+```
+... fit scales, [crop (static),] [scale=<largest scale used, if < 1>:flags=bicubic, setsar=1,]
+pad=w=iw+4*ceil((W+8-iw)/4):h=…:x=2*ceil((W+8-iw)/4):y=…:color=black@0,                         (position / scale keyed)
+tpad=stop=N:stop_mode=clone, trim=end_frame=N, setpts=PTS-STARTPTS,
+perspective=x0..y3='<corner expressions of in>':interpolation=linear:sense=destination:eval=frame,
+crop=W:H:x=2*floor((iw-W)/4):y=…, setsar=1,
+[sendcmd=c='<t0>-<t1> lut@kfoN a val*<o>;…', lut@kfoN=a='val*<o0>',]                              (opacity keyed)
+[fade=in/out]
+```
+
+- **Position / scale:** the picture is centred on a transparent canvas a little larger than the frame (offsets are
+  multiples of 2, so 4:2:0 chroma stays aligned and the picture's centre is the canvas centre). After the
+  exact-length trim, `perspective` (sense=destination, eval=frame) sends the canvas corners to where the preview
+  draws them: centre at the frame centre + `(x, y)`, scaled by `scale` and rotated by the static rotation about the
+  uncropped picture's centre, the crop keeping its place. The corner expressions hold the keyframe curve of `x`,
+  `y` and `scale` in terms of perspective's frame counter (`in` is 1 on the first frame: clip frame `in-1+k0`), and
+  map pixel indexes, so they include the half-pixel shift between pixel indexes and the canvas preview's area
+  coordinates. Placement is sub-pixel (bilinear), like the preview. When the clip's largest scale is below 100 %,
+  the picture is first scaled to it with bicubic filtering, so a small moving picture is not resampled from full
+  size. Clips without keyed position or scale keep the static chain above. Cost: about 35 frames per second at 1080p
+  on four cores for the keyed clip, besides decode and encode.
+- **Opacity:** `lut` multiplies the alpha, and `sendcmd` sets its factor per frame from values computed in
+  TypeScript (no FFmpeg copy of the curve to keep in step). A command is sent only when the factor changes by at
+  least 1/1024, at half a frame before the frame's timestamp, so a long fade sends at most about a thousand.
+- **Keyframe expressions** (`keyframesExpr`): `v0 + Σ (v[i+1] − v[i]) · e(clip((k − f[i]) / (f[i+1] − f[i]), 0, 1))`
+  with `e(u) = u` (Linear) or `u·u·(3 − 2u)` (Ease, smoothstep, the preview's formula). One flat sum grouped in a
+  balanced tree of parentheses, so FFmpeg's recursive evaluator stays shallow with many keyframes; it grows by about
+  60 to 110 characters per keyframe and lives in the filter script, which has no length limit.
+- Measured with real FFmpeg (`tests/unit/keyframes-export.test.ts`): position within 0.25 px of the evaluator
+  (0.005 px seen), size within 1 px, opacity within 1.5 luma levels of 219, level within 0.5 dB (0.07 dB seen),
+  single pass and chunked.
+
 ### Track assembly and compositing
 
 Per video track, segments and gaps are joined with `concat=n=K:v=1:a=0` (a single segment is used as is)
@@ -181,8 +219,13 @@ with a warning). Chain:
 ```
 [pan=... (channel selection),] atrim=start=S:duration=L, asetpts=PTS-S/TB, aresample=async=1:first_pts=0, [atempo... (stages within 0.5..2)],
 aresample=SR, aformat=sample_fmts=fltp:channel_layouts=stereo|5.1,
-[volume=<gain>dB,] [volume=<volume>,] [afade in/out,] apad=whole_dur=len, atrim=duration=len
+[volume=<gain>dB,] [volume=<volume>,] [afade in/out,] apad=whole_dur=len, atrim=duration=len, asetpts=PTS-STARTPTS,
+[asetnsamples=n=256:p=0, volume=volume='st(0,(t+128/sample_rate)*fps+k0);<keyframe expression of ld(0)>':eval=frame]
 ```
+
+A keyframed level (Roadmap §11) replaces `volume=<volume>`: after the exact-length tail, `t` is the segment's time,
+and the level is evaluated every 256 samples at the block's middle (5.3 ms at 48 kHz) with the expression above.
+Gain, the clip fades and transitions multiply with it, as in the preview (`clipGain` in `src/playback/planner.ts`).
 
 Audio is rebased to the in-point `S` (not to its own first sample) and `aresample=async=1:first_pts=0` fills
 a late-starting stream with silence, so a file whose audio starts after its video keeps that offset.

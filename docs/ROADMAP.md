@@ -351,6 +351,13 @@ or `sendcmd`). Static transforms were made frame-exact first.
 **Plan:** per-property keyframe lists on `ClipTransform` / `ClipAudio`, evaluated in the planner and emitted as
 FFmpeg expressions. The first version covers opacity, volume, position and scale, with linear and ease
 interpolation. Rotation, crop, audio level curves and a graph editor follow later.
+**Status: first version implemented, pending release 0.13.0** (not done until 0.13.0 is published). Position, scale,
+opacity (`ClipTransform.keyframes`) and level (`ClipAudio.keyframes`) take keyframes in clip-relative frames with
+Linear or Ease (smoothstep), evaluated by `shared/keyframes.ts` in the preview and the export; the Inspector adds,
+edits, steps through and clears them at the playhead (one undo step each) and the timeline shows them as diamonds.
+The export places keyed motion per frame with `perspective`, keyed opacity with `sendcmd` + `lut` and keyed level
+with `volume` every 256 samples, measured against the evaluator with real FFmpeg. Still to come: rotation and crop
+keyframes, Bézier / hold interpolation, dragging keyframes on the timeline, and a graph editor.
 
 ## 12. Dialogue / music / effects stem separation
 
