@@ -1,7 +1,7 @@
 {
   "name": "recut",
   "productName": "ReCut",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "A Premiere-style desktop video editor purpose-built for fan edits of movies and television",
   "main": "dist/electron/main.js",
   "private": true,
