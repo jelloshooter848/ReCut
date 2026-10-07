@@ -54,7 +54,7 @@ export interface RenderGraph {
   chapters: ExportChapter[];
   /**
    * FFMETADATA1 file content for `chapters`, present when there are chapters. With `chaptersFilePath` the file is
-   * the last input (`-f ffmetadata -i <path>`) and `-map_chapters` reads it.
+   * the input after the media inputs (`-f ffmetadata -i <path>`; MKV soft subtitle files follow it) and `-map_chapters` reads it.
    */
   chaptersContent?: string;
   /** Number of media inputs (the chapters file is not counted): one per rendered clip segment, except that a video and an audio segment with identical input args (a linked V+A pair) share one. */

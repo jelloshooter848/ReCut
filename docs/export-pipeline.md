@@ -260,7 +260,7 @@ back with the first chapter at 0). When no chapter marker is at or before `start
 from 0 to the first marker, so that marker's break is kept. `buildRenderGraph` returns them in `chapters` and as an FFMETADATA1 file in
 `chaptersContent` (`ffmetadataChapters`, `TIMEBASE=1/1000000`, names escaped by `ffmetadataEscape`: `=`, `;`, `#`,
 `\` and line breaks get a backslash; a trailing backslash is dropped, since FFmpeg 6.1–9.0 read a line break after
-an escaped backslash as escaped). With `chaptersFilePath` the file is the last input, `-f ffmetadata -i <file>`, and
+an escaped backslash as escaped). With `chaptersFilePath` the file is the input after the media inputs (MKV soft subtitle files follow it), `-f ffmetadata -i <file>`, and
 `-map_chapters` names it (`inputCount` does not count it). The MP4 muxer stores them as a `chpl` atom plus a chapter
 text track (ffprobe lists it as a `data` stream; the probe ignores it); the Matroska muxer stores them as native
 chapters. Chunk graphs carry no chapters; the chunked join adds the same file as an input after the audio lists.
