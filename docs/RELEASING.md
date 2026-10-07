@@ -118,6 +118,12 @@ of these, in the installed app and in the portable exe:
   and commit the updated `THIRD_PARTY_NOTICES.md`; the unit suite fails while it is out of date.
 - Do not remove any of these files from the packaging config. If FFmpeg is ever bundled for Linux or macOS, the same
   files must go next to those binaries (see `docs/INSTALL.md`, "Bundling FFmpeg").
+- **Before every release, check the FFmpeg source link still works.** The release does not carry FFmpeg's source
+  code; `FFMPEG-BUILD.txt` points to where it can be downloaded (the owner's decision, 7 October 2026: a link, not an
+  attached copy). After the release run, open the latest release build's log or the installed `FFMPEG-BUILD.txt`,
+  and confirm that the "Corresponding source" link (for gyan.dev builds, `https://ffmpeg.org/releases/ffmpeg-<version>.tar.xz`)
+  still downloads. If it no longer does, attach that version's source archive to the release by hand or switch to
+  attaching it in CI. The GPL expects the source to stay available for as long as the release is offered.
 
 ### Fallback: pushing the tag yourself
 
