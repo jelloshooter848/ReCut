@@ -474,6 +474,32 @@ describe('jobs', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(q.activeCount).toBe(0);
   });
+
+  it('OCR shares the background lane with scene detection; language downloads run 2 at a time in the network lane', async () => {
+    expect(laneFor('ocr')).toBe('background');
+    expect(laneFor('download')).toBe('network');
+    expect(laneFor('transcribe')).toBe('media');
+    const q = new JobQueue({ mediaConcurrency: 1 });
+    const releases: (() => void)[] = [];
+    const held = (kind: 'ocr' | 'sceneDetect' | 'download', title: string) => q.add({ kind, title, run: () => new Promise<void>((resolve) => { releases.push(resolve); }) });
+    const detect = held('sceneDetect', 'detect');
+    const ocr = held('ocr', 'ocr');
+    const d1 = held('download', 'd1'), d2 = held('download', 'd2'), d3 = held('download', 'd3');
+    const proxy = q.add({ kind: 'proxy', title: 'p', run: async () => 'p' });
+    expect(q.get(detect.id)?.status).toBe('running');
+    expect(q.get(ocr.id)?.status).toBe('queued'); // background lane limit 1
+    expect([d1, d2, d3].map((j) => q.get(j.id)?.status)).toEqual(['running', 'running', 'queued']);
+    expect(q.get(proxy.id)?.status).toBe('running'); // neither lane takes a media slot
+    expect((await q.waitFor(proxy.id)).status).toBe('done');
+    releases.splice(0).forEach((r) => r());
+    await Promise.all([q.waitFor(detect.id), q.waitFor(d1.id), q.waitFor(d2.id)]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(q.get(ocr.id)?.status).toBe('running');
+    expect(q.get(d3.id)?.status).toBe('running');
+    releases.splice(0).forEach((r) => r());
+    await Promise.all([q.waitFor(ocr.id), q.waitFor(d3.id)]);
+    expect(q.activeCount).toBe(0);
+  });
 });
 
 // ------------------------------------------------------------------

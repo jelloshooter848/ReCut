@@ -4,6 +4,7 @@
  */
 import { contextBridge, ipcRenderer, webUtils, IpcRendererEvent } from 'electron';
 import type { AppPreferences, ID, JobInfo, Project } from '../shared/model';
+import type { OcrRequest } from '../shared/ocr';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import { SAVE_STREAM_IPC, type ProjectAutosaveStreamApi, type ProjectSaveStreamApi } from '../shared/projectWire';
 import type {
@@ -81,6 +82,12 @@ const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
   startSceneDetect: (req: SceneDetectRequest) => ipcRenderer.invoke(IPC.mediaSceneDetectStart, req),
   extractSubtitles: (path: string, streamIndex: number) => ipcRenderer.invoke(IPC.mediaExtractSubtitles, path, streamIndex),
   mediaUrl: (path: string) => pathToMediaUrl(path),
+
+  startOcr: (req: OcrRequest) => ipcRenderer.invoke(IPC.ocrStart, req),
+  ocrLanguages: () => ipcRenderer.invoke(IPC.ocrLanguages),
+  ocrInstallLanguage: (code: string) => ipcRenderer.invoke(IPC.ocrInstallLanguage, code),
+  ocrRemoveLanguage: (code: string) => ipcRenderer.invoke(IPC.ocrRemoveLanguage, code),
+  ocrInstallLanguageFromFile: (code: string, path: string) => ipcRenderer.invoke(IPC.ocrInstallLanguageFromFile, code, path),
 
   listJobs: () => ipcRenderer.invoke(IPC.jobsList),
   cancelJob: (id: ID) => ipcRenderer.invoke(IPC.jobsCancel, id),

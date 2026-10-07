@@ -13,7 +13,7 @@ import { create } from 'zustand';
 import { produce, current, freeze, isDraftable } from 'immer';
 import type {
   Bin, Clip, DetectedScene, ID, Marker, MediaItem, MediaKind, MediaProbe, Project, SceneRecord, Sequence,
-  SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock, Track, Transition, TransitionType, TagVocabulary, SequenceView,
+  SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock, SubtitleTrack, Track, Transition, TransitionType, TagVocabulary, SequenceView,
 } from '../../shared/model';
 import { uid } from '../../shared/ids';
 import { isValidFps, secondsToFrames } from '../../shared/time';
@@ -790,6 +790,24 @@ export const useStore = create<RecutStore>()((set, get) => {
           if (m && !m.subtitleTrackIds.includes(track.id)) m.subtitleTrackIds.push(track.id);
         }
       });
+    },
+    putOcrSubtitleTrack(track) {
+      // A re-run of OCR on the same stream replaces the earlier result (same id: references stay valid).
+      const sameStream = (t: SubtitleTrack) => t.origin === 'ocr' && track.mediaId !== null && t.mediaId === track.mediaId
+        && track.streamIndex !== undefined && t.streamIndex === track.streamIndex;
+      const existing = Object.values(get().project.subtitleTracks).find(sameStream);
+      const id = existing?.id ?? track.id;
+      commit('OCR subtitles', (d) => {
+        const cur = existing ? d.subtitleTracks[existing.id] : undefined;
+        if (cur) {
+          cur.cues = track.cues; cur.name = track.name; cur.language = track.language;
+        } else {
+          d.subtitleTracks[id] = { ...track, origin: 'ocr' };
+        }
+        const m = track.mediaId ? d.media[track.mediaId] : undefined;
+        if (m && !m.subtitleTrackIds.includes(id)) m.subtitleTrackIds.push(id);
+      });
+      return id;
     },
     removeMediaSubtitleTrack(trackId) {
       commit('Remove subtitles', (d) => {

@@ -11,7 +11,9 @@ import {
   type ExportRequest, type ExportStartResult, type FilmstripRequest, type ProxyRequest,
   type SceneDetectRequest, type ThumbnailRequest, type WaveformData,
 } from '@shared/ipc';
-import type { MediaContext, MediaHandlers } from '../ipc';
+import type { OcrLanguageState, OcrRequest } from '@shared/ocr';
+import type { MediaContext, MediaFetch, MediaHandlers } from '../ipc';
+import { listOcrLanguages, ocrDataDir } from '../ocr/dataDir';
 import { JobQueue } from '../jobs/jobQueue';
 import { buildExportCommand, cancelExportJob, startExportJob } from '../export/exporter';
 import { cacheKeyForPath, setCacheDir } from './cache';
@@ -25,11 +27,32 @@ import { extractSubtitles } from './subtitlesExtract';
 
 export type { MediaHandlers, MediaContext } from '../ipc';
 
-/** The one job queue shared by proxies, scene detection, waveforms and exports. */
+/** The one job queue shared by proxies, scene detection, waveforms, OCR, language downloads and exports. */
 export const jobQueue = new JobQueue();
+
+/** What init() was given that the OCR layer needs: the user-data folder and the HTTP client for downloads. */
+let ocrCtx: { userData: string; fetch?: MediaFetch } | null = null;
+
+/** The OCR context from init(); throws before init. */
+export function ocrContext(): { userData: string; dataDir: string; fetch?: MediaFetch } {
+  if (!ocrCtx) throw new Error('OCR is not ready yet (the media layer has not started)');
+  return { ...ocrCtx, dataDir: ocrDataDir(ocrCtx.userData) };
+}
+
+/** Active 'download' job per language code (filled by the language installer). */
+export const ocrDownloadJobs = new Map<string, ID>();
+
+function activeDownloadJob(code: string): ID | undefined {
+  const id = ocrDownloadJobs.get(code);
+  const job = id ? jobQueue.get(id) : undefined;
+  return job && (job.status === 'queued' || job.status === 'running') ? job.id : undefined;
+}
+
+const notImplemented = (what: string) => new Error(`${what} is not implemented yet`);
 
 export const mediaHandlers: MediaHandlers = {
   init(ctx: MediaContext): void {
+    ocrCtx = { userData: ctx.userData, fetch: ctx.fetch };
     if (ctx.cacheDir) setCacheDir(ctx.cacheDir);
     // Prefer our own resolver (env → bundled → PATH); fall back to whatever the IPC layer found.
     if (!getFfmpegPath() && ctx.ffmpegPath) setFfmpegPaths({ ffmpeg: ctx.ffmpegPath });
@@ -77,6 +100,26 @@ export const mediaHandlers: MediaHandlers = {
 
   extractSubtitles(path: string, streamIndex: number): Promise<string> {
     return extractSubtitles(path, streamIndex);
+  },
+
+  async startOcr(_req: OcrRequest): Promise<JobInfo> {
+    throw notImplemented('Reading subtitles with OCR');
+  },
+
+  ocrLanguages(): Promise<OcrLanguageState[]> {
+    return listOcrLanguages(ocrContext().dataDir, activeDownloadJob);
+  },
+
+  async ocrInstallLanguage(_code: string): Promise<JobInfo> {
+    throw notImplemented('Installing OCR languages');
+  },
+
+  async ocrRemoveLanguage(_code: string): Promise<{ ok: boolean; error?: string }> {
+    return { ok: false, error: notImplemented('Removing OCR languages').message };
+  },
+
+  async ocrInstallLanguageFromFile(_code: string, _path: string): Promise<{ ok: boolean; error?: string }> {
+    return { ok: false, error: notImplemented('Installing OCR languages from a file').message };
   },
 
   async listJobs(): Promise<JobInfo[]> {

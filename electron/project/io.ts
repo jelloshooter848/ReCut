@@ -761,6 +761,8 @@ export function normalizePrefs(raw: unknown): AppPreferences {
     shortcuts: p.shortcuts && typeof p.shortcuts === 'object' ? { ...(p.shortcuts as Record<string, string>) } : {},
   };
   if (out.layout && typeof out.layout !== 'object') delete out.layout;
+  // A tessdata code (shared/ocr.ts); anything else is dropped rather than handed to the OCR dialog.
+  if ('ocrLastLanguage' in out && !(typeof out.ocrLastLanguage === 'string' && /^[a-z_]{3,12}$/.test(out.ocrLastLanguage))) delete out.ocrLastLanguage;
   return out;
 }
 

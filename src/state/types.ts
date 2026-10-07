@@ -180,6 +180,12 @@ export interface StoreActions {
   relinkMedia(id: ID, newPath: string, stat?: MediaRelinkStat): void;
   setOffline(id: ID, offline: boolean): void;
   addMediaSubtitleTrack(track: SubtitleTrack): void;
+  /**
+   * Add an OCR result as a media subtitle track (one undo step, "OCR subtitles"). When an `origin: 'ocr'` track of
+   * the same `mediaId` and `streamIndex` exists, its cues, name and language are replaced and it keeps its id.
+   * Returns the id of the track that holds the cues.
+   */
+  putOcrSubtitleTrack(track: SubtitleTrack): ID;
   removeMediaSubtitleTrack(trackId: ID): void;
 
   // ---- sequences ----

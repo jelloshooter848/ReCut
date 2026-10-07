@@ -326,8 +326,13 @@ export interface SubtitleTrack {
   path?: string;
   mediaId: ID | null;     // associated source media
   cues: SubtitleCue[];
-  /** Provider that produced it: 'srt' | 'vtt' | 'whisper' | 'manual' */
+  /** Provider that produced it: 'srt' | 'vtt' | 'ocr' | 'whisper' | 'manual' (embedded text streams are 'srt') */
   origin: string;
+  /**
+   * Source stream of an OCR / embedded track: absolute ffprobe stream index in the media file (`mediaId`).
+   * Non-negative integer; absent for tracks not read from a stream.
+   */
+  streamIndex?: number;
 }
 
 export interface TagVocabulary {
@@ -378,12 +383,15 @@ export interface AppPreferences {
   cacheDir?: string;
   lastExportDir?: string;
   layout?: Record<string, number>;
+  /** tessdata code (shared/ocr.ts) last used for OCR, the OCR dialog's default when the track language says nothing. */
+  ocrLastLanguage?: string;
 }
 
 // ------------------------------------------------------------------
 // Jobs (background work in the main process)
 // ------------------------------------------------------------------
-export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'export' | 'thumbnails' | 'transcribe';
+/** 'ocr': bitmap subtitles to text; 'download': OCR language install; 'transcribe' is reserved for speech-to-text. */
+export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download';
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled';
 
 export interface JobInfo {

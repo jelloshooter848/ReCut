@@ -1,5 +1,5 @@
 /**
- * On-disk cache layout for derived media (thumbnails, waveforms, proxies, scene detection).
+ * On-disk cache layout for derived media (thumbnails, waveforms, proxies, scene detection, OCR results).
  *
  * No Electron import here: main.ts calls `setCacheDir(path.join(app.getPath('userData'), 'cache'))`
  * at startup; tests set RECUT_CACHE_DIR.
@@ -11,8 +11,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { assertAbsoluteMediaPath } from './ffmpeg';
 
-export type CacheSubdir = 'thumbs' | 'waves' | 'proxies' | 'scenes';
-export const CACHE_SUBDIRS: CacheSubdir[] = ['thumbs', 'waves', 'proxies', 'scenes'];
+export type CacheSubdir = 'thumbs' | 'waves' | 'proxies' | 'scenes' | 'ocr';
+export const CACHE_SUBDIRS: CacheSubdir[] = ['thumbs', 'waves', 'proxies', 'scenes', 'ocr'];
 
 let configuredDir: string | null = null;
 
