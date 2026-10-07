@@ -5,7 +5,7 @@ import { Play, ScanSearch, Square, X } from 'lucide-react';
 import { MEDIA_CATEGORIES, type ID, type JobInfo, type MediaCategory, type MediaItem, type SourceIdentity } from '@shared/model';
 import { fpsLabel, fpsValue } from '@shared/time';
 import { identityLabel, mediaSubtitleTracks, setMediaAudioStream, startProxy, startSceneDetect, useStore } from '@/state';
-import { mediaNeedsProxyForPreview, previewPlaybackLabel } from '@/playback/mediaSource';
+import { isDisplayableImage, isStillImage, mediaNeedsProxyForPreview, previewPlaybackLabel } from '@/playback/mediaSource';
 import type { StoreState } from '@/state';
 import { useJobsStore } from '@/app/jobsStore';
 import { Button, ColorSwatchPicker, IconButton, ProgressBar, Select, TagInput, TextField } from '@/components/ui';
@@ -145,7 +145,7 @@ function SingleMedia({ m }: { m: MediaItem }) {
           {proxyJob ? (
             <IconButton icon={Square} label="Cancel proxy job" size="sm" onClick={() => cancelJob(proxyJob.id)} />
           ) : (
-            <Button size="sm" icon={Play} disabled={m.kind !== 'video' || m.offline} title="Generate a proxy for smooth playback" onClick={() => { void startProxy(m.id); }}>
+            <Button size="sm" icon={Play} disabled={m.offline || !(m.kind === 'video' || (isStillImage(m) && !!m.probe && !isDisplayableImage(m)))} title={isStillImage(m) ? 'Decode this image to a PNG the preview can show' : 'Generate a proxy for smooth playback'} onClick={() => { void startProxy(m.id); }}>
               {m.proxy.status === 'ready' ? 'Regenerate' : 'Generate'}
             </Button>
           )}

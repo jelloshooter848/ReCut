@@ -104,12 +104,15 @@ describe('proxy time mapping', () => {
     expect(Math.abs(b.duration - a.duration)).toBeLessThan(0.05);
   });
 
-  it('image source: proxy job fails with a readable error (images never need proxies)', async () => {
+  it('image source: the proxy job writes a PNG still proxy (Roadmap §2 B; it used to fail: "neither video nor audio")', async () => {
     const q = new JobQueue();
-    const { job } = await startProxyJob(q, { mediaId: 'img', path: mediaPath('image.png'), height: 540 });
+    const { job, outputPath } = await startProxyJob(q, { mediaId: 'img', path: mediaPath('image.png'), height: 540 });
     const final = await q.waitFor(job.id);
-    console.log(`[proxy image] status=${final.status} error=${final.error}`);
-    expect(final.status).toBe('failed');
+    console.log(`[proxy image] status=${final.status} error=${final.error} out=${path.basename(outputPath)}`);
+    expect(final.status).toBe('done');
+    expect(outputPath).toMatch(/_still\.png$/);
+    expect((final.result as { path: string }).path).toBe(outputPath);
+    expect((await probeMedia(outputPath)).video?.codec).toBe('png');
   });
 
   it('odd-height request and tiny source: proxy never upscales and keeps even dimensions', async () => {

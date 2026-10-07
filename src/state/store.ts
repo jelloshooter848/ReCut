@@ -93,12 +93,28 @@ function resetSelectionUi(ui: UIState): UIState {
   };
 }
 
+/** Still-image extensions; the same list as IMAGE_EXT in electron/media/probe.ts (tests/unit/stills.test.ts). */
+export const STILL_IMAGE_EXTS: readonly string[] = [
+  'png', 'apng', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'bmp', 'tif', 'tiff', 'gif', 'heic', 'heif', 'avif',
+  'jxl', 'tga', 'exr', 'psd', 'dpx', 'sgi', 'pcx', 'ppm', 'pgm', 'pbm', 'pam', 'qoi', 'hdr', 'jp2', 'j2k',
+];
+const STILL_IMAGE_CODECS: readonly string[] = [
+  'png', 'apng', 'mjpeg', 'jpegls', 'webp', 'bmp', 'tiff', 'gif', 'jpegxl', 'targa', 'exr', 'psd', 'dpx', 'sgi', 'pcx',
+  'ppm', 'pgm', 'pgmyuv', 'pbm', 'pam', 'qoi', 'hdr', 'jpeg2000', 'av1', 'hevc',
+];
+
+/**
+ * Media kind from a probe; mirrors classifyKind in electron/media/probe.ts. The main process marks stills (an image
+ * demuxer, or a single picture from an image file: AVIF / HEIC / one-frame GIF) with playabilityReason 'still image'.
+ * A probe without the mark (saved by an older version) is a still when it has a picture without duration or audio from
+ * an image file or image codec. An animated GIF has a duration and frames: a video (it plays through a proxy).
+ */
 export function kindFromProbe(p: MediaProbe, path = ''): MediaKind {
   if (p.video) {
-    const imageCodecs = ['png', 'mjpeg', 'bmp', 'gif', 'webp', 'tiff', 'jpeg', 'jpegls', 'ppm', 'pgm'];
-    const imageExt = /\.(png|jpe?g|gif|bmp|webp|tiff?)$/i.test(path);
-    const stillish = /image|pipe/i.test(p.container) || !Number.isFinite(p.duration) || p.duration <= 0.05;
-    if (imageExt || (imageCodecs.includes(p.video.codec) && stillish)) return 'image';
+    if (p.playabilityReason === 'still image' || /_pipe$|^image2/i.test(p.container)) return 'image';
+    const m = /\.([^./\\]+)$/.exec(path);
+    const ext = m ? m[1].toLowerCase() : '';
+    if (!(p.duration > 0) && p.audio.length === 0 && (STILL_IMAGE_EXTS.includes(ext) || STILL_IMAGE_CODECS.includes(p.video.codec))) return 'image';
     return 'video';
   }
   if (p.audio.length > 0) return 'audio';

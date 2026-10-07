@@ -93,8 +93,19 @@ export function streamRotation(s: FfprobeStream): number {
 
 // ------------------------------------------------------------------
 
-const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff', '.gif', '.heic', '.avif', '.jxl']);
-const IMAGE_CODECS = new Set(['png', 'mjpeg', 'webp', 'bmp', 'tiff', 'gif', 'jpegxl', 'av1', 'hevc']); // av1/hevc only when container is an image pipe
+/**
+ * Still-image extensions (FFmpeg decodes all of these; Chromium only some, see src/playback/mediaSource.ts). Keep in
+ * step with STILL_IMAGE_EXTS in src/state/store.ts (tests/unit/stills.test.ts checks that the two agree).
+ */
+export const IMAGE_EXT = new Set([
+  '.png', '.apng', '.jpg', '.jpeg', '.jpe', '.jfif', '.webp', '.bmp', '.tif', '.tiff', '.gif', '.heic', '.heif', '.avif',
+  '.jxl', '.tga', '.exr', '.psd', '.dpx', '.sgi', '.pcx', '.ppm', '.pgm', '.pbm', '.pam', '.qoi', '.hdr', '.jp2', '.j2k',
+]);
+/** Codecs that only ever carry stills; av1/hevc count only without duration (AVIF / HEIC items in a mov container). */
+const IMAGE_CODECS = new Set([
+  'png', 'apng', 'mjpeg', 'jpegls', 'webp', 'bmp', 'tiff', 'gif', 'jpegxl', 'targa', 'exr', 'psd', 'dpx', 'sgi', 'pcx',
+  'ppm', 'pgm', 'pgmyuv', 'pbm', 'pam', 'qoi', 'hdr', 'jpeg2000', 'av1', 'hevc',
+]);
 const SUBTITLE_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub', '.sbv']);
 
 function gcd(a: number, b: number): number {
@@ -166,6 +177,21 @@ export function normalizeContainer(formatName: string | undefined, filePath: str
 function isImageContainer(container: string, formatName: string | undefined): boolean {
   const f = (formatName ?? '').toLowerCase();
   return /_pipe$/.test(container) || /_pipe\b/.test(f) || container === 'image2' || f.startsWith('image2');
+}
+
+/**
+ * Whether a probed file with a video stream is a still image: an image demuxer (image2 / *_pipe), or a single picture
+ * in another container (AVIF / HEIC items demux as `mov`, a one-frame GIF as `gif`) from an image file: no audio, and
+ * one frame or no duration. An animated GIF / AVIF (several frames) stays a video.
+ */
+function isStillSource(container: string, formatName: string | undefined, filePath: string, v: FfprobeStream | undefined,
+  duration: number, audioCount: number): boolean {
+  if (isImageContainer(container, formatName)) return true;
+  if (audioCount > 0) return false;
+  const ext = path.extname(filePath).toLowerCase();
+  const frames = num(v?.nb_frames);
+  const single = frames !== undefined ? frames <= 1 : !(duration > 0);
+  return single && (IMAGE_EXT.has(ext) || (!(duration > 0) && IMAGE_CODECS.has(v?.codec_name ?? '')));
 }
 
 // ------------------------------------------------------------------
@@ -288,7 +314,7 @@ export function probeFromFfprobe(raw: FfprobeOutput, filePath: string, fileSize?
     }
   }
 
-  const isImage = !!video && isImageContainer(container, format.format_name);
+  const isImage = !!video && isStillSource(container, format.format_name, filePath, streams.find((s) => s.index === video!.index), duration, audio.length);
   if (isImage) duration = 0;
 
   const size = fileSize ?? num(format.size) ?? 0;
@@ -320,18 +346,49 @@ export async function probeMedia(filePath: string): Promise<MediaProbe> {
   });
   const raw = await runFfprobeJson<FfprobeOutput>(['-show_format', '-show_streams', ffmpegFileArg(filePath)], { timeoutMs: 60_000 });
   if (!raw.format && !(raw.streams && raw.streams.length)) throw new Error(`ffprobe found no streams in ${filePath}`);
-  return probeFromFfprobe(raw, filePath, st.size);
+  const probe = probeFromFfprobe(raw, filePath, st.size);
+  const v = probe.video as ProbedVideoStreamInfo | undefined;
+  if (probe.playabilityReason === 'still image' && v && !v.rotation) {
+    // EXIF orientation (JPEG) is a property of the decoded frame, not of the stream: ffprobe's stream size is the
+    // stored one. FFmpeg (export, proxy, thumbnails) and Chromium (<img>) both turn the picture upright, so the probe
+    // reports the upright size too (the Source monitor's zoom, the export's crop maths).
+    const frames = await runFfprobeJson<{ frames?: { side_data_list?: FfprobeStream['side_data_list'] }[] }>(
+      ['-select_streams', 'v:0', '-read_intervals', '%+#1', '-show_entries', 'frame=width,height:frame_side_data=side_data_type,rotation', ffmpegFileArg(filePath)],
+      { timeoutMs: 60_000 },
+    ).catch(() => undefined);
+    applyStillOrientation(probe, frames?.frames?.[0]?.side_data_list);
+  }
+  return probe;
 }
 
-/** Classify a probed file as video / audio / image / subtitle / unknown. */
+/**
+ * Record the first decoded frame's display rotation (EXIF orientation of a JPEG, as FFmpeg exports it) on a still's
+ * probe: `rotation`, and the display size with the axes swapped for a quarter turn. Exported for tests.
+ */
+export function applyStillOrientation(probe: MediaProbe, sideData: FfprobeStream['side_data_list'] | undefined): void {
+  const v = probe.video as ProbedVideoStreamInfo | undefined;
+  if (!v || !sideData?.length) return;
+  const rotation = streamRotation({ index: v.index, side_data_list: sideData });
+  if (!rotation) return;
+  v.rotation = rotation;
+  if (rotation === 90 || rotation === 270) {
+    const w = v.codedWidth || v.width, h = v.codedHeight || v.height;
+    v.width = h;
+    v.height = w;
+  }
+}
+
+/**
+ * Classify a probed file as video / audio / image / subtitle / unknown. A still is what probeFromFfprobe marked
+ * `still image`, and anything from an image demuxer is one; a probe without that mark (recorded by an older version, or
+ * built by hand) is also a still when it has a picture without duration or audio from an image file or image codec.
+ * Mirrors kindFromProbe in src/state/store.ts.
+ */
 export function classifyKind(probe: MediaProbe, filePath: string): MediaKind {
   const ext = path.extname(filePath).toLowerCase();
   if (probe.video) {
-    const container = probe.container;
-    if (isImageContainer(container, container) || probe.duration === 0 && (IMAGE_CODECS.has(probe.video.codec) || IMAGE_EXT.has(ext))) {
-      return 'image';
-    }
-    if (IMAGE_EXT.has(ext) && ext !== '.gif' && probe.audio.length === 0) return 'image';
+    if (probe.playabilityReason === 'still image' || isImageContainer(probe.container, probe.container)) return 'image';
+    if (!(probe.duration > 0) && probe.audio.length === 0 && (IMAGE_EXT.has(ext) || IMAGE_CODECS.has(probe.video.codec))) return 'image';
     return 'video';
   }
   if (probe.audio.length > 0) return 'audio';

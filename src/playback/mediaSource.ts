@@ -20,12 +20,24 @@ export interface PlaybackPathResolution {
   timeOffset?: number;
   /** Human readable explanation when a non-obvious choice was made or nothing is playable. */
   reason?: string;
-  /** True when `path` is a still image to draw with an <img> (no <video>, no audio, no proxy). */
+  /** True when `path` is a still image to draw with an <img> (the original, or its PNG proxy; no <video>, no audio). */
   isImage?: boolean;
 }
 
-/** Still-image extensions Chromium decodes in an <img> (drawn directly; never proxied). */
-export const DISPLAYABLE_IMAGE_EXTS: readonly string[] = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
+/**
+ * Still-image extensions Chromium decodes in an <img> (drawn directly; never proxied). Every other still (TIFF, TGA,
+ * EXR, PSD, JPEG XL, HEIC, ...) is previewed from a PNG proxy that FFmpeg decodes on import (electron/media/proxy.ts),
+ * so the preview shows what the export decodes. AVIF is proxied too although Electron 33 decodes it: Chromium applies
+ * the AVIF `irot` / `imir` orientation and FFmpeg 6.1 does not, so a rotated AVIF drawn directly would preview
+ * rotated and export unrotated (bugs/closed/2026-10-07-avif-preview-orientation-differs-from-export.md).
+ */
+export const DISPLAYABLE_IMAGE_EXTS: readonly string[] = ['png', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'gif', 'bmp'];
+
+/** Still-image extensions (FFmpeg decodes them all); see STILL_IMAGE_EXTS in src/state/store.ts. */
+const STILL_EXTS: readonly string[] = [
+  'png', 'apng', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'bmp', 'tif', 'tiff', 'gif', 'heic', 'heif', 'avif',
+  'jxl', 'tga', 'exr', 'psd', 'dpx', 'sgi', 'pcx', 'ppm', 'pgm', 'pbm', 'pam', 'qoi', 'hdr', 'jp2', 'j2k',
+];
 
 function fileExt(path: string): string {
   const base = path.split(/[\\/]/).pop() ?? '';
@@ -33,9 +45,15 @@ function fileExt(path: string): string {
   return dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
 }
 
-/** A still image (classified on import, or probed as one). */
+/**
+ * A still image: classified on import, or probed as one. A probe saved before stills were detected in every container
+ * (an AVIF read as a browser-playable `mov`) counts when it is a picture without duration or audio in an image file.
+ */
 export function isStillImage(media: MediaItem | undefined): boolean {
-  return !!media && (media.kind === 'image' || media.probe?.playabilityReason === 'still image');
+  if (!media) return false;
+  if (media.kind === 'image' || media.probe?.playabilityReason === 'still image') return true;
+  const p = media.probe;
+  return !!p?.video && !(p.duration > 0) && p.audio.length === 0 && STILL_EXTS.includes(fileExt(media.path));
 }
 
 /** A still image the renderer can draw directly from the original file (png/jpg/jpeg/webp/gif/bmp). */
@@ -44,11 +62,13 @@ export function isDisplayableImage(media: MediaItem | undefined): boolean {
 }
 
 /**
- * Whether previewing `media` needs a proxy: probed, not decodable by Chromium, and not a still image
- * (images are drawn directly, or not at all — a proxy job cannot transcode a frame without duration).
+ * Whether previewing `media` needs a proxy: probed, and either a still Chromium cannot draw (previewed from a PNG
+ * proxy) or a video/audio file it cannot decode.
  */
 export function mediaNeedsProxyForPreview(media: MediaItem | undefined): boolean {
-  return !!media && !media.offline && !!media.probe && !media.probe.browserPlayable && !isStillImage(media);
+  if (!media || media.offline || !media.probe) return false;
+  if (isStillImage(media)) return !isDisplayableImage(media);
+  return !media.probe.browserPlayable;
 }
 
 const DEFAULT_FPS: Rational = { num: 24, den: 1 };
@@ -130,7 +150,7 @@ export function proxyStreamStale(media: MediaItem, wants: readonly (number | und
 export function previewPlaybackLabel(media: MediaItem): { direct: boolean; text: string } {
   const p = media.probe;
   if (isDisplayableImage(media)) return { direct: true, text: 'Direct (still image)' };
-  if (isStillImage(media)) return { direct: false, text: 'Not previewable — convert the image to PNG or JPEG (export still works)' };
+  if (isStillImage(media)) return { direct: false, text: `Proxy required — ${(fileExt(media.path) || 'this').toUpperCase()} image (previewed as PNG)` };
   if (!p || p.browserPlayable) return { direct: true, text: 'Direct' };
   return { direct: false, text: `Proxy required${p.playabilityReason ? ` — ${p.playabilityReason}` : ''}` };
 }
@@ -138,11 +158,14 @@ export function previewPlaybackLabel(media: MediaItem): { direct: boolean; text:
 export function resolvePlaybackPath(media: MediaItem, useProxies: boolean): PlaybackPathResolution {
   if (media.offline) return { path: null, usingProxy: false, reason: 'media offline' };
   if (isDisplayableImage(media)) return { path: media.path, usingProxy: false, timeOffset: 0, isImage: true };
-  if (isStillImage(media) && media.probe) {
-    return { path: null, usingProxy: false, reason: `image format not previewable (${fileExt(media.path) || 'unknown'}); convert to PNG or JPEG` };
-  }
   const proxyReady = media.proxy?.status === 'ready' && !!media.proxy.path;
   const proxyPath = proxyReady ? media.proxy.path! : null;
+  if (isStillImage(media) && media.probe) {
+    // Chromium cannot draw this format: the PNG proxy, whatever the proxies toggle (a proxy beats nothing).
+    if (proxyPath) return { path: proxyPath, usingProxy: true, timeOffset: 0, isImage: true };
+    const ext = (fileExt(media.path) || 'unknown').toUpperCase();
+    return { path: null, usingProxy: false, reason: `${ext} image needs a preview proxy${proxyHint(media)}` };
+  }
 
   if (useProxies && proxyPath) return { path: proxyPath, usingProxy: true, timeOffset: 0 };
 
@@ -157,13 +180,17 @@ export function resolvePlaybackPath(media: MediaItem, useProxies: boolean): Play
     return { path: null, usingProxy: false, reason: media.probeError ? `probe failed: ${media.probeError}` : 'not probed yet' };
   }
   const why = media.probe.playabilityReason ? ` (${media.probe.playabilityReason})` : '';
+  return { path: null, usingProxy: false, reason: `original not decodable${why}${proxyHint(media)}` };
+}
+
+/** "; proxy in progress" / "; proxy failed: ..." / "; generate a proxy to preview". */
+function proxyHint(media: MediaItem): string {
   const proxyState = media.proxy?.status ?? 'none';
-  const proxyHint = proxyState === 'running' || proxyState === 'queued'
+  return proxyState === 'running' || proxyState === 'queued'
     ? '; proxy in progress'
     : proxyState === 'failed'
       ? `; proxy failed${media.proxy.error ? ': ' + media.proxy.error : ''}`
       : '; generate a proxy to preview';
-  return { path: null, usingProxy: false, reason: `original not decodable${why}${proxyHint}` };
 }
 
 /**
