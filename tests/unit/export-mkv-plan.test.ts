@@ -299,6 +299,18 @@ describe('render graph: MKV', () => {
     expect(g.warnings.some((w) => /AC-3 audio supports/.test(w))).toBe(true);
   });
 
+  it('malformed IPC input: non-object output tracks and subtitle tracks are ignored', () => {
+    const s = sequence();
+    const r = req({ audioOutputs: [null, 'x', { layout: '5.1', codec: 'ac3', sources: 'all', title: 7 }] as never, subtitleOutputs: [{ trackId: 'st-en' }] }, s);
+    r.subtitleTracks = [null, { id: 'st-en', name: 3, language: null, cues: [null, { start: 'a', end: 2, text: 'x' }, { start: 1, end: 2, text: 'ok' }] }] as never;
+    const g = buildRenderGraph(r, { softSubtitleFilePaths: ['/tmp/s.srt'] });
+    expect(g.audioOutputs.map((o) => o.channels)).toEqual([6]);
+    expect(g.streamArgs).toContain('title=7');
+    expect(g.softSubtitles.map((x) => [x.title, x.language])).toEqual([['English', 'eng']]); // the sequence's track names it
+    expect(g.softSubtitles[0].content).toContain('ok');
+    expect(usesAc3(settings({ audioOutputs: [null] as never }))).toBe(false);
+  });
+
   it('the command preview names the soft subtitle files', () => {
     const cmd = buildExportCommand(req({ subtitleOutputs: [{ trackId: 'st-en' }] }));
     expect(cmd.some((a) => /recut-export[\\/]subtitles-0\.srt$/.test(a))).toBe(true);

@@ -1092,12 +1092,15 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   // Soft subtitle streams (MKV): the whole export only (a chunked export adds them when joining the chunks).
   const softSubtitles: SoftSubtitleStream[] = [];
   if (packaging && !opts.range && !opts.streams) {
-    const tracks = Array.isArray(req.subtitleTracks) ? req.subtitleTracks.filter((t) => t && typeof t.id === 'string') : [];
-    for (const p of subtitleOutputPlan(tracks.map((t) => ({ id: t.id, name: String(t.name ?? ''), language: String(t.language ?? '') })), settings)) {
-      const t = tracks.find((x) => x.id === p.track.id)!;
-      const content = rangeSrt(req, Array.isArray(t.cues) ? t.cues : [], startF, endF);
+    // Names and languages from the sequence's tracks, cues from the request (resolved to seconds by the dialog).
+    const cueTracks = Array.isArray(req.subtitleTracks) ? req.subtitleTracks.filter((t) => t && typeof t.id === 'string') : [];
+    const seqTracks = (Array.isArray(seq.subtitleTracks) ? seq.subtitleTracks : []).filter((t) => t && typeof t.id === 'string')
+      .map((t) => ({ id: t.id, name: String(t.name ?? ''), language: String(t.language ?? '') }));
+    for (const p of subtitleOutputPlan(seqTracks, settings)) {
+      const t = cueTracks.find((x) => x.id === p.track.id);
+      const content = t ? rangeSrt(req, Array.isArray(t.cues) ? t.cues : [], startF, endF) : null;
       if (!content) { warnings.push(`Subtitle track "${p.track.name}" has no cues in the export range; it is not included.`); continue; }
-      softSubtitles.push({ trackId: t.id, content, language: p.language, title: p.title, isDefault: p.isDefault, forced: p.forced });
+      softSubtitles.push({ trackId: p.track.id, content, language: p.language, title: p.title, isDefault: p.isDefault, forced: p.forced });
     }
   }
   const subtitleCodecArgs = softSubtitles.length ? ['-c:s', 'subrip'] : [];

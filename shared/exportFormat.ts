@@ -210,7 +210,7 @@ export function audioEncoder(s: ExportSettings): AudioEncoder {
 /** True when an audio encoder of the export is AC-3 (32 / 44.1 / 48 kHz only): MP4 / MKV main mix, or an MKV output track. */
 export function usesAc3(s: Pick<ExportSettings, 'container' | 'audioCodec'> & Partial<Pick<ExportSettings, 'audioOutputs'>>): boolean {
   const c = exportContainer(s);
-  if (c === 'mkv' && hasAudioOutputs(s)) return s.audioOutputs!.some((o) => audioOutputCodec(o) === 'ac3');
+  if (c === 'mkv' && hasAudioOutputs(s)) return s.audioOutputs!.some((o) => !!o && typeof o === 'object' && audioOutputCodec(o) === 'ac3');
   return (c === 'mp4' || c === 'mkv') && s.audioCodec === 'ac3';
 }
 
@@ -334,6 +334,9 @@ export const AUDIO_CODECS: { id: ExportAudioCodec; label: string }[] = [
   { id: 'pcm', label: 'PCM (uncompressed)' },
 ];
 
+/** Most output audio tracks an export writes (the dialog offers fewer, packaging.ts MAX_AUDIO_OUTPUTS). */
+export const MAX_OUTPUT_TRACKS = 32;
+
 /** AC-3 limits of FFmpeg's encoder: at most 640 kbit/s; 5.1 fails bit allocation below 64 kbit/s. */
 export const AC3_MAX_KBPS = 640;
 export const AC3_MIN_KBPS_51 = 64;
@@ -388,7 +391,9 @@ export function cleanStreamTitle(title: string | undefined): string {
  * channels, exactly the audio an MP4 export writes.
  */
 export function resolveAudioOutputs(s: ExportSettings): ExportAudioOutput[] {
-  if (hasAudioOutputs(s)) return s.audioOutputs!;
+  // IPC input may be malformed: entries that are not objects are ignored, and at most MAX_OUTPUT_TRACKS are written.
+  const outs = hasAudioOutputs(s) ? s.audioOutputs!.filter((o) => o && typeof o === 'object').slice(0, MAX_OUTPUT_TRACKS) : [];
+  if (outs.length) return outs;
   const enc = audioEncoder(s);
   const codec: ExportAudioCodec = enc.codec === 'ac3' || enc.codec === 'aac' || enc.codec === 'flac' ? enc.codec : 'pcm';
   const main: ExportAudioOutput = { layout: s.audioChannels === 6 ? '5.1' : 'stereo', codec };
