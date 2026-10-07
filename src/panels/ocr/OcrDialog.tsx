@@ -25,6 +25,7 @@ import {
 import { ocrLanguage } from '@shared/ocr';
 import './ocrLanguages.css';
 
+const INSTALL_FIRST = 'Install an OCR language first.';
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function OcrDialog() {
@@ -71,7 +72,7 @@ export function OcrDialog() {
       : media.offline ? 'This media is offline.'
         : !stream ? `Stream #${target.streamIndex} is not a bitmap subtitle stream.`
           : running ? 'This stream is already being read (see Jobs).'
-            : languages !== null && installed.length === 0 ? 'Install an OCR language first.'
+            : languages !== null && installed.length === 0 ? INSTALL_FIRST
               : null;
   const canStart = !blocked && !!selected && !starting;
 
@@ -147,7 +148,8 @@ export function OcrDialog() {
             )}
           </div>
         ) : null}
-        {blocked ? <div className="text-sm text-accent-2" data-testid="ocr-blocked">{blocked}</div> : null}
+        {/* "Install a language first" is already said by the install row when it is shown. */}
+        {blocked && !(blocked === INSTALL_FIRST && choice.offerInstall) ? <div className="text-sm text-accent-2" data-testid="ocr-blocked">{blocked}</div> : null}
         <p className="text-dim text-sm ocr-note">
           OCR runs on this computer and adds a subtitle track named “{selected ? `${ocrLanguage(selected)?.name} (OCR #${target.streamIndex})` : `Language (OCR #${target.streamIndex})`}”.
           Italics, coloured text and signs may be read imperfectly; check the lines you rely on.
