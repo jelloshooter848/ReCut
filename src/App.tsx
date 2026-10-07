@@ -30,6 +30,8 @@ import { ExportDialog } from '@/panels/export/ExportDialog';
 import { OcrLanguagesDialog } from '@/panels/ocr/OcrLanguagesDialog';
 import { CollectDialog } from '@/panels/collect/CollectDialog';
 import { OcrDialog } from '@/panels/ocr/OcrDialog';
+import { TranscribeDialog } from '@/panels/whisper/TranscribeDialog';
+import { WhisperModelsDialog } from '@/panels/whisper/WhisperModelsDialog';
 import { recutApi, setFfmpegAvailability } from '@/state';
 import '@/panels';
 
@@ -120,6 +122,8 @@ export function App() {
       <ExportDialog />
       <OcrDialog />
       <OcrLanguagesDialog />
+      <TranscribeDialog />
+      <WhisperModelsDialog />
       <CollectDialog />
       <DialogHost />
     </>

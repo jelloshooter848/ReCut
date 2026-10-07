@@ -136,7 +136,7 @@ not supported by Chromium"). Typical cases:
 | Sidecar files | When a video is imported, `<video name>.srt|.vtt` and `<video name>.<lang>.srt|.vtt` **in the same folder** are attached automatically, with the language taken from the file name. |
 | Embedded text streams | Right-click › **Embedded Subtitles** or Transcript › Import › **Embedded…**. Text codecs (SubRip, ASS/SSA, mov_text, WebVTT, TTML, SAMI, MicroDVD, ...) are converted to SRT. ASS styling is dropped. |
 | Bitmap streams (PGS, VobSub, DVB, XSUB) | Right-click › **Embedded Subtitles** or Transcript › Import › **Embedded…** › "#3 eng (PGS) — **Read with OCR…**". ReCut reads the images with its built-in OCR engine (Tesseract) in the language you choose; install languages once in **File › OCR Languages…**. The track is named "English (OCR #3)". Teletext and ARIB captions are not supported. |
-| Speech-to-text | Not available yet. The Local Whisper entry under Transcribe… is a disabled placeholder. |
+| Speech-to-text | Transcript › Import › Transcribe… › **Local Whisper…** or right-click › **Transcribe with Whisper…**: the built-in whisper.cpp engine transcribes any audio stream FFmpeg can decode (it is converted to 16 kHz mono first) with a model installed from **File › Transcription Models…** (ggml Whisper models, 78 MB to 1.6 GB). The track is named "English (Whisper Small)". |
 
 Media subtitle tracks feed the Transcript search. When **Carry subtitles into sequence** is on (the default),
 inserting a clip copies its cues into the sequence's subtitle tracks, attached to the clip.

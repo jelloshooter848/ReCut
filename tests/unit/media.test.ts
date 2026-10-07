@@ -478,7 +478,7 @@ describe('jobs', () => {
   it('OCR shares the background lane with scene detection; language downloads run 2 at a time in the network lane', async () => {
     expect(laneFor('ocr')).toBe('background');
     expect(laneFor('download')).toBe('network');
-    expect(laneFor('transcribe')).toBe('media');
+    expect(laneFor('transcribe')).toBe('transcribe');
     const q = new JobQueue({ mediaConcurrency: 1 });
     const releases: (() => void)[] = [];
     const held = (kind: 'ocr' | 'sceneDetect' | 'download', title: string) => q.add({ kind, title, run: () => new Promise<void>((resolve) => { releases.push(resolve); }) });
