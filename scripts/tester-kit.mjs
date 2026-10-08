@@ -130,7 +130,7 @@ const FILMS = [
 ];
 const filmName = (f) => `${f.title} (${f.year})`;
 
-/** Synthetic stand-ins: one minute per film, with cuts, tones and made-up subtitles (never shipped). */
+/** Synthetic stand-ins: 90 s per film, with cuts, tones and made-up subtitles (never shipped). */
 function makeSyntheticSources(dir) {
   mkdirp(dir);
   const scenes = ['testsrc2', 'smptehdbars', 'rgbtestsrc', 'pal75bars', 'testsrc', 'yuvtestsrc'];
@@ -139,20 +139,20 @@ function makeSyntheticSources(dir) {
     const out = path.join(dir, f.src);
     for (const lang of Object.keys(f.subs)) {
       const cues = [];
-      for (let t = 0, i = 1; t < 60; t += 5, i++) cues.push(`${i}\n00:00:${String(t).padStart(2, '0')},100 --> 00:00:${String(t).padStart(2, '0')},900\n[${lang}] ${f.title} line ${i}, about the dragon\n`);
+      for (let t = 0, i = 1; t < 45; t += 5, i++) cues.push(`${i}\n00:00:${String(t).padStart(2, '0')},100 --> 00:00:${String(t).padStart(2, '0')},900\n[${lang}] ${f.title} line ${i}, about the dragon\n`);
       fs.writeFileSync(path.join(dir, f.subs[lang]), cues.join('\n'));
     }
     if (fs.existsSync(out)) continue;
-    const inputs = scenes.flatMap((s) => ['-f', 'lavfi', '-i', `${s}=s=1280x720:r=24:d=10`]);
+    const inputs = scenes.flatMap((s) => ['-f', 'lavfi', '-i', `${s}=s=1280x720:r=24:d=15`]);
     const graph = `${scenes.map((_, i) => `[${i}:v]format=yuv420p,setsar=1[v${i}]`).join(';')};${scenes.map((_, i) => `[v${i}]`).join('')}concat=n=${scenes.length}:v=1:a=0[v]`;
-    // "Speech": a 1 s tone burst every 5 s, over a quiet second tone ("music").
-    const audio = `aevalsrc='0.3*sin(2*PI*${freqs[f.key]}*t)*lt(mod(t\\,5)\\,1)|0.3*sin(2*PI*${freqs[f.key]}*t)*lt(mod(t\\,5)\\,1)':s=48000:d=60`;
-    ff([...inputs, '-f', 'lavfi', '-i', audio, '-f', 'lavfi', '-i', 'sine=f=220:r=48000:d=60', '-filter_complex', `${graph};[6:a][7:a]amix=inputs=2:normalize=0,aformat=channel_layouts=stereo[a]`,
+    // "Speech": a 1 s tone burst every 5 s in the first 45 s (where the subtitles are), over a second tone ("music").
+    const audio = `aevalsrc='0.3*sin(2*PI*${freqs[f.key]}*t)*lt(mod(t\\,5)\\,1)*lt(t\\,45)|0.3*sin(2*PI*${freqs[f.key]}*t)*lt(mod(t\\,5)\\,1)*lt(t\\,45)':s=48000:d=90`;
+    ff([...inputs, '-f', 'lavfi', '-i', audio, '-f', 'lavfi', '-i', 'sine=f=220:r=48000:d=90', '-filter_complex', `${graph};[6:a][7:a]amix=inputs=2:normalize=0,aformat=channel_layouts=stereo[a]`,
       '-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-c:a', 'aac', '-b:a', '128k', out], { what: `synthetic ${f.key}` });
   }
   // A music-and-effects track for Sintel: the "music" tone only, so mix minus it is the "speech".
   const me = path.join(dir, 'sintel-me.flac');
-  if (!fs.existsSync(me)) ff(['-f', 'lavfi', '-i', 'sine=f=220:r=48000:d=60', '-af', 'aformat=channel_layouts=stereo', '-c:a', 'flac', me]);
+  if (!fs.existsSync(me)) ff(['-f', 'lavfi', '-i', 'sine=f=220:r=48000:d=90', '-af', 'aformat=channel_layouts=stereo', '-c:a', 'flac', me]);
 }
 
 /** Normalised official subtitles (UTF-8, no BOM, CRLF), checked with ReCut's own parser. */
@@ -243,12 +243,12 @@ function bestLag(a, b, center, radius) {
   }
   return { lag: best, corr: bestV };
 }
-const rms = (x) => Math.sqrt(x.reduce((n, v) => n + v * v, 0) / Math.max(1, x.length));
 
 /**
  * Sintel's music-and-effects track (sintel-m+e-st.flac, published with the film) lined up with the film's own mix:
- * offset and gain from the waveforms, then how much is left of the mix when the M&E is taken away in stretches
- * without dialogue. Clean (residual at most -20 dB) means mix minus M&E is the dialogue alone.
+ * the offset from the waveforms, then the fold of the film's channels that matches the M&E, then how much is left
+ * when the M&E is taken away in stretches without dialogue. Clean (residual at most -20 dB) means the folded film
+ * minus the M&E is the dialogue alone.
  */
 function alignSintelMe(L, sintelFile, meFile, cues) {
   if (!meFile) return { ok: false, why: 'no sintel-me.flac' };
@@ -274,23 +274,57 @@ function alignSintelMe(L, sintelFile, meFile, cues) {
     if (v > best.v) best = { off, v };
   }
   const offsetSec = lag8 / 8000 - (best.off - base) / 48000; // the M&E is played this much later than the mix
-  // Gain (least squares) and the residual, over every quiet stretch (up to 10 of them, 6 s each).
-  let num = 0, den = 0;
-  const pairs = [];
-  for (const [s] of quiet.slice(0, 10)) {
-    const x = pcm(sintelFile, { from: s, len: 6, rate: 48000 });
-    const y = pcm(meFile, { from: s - offsetSec, len: 6, rate: 48000 });
-    const n = Math.min(x.length, y.length);
-    for (let i = 0; i < n; i++) { num += x[i] * y[i]; den += y[i] * y[i]; }
-    pairs.push([x, y, n]);
-  }
-  const gain = num / (den + 1e-12);
+  // The M&E is a stereo fold of the music and effects; the film's track may be 5.1. Find, per M&E channel, the mix of
+  // the film's channels that matches it best (least squares over the stretches without dialogue): with the same
+  // master, the film folded that way minus the M&E is the dialogue. Fitted on every other stretch, measured on the rest.
+  const nch = probe(sintelFile).streams.find((x) => x.codec_type === 'audio')?.channels ?? 2;
+  // 5-second pieces of the quiet stretches, at most 16, spread over the film.
+  const pieces = quiet.flatMap(([a, b]) => { const out = []; for (let t = a; t + 5 <= b; t += 5) out.push([t, t + 5]); return out; });
+  const spans = pieces.filter((_, i) => i % Math.max(1, Math.floor(pieces.length / 16)) === 0).slice(0, 16);
+  const decode = (file, from, ch) => {
+    const buf = ffOut(['-ss', String(from), '-t', '5', '-i', file, '-map', '0:a:0', '-ac', String(ch), '-ar', '48000', '-f', 'f32le', '-'], `decode ${path.basename(file)}`);
+    return new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.length / 4));
+  };
+  const blocks = spans.map(([a]) => ({ x: decode(sintelFile, a, nch), y: decode(meFile, a - offsetSec, 2) }));
+  const fold = [0, 1].map((oc) => {
+    const A = Array.from({ length: nch }, () => new Float64Array(nch)), b = new Float64Array(nch);
+    blocks.forEach(({ x, y }, k) => {
+      if (k % 2) return;
+      const n = Math.min(x.length / nch, y.length / 2);
+      for (let t = 0; t < n; t++) {
+        const target = y[t * 2 + oc];
+        for (let i = 0; i < nch; i++) { const xi = x[t * nch + i]; b[i] += xi * target; for (let j = 0; j < nch; j++) A[i][j] += xi * x[t * nch + j]; }
+      }
+    });
+    for (let i = 0; i < nch; i++) A[i][i] += 1e-6; // a silent channel (LFE in quiet passages) must not make it singular
+    return solve(A, b);
+  });
   let res = 0, tot = 0;
-  for (const [x, y, n] of pairs) for (let i = 0; i < n; i++) { const r = x[i] - gain * y[i]; res += r * r; tot += x[i] * x[i]; }
+  blocks.forEach(({ x, y }, k) => {
+    if (!(k % 2)) return;
+    const n = Math.min(x.length / nch, y.length / 2);
+    for (let t = 0; t < n; t++) for (let oc = 0; oc < 2; oc++) {
+      let v = 0; for (let i = 0; i < nch; i++) v += fold[oc][i] * x[t * nch + i];
+      const r = v - y[t * 2 + oc]; res += r * r; tot += y[t * 2 + oc] ** 2;
+    }
+  });
   const residualDb = 10 * Math.log10((res + 1e-12) / (tot + 1e-12));
-  const out = { ok: residualDb <= -20 && offsetSec >= -5 && offsetSec <= 5, offsetSec, gain, residualDb, corr: best.v };
-  log(`Sintel M&E alignment: offset ${(offsetSec * 1000).toFixed(2)} ms, gain ${gain.toFixed(3)}, residual ${residualDb.toFixed(1)} dB in ${pairs.length} quiet stretches (corr ${best.v.toFixed(3)}) -> ${out.ok ? 'clean' : 'not clean'}`);
+  const out = { ok: residualDb <= -20 && Math.abs(offsetSec) <= 5 && blocks.length >= 4, offsetSec, fold, nch, residualDb, corr: best.v };
+  log(`Sintel M&E alignment: offset ${(offsetSec * 1000).toFixed(2)} ms (corr ${best.v.toFixed(3)}), fold of ${nch} channels ${fold.map((w) => `[${Array.from(w, (v) => v.toFixed(3)).join(' ')}]`).join(' ')}, residual ${residualDb.toFixed(1)} dB in ${Math.floor(blocks.length / 2)} held-out quiet stretches -> ${out.ok ? 'clean' : 'not clean'}`);
   return out;
+}
+
+/** Solve A x = b (small, symmetric positive definite) by Gaussian elimination with partial pivoting. */
+function solve(A, b) {
+  const n = b.length, M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c; for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    [M[c], M[p]] = [M[p], M[c]];
+    for (let r = c + 1; r < n; r++) { const f = M[r][c] / M[c][c]; for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k]; }
+  }
+  const x = new Array(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) { let v = M[r][n]; for (let k = r + 1; k < n; k++) v -= M[r][k] * x[k]; x[r] = v / M[r][r]; }
+  return x;
 }
 
 /**
@@ -316,10 +350,11 @@ function centreIsDialogue(L, f) {
 
 /** -filter_complex inputs for Sintel's dialogue stem (mix minus aligned M&E), stereo, starting at `start`. */
 function sintelDialogueArgs(sintelFile, meFile, al, start, len) {
+  const pan = al.fold.map((w, oc) => `c${oc}=${w.map((v, i) => `${v.toFixed(6)}*c${i}`).join('+')}`).join('|').replace(/\+-/g, '-');
   return {
     inputs: ['-ss', String(start), '-t', String(len), '-i', sintelFile, '-ss', String(start - al.offsetSec), '-t', String(len), '-i', meFile],
-    // [mix] - gain * [me], per channel (both stereo at 48 kHz).
-    graph: (mix, me, out) => `[${mix}]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[dmx];[${me}]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${(-al.gain).toFixed(6)}[dme];[dmx][dme]amix=inputs=2:normalize=0:duration=shortest[${out}]`,
+    // The film folded to stereo as the M&E was, minus the M&E, per channel (48 kHz).
+    graph: (mix, me, out) => `[${mix}]aresample=48000,pan=stereo|${pan},aformat=sample_fmts=fltp[dmx];[${me}]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=-1[dme];[dmx][dme]amix=inputs=2:normalize=0:duration=shortest[${out}]`,
   };
 }
 
@@ -372,8 +407,11 @@ async function build() {
     const rel = 'formats/Tears of Steel - 3 audio tracks, 2 subtitles, chapters.mkv';
     const dir = mkdirp(path.join(work, 'mkv'));
     const enSrt = path.join(dir, 'en.srt'), deSrt = path.join(dir, 'de.srt');
-    fs.writeFileSync(enSrt, L.writeSrt(L.windowCues(subs.tos.en.cues, tosW, tosMkvLen)));
-    fs.writeFileSync(deSrt, L.writeSrt(L.windowCues(subs.tos.de.cues, tosW, tosMkvLen)));
+    for (const [file, cues] of [[enSrt, subs.tos.en.cues], [deSrt, subs.tos.de.cues]]) {
+      const w = L.windowCues(cues, tosW, tosMkvLen);
+      if (w.length < 3) throw new Error(`only ${w.length} subtitle lines in the multi-track MKV window`);
+      fs.writeFileSync(file, L.writeSrt(w));
+    }
     const meta = path.join(dir, 'chapters.txt');
     const ch = [[0, 'Opening'], [Math.round(tosMkvLen / 3), 'The argument'], [Math.round((2 * tosMkvLen) / 3), 'Aftermath']];
     fs.writeFileSync(meta, `;FFMETADATA1\n${ch.map(([s, t], i) => `[CHAPTER]\nTIMEBASE=1/1000\nSTART=${s * 1000}\nEND=${(i + 1 < ch.length ? ch[i + 1][0] : tosMkvLen) * 1000}\ntitle=${t}\n`).join('')}`);
@@ -433,7 +471,7 @@ async function build() {
       const w = L.bestWindow(sintel.cues, sintel.dur, len, { from: 30, to: sintel.dur * 0.8 });
       rel = 'formats/Sintel - 5.1 with dialogue on the centre channel.mkv';
       const d = sintelDialogueArgs(sintel.source, meFile, al, w, len);
-      ff([...d.inputs, '-filter_complex', `${d.graph('0:a:0', '1:a:0', 'dlg')};[1:a:0]aresample=48000,aformat=channel_layouts=stereo,volume=${al.gain.toFixed(6)},asplit=2[me1][me2];` +
+      ff([...d.inputs, '-filter_complex', `${d.graph('0:a:0', '1:a:0', 'dlg')};[1:a:0]aresample=48000,aformat=channel_layouts=stereo,asplit=2[me1][me2];` +
         `[dlg]pan=mono|c0=0.5*c0+0.5*c1[c];[me2]pan=mono|c0=0.5*c0+0.5*c1,lowpass=f=120[lfe];` +
         '[me1][c][lfe]amerge=inputs=3,pan=5.1(side)|FL=c0|FR=c1|FC=c2|LFE=c3|SL=0.5*c0|SR=0.5*c1[a]',
       '-map', '0:v:0', '-map', '[a]', '-vf', 'format=yuv420p', ...X264(21, ['-g', '48']), '-c:a', 'ac3', '-b:a', '448k',
@@ -500,10 +538,13 @@ async function build() {
     if (canRotate) {
       // Shown upright, the picture must be the portrait crop it was made from (not sideways or upside down).
       const psnr = (turn) => {
+        const stats = path.join(work, 'phone', `psnr-${turn ? 'turned' : 'upright'}.log`);
+        fs.rmSync(stats, { force: true });
         const r = spawnSync(FFMPEG, ['-hide_banner', '-nostdin', '-ss', '1', '-i', K(rel), '-ss', String(at + 1), '-i', sintel.source, '-filter_complex',
-          `[0:v]scale=360:640,format=yuv420p[x];[1:v]crop=ih*9/16:ih${turn ? ',transpose=1,transpose=1' : ''},scale=360:640,format=yuv420p[y];[x][y]psnr`, '-frames:v', '1', '-f', 'null', '-'], { encoding: 'utf8' });
-        const m = /average:([0-9.]+|inf)/.exec(r.stderr);
-        if (!m) throw new Error(`orientation check failed: ${r.stderr.slice(-800)}`);
+          `[0:v]scale=360:640,format=yuv420p[x];[1:v]crop=ih*9/16:ih${turn ? ',transpose=1,transpose=1' : ''},scale=360:640,format=yuv420p[y];[x][y]psnr=stats_file=${stats.replace(/\\/g, '/').replace(/:/g, '\\:')}[out]`,
+          '-map', '[out]', '-frames:v', '1', '-an', '-f', 'null', '-'], { encoding: 'utf8' });
+        const m = fs.existsSync(stats) ? /psnr_avg:([0-9.]+|inf)/.exec(fs.readFileSync(stats, 'utf8')) : null;
+        if (r.status !== 0 || !m) throw new Error(`orientation check failed: ${r.stderr.slice(-800)}`);
         return m[1] === 'inf' ? 99 : Number(m[1]);
       };
       const upright = psnr(false), turned = psnr(true);
