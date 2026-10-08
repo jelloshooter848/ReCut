@@ -83,7 +83,7 @@ flowchart LR
 | `whisper/transcribeJob.ts`, `whisper/wav.ts`, `whisper/output.ts` | The `transcribe` job (its own lane): verify the model, cache lookup (`<cache>/whisper/<media key>_s<stream>_<model>-<settings hash>.json`; the media key comes from `transcriptionMediaKey`: the content key `cacheKeyForPath`, so it survives moves), FFmpeg → 16 kHz mono PCM WAV in a temp folder under `<userData>/whisper/tmp`, chunks of ≤ 30 min cut at the quietest 100 ms window in the 20 s before each boundary (streamed: memory does not grow with length), `whisper-cli -oj -pp` per chunk with relative ASCII paths (cwd = the temp folder), progress from `-pp` and the printed segment times, the JSON result repaired (raw control characters, cut UTF-8) and cleaned into cues (non-speech dropped, times clamped). Cancel kills the process; the temp folder is always removed. |
 | `export/renderGraph.ts` | Pure: `ExportRequest` → ffmpeg args + `filter_complex` script. Unit-tested. Also used by "Show FFmpeg command". Its segment and transition-handle planning lives in `shared/exportPlan.ts`. Keyframed clips (Roadmap §11): position / scale per frame with `perspective` (eval=frame) after the exact-length trim, opacity with `sendcmd` + a named `lut`, level with `volume` eval=frame every 256 samples ([export-pipeline.md](export-pipeline.md#keyframed-clips-roadmap-11)). |
 | `export/chunks.ts` | Pure: decides when to chunk and where the chunk boundaries go. |
-| `export/exporter.ts` | Runs the graph (single pass or chunked), parses `-progress`, handles cancel, renders into an exclusively created `<name>.recut-part-<random>.mp4` and moves it onto the output (kept as `<name>.recut-unsaved-<time>.mp4` if that fails), writes the `.srt` sidecar through a temp, cleans temp files. Refuses an output that is a project source file, and an existing output unless the request says `overwrite` (see [export-pipeline.md](export-pipeline.md#output-files)). |
+| `export/exporter.ts` | Runs the graph (single pass or chunked), parses `-progress`, handles cancel, renders into an exclusively created `<name>.recut-part-<random>.<ext>` and moves it onto the output (kept as `<name>.recut-unsaved-<time>.<ext>` if that fails), writes the `.srt` sidecar through a temp, cleans temp files. Refuses an output that is a project source file, and an existing output unless the request says `overwrite` (see [export-pipeline.md](export-pipeline.md#output-files)). |
 | `safeMkdir.ts` | Creates the output folder level by level, without recursive or blocking mkdir. Refuses `/proc`, `/sys` and `/dev`. Gives up after 5 s. |
 | `updateCheck.ts`, `updateIpc.ts` | Update notice: `UpdateChecker` (pure Node, unit-tested) makes one GET to GitHub's `releases/latest` (`net.fetch`, only a `User-Agent: ReCut/<version>` header, no cookies, 10 s timeout, 1 MB cap), remembers the answer in `prefs.json` (`updateCheck`, `updateLastCheckAt`, `updateLatest`, `updateSkipVersion`) and broadcasts `ev:updateStatus`. The automatic check runs 5 s after startup, only when the user opted in, at most once per 24 h; Help › Check for Updates… runs it on demand. Failures are logged, never thrown. `update:openRelease` opens only the repository's releases pages. Rules (semver, reply parser, URL check, throttle) are pure in `shared/update.ts`; the prompt, notice and Help command are `src/app/updates.ts` / `UpdateBanner.tsx`. Nothing is downloaded or installed. |
 | `pathSafety.ts` | "Is this the same file as a project source?" for writes: `canonicalPath` (realpath), `fileIdentity` (device + inode) and `findSameFile`, case-folded on every platform. Used by video export and subtitle export. |
@@ -158,7 +158,7 @@ pickup and auto-proxies; probing; save/open/autosave; relink.
 SequencePlayer                  SourcePlayer (one <video>, JKL; native at 0<rate≤4, seek-stepped otherwise)
    │ each frame:
    │  planFrame(seq, media, frame)  ← pure planner: per-track indexes, transitions → layers (alpha) + audio (gain)
-   │  MediaElementPool.acquire()    ← pooled <video> per (path, role), LRU capacity 12
+   │  MediaElementPool.acquire()    ← pooled <video> per (path, role), LRU capacity 16
    │  keep elements at sourceTime + ½ media frame (drift > 80 ms → re-seek)
    │  draw bottom→top on a 2D canvas (transform, crop, opacity, transition alpha), subtitles on top; a Cross
    │    Dissolve pair (incoming layer's mixWith = outgoing clip, mixesWith) is added in a scratch canvas
@@ -344,7 +344,7 @@ frame by construction, and the unit and real-FFmpeg tests compare nested timelin
 - Virtualized lists: Project tree, Transcript results, Scene library.
 - Planner: per-track sorted indexes and transition maps cached per immutable track object (binary search per frame).
 - Caches: thumbnails, filmstrips and waveforms (main-side disk cache plus renderer memory), proxies, scene results,
-  all keyed by path + size + mtime.
+  all keyed by the file's content key (`cacheKeyForPath`), so moved media keep them.
 - Job lanes keep long scene detections from starving proxies. In-flight de-duplication prevents double encodes.
 - Projects are saved as compact JSON.
 

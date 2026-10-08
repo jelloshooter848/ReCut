@@ -13,7 +13,7 @@ Files:
   subtitleContent?, inputCount, ... }`.
   No I/O; unit-tested; used for the "preview command" UI.
 - `electron/export/exporter.ts` — runs it: writes the graph to a temp file, spawns ffmpeg, parses
-  `-progress` output, handles cancel, moves the render temp (`<name>.recut-part-<random>.mp4`) onto the final
+  `-progress` output, handles cancel, moves the render temp (`<name>.recut-part-<random>.<ext>`) onto the final
   name, writes the `.srt` sidecar (see "Output files").
 - `electron/export/chunks.ts` — pure. Decides when to chunk and plans chunk boundaries.
 - `electron/safeMkdir.ts` — creates the output folder without recursive mkdir (see "Running it").
@@ -372,7 +372,7 @@ chapters. Chunk graphs carry no chapters; the chunked join adds the same file as
   frame midpoints, half a frame before those frames: libass picks cues by frame time in whole milliseconds, so
   exact frame times showed or hid about half the cue edges one frame off. Burn-in runs on the sequence-rate frames,
   before any frame-rate conversion. With `exportSubtitleSidecar`, a sidecar SRT with the exact cue times
-  (`buildSubtitleSrt`) is written next to the MP4.
+  (`buildSubtitleSrt`) is written next to the output.
 - Soft subtitles (MKV, `settings.subtitleOutputs`): `buildRenderGraph` returns one range-relative SRT per chosen
   sequence subtitle track in `softSubtitles` (exact cue times like the sidecar, from `req.subtitleTracks`; a track
   with no cue in the range is left out with a warning). With `softSubtitleFilePaths` each file is an input after the
@@ -401,14 +401,14 @@ chapters. Chunk graphs carry no chapters; the chunked join adds the same file as
   `{ ok: false, code: 'exists' }` and the dialog asks "<file> already exists. Replace it?" and resends the request
   with `overwrite: true`. `runExport` checks again just before the final move, so a file created while rendering is
   not replaced either.
-- **Exclusive temps.** The render goes to `<name>.recut-part-<random>.mp4`, created with `O_EXCL` next to the
-  output (never an existing file, symlink or hard link); ffmpeg writes into that file, and its device + inode are
-  checked before the move. The sidecar is written to `<name>.recut-part-<random>.srt` (flag `wx`) and renamed.
+- **Exclusive temps.** The render goes to `<name>.recut-part-<random>.<ext>` (the output's extension), created with
+  `O_EXCL` next to the output (never an existing file, symlink or hard link); ffmpeg writes into that file, and its
+  device + inode are checked before the move. The sidecar is written to `<name>.recut-part-<random>.srt` (flag `wx`) and renamed.
 - **Final move** (`finalizeExportOutput`): a plain `rename`, which replaces the target atomically (POSIX rename,
   `MoveFileEx` with `REPLACE_EXISTING` on Windows); the previous file is never deleted first. Only when that is
   refused and a regular file is in the way (e.g. read-only on Windows) is it moved aside, the render moved in and
   the old file deleted, or moved back on failure. If the move still fails, the finished render is kept as
-  `<name>.recut-unsaved-<time>.mp4` and the error names it.
+  `<name>.recut-unsaved-<time>.<ext>` and the error names it.
 
 ## Chunked rendering (large sequences)
 
@@ -441,7 +441,7 @@ renders the output frames `[outputFrameIndex(start), outputFrameIndex(end))` of 
 chunk that owns no output frame (e.g. a 1-frame chunk at 60 → 24 fps) is merged into the next one
 (`mergeChunksWithoutOutputFrames` in `exporter.ts`).
 
-**Video**: one ffmpeg per chunk → `chunk-NNNN.mp4` with the export's encoder args plus closed GOPs and an
+**Video**: one ffmpeg per chunk → `chunk-NNNN.mp4` (`.mov` for MOV) with the export's encoder args plus closed GOPs and an
 IDR at the chunk start (`-x264-params keyint=250:open-gop=0:stitchable=1` / `-x265-params
 keyint=250:open-gop=0`, `-force_key_frames 0`), `-an`. Each input gets `-threads 1` and the graph
 `-filter_complex_threads 2`: per-input decoder threads multiplied memory by the input count (1.47 GB →
@@ -463,8 +463,8 @@ chunk-NNNN-aK.wav` output per track, the tracks decoded once).
 `-c:v copy`, the PCM of each output audio track through its final encode with the export's audio args, the chapters
 file (when the range has chapter markers) as an input after the audio lists with `-map_chapters`, the soft subtitle
 files (MKV) after it with the export's stream tags, no metadata from the chunk files —
-`-movflags +faststart -t <duration>` → `<name>.recut-part-<random>.mp4`, moved into place as usual. The chapters are
-those of the single pass.
+`-t <duration>` and the format's muxer args (`-movflags +faststart` for MP4) → `<name>.recut-part-<random>.<ext>`,
+moved into place as usual. The chapters are those of the single pass.
 
 Progress is weighted (video 80 % by frames, audio 12 %, join 8 %) and monotonic. Cancel kills the current
 ffmpeg; the temp folder (chunk files, lists, scripts) is removed in all cases. An error names the step:
