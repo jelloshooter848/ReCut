@@ -63,6 +63,23 @@ export interface VideoStreamInfo {
 
 export interface SubtitleStreamInfo { index: number; codec: string; language?: string; title?: string }
 
+/**
+ * A media file's embedded start timecode: the label of its first frame (camera MOV / MP4 `tmcd` tracks, MXF), as
+ * electron/media/probe.ts reads it from ffprobe (`format.tags.timecode`, else the video stream's, else a `tmcd` data
+ * stream's). Source timecode displays and the interchange exports count from it; files without one count from
+ * 00:00:00:00.
+ */
+export interface StartTimecode {
+  /** The label, normalized: `HH:MM:SS:FF`, or `HH:MM:SS;FF` for drop-frame. */
+  text: string;
+  /** The rate the label counts at (the video stream's rate; the tmcd track's when there is no usable video rate). */
+  rate: Rational;
+  /** SMPTE drop-frame counting (only at 30000/1001 and 60000/1001). */
+  dropFrame: boolean;
+  /** The label as a frame count at `rate` (drop-frame labels converted, so frames / rate is real time). */
+  frames: number;
+}
+
 export interface MediaProbe {
   container: string;
   duration: number;             // seconds
@@ -72,6 +89,8 @@ export interface MediaProbe {
   subtitles: SubtitleStreamInfo[];
   startTime: number;            // container start time (seconds), used to normalize seeking
   bitrate?: number;
+  /** Embedded start timecode (absent: the file has none, or an older build probed it; source timecode then counts from 00:00:00:00). */
+  startTimecode?: StartTimecode;
   /** Whether Chromium can decode this file directly (container + codecs). */
   browserPlayable: boolean;
   playabilityReason?: string;

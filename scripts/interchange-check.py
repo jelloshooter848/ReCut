@@ -4,18 +4,20 @@
 The unit tests (tests/unit/interchange-export.test.ts) write the exports of each fixture project as goldens in
 tests/fixtures/interchange/, next to a `<fixture>.expected.json` sidecar listing what ReCut intended: every track
 and clip with its record range (sequence frames), source in point (frames at the media's rate), speed, file and
-enabled state. This script reads the goldens back and compares:
+enabled state; for a file with an embedded start timecode also `tcStart` (frames at the media's rate), from which the
+exports count source times (source in = tcStart + srcIn). This script reads the goldens back and compares:
 
 - `.otio` with the otio_json adapter: track order and kinds, every clip's record range (from the track layout),
-  source in, rate, time warp, enabled state and file URL;
+  source in, rate, time warp, enabled state and file URL, and the media reference's available range starting at the
+  file's start timecode;
 - `_Vn.edl` with the cmx_3600 adapter: every enabled clip of video track n in order, its record range within the
   clip (dissolves borrow handles), its source frames at its record frames, the SOURCE FILE comment, and one distinct
   reel name per file;
 - `.fcpxml` with the fcpx_xml adapter (lanes and clips per lane: the adapter truncates frame rates to integers, so
   it cannot check NTSC times) and with an exact reader written here on ElementTree + Fraction (record and source
-  frames of every clip, FCPXML 1.9 time semantics as documented in shared/interchange/fcpxml.ts). An asset-clip of a
-  file with picture and sound and no srcEnable is a linked video + audio pair: it reads as both, the audio on the
-  lane of the intended audio clip it matches (FCPXML does not say which audio track it was on).
+  frames of every clip and its asset's start, FCPXML 1.9 time semantics as documented in shared/interchange/fcpxml.ts).
+  An asset-clip of a file with picture and sound and no srcEnable is a linked video + audio pair: it reads as both,
+  the audio on the lane of the intended audio clip it matches (FCPXML does not say which audio track it was on).
 
 A format whose adapter is not installed is reported and skipped. Exit status 1 on any mismatch.
 
@@ -51,6 +53,11 @@ def have(adapter):
     return adapter in [a.name for a in otio.plugins.ActiveManifest().adapters]
 
 
+def src_in(c):
+    """The source in point as the exports write it: frames from the file's embedded start timecode, if any."""
+    return c['srcIn'] + c.get('tcStart', 0)
+
+
 def frames(t, rate):
     """A RationalTime as a frame count at `rate` (exact to 1e-6)."""
     v = t.value_rescaled_to(rate)
@@ -73,14 +80,17 @@ def check_otio(exp, path):
             rip = t.range_of_child(item)
             sr = item.source_range
             warp = [e for e in item.effects if isinstance(e, otio.schema.LinearTimeWarp)]
+            ar = item.media_reference.available_range
             got.append({
+                'fileStart': ar.start_time.value if ar is not None else None,
                 'start': frames(rip.start_time, rate), 'duration': frames(rip.duration, rate),
                 'srcIn': sr.start_time.value, 'srcRate': sr.start_time.rate,
                 'speed': warp[0].time_scalar if warp else 1, 'enabled': item.enabled,
                 'url': item.media_reference.target_url,
             })
         want = [{
-            'start': c['start'], 'duration': c['duration'], 'srcIn': c['srcIn'], 'srcRate': c['srcRate'][0] / c['srcRate'][1],
+            'fileStart': None if c['still'] else c.get('tcStart', 0),
+            'start': c['start'], 'duration': c['duration'], 'srcIn': src_in(c), 'srcRate': c['srcRate'][0] / c['srcRate'][1],
             'speed': c['speed'], 'enabled': c['enabled'], 'url': c['url'],
         } for c in et['clips']]
         check(got == want, f"otio {et['name']}: clips\n    got  {got}\n    want {want}")
@@ -124,7 +134,8 @@ def check_edl(exp, path):
         name = c['name']
         # Record range: within the clip, or earlier by the half of a dissolve that borrows its handle.
         check(c['start'] - 60 <= ri <= ro <= c['end'], f'edl {name}: record {ri}-{ro} outside the clip')
-        check(si == c['srcIn'] + round((ri - c['start']) * ratio), f"edl {name}: source in {si}, want {c['srcIn'] + round((ri - c['start']) * ratio)}")
+        want_si = src_in(c) + round((ri - c['start']) * ratio)
+        check(si == want_si, f'edl {name}: source in {si}, want {want_si}')
         comments = g.metadata.get('cmx_3600', {}).get('comments', [])
         check(f"SOURCE FILE: {c['path']}" in comments, f'edl {name}: SOURCE FILE comment ({comments})')
         reels.setdefault(c['path'], set()).add(g.metadata.get('cmx_3600', {}).get('reel'))
@@ -171,14 +182,16 @@ def read_fcpxml_exact(path):
                 speed, media = 1, start
                 tm = k.find('timeMap')
                 if tm is not None:
-                    # Local time -> media time, anchored at the asset's start (0s -> 0s).
+                    # Local time -> media time, anchored at the asset's start (T0 -> T0; 0s without a start timecode).
                     t0, t1 = list(tm)
-                    check((t0.get('time'), t0.get('value')) == ('0s', '0s'), f"fcpxml: timeMap of {k.get('name')} starts at 0s -> 0s")
+                    a0 = a.get('start', '0s')
+                    check((t0.get('time'), t0.get('value')) == (a0, a0), f"fcpxml: timeMap of {k.get('name')} starts at {a0} -> {a0}")
                     sp = (q(t1.get('value')) - q(t0.get('value'))) / (q(t1.get('time')) - q(t0.get('time')))
                     speed = float(sp)
                     media = q(t0.get('value')) + (start - q(t0.get('time'))) * sp
                 r = {
                     'lane': k_lane, 'start': abs_start / fd, 'duration': q(k.get('duration')) / fd, 'srcIn': media / mfd,
+                    'fileStart': q(a.get('start', '0s')) / mfd,
                     'speed': speed, 'enabled': k.get('enabled') != '0', 'url': a.find('media-rep').get('src'),
                 }
                 out.append(r)
@@ -194,10 +207,11 @@ def check_fcpxml(exp, path):
     want = []
     for t in exp['tracks']:
         for c in t['clips']:
-            want.append({'lane': t['lane'], 'start': c['start'], 'duration': c['duration'], 'srcIn': c['srcIn'], 'speed': c['speed'], 'enabled': c['enabled'], 'url': c['url']})
+            want.append({'lane': t['lane'], 'start': c['start'], 'duration': c['duration'], 'srcIn': src_in(c), 'fileStart': c.get('tcStart', 0),
+                         'speed': c['speed'], 'enabled': c['enabled'], 'url': c['url']})
     got = read_fcpxml_exact(path)
     for g in got:
-        for k in ('start', 'duration', 'srcIn'):
+        for k in ('start', 'duration', 'srcIn', 'fileStart'):
             check(g[k].denominator == 1, f'fcpxml: {k} {g[k]} is not on a frame')
             g[k] = int(g[k])
     # Linked asset-clips: their audio half takes the lane of the intended audio clip it matches.

@@ -9,7 +9,8 @@
  * Timing: a RationalTime's `rate` is the frame rate as a float (num / den) and its `value` a frame count at that rate.
  * Record positions follow from the track order (gaps between clips); a clip's `source_range.duration` is its length
  * at the sequence rate (what it occupies in the track) and `source_range.start_time` its in point in frames at the
- * media's own rate. Constant speed is a LinearTimeWarp (time_scalar = speed), which by OTIO convention does not
+ * media's own rate, on the file's timecode: an ExternalReference's `available_range.start_time` is the file's embedded
+ * start timecode (0 without one) and source ranges count from it, as OTIO's readers expect. Constant speed is a LinearTimeWarp (time_scalar = speed), which by OTIO convention does not
  * change the clip's duration in the track. Dissolves are SMPTE_Dissolve transitions centred on the cut (in_offset =
  * out_offset = half); fades from / to black are SMPTE_Dissolve transitions against the gap (or track edge) with one
  * offset 0. ReCut-only properties (transform, opacity, levels, channel selection, keyframes, links) are kept under
@@ -68,12 +69,12 @@ export function writeOtio(p: Prepared, issues: Issues): string {
     const mr = pc.still ? 1 : rateOf(pc.srcRate);
     const pr = m.probe;
     const available = pc.still || !pr || !(pr.duration > 0) ? null
-      : range(rt(0, mr), rt(Math.round(pr.duration * pc.srcRate.num / pc.srcRate.den), mr));
+      : range(rt(pc.tc?.frames ?? 0, mr), rt(Math.round(pr.duration * pc.srcRate.num / pc.srcRate.den), mr));
     return {
       OTIO_SCHEMA: 'Clip.1',
       metadata: { recut },
       name: pc.name,
-      source_range: range(pc.still ? R(0) : rt(pc.srcIn, mr), R(pc.duration)),
+      source_range: range(pc.still ? R(0) : rt(pc.srcIn + (pc.tc?.frames ?? 0), mr), R(pc.duration)),
       effects: pc.speed !== 1 && !pc.still ? [{ OTIO_SCHEMA: 'LinearTimeWarp.1', metadata: {}, name: '', effect_name: 'LinearTimeWarp', time_scalar: pc.speed }] : [],
       markers: [],
       enabled: pc.enabled,

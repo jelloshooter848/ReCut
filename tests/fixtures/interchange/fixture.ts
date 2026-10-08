@@ -1,23 +1,27 @@
 /**
  * Projects for the interchange tests (tests/unit/interchange-*.test.ts): deterministic ids, a representative fan-edit
- * sequence at 23.976 and a drop-frame one at 29.97. The goldens next to this file are their exports; the
+ * sequence at 23.976, a drop-frame one at 29.97 and one cut from camera files with embedded start timecode. The goldens next to this file are their exports; the
  * `*.expected.json` sidecars are what ReCut intended (read by scripts/interchange-check.py through OpenTimelineIO).
  */
 import type { Clip, ID, MediaItem, Project, Rational, Sequence, Track, Transition } from '../../../shared/model';
 import { createProject, createSequence } from '../../../shared/project';
 import { defaultAudio, defaultTransform } from '../../../shared/timeline';
+import { parseStartTimecode } from '../../../shared/time';
 
 export const R23: Rational = { num: 24000, den: 1001 };
 export const R29: Rational = { num: 30000, den: 1001 };
 
-export function media(id: string, path: string, over: Partial<MediaItem> = {}, opts: { fps?: Rational; dur?: number; audio?: number[]; video?: boolean } = {}): MediaItem {
+export function media(id: string, path: string, over: Partial<MediaItem> = {}, opts: { fps?: Rational; dur?: number; audio?: number[]; video?: boolean; tc?: string } = {}): MediaItem {
   const fps = opts.fps ?? R23;
+  const startTimecode = opts.tc ? parseStartTimecode(opts.tc, fps) : null;
+  if (opts.tc && !startTimecode) throw new Error(`fixture: bad timecode ${opts.tc}`);
   const audio = (opts.audio ?? [2]).map((channels, i) => ({ index: i + 1, codec: 'aac', channels, layout: channels === 6 ? '5.1(side)' : 'stereo', sampleRate: 48000 }));
   return {
     id, name: path.split(/[\\/]/).pop()!, path, kind: opts.video === false ? 'audio' : 'video', category: 'Movie', identity: {}, binId: null,
     probe: {
       container: 'matroska,webm', duration: opts.dur ?? 3600, size: 1, audio, subtitles: [], startTime: 0, browserPlayable: true,
       ...(opts.video === false ? {} : { video: { index: 0, codec: 'h264', width: 1920, height: 1080, fps, avgFps: fps, isVfr: false } }),
+      ...(startTimecode ? { startTimecode } : {}),
     },
     offline: false, proxy: { status: 'none' }, detectedScenes: [], subtitleTrackIds: [], notes: '', tags: [], addedAt: 0, ...over,
   };
@@ -128,4 +132,30 @@ export function dropFrame(): { project: Project; seqId: ID } {
   put(A1, clip('da1', 'm-ntsc', 0, 1790, 5, { linkId: 'D1' }), clip('da2', 'm-ntsc', 1790, 300, 120, { linkId: 'D2' }));
   s.markers.push({ id: 'mdf', time: 1800, duration: 0, name: 'One minute', note: '', color: '#30a46c', kind: 'marker' });
   return { project: mkProject('NTSC Project', M, [s]), seqId: s.id };
+}
+
+/**
+ * A 29.97 sequence cut from camera files with embedded start timecode: a drop-frame one (01:00:00;00), a non-drop one
+ * at the same rate (01:00:00:00 NDF = frame 108000), and a file without timecode; a dissolve, linked audio, a speed
+ * change and a marker.
+ */
+export function sourceTimecode(): { project: Project; seqId: ID } {
+  const M = [
+    media('m-cam-df', '/media/Camera/A001_C002.mov', {}, { fps: R29, dur: 600, tc: '01:00:00;00' }),
+    media('m-cam-ndf', '/media/Camera/B001 NDF.mp4', {}, { fps: R29, dur: 600, tc: '01:00:00:00' }),
+    media('m-plain', '/media/Plain/screen.mkv', {}, { fps: R29, dur: 600 }),
+  ];
+  const s = mkSeq('seq-tc', 'Camera Cut', R29);
+  const [V1] = s.videoTracks;
+  const [A1] = s.audioTracks;
+  put(V1,
+    clip('k1', 'm-cam-df', 0, 120, 2, { linkId: 'K1', name: 'Camera A' }),
+    clip('k2', 'm-cam-ndf', 120, 150, 10, { linkId: 'K2', name: 'Camera B' }),
+    clip('k3', 'm-plain', 270, 60, 1),
+    clip('k4', 'm-cam-ndf', 330, 60, 30, { speed: 2, name: 'Camera B fast' }),
+  );
+  V1.transitions.push(tr('t-k', 'crossDissolve', 20, 'k1', 'k2'));
+  put(A1, clip('ka1', 'm-cam-df', 0, 120, 2, { linkId: 'K1' }), clip('ka2', 'm-cam-ndf', 120, 150, 10, { linkId: 'K2' }));
+  s.markers.push({ id: 'mtc', time: 200, duration: 0, name: 'B roll', note: '', color: '#4d7cfe', kind: 'marker' });
+  return { project: mkProject('Camera Project', M, [s]), seqId: s.id };
 }

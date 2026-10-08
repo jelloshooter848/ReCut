@@ -4,7 +4,7 @@
  */
 import type { Clip, ID, Marker, MediaItem, Rational, SceneRecord, Sequence, SubtitleCue, Track } from '../../shared/model';
 import { allTracks, clipEnd, findClip, sequenceDuration, sourceTimeAt } from '../../shared/timeline';
-import { formatSequenceSecondsTimecode, validFpsOr } from '../../shared/time';
+import { formatSourceTimecode, validFpsOr } from '../../shared/time';
 import type { FilterState, StoreState } from './types';
 
 export function activeSequence(state: StoreState): Sequence | null {
@@ -271,13 +271,20 @@ export function identityLabel(media: MediaItem | undefined): string {
   return parent ? `${parent} › ${title}` : title;
 }
 
+/**
+ * Source timecode of `seconds` into `media`: at the media's video rate (else `fps`), counting from the file's embedded
+ * start timecode when it has one (shared/time.ts formatSourceTimecode), else from 00:00:00:00.
+ */
+export function mediaSourceTimecode(seconds: number, media: MediaItem | undefined, fps: Rational): string {
+  return formatSourceTimecode(seconds, validFpsOr(media?.probe?.video?.fps, fps), media?.probe?.startTimecode);
+}
+
 export function originalTimecode(clip: Clip, frame: number, fps: Rational, media: MediaItem | undefined): OriginalTimecode {
   const f = Math.max(clip.start, Math.min(clipEnd(clip) - 1, frame));
   const sourceSeconds = Math.max(0, sourceTimeAt(clip, f, fps));
-  const mediaFps = validFpsOr(media?.probe?.video?.fps, fps);
   return {
     sourceSeconds,
-    sourceTimecode: formatSequenceSecondsTimecode(sourceSeconds, mediaFps),
+    sourceTimecode: mediaSourceTimecode(sourceSeconds, media, fps),
     fileName: media ? fileNameOf(media.path) : '',
     identityLabel: identityLabel(media),
   };

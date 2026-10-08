@@ -1,4 +1,4 @@
-import type { Rational } from './model';
+import type { Rational, StartTimecode } from './model';
 
 export const FPS_PRESETS: { label: string; fps: Rational }[] = [
   { label: '23.976', fps: { num: 24000, den: 1001 } },
@@ -249,6 +249,74 @@ export function parseSequenceTimecode(text: string, fps: Rational, current = 0):
     if (i >= 0) t = `${t.slice(0, i)};${t.slice(i + 1)}`;
   }
   return parseTimecode(t, fps, current);
+}
+
+// ------------------------------------------------------------------------------------------------
+// Embedded source timecode
+// ------------------------------------------------------------------------------------------------
+
+/** What a source timecode counts from: a file's embedded start timecode (see StartTimecode in model.ts). */
+export type TimecodeOrigin = Pick<StartTimecode, 'frames' | 'rate' | 'dropFrame'>;
+
+/** Frames in 24 hours of timecode labels at `fps` (2,589,408 drop-frame at 29.97): labels wrap there. */
+export function timecodeDayFrames(fps: Rational, dropFrame: boolean): number {
+  const nominal = Math.round(fpsValue(fps));
+  const drop = dropFrame ? dropFramesPerMinute(fps) : 0;
+  return 24 * 6 * (nominal * 600 - 9 * drop);
+}
+
+/**
+ * Parse an embedded start timecode label (ffprobe's `timecode` tag: "01:00:00:00", drop-frame "01:00:00;00") counting
+ * at `rate`. The label is drop-frame when its last separator is ';' (or '.' / ',') and `rate` has drop-frame
+ * timecode (29.97, 59.94); at other rates it is read as non-drop. Null for anything that is not a valid label at that
+ * rate (hours 0-23, minutes / seconds 0-59, frames below the nominal rate, not a label drop-frame skips) or an invalid
+ * rate.
+ */
+export function parseStartTimecode(text: string, rate: Rational): StartTimecode | null {
+  if (typeof text !== 'string' || !isValidFps(rate)) return null;
+  const m = /^\s*(\d{1,2}):(\d{2}):(\d{2})([:;.,])(\d{2,3})\s*$/.exec(text);
+  if (!m) return null;
+  const [h, mi, s, f] = [m[1], m[2], m[3], m[5]].map(Number);
+  const nominal = Math.round(fpsValue(rate));
+  if (h > 23 || mi > 59 || s > 59 || f >= nominal) return null;
+  const dropFrame = m[4] !== ':' && dropFramesPerMinute(rate) > 0;
+  const p = (n: number) => String(n).padStart(2, '0');
+  const label = `${p(h)}:${p(mi)}:${p(s)}${dropFrame ? ';' : ':'}${p(f)}`;
+  const frames = parseTimecode(label, rate);
+  if (frames === null) return null;
+  return { text: label, rate: { num: rate.num, den: rate.den }, dropFrame, frames };
+}
+
+/**
+ * A start timecode as a frame count at `fps` and the counting mode of labels at that rate: the file's own mode at its
+ * own rate; at another rate (a probe whose video rate was unusable) the same instant, under the app-wide rule.
+ */
+export function timecodeOriginAt(origin: TimecodeOrigin, fps: Rational): { frames: number; dropFrame: boolean } {
+  if (fpsEquals(origin.rate, fps)) return { frames: origin.frames, dropFrame: origin.dropFrame && usesDropFrameDisplay(fps) };
+  return { frames: secondsToFrames(framesToSeconds(origin.frames, origin.rate), fps), dropFrame: usesDropFrameDisplay(fps) };
+}
+
+/** `frames` wrapped into one day of timecode labels (0 .. timecodeDayFrames - 1). */
+export function wrapTimecodeFrames(frames: number, fps: Rational, dropFrame: boolean): number {
+  const day = timecodeDayFrames(fps, dropFrame);
+  return ((frames % day) + day) % day;
+}
+
+/**
+ * Source timecode of a position `seconds` into a media file whose frames count at `fps` (the media's rate). Without
+ * `origin` (the file has no embedded start timecode) this is formatSequenceSecondsTimecode: from 00:00:00:00 under
+ * the app-wide drop-frame rule. With one it counts from the file's start timecode, in the file's own mode (a
+ * non-drop 29.97 camera file stays non-drop, as the camera and other editors show it), wrapping at 24 hours.
+ */
+export function formatSourceTimecode(seconds: number, fps: Rational, origin?: TimecodeOrigin | null): string {
+  return formatSourceFrameTimecode(secondsToFrames(seconds, fps), fps, origin);
+}
+
+/** formatSourceTimecode for a source frame number at `fps` (frame 0 = the file's first frame). */
+export function formatSourceFrameTimecode(frame: number, fps: Rational, origin?: TimecodeOrigin | null): string {
+  if (!origin) return formatSequenceTimecode(frame, fps);
+  const o = timecodeOriginAt(origin, fps);
+  return formatTimecode(wrapTimecodeFrames(o.frames + Math.round(frame), fps, o.dropFrame), fps, { dropIndicator: o.dropFrame });
 }
 
 export function clamp(v: number, lo: number, hi: number): number { return v < lo ? lo : v > hi ? hi : v; }

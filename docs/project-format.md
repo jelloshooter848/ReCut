@@ -81,6 +81,14 @@ by **Collect Project** with proxies included, `proxy.path` points into the colle
 `audioStreams` (not a list of non-negative integers) is dropped on load. `probe.video.sar`
 (`{num, den}`) is the sample aspect ratio; it is kept only when both terms are positive safe integers and the ratio
 is within 1/16–16, otherwise it is dropped (square pixels). Probes from older builds have none.
+`probe.startTimecode` (optional) is the file's embedded start timecode, as probing read it (`format.tags.timecode`,
+else the video stream's `tags.timecode`, else a `tmcd` data stream's):
+`{ "text": "01:00:00;00", "rate": {"num": 30000, "den": 1001}, "dropFrame": true, "frames": 107892 }`. `text` is the
+normalized label (`;` before the frames when drop-frame), `rate` the rate it counts at (the video rate), `frames` the
+label as a frame count at `rate` (drop-frame labels converted). Source timecode displays and the timeline interchange
+exports count from it. It is kept on load only when `parseStartTimecode(text, rate)` (`shared/time.ts`) gives the
+same text, mode and frame count, otherwise dropped. Probes from older builds have none and count from 00:00:00:00, as
+before; it is added when the media is probed again (no migration, `formatVersion` unchanged).
 `probe.audio[].layoutGuessed: true` marks a stream for which ffprobe reported no channel layout (the `layout` shown
 is a guess from the channel count, so its channels are numbered, not named). Optional `channelProxies` holds the
 preview files of clips' channel selections (see Clip), keyed `<stream>.ch-<channel>` or

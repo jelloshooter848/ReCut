@@ -5,7 +5,7 @@
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Link2 } from 'lucide-react';
 import type { Clip, MediaItem, Rational } from '@shared/model';
-import { formatSequenceSecondsTimecode, validFpsOr } from '@shared/time';
+import { formatSourceTimecode, validFpsOr } from '@shared/time';
 import { AUDIO_KEY_PROPS, clipKeyframeFrames, TRANSFORM_KEY_PROPS } from '@shared/keyframes';
 import type { WaveformData } from '@shared/ipc';
 import { thumbs, waves } from '@/app/media';
@@ -202,8 +202,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
   }, [wave, waveX, waveSize.w, waveSize.h, waveSize.cssW, bodyH, zoom, clip.sourceIn, clip.speed, clip.audio.volume, clip.audio.muted, frameSec, isVideo, p.selected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- labels ----------------------------------------------------------------------------
-  const mediaFps = validFpsOr(media?.probe?.video?.fps, fps);
-  const srcTc = p.showSourceTc ? formatSequenceSecondsTimecode(clip.sourceIn, mediaFps) : null;
+  const srcTc = p.showSourceTc ? formatSourceTimecode(clip.sourceIn, validFpsOr(media?.probe?.video?.fps, fps), media?.probe?.startTimecode) : null;
   const stripe = labelColorHex(clip.color);
   const characters = clip.characters.slice(0, 2);
   // Keyframes (Roadmap §11): read-only diamonds at the clip's keyframes (picture properties on video, level on audio)

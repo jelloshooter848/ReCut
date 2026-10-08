@@ -300,8 +300,13 @@ these formats yet (planned for 1.4.0).
   into their media clips where the format has no nesting.
 - Times are exact: FCPXML uses rational times (version 1.9, which Resolve 18 and 19 import), OTIO frame counts at
   the sequence rate (source ranges at the media's own rate), EDL timecode (drop-frame at 29.97 and 59.94). The
-  timeline starts at 00:00:00:00, and source timecode counts from 00:00:00:00 at the start of each file (embedded
-  source timecode is not read).
+  timeline starts at 00:00:00:00.
+- Source times count from the file's embedded start timecode (camera MOV / MP4 `tmcd` tracks, MXF; see
+  [LIMITATIONS](LIMITATIONS.md#editing-and-effects)), as the other editor reads it from the file: the FCPXML asset's `start` is
+  that timecode and clip `start`s are media time from there (with the clip's `tcFormat`, `DF` or `NDF`); an OTIO
+  media reference's `available_range` starts at it and clips' `source_range` are on the same base; EDL source
+  timecode counts from it in the file's own mode (drop-frame or not), wrapping at 24 hours. Files without one count
+  from 00:00:00:00, as before.
 - Transitions are exported as ReCut renders them: dissolves centred on the cut and limited by the clips' handles (a
   dissolve with no handles is a cut, as in ReCut's own export).
 
@@ -323,7 +328,8 @@ these formats yet (planned for 1.4.0).
   rides on the video dissolve at the same cut and takes its length. Any other use of a file that has both picture and
   sound is marked video-only or audio-only (`srcEnable`), and because DaVinci Resolve ignores that mark, the unused
   half is also written muted (−96 dB) or transparent (opacity 0). A retimed clip's `timeMap` starts at the file's
-  start (`0s` → `0s`), the form Final Cut Pro writes and Resolve reads.
+  start (the asset's `start`: its embedded start timecode, else `0s`, mapped to itself), the form Final Cut Pro
+  writes and Resolve reads.
 - EDL names: one file per video track, `<name>_V1.edl`, `<name>_V2.edl` … (track numbers after flattening, so a
   compound clip's inner tracks get their own numbers). Each file has its own reel name: the file name without its
   extension, with characters other than letters, digits, `_` and `-` replaced by `_`, at most 32 characters, and

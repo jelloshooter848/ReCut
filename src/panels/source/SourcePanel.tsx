@@ -8,7 +8,7 @@ import {
   LoaderCircle, Pause, Play, Repeat, Replace, StepBack, StepForward, TriangleAlert, Volume2, VolumeX, WifiOff,
 } from 'lucide-react';
 import type { MediaItem, SubtitleCue } from '@shared/model';
-import { formatSequenceTimecode, framesToSeconds, secondsToFrames, secondsToFramesFloor, fpsLabel } from '@shared/time';
+import { formatSequenceTimecode, formatSourceFrameTimecode, framesToSeconds, secondsToFrames, secondsToFramesFloor, fpsLabel } from '@shared/time';
 import { pathToMediaUrl } from '@shared/ipc';
 import { useStore, identityLabel, startProxy } from '@/state';
 import type { StoreState } from '@/state';
@@ -410,7 +410,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
           <TimecodeField value={outFrame ?? durationFrames} fps={fps} min={0} max={Math.max(0, durationFrames)} tone={outFrame === null ? 'default' : 'playhead'}
             onChange={(f) => useStore.getState().setSourceOut(framesToSeconds(f, fps))} title="Out point" className="tc-out" />
           <div className="tc-meta">
-            <span title="Source timecode">TC <span className="mono">{formatSequenceTimecode(curFrame, fps)}</span></span>
+            <span title={media.probe?.startTimecode ? `Source timecode, from the file's embedded start timecode ${media.probe.startTimecode.text}` : 'Source timecode'}>TC <span className="mono" data-testid="source-file-tc">{formatSourceFrameTimecode(curFrame, fps, media.probe?.startTimecode)}</span></span>
             <span title="Media duration" className="mono tc-mdur">{Number.isFinite(duration) ? formatSequenceTimecode(durationFrames, fps) : '—'}</span>
             <span title="Frame rate" className="tc-fps">{fpsLabel(fps)} fps</span>
           </div>

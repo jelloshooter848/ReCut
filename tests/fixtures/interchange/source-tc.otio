@@ -1,0 +1,479 @@
+{
+    "OTIO_SCHEMA": "Timeline.1",
+    "metadata": {
+        "recut": {
+            "sequenceId": "seq-tc",
+            "fps": {
+                "num": 30000,
+                "den": 1001
+            },
+            "width": 1920,
+            "height": 1080,
+            "sampleRate": 48000,
+            "channels": 2
+        }
+    },
+    "name": "Camera Cut",
+    "global_start_time": {
+        "OTIO_SCHEMA": "RationalTime.1",
+        "rate": 29.97002997002997,
+        "value": 0
+    },
+    "tracks": {
+        "OTIO_SCHEMA": "Stack.1",
+        "metadata": {},
+        "name": "tracks",
+        "source_range": null,
+        "effects": [],
+        "markers": [
+            {
+                "OTIO_SCHEMA": "Marker.2",
+                "metadata": {
+                    "recut": {
+                        "markerId": "mtc",
+                        "kind": "marker",
+                        "color": "#4d7cfe"
+                    }
+                },
+                "name": "B roll",
+                "color": "BLUE",
+                "marked_range": {
+                    "OTIO_SCHEMA": "TimeRange.1",
+                    "duration": {
+                        "OTIO_SCHEMA": "RationalTime.1",
+                        "rate": 29.97002997002997,
+                        "value": 0
+                    },
+                    "start_time": {
+                        "OTIO_SCHEMA": "RationalTime.1",
+                        "rate": 29.97002997002997,
+                        "value": 200
+                    }
+                },
+                "comment": ""
+            }
+        ],
+        "enabled": true,
+        "children": [
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "recut": {
+                        "trackId": "seq-tc-V1",
+                        "volume": 1
+                    }
+                },
+                "name": "V1",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Clip.1",
+                        "metadata": {
+                            "recut": {
+                                "clipId": "k1",
+                                "linkId": "K1"
+                            }
+                        },
+                        "name": "Camera A",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 120
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 107952
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "media_reference": {
+                            "OTIO_SCHEMA": "ExternalReference.1",
+                            "metadata": {
+                                "recut": {
+                                    "mediaId": "m-cam-df"
+                                }
+                            },
+                            "name": "A001_C002.mov",
+                            "available_range": {
+                                "OTIO_SCHEMA": "TimeRange.1",
+                                "duration": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 17982
+                                },
+                                "start_time": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 107892
+                                }
+                            },
+                            "target_url": "file:///media/Camera/A001_C002.mov"
+                        }
+                    },
+                    {
+                        "OTIO_SCHEMA": "Transition.1",
+                        "metadata": {
+                            "recut": {
+                                "transitionId": "t-k",
+                                "type": "crossDissolve"
+                            }
+                        },
+                        "name": "Cross Dissolve",
+                        "transition_type": "SMPTE_Dissolve",
+                        "in_offset": {
+                            "OTIO_SCHEMA": "RationalTime.1",
+                            "rate": 29.97002997002997,
+                            "value": 10
+                        },
+                        "out_offset": {
+                            "OTIO_SCHEMA": "RationalTime.1",
+                            "rate": 29.97002997002997,
+                            "value": 10
+                        }
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.1",
+                        "metadata": {
+                            "recut": {
+                                "clipId": "k2",
+                                "linkId": "K2"
+                            }
+                        },
+                        "name": "Camera B",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 150
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 108300
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "media_reference": {
+                            "OTIO_SCHEMA": "ExternalReference.1",
+                            "metadata": {
+                                "recut": {
+                                    "mediaId": "m-cam-ndf"
+                                }
+                            },
+                            "name": "B001 NDF.mp4",
+                            "available_range": {
+                                "OTIO_SCHEMA": "TimeRange.1",
+                                "duration": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 17982
+                                },
+                                "start_time": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 108000
+                                }
+                            },
+                            "target_url": "file:///media/Camera/B001%20NDF.mp4"
+                        }
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.1",
+                        "metadata": {
+                            "recut": {
+                                "clipId": "k3"
+                            }
+                        },
+                        "name": "k3",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 60
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 30
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "media_reference": {
+                            "OTIO_SCHEMA": "ExternalReference.1",
+                            "metadata": {
+                                "recut": {
+                                    "mediaId": "m-plain"
+                                }
+                            },
+                            "name": "screen.mkv",
+                            "available_range": {
+                                "OTIO_SCHEMA": "TimeRange.1",
+                                "duration": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 17982
+                                },
+                                "start_time": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 0
+                                }
+                            },
+                            "target_url": "file:///media/Plain/screen.mkv"
+                        }
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.1",
+                        "metadata": {
+                            "recut": {
+                                "clipId": "k4"
+                            }
+                        },
+                        "name": "Camera B fast",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 60
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 108899
+                            }
+                        },
+                        "effects": [
+                            {
+                                "OTIO_SCHEMA": "LinearTimeWarp.1",
+                                "metadata": {},
+                                "name": "",
+                                "effect_name": "LinearTimeWarp",
+                                "time_scalar": 2
+                            }
+                        ],
+                        "markers": [],
+                        "enabled": true,
+                        "media_reference": {
+                            "OTIO_SCHEMA": "ExternalReference.1",
+                            "metadata": {
+                                "recut": {
+                                    "mediaId": "m-cam-ndf"
+                                }
+                            },
+                            "name": "B001 NDF.mp4",
+                            "available_range": {
+                                "OTIO_SCHEMA": "TimeRange.1",
+                                "duration": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 17982
+                                },
+                                "start_time": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 108000
+                                }
+                            },
+                            "target_url": "file:///media/Camera/B001%20NDF.mp4"
+                        }
+                    }
+                ],
+                "kind": "Video"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "recut": {
+                        "trackId": "seq-tc-V2",
+                        "volume": 1
+                    }
+                },
+                "name": "V2",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "children": [],
+                "kind": "Video"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "recut": {
+                        "trackId": "seq-tc-V3",
+                        "volume": 1
+                    }
+                },
+                "name": "V3",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "children": [],
+                "kind": "Video"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "recut": {
+                        "trackId": "seq-tc-A1",
+                        "volume": 1
+                    }
+                },
+                "name": "A1",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Clip.1",
+                        "metadata": {
+                            "recut": {
+                                "clipId": "ka1",
+                                "linkId": "K1"
+                            }
+                        },
+                        "name": "ka1",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 120
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 107952
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "media_reference": {
+                            "OTIO_SCHEMA": "ExternalReference.1",
+                            "metadata": {
+                                "recut": {
+                                    "mediaId": "m-cam-df"
+                                }
+                            },
+                            "name": "A001_C002.mov",
+                            "available_range": {
+                                "OTIO_SCHEMA": "TimeRange.1",
+                                "duration": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 17982
+                                },
+                                "start_time": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 107892
+                                }
+                            },
+                            "target_url": "file:///media/Camera/A001_C002.mov"
+                        }
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.1",
+                        "metadata": {
+                            "recut": {
+                                "clipId": "ka2",
+                                "linkId": "K2"
+                            }
+                        },
+                        "name": "ka2",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 150
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 108300
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "media_reference": {
+                            "OTIO_SCHEMA": "ExternalReference.1",
+                            "metadata": {
+                                "recut": {
+                                    "mediaId": "m-cam-ndf"
+                                }
+                            },
+                            "name": "B001 NDF.mp4",
+                            "available_range": {
+                                "OTIO_SCHEMA": "TimeRange.1",
+                                "duration": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 17982
+                                },
+                                "start_time": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 108000
+                                }
+                            },
+                            "target_url": "file:///media/Camera/B001%20NDF.mp4"
+                        }
+                    }
+                ],
+                "kind": "Audio"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "recut": {
+                        "trackId": "seq-tc-A2",
+                        "volume": 1
+                    }
+                },
+                "name": "A2",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "children": [],
+                "kind": "Audio"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "recut": {
+                        "trackId": "seq-tc-A3",
+                        "volume": 1
+                    }
+                },
+                "name": "A3",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "children": [],
+                "kind": "Audio"
+            }
+        ]
+    }
+}

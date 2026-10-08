@@ -29,6 +29,11 @@ Timecodes read `HH:MM:SS:FF`. At 29.97 and 59.94 fps every timecode in the app (
 source timecode) is SMPTE drop-frame, written `HH:MM:SS;FF`: frame 1800 at 29.97 is `00:01:00;02`. Click a timecode
 field to type a value; see [SHORTCUTS](SHORTCUTS.md#timecode-entry) for what it accepts.
 
+Source timecode (a position in a media file) counts from the file's own start timecode when it carries one, as camera
+files do (a MOV / MP4 timecode track, MXF): a clip 10 seconds into a camera file that starts at `01:00:00:00` reads
+`01:00:10:00`, as the camera and other editors show it, in the file's own drop-frame or non-drop mode. The Media
+Inspector shows it as **Start timecode**. Files without one count from `00:00:00:00`.
+
 ## 1. Import a movie or a season
 
 1. **File › Import Media…** (Ctrl+I), or **Import…** in the Project panel. You can also drag files from your file
@@ -357,7 +362,9 @@ own sequence and drop it into as many cuts as you like: an edit made inside it s
   timecodes for a review document.
 - Where an edit came from: the Inspector's **Original source timecode** block (at the playhead or at the clip start;
   click to copy). Click the Program timecode to switch between **SEQ** and **SRC** (source file and timecode).
-  Preferences › **Show source timecode on clips** prints source ranges on the clips.
+  Preferences › **Show source timecode on clips** prints source ranges on the clips. All of these count from the
+  file's embedded start timecode when it has one (see the timecode note at the top); so does the Source monitor's
+  **TC** readout, while its current-time, In and Out fields count from the start of the file.
 
 ## 13. Subtitles in the cut
 
@@ -616,11 +623,11 @@ What to expect in Resolve 21:
 What transfers with **FCPXML** (the most complete): the cuts on every track, source in and out points, speed, levels
 and audio fades, position, scale, rotation, crop, opacity, keyframes, dissolves, dips (as opacity keyframes) and
 markers. Compound clips arrive flattened into their clips. **OpenTimelineIO** carries the cuts, speed, dissolves and
-markers; **EDL** only cuts and dissolves. Never carried: subtitle tracks, audio channel selections and the centre
-channel extraction, and timecode embedded in the source files (ReCut counts source time from the start of each file;
-the timeline starts at 00:00:00:00, so set Resolve's timeline start to match if it asks). The report lists everything
-else before you save. Nothing in your ReCut project changes. See [FORMATS](FORMATS.md#interchange-export) and
-[LIMITATIONS](LIMITATIONS.md#export).
+markers; **EDL** only cuts and dissolves. Source in and out points are on each file's own timecode when it carries
+one (camera files), so they match what Resolve reads from the files. Never carried: subtitle tracks, audio channel
+selections and the centre channel extraction. The timeline starts at 00:00:00:00, so set Resolve's timeline start to
+match if it asks. The report lists everything else before you save. Nothing in your ReCut project changes. See
+[FORMATS](FORMATS.md#interchange-export) and [LIMITATIONS](LIMITATIONS.md#export).
 
 ## Saving
 

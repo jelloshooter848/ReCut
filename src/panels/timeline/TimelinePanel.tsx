@@ -6,9 +6,9 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, us
 import { flushSync } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import type { Clip, ID, Marker, Sequence, Track, TransitionType } from '@shared/model';
-import { formatSequenceSecondsTimecode, formatSequenceTimecode, fpsLabel, validFpsOr } from '@shared/time';
+import { formatSequenceTimecode, fpsLabel } from '@shared/time';
 import { clipEnd, clipSourceOut, editPoints, findClip, removableDisabledClipIds, resolveSubtitleCues, sequenceDuration, sourceTimeAt } from '@shared/timeline';
-import { useStore, filterMatches, filtersActive, usePlayhead } from '@/state';
+import { useStore, filterMatches, filtersActive, mediaSourceTimecode, usePlayhead } from '@/state';
 import { hasClipDrag, hasSequenceDrag, readClipDrag, SEQUENCE_DND_TYPE } from '@/app/dnd';
 import { isNestedClip, sourceUnder } from '@shared/nest';
 import { openContextMenu, type MenuItem } from '@/components/ui/ContextMenu';
@@ -779,13 +779,12 @@ function HoverTimecode({ fps }: { fps: { num: number; den: number } }) {
 const StatusStrip = React.memo(function StatusStrip({ name, fps, selectedClip, selectedCount, media, duration, zoom }: {
   name: string; fps: { num: number; den: number }; selectedClip: Clip | undefined; selectedCount: number; media: ReturnType<typeof useStore.getState>['project']['media'][string] | undefined; duration: number; zoom: number;
 }) {
-  const mediaFps = validFpsOr(media?.probe?.video?.fps, fps);
   return (
     <div className="toolbar toolbar-bottom tl-status" data-status>
       {selectedClip ? (
         <>
           <span className="tl-status-name ellipsis" style={{ maxWidth: 220 }}>{selectedClip.name}</span>
-          <span>src {formatSequenceSecondsTimecode(selectedClip.sourceIn, mediaFps)} – {formatSequenceSecondsTimecode(clipSourceOut(selectedClip, fps), mediaFps)}</span>
+          <span>src {mediaSourceTimecode(selectedClip.sourceIn, media, fps)} – {mediaSourceTimecode(clipSourceOut(selectedClip, fps), media, fps)}</span>
           <span>dur {formatSequenceTimecode(selectedClip.duration, fps)}</span>
           <span>@ {formatSequenceTimecode(selectedClip.start, fps)}</span>
           {selectedCount > 1 ? <span className="badge dim">+{selectedCount - 1}</span> : null}

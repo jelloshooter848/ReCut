@@ -11,13 +11,14 @@
  *   FCPXML puts transitions on a track other than V1.
  * - Times are exact rationals (`N/Ds`). An item's `offset` is in its parent's local time: for a gap
  *   `start + (t - offset)` with start 0; for a clip `start` is the in point's local time (its media time; for a
- *   retimed clip see Speed), and local time runs with the timeline from there. A storyline's children are in the same
- *   local time as the storyline's own offset (the anchor clip's), as the primary spine's children are in the
- *   sequence's time.
- * - Speed: `<timeMap>` with two linear points from the asset's start, (0s -> 0s) and (end -> end * speed): a retimed
- *   clip's local time runs at the timeline's pace and equals media time at the asset's start, so its `start` is the
- *   in point's media time divided by the speed (as Final Cut Pro writes it; DaVinci Resolve 21 reads the in point
- *   that way and ignores a map anchored at the in point).
+ *   retimed clip see Speed), and local time runs with the timeline from there. Media time starts at the asset's
+ *   `start`: the file's embedded start timecode T0 (MediaProbe.startTimecode; its clips then carry `tcFormat`), else
+ *   0s. A storyline's children are in the same local time as the storyline's own offset (the anchor clip's), as the
+ *   primary spine's children are in the sequence's time.
+ * - Speed: `<timeMap>` with two linear points from the asset's start, (T0 -> T0) and (end -> T0 + (end - T0) * speed):
+ *   a retimed clip's local time runs at the timeline's pace and equals media time at the asset's start, so its
+ *   `start` is T0 + (in point's media time - T0) / speed (as Final Cut Pro writes it; DaVinci Resolve 21 reads the in
+ *   point that way and ignores a map anchored at the in point). Without a start timecode T0 is 0s.
  * - Linked video and audio (one video clip and an audio clip with the same media, record range, source in, speed
  *   and enabled state) are one asset-clip carrying both, where the video clip is, with the audio's level and fades:
  *   Final Cut Pro's own form, and the only one DaVinci Resolve 21 maps to one video and one audio item (it ignores
@@ -93,9 +94,10 @@ class Resources {
     }
     const id = this.id();
     const rate = pc.srcRate;
+    const start = pc.tc ? Q.frames(pc.tc.frames, rate).toTime() : '0s';
     const duration = pc.still ? '0s' : pr && pr.duration > 0 ? Q.frames(Math.round(pr.duration * rate.num / rate.den), rate).toTime() : undefined;
     this.nodes.push(el('asset', [
-      ['id', id], ['name', m.name], ['start', '0s'], ['duration', duration],
+      ['id', id], ['name', m.name], ['start', start], ['duration', duration],
       ['hasVideo', hasVideo ? '1' : undefined], ['format', format],
       ['hasAudio', hasAudio ? '1' : undefined],
       ['audioSources', audio.length ? String(audio.length) : undefined],
@@ -118,14 +120,21 @@ class Resources {
 
 type Item = { kind: 'gap'; start: number; dur: number } | { kind: 'clip'; pc: PClip } | { kind: 'tr'; tr: PTransition };
 
-/** Media time of a clip's in point (the asset starts at 0s; stills at 0). */
-const mediaIn = (pc: PClip): Q => (pc.still ? new Q(0n) : Q.frames(pc.srcIn, pc.srcRate));
+/** Media time of the file's start (the asset's `start`): its embedded start timecode, else 0s (stills: 0s). */
+const mediaStart = (pc: PClip): Q => (pc.still || !pc.tc ? new Q(0n) : Q.frames(pc.tc.frames, pc.srcRate));
+/** Media time of a clip's in point: its source frame counted from the file's start timecode (stills at 0). */
+const mediaIn = (pc: PClip): Q => (pc.still ? new Q(0n) : Q.frames(pc.srcIn + (pc.tc?.frames ?? 0), pc.srcRate));
 /** The speed as written (6 decimals) for a retimed clip, else null. */
 const speedOf = (pc: PClip): Q | null => (pc.speed !== 1 && !pc.still ? Q.dec(pc.speed, 6) : null);
-/** Local time of a clip's in point (its `start`): the media time, over the speed for a retimed clip (see timeMap). */
+/**
+ * Local time of a clip's in point (its `start`): the media time; for a retimed clip the asset's start plus the media
+ * time past it over the speed (see timeMap).
+ */
 export function localIn(pc: PClip): Q {
   const sp = speedOf(pc);
-  return sp ? mediaIn(pc).div(sp) : mediaIn(pc);
+  if (!sp) return mediaIn(pc);
+  const t0 = mediaStart(pc);
+  return t0.add(mediaIn(pc).sub(t0).div(sp));
 }
 
 /** Audio clip `a` can ride on video clip `v` as one asset-clip (same file, range, in point, speed, enabled state). */
@@ -293,14 +302,15 @@ export function writeFcpxml(p: Prepared, issues: Issues, audioCrossfades: Fcpxml
       ...splitEdit(audio, S, D),
       ['srcEnable', both ? undefined : video ? (a.hasAudio ? 'video' : undefined) : (a.hasVideo ? 'audio' : undefined)],
       ['enabled', pc.enabled ? undefined : '0'],
+      ['tcFormat', pc.tc ? (pc.tc.dropFrame ? 'DF' : 'NDF') : undefined],
     ]);
     const sp = speedOf(pc);
     if (sp) {
       if (Math.abs(sp.toNumber() - pc.speed) > 1e-9) issues.add('speed-approx', 'speed', 'warning', (n) => `The speed of ${count(n)} is rounded to 6 decimals.`, item);
-      const end = S.add(D);
+      const t0 = mediaStart(pc), end = S.add(D);
       node.kids.push(el('timeMap', [], [
-        el('timept', [['time', '0s'], ['value', '0s'], ['interp', 'linear']]),
-        el('timept', [['time', end.toTime()], ['value', end.mul(sp).toTime()], ['interp', 'linear']]),
+        el('timept', [['time', t0.toTime()], ['value', t0.toTime()], ['interp', 'linear']]),
+        el('timept', [['time', end.toTime()], ['value', t0.add(end.sub(t0).mul(sp)).toTime()], ['interp', 'linear']]),
       ]));
     }
     if (video) {
