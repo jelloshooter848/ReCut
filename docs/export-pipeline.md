@@ -218,8 +218,15 @@ measures every frame against it (bugs/closed/2026-10-08-two-sided-transition-pre
 **Dip to Black** fades A to black over its last `D/2` frames and B up from black over its first `D/2` (frame `k` of
 the clip: weight `(end − k) / (D/2)` and `k / (D/2)`; `D/2` can be a half frame). Each clip only shows frames it
 shows anyway, so a dip needs no handles and is never shortened or dropped for lack of them. `planTrackSegments`
-records the halves as the segments' `fadeOut` / `fadeIn`, and the weight goes into the per-frame alpha `lut` with the
-single-sided fades below (on V1 the track shows black; on an upper track, the track below). The former
+records the halves as the segments' `dipOut` / `dipIn`. The weight multiplies the alpha (on V1 the track shows black;
+on an upper track, the track below): a half of a whole number of frames `H` is `fade=t=in|out:start_frame=…:
+nb_frames=H:alpha=1` (counting frames, it gives exactly `k / H`; it leaves other frames alone and is two short
+filters, where a per-frame `lut` + `sendcmd` ramp costs a command per frame in the graph); a half-frame half (an odd
+length) goes into the per-frame alpha `lut` with the single-sided fades below (`fade`'s time options round half
+frames, so it cannot place them). The segments still open
+their inputs over the handles a centred transition would take (`readBefore` / `readAfter`, not shown), so a clip
+whose linked audio crossfades on the same cut keeps sharing one input with it (inputs are shared only when their
+arguments are identical; without this the 2,500-clip bench opened 118 more). The former
 `xfade=transition=fadeblack` reached black early on a smoothstep, used the handle frames past the cut and dipped to
 luma 0: up to 146 levels from the preview.
 

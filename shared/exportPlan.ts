@@ -58,13 +58,23 @@ export interface ClipSeg {
   extAfter: number;
   /** Transition INTO this segment from the previous segment (centered on the cut). */
   transIn?: { type: Transition['type']; frames: number };
-  /**
-   * Fade from black/silence at segment start, in frames (may be fractional): a transition with outClipId null (its
-   * length), or the incoming half of a two-sided Dip to Black (half its length; video only).
-   */
+  /** Fade from black/silence at segment start (transition with outClipId null). */
   fadeIn?: number;
-  /** Fade to black/silence at segment end: a transition with inClipId null, or the outgoing half of a Dip to Black. */
+  /** Fade to black/silence at segment end (transition with inClipId null). */
   fadeOut?: number;
+  /**
+   * The incoming / outgoing half of a two-sided Dip to Black: the clip fades up from / down to black over its first /
+   * last `dipIn` / `dipOut` frames (half the transition: a half frame when its length is odd). Video only.
+   */
+  dipIn?: number;
+  dipOut?: number;
+  /**
+   * Source frames read before / after the segment's own range without being shown: a Dip to Black opens its input
+   * over the handles a centred transition would take, so the input stays identical to (and is shared with) a linked
+   * audio clip's that crossfades on the same cut (inputs are shared only when their arguments are identical).
+   */
+  readBefore?: number;
+  readAfter?: number;
   isImage: boolean;
   speed: number;
   /** The render graph's ffmpeg input index for the segment (-1 until it assigns one). */
@@ -244,10 +254,12 @@ export function planTrackSegments(
       if (tr.type === 'dipToBlack') {
         // The preview's dip (src/playback/planner.ts contribute): the outgoing clip fades to black over its last D / 2
         // frames, the incoming one from black over its first D / 2, each on frames it shows anyway. No handles, so
-        // it is never shortened. The render graph multiplies these weights into the alpha (fadeWeights).
+        // it is never shortened. The render graph ramps the alpha (dipFilters, fadeWeights).
         transitions.push(outcome(D, null));
-        outSeg.fadeOut = D / 2;
-        inSeg.fadeIn = D / 2;
+        outSeg.dipOut = D / 2;
+        inSeg.dipIn = D / 2;
+        const { h } = transitionHandles(D, outSeg, inSeg, fd);
+        if (h >= 1) { outSeg.readAfter = h; inSeg.readBefore = h; }
         continue;
       }
       const { h, hClips, hSource } = transitionHandles(D, outSeg, inSeg, fd);

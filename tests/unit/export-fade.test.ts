@@ -388,6 +388,22 @@ describe('two-sided transitions: export matches the preview per frame', () => {
     plain.videoTracks[0].transitions.push(fade('f', null, plain.videoTracks[0].clips[0].id, 4));
     expect(buildRenderGraph(req(plain)).filterGraph).not.toMatch(/split=|yuva444p|premultiply|xfade/);
   });
+
+  it('the graph: a dip opens the same input as its linked audio crossfade, so the pair still shares it', () => {
+    const av: MediaItem = { ...white, id: 'av', probe: { ...white.probe!, audio: [{ index: 1, codec: 'aac', channels: 2, layout: 'stereo', sampleRate: 48000 }] } };
+    const s = createSequence('shared', F24, 320, 180);
+    const v = [0, 1].map((i) => ({ ...makeClip({ mediaId: av.id, name: `v${i}`, sourceIn: 1 + i, duration: 24, kind: 'video' }, i * 24), linkId: `L${i}` }));
+    const a = [0, 1].map((i) => ({ ...makeClip({ mediaId: av.id, name: `a${i}`, sourceIn: 1 + i, duration: 24, kind: 'audio', audioStream: 1 }, i * 24), linkId: `L${i}` }));
+    s.videoTracks[0].clips.push(...v);
+    s.audioTracks[0].clips.push(...a);
+    s.videoTracks[0].transitions.push(fade('d', v[0].id, v[1].id, 12, 'dipToBlack'));
+    s.audioTracks[0].transitions.push(fade('x', a[0].id, a[1].id, 12, 'audioCrossfade'));
+    const g = buildRenderGraph({ ...req(s), media: { [av.id]: av } });
+    expect(g.inputCount).toBe(2); // one per linked pair
+    // The dip's picture still shows no handle frame: each clip's video is its own 24 frames.
+    expect(g.filterGraph).not.toMatch(/xfade|tpad=stop=30/);
+    expect(g.filterGraph.match(/tpad=stop=24:stop_mode=clone,trim=end_frame=24/g)).toHaveLength(2);
+  });
 });
 
 describe('audio crossfade: the export\'s gain law is the preview\'s', () => {
