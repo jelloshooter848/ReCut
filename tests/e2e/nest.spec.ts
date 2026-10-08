@@ -93,8 +93,17 @@ test('Make Compound Clip, Open in Timeline, edit inside: the outer timeline and 
   const nestedClipId = await st<string>(`(s, id) => s.project.sequences[id].videoTracks[0].clips[0].id`, outerId);
   await st(`(s, id) => s.setView(s.project.activeSequenceId, { playhead: 60 })`);
   const nb = (await page.locator(`.tl-clip[data-clip-id="${nestedClipId}"]`).boundingBox())!;
-  await page.mouse.dblclick(nb.x + Math.min(nb.width / 2, 40), nb.y + nb.height / 2);
-  await expect.poll(() => st<string>(`(s) => s.project.activeSequenceId`)).toBe(innerId);
+  const px = nb.x + Math.min(nb.width / 2, 40), py = nb.y + nb.height / 2;
+  // The point must hit the nested clip itself (not an overlay), so a failure below is about the double-click.
+  const hit = await page.evaluate(([x, y]) => {
+    const el = document.elementFromPoint(x, y) as HTMLElement | null;
+    return { clipId: el?.closest('[data-clip-id]')?.getAttribute('data-clip-id') ?? null, what: el ? `${el.tagName}.${el.className}` : 'nothing' };
+  }, [px, py]);
+  expect(hit.clipId, `the double-click point hits ${hit.what}`).toBe(nestedClipId);
+  await page.mouse.dblclick(px, py);
+  await expect.poll(() => st<string>(`(s) => s.project.activeSequenceId`), {
+    message: `after the double-click: selection ${JSON.stringify(await st<string[]>(`(s) => s.ui.selectedClipIds`))}`,
+  }).toBe(innerId);
   expect(await st<number>(`(s, id) => s.project.sequences[id].view.playhead`, innerId)).toBe(60);
   await expect(page.locator('.tl-clip.nested')).toHaveCount(0);
 
