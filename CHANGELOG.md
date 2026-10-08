@@ -65,6 +65,8 @@ earlier releases open unchanged.
   ([report](bugs/closed/2026-10-07-download-redirect-net-fetch-manual.md)).
 - Double-clicking a clip on the timeline (open in Source, or open a compound clip) did not always register on
   Windows; double-clicks are now detected by the timeline itself.
+- After a clean save and quit, the next launch could offer to recover an autosave anyway: an autosave still being
+  written could finish after the save ([report](bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md)).
 
 ### Development
 
