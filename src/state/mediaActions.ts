@@ -595,10 +595,10 @@ async function serializeCompactInPieces(project: Project, emit: (text: string) =
 }
 
 /** One streamed write to main: a manual save (ProjectSaveStreamApi) or an autosave (ProjectAutosaveStreamApi). */
-interface SaveStream {
+interface SaveStream<R = SaveResult> {
   begin(): Promise<SaveBeginResult>;
   chunk(id: string, seq: number, text: string): void;
-  commit(id: string, totals: { chunks: number; chars: number }): Promise<SaveResult>;
+  commit(id: string, totals: { chunks: number; chars: number }): Promise<R>;
   abort(id: string): Promise<void> | void;
 }
 
@@ -610,7 +610,7 @@ interface SaveStream {
  * receiving it and 60 ms encoding it, all after the serialization; streamed, those costs overlap the
  * serialization of the next piece, and only the last piece, the fsync and the rename follow it.
  */
-async function writeStreamed(s: SaveStream, serialize: (emit: (text: string) => Promise<void>) => Promise<void>): Promise<SaveResult> {
+async function writeStreamed<R = SaveResult>(s: SaveStream<R>, serialize: (emit: (text: string) => Promise<void>) => Promise<void>): Promise<R | SaveResult> {
   const begun = s.begin(); // main opens the temp file while the first slice is serialized
   begun.catch(() => undefined); // a rejection is handled where it is awaited (first piece / failure below)
   let id: string | null = null;
@@ -652,11 +652,12 @@ function saveStreamed(api: ProjectSaveStreamApi, target: string, project: Projec
  * frame and is rarely idle; the lifecycle defers autosaves then, a forced one still runs) in task slices between
  * the frames (slicer).
  */
-function autosaveStreamed(api: ProjectAutosaveStreamApi, projectPath: string | null, project: Project, playing: boolean): Promise<SaveResult> {
-  return writeStreamed({
+function autosaveStreamed(api: ProjectAutosaveStreamApi, projectPath: string | null, project: Project, playing: boolean, snap: WriteSnapshot): Promise<AutosaveResult> {
+  return writeStreamed<AutosaveResult>({
     begin: () => api.autosaveProjectBegin(projectPath),
     chunk: (id, seq, text) => api.saveProjectChunk(id, seq, text),
-    commit: (id, totals) => api.autosaveProjectCommit(projectPath, id, totals),
+    // Superseded by a save: the temp file is dropped, the autosave file is left as the save left it.
+    commit: (id, totals) => writeAutosaveFile(snap, () => api.autosaveProjectCommit(projectPath, id, totals), () => api.saveProjectAbort(id)),
     abort: (id) => api.saveProjectAbort(id),
   }, (emit) => serializeCompactInPieces(project, emit, playing ? slicer() : idleSlicer()));
 }
@@ -668,6 +669,54 @@ class SaveRefused {
 
 /** The save in progress (or a settled promise): saves run one at a time, so their writes land in order. */
 let saveQueue: Promise<unknown> = Promise.resolve();
+
+/** What a save wrote or an autosave snapshotted: the project, its last new / open (loadedRevision) and the content's revision. */
+interface WriteSnapshot { projectId: ID; loadedRevision: number; revision: number }
+
+/** `save` holds everything `snap` holds: the same project, at the same revision or a later one. */
+function covers(save: WriteSnapshot, snap: WriteSnapshot): boolean {
+  return save.projectId === snap.projectId && save.loadedRevision === snap.loadedRevision && save.revision >= snap.revision;
+}
+
+/*
+ * An autosave never lands after a save that holds its content (bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md).
+ * Saves and autosaves run on their own queues, and an autosave serializes in idle slices for a while: one that
+ * snapshotted the project before or during a save could make its file after the save's. Its file is then newer
+ * than the project file while holding nothing the project lacks, and the next launch offers it for recovery after a
+ * clean save + quit; for a never-saved project it is the untitled autosave the save had just dropped (electron/ipc.ts
+ * afterSave), which recovery offers whatever its age. So:
+ *  - a save waits for the autosave write in flight in main (autosaveWriting), then snapshots the project in the
+ *    same task and records what it writes (savingNow);
+ *  - an autosave's write (the commit of a streamed autosave, the one IPC call otherwise) waits while a running save
+ *    holds its content, and is dropped when a save wrote it (lastSaved). An autosave of edits newer than every save
+ *    is written at once, as before.
+ */
+/** The autosave write in flight in main, or null. Autosaves run one at a time (autosaveQueue). */
+let autosaveWriting: Promise<unknown> | null = null;
+/** The save running now, from its snapshot to markSaved: what it writes, and a promise settled when it is done. */
+let savingNow: { snap: WriteSnapshot; done: Promise<void> } | null = null;
+/** The newest content a save wrote (null: none yet). */
+let lastSaved: WriteSnapshot | null = null;
+
+/** The result of an autosave dropped because a save already wrote its content (nothing was written). */
+const AUTOSAVE_SUPERSEDED = { ok: true, superseded: true } as const;
+type AutosaveResult = SaveResult | typeof AUTOSAVE_SUPERSEDED;
+
+/**
+ * Make the autosave file of `snap` with `write`, unless a save holds that content: wait for a running save that does;
+ * once a save wrote it, `drop` the autosave instead (a streamed autosave aborts its temp file) and write nothing.
+ */
+async function writeAutosaveFile(snap: WriteSnapshot, write: () => Promise<SaveResult>, drop: () => Promise<void> | void = () => undefined): Promise<AutosaveResult> {
+  while (savingNow && covers(savingNow.snap, snap)) await savingNow.done;
+  if (lastSaved && covers(lastSaved, snap)) {
+    await Promise.resolve().then(drop).catch(() => undefined);
+    return AUTOSAVE_SUPERSEDED;
+  }
+  // In the task that checked: a save cannot snapshot between the check and the write it waits for.
+  const w = write();
+  autosaveWriting = w;
+  try { return await w; } finally { if (autosaveWriting === w) autosaveWriting = null; }
+}
 
 /**
  * Save the project to `path` (default: its current path). Saves are queued: each one snapshots the project when its
@@ -693,24 +742,35 @@ function projectToSave(project: Project): Project {
 async function saveNow(path?: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
   const api = recutApi();
   if (!api) return { ok: false, error: 'IPC unavailable' };
+  // An autosave main is writing lands first (it holds no newer content than this save's snapshot; see writeAutosaveFile).
+  while (autosaveWriting) await autosaveWriting.catch(() => undefined);
   const st = useStore.getState();
   const target = path ?? st.projectPath;
   if (!target) return { ok: false, error: 'No project path' };
   const revision = st.revision;
   const project = projectToSave(st.project);
-  // Serialize here, in slices, and send text (P-06): a structured clone of the whole project across IPC cost more
-  // than the serialization, and main then pretty-printed it again on its own thread. Streamed when the bridge
-  // can (saveStreamed); else one string.
-  const res = canStreamSave(api) ? await saveStreamed(api, target, project)
-    : typeof api.saveProjectJson === 'function' ? await api.saveProjectJson(target, await serializeProjectSliced(project))
-      : await api.saveProject(target, project);
-  if (res.ok) {
-    useStore.getState().markSaved(res.path, revision);
-    const after = useStore.getState();
-    // Edits made while the save ran keep the project dirty: make sure an autosave newer than this file holds them.
-    if (after.dirty && after.revision !== revision && after.loadedRevision <= revision) autosaveAfterSave(after.project.id, after.loadedRevision);
+  const snap: WriteSnapshot = { projectId: st.project.id, loadedRevision: st.loadedRevision, revision };
+  let finish!: () => void;
+  savingNow = { snap, done: new Promise<void>((r) => { finish = r; }) };
+  try {
+    // Serialize here, in slices, and send text (P-06): a structured clone of the whole project across IPC cost more
+    // than the serialization, and main then pretty-printed it again on its own thread. Streamed when the bridge
+    // can (saveStreamed); else one string.
+    const res = canStreamSave(api) ? await saveStreamed(api, target, project)
+      : typeof api.saveProjectJson === 'function' ? await api.saveProjectJson(target, await serializeProjectSliced(project))
+        : await api.saveProject(target, project);
+    if (res.ok) {
+      lastSaved = snap;
+      useStore.getState().markSaved(res.path, revision);
+      const after = useStore.getState();
+      // Edits made while the save ran keep the project dirty: make sure an autosave newer than this file holds them.
+      if (after.dirty && after.revision !== revision && after.loadedRevision <= revision) autosaveAfterSave(after.project.id, after.loadedRevision);
+    }
+    return res;
+  } finally {
+    savingNow = null;
+    finish();
   }
-  return res;
 }
 
 /**
@@ -851,9 +911,13 @@ async function autosaveNow(): Promise<void> {
   const st = useStore.getState();
   if (!api || !st.dirty) return;
   const project = projectToSave(st.project);
-  const res = canStreamAutosave(api) ? await autosaveStreamed(api, st.projectPath, project, st.playback.playing)
-    : typeof api.autosaveProjectJson === 'function' ? await api.autosaveProjectJson(st.projectPath, JSON.stringify(project))
-      : await api.autosaveProject(st.projectPath, project);
+  const snap: WriteSnapshot = { projectId: st.project.id, loadedRevision: st.loadedRevision, revision: st.revision };
+  const projectPath = st.projectPath;
+  let res: AutosaveResult;
+  if (canStreamAutosave(api)) res = await autosaveStreamed(api, projectPath, project, st.playback.playing, snap);
+  else if (typeof api.autosaveProjectJson === 'function') { const json = JSON.stringify(project); res = await writeAutosaveFile(snap, () => api.autosaveProjectJson(projectPath, json)); }
+  else res = await writeAutosaveFile(snap, () => api.autosaveProject(projectPath, project));
   if (res && res.ok === false) throw new Error(res.error);
+  if (res && 'superseded' in res) return; // nothing written: the project file holds it
   lastAutosaveDoneAt = Date.now();
 }
