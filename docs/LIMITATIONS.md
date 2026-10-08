@@ -15,6 +15,14 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   opacity and crop.
 - **No titles or generators.** Text, shapes and solids are not available. Import a still image instead.
 - **Three transitions:** Cross Dissolve, Dip to Black, Audio Crossfade.
+  - A Cross Dissolve or Audio Crossfade of an odd length plays and exports one frame shorter (it is centred on the
+    cut, so it covers the same number of frames on each side).
+  - When a clip has too little media past its edge for a Cross Dissolve, the export renders it shorter, or as a cut,
+    and the Export dialog warns about it; the Program monitor still plays it at full length, holding the clip's first
+    or last frame.
+  - A Cross Dissolve at the edge of a nested clip is drawn as two ramps, one over the other, not as a mix of the two
+    pictures, so it dims in the middle (by a quarter of the outgoing picture at the cut), in the preview and the
+    export alike. Dissolves between clips inside the nested sequence, or between two plain clips, mix linearly.
 - **Nested sequences and compound clips** (see the [user guide](USER-GUIDE.md#acts-and-reels-nested-sequences-and-compound-clips)):
   - A nested clip always plays at 100 % speed (no speed change or reverse on it; change the speed of the clips
     inside).

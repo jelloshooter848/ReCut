@@ -62,6 +62,19 @@ export interface ClipSeg {
   fadeIn?: number;
   /** Fade to black/silence at segment end (transition with inClipId null). */
   fadeOut?: number;
+  /**
+   * The incoming / outgoing half of a two-sided Dip to Black: the clip fades up from / down to black over its first /
+   * last `dipIn` / `dipOut` frames (half the transition: a half frame when its length is odd). Video only.
+   */
+  dipIn?: number;
+  dipOut?: number;
+  /**
+   * Source frames read before / after the segment's own range without being shown: a Dip to Black opens its input
+   * over the handles a centred transition would take, so the input stays identical to (and is shared with) a linked
+   * audio clip's that crossfades on the same cut (inputs are shared only when their arguments are identical).
+   */
+  readBefore?: number;
+  readAfter?: number;
   isImage: boolean;
   speed: number;
   /** The render graph's ffmpeg input index for the segment (-1 until it assigns one). */
@@ -236,6 +249,17 @@ export function planTrackSegments(
       if (outSeg.start + outSeg.frames !== cut || inSeg.start !== cut) {
         warnings.push(`Transition at the edge of the export range is dropped (hard cut).`);
         transitions.push(outcome(0, 'rangeEdge'));
+        continue;
+      }
+      if (tr.type === 'dipToBlack') {
+        // The preview's dip (src/playback/planner.ts contribute): the outgoing clip fades to black over its last D / 2
+        // frames, the incoming one from black over its first D / 2, each on frames it shows anyway. No handles, so
+        // it is never shortened. The render graph ramps the alpha (dipFilters, fadeWeights).
+        transitions.push(outcome(D, null));
+        outSeg.dipOut = D / 2;
+        inSeg.dipIn = D / 2;
+        const { h } = transitionHandles(D, outSeg, inSeg, fd);
+        if (h >= 1) { outSeg.readAfter = h; inSeg.readBefore = h; }
         continue;
       }
       const { h, hClips, hSource } = transitionHandles(D, outSeg, inSeg, fd);
