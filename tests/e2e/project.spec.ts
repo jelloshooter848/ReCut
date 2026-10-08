@@ -8,6 +8,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { discardChangesOnQuit } from './helpers';
 
 const root = path.resolve(__dirname, '../..');
 const EPISODES = ['Station Eleven S01E01.mp4', 'Station Eleven S01E02.mp4', 'Station Eleven S01E03.mp4'];
@@ -67,8 +68,8 @@ async function setMaximized(on: boolean) {
 }
 
 test.afterAll(async () => {
-  // Unsaved edits would make the quit flow prompt to save and block close().
-  try { await page.evaluate(() => (window as any).__recut.store.setState({ dirty: false })); } catch { /* gone */ }
+  // Unsaved edits would make the quit flow prompt to save and block close(): discard them.
+  if (app) await discardChangesOnQuit(app);
   await app?.close();
 });
 
