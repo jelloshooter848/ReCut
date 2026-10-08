@@ -389,6 +389,9 @@ describe('two-sided transitions: export matches the preview per frame', () => {
     g = buildRenderGraph(req(s)).filterGraph;
     expect(g.match(/xfade=transition=fade:duration=0\.25:offset=0,unpremultiply=inplace=1,format=yuva420p/g)).toHaveLength(1);
     expect(g.match(/format=yuva444p,premultiply=inplace=1/g)).toHaveLength(2);
+    // The same static opacity on both sides: equal alphas again, a plain xfade.
+    s.videoTracks[0].clips[0].transform.opacity = 0.99;
+    expect(buildRenderGraph(req(s)).filterGraph).not.toMatch(/premultiply/);
     // A track of cuts, fades and dips only: no split, no 4:4:4, no premultiply, no xfade.
     const plain = chain('plain', 'dipToBlack', [6, 4]);
     plain.videoTracks[0].transitions.push(fade('f', null, plain.videoTracks[0].clips[0].id, 4));

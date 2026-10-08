@@ -207,8 +207,13 @@ measures every frame against it (bugs/closed/2026-10-08-two-sided-transition-pre
   `unpremultiply=inplace=1,format=yuva420p`. Mixing premultiplied pictures makes the result, laid over the tracks
   below, `(1 − t)·(A over below) + t·(B over below)` also where the clips' alphas differ (opacity, a letterboxed or
   scaled picture, fades): a plain `xfade` of straight-alpha frames darkened those places. Only the window's frames
-  are converted to 4:4:4 (premultiply needs the alpha at every chroma sample). The bodies and the mixed windows are
-  joined by the track's one `concat`. A track without dissolves has no `split`, `premultiply` or `xfade`.
+  are converted to 4:4:4 (premultiply needs the alpha at every chroma sample). When both windows provably have
+  the same alpha (`windowAlpha`: no alpha channel in the probed pixel format, no motion, the same static opacity, no
+  fade or dip ramp over the window, no nested ramp, no late-starting stream, and both filling the frame or both with
+  the same fitted size and transform), a plain `xfade` is already that mix and the 4:4:4 round trip is skipped. That
+  round trip is the costly part: on a 1080p export with a 24-frame dissolve at every 3-second cut, about 40 % longer
+  (the usual case, full-frame clips at opacity 1, takes the plain `xfade`, as fast as before). The bodies and the mixed windows are joined by the track's one `concat`. A track
+  without dissolves has no `split`, `premultiply` or `xfade`.
 - `D` is rounded down to an even number (an odd length renders one frame less, in the preview too) and clamped to
   the available handles and to each clip's length; a clamped or dropped transition produces a warning that names
   the limit ("source handles" only when the handles are what shortened it). The export range does not clamp it:

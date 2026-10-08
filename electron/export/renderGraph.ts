@@ -735,7 +735,7 @@ function videoGap(ctx: Ctx, frames: number): string {
  * linear mix `(1 - t) * out + t * in` with `t = k / D` on frame k, so the result composites over the tracks below as
  * `(1 - t) * (out over below) + t * (in over below)`, the preview's picture (src/playback/planner.ts LayerPlan.mixWith).
  * `xfade` mixes straight-alpha pixels, which is that mix only where the two alphas are equal; where they may differ
- * (`premultiply`: opacity, letterboxing, transforms, fades) the windows are mixed premultiplied, in 4:4:4 (premultiply
+ * (`premultiply`: see windowAlpha) the windows are mixed premultiplied, in 4:4:4 (premultiply
  * needs the alpha at every chroma sample), only over the window's frames.
  */
 function dissolveWindow(ctx: Ctx, tail: string, head: string, D: number, premultiply: boolean): string {
@@ -752,29 +752,32 @@ function dissolveWindow(ctx: Ctx, tail: string, head: string, D: number, premult
 }
 
 /**
- * Whether every pixel of segment frames `[a, b)` is opaque (alpha 1): a picture without an alpha channel (the probe
- * says so) whose display shape is the frame's, so the fit fills the frame exactly; no transform, crop or motion;
- * opacity 1 without keyframes; no fade or dip ramp over those frames; no nested ramp; and no late-starting video
- * stream (made transparent). Two such windows have equal alphas, so dissolveWindow's plain xfade is already the
- * premultiplied mix and skips the 4:4:4 round trip (the costly part: a 1080p export with a 24-frame dissolve at every
- * 3-second cut took about a third longer with it).
+ * The alpha of segment frames `[a, b)` as a key, when it is known to be the same on all of them and to depend only on
+ * the key: a picture without an alpha channel (the probe says so), no motion keyframes, a static opacity, no fade or
+ * dip ramp over those frames, no nested ramp and no late-starting video stream (made transparent). The key is
+ * `full@<opacity>` when the picture fills the frame (its display shape is the frame's, no transform or crop), else the
+ * fitted size and the transform. Null otherwise. Two windows with the same key have equal alphas, so dissolveWindow's
+ * plain xfade is already the premultiplied mix and skips the 4:4:4 round trip (the costly part: on a 1080p export with
+ * a 24-frame dissolve at every 3-second cut, about 40 % longer).
  */
-function opaqueOverFrame(ctx: Ctx, seg: ClipSeg, a: number, b: number): boolean {
+function windowAlpha(ctx: Ctx, seg: ClipSeg, a: number, b: number): string | null {
   const c = seg.clip, t = c.transform;
   const v = seg.media.probe?.video;
-  if (!v?.pixFmt || /^(rgba|bgra|argb|abgr|ya\d|yuva|gbrap|ayuv|pal8)/.test(v.pixFmt)) return false;
+  if (!v?.pixFmt || /^(rgba|bgra|argb|abgr|ya\d|yuva|gbrap|ayuv|pal8)/.test(v.pixFmt)) return null;
   const d = fitInputSize(v);
-  if (!d || d.w * ctx.H !== d.h * ctx.W) return false;
-  const crop = t.crop ?? { left: 0, top: 0, right: 0, bottom: 0 };
-  if (clamp01(crop.left) + clamp01(crop.right) + clamp01(crop.top) + clamp01(crop.bottom) > 0) return false;
-  if (t.scale !== 1 || ((t.rotation % 360) + 360) % 360 !== 0 || Math.round(t.x || 0) !== 0 || Math.round(t.y || 0) !== 0) return false;
-  if (hasMotionKeyframes(c) || keyframesOf(c, 'opacity') || !(t.opacity >= 1)) return false;
+  if (!d || hasMotionKeyframes(c) || keyframesOf(c, 'opacity') || !Number.isFinite(t.opacity)) return null;
   // Fade / dip ramps: weight < 1 on frames n < extBefore + ramp-in and n > end - ramp-out (fadeWeights, dipFilters).
   const rampIn = Math.max(seg.fadeIn ?? 0, seg.dipIn ?? 0), rampOut = Math.max(seg.fadeOut ?? 0, seg.dipOut ?? 0);
-  if (rampIn > 0 && a < seg.extBefore + rampIn) return false;
-  if (rampOut > 0 && b > seg.extBefore + seg.frames - rampOut) return false;
-  if (flatOrigin(c)?.env.length) return false;
-  return !(videoStreamStart(seg.media) > 0);
+  if (rampIn > 0 && a < seg.extBefore + rampIn) return null;
+  if (rampOut > 0 && b > seg.extBefore + seg.frames - rampOut) return null;
+  if (flatOrigin(c)?.env.length || videoStreamStart(seg.media) > 0) return null;
+  const crop = t.crop ?? { left: 0, top: 0, right: 0, bottom: 0 };
+  const cr = [crop.left, crop.right, crop.top, crop.bottom].map(clamp01);
+  const rot = ((t.rotation % 360) + 360) % 360, X = Math.round(t.x || 0), Y = Math.round(t.y || 0);
+  const op = num(clamp01(t.opacity));
+  const identity = cr.every((x) => x === 0) && t.scale === 1 && rot === 0 && X === 0 && Y === 0;
+  if (identity && d.w * ctx.H === d.h * ctx.W) return `full@${op}`;
+  return `${d.w}x${d.h}:${cr.join(',')}:${t.scale}:${rot}:${X}:${Y}@${op}`;
 }
 
 /**
@@ -789,7 +792,7 @@ function videoTrack(ctx: Ctx, plan: TrackPlan): string | null {
   if (!plan.segs.some((s) => s.kind === 'clip')) return null;
   const parts: string[] = [];
   /** The previous segment's tail window, waiting for the incoming segment's head window. */
-  let tail: { label: string; frames: number; opaque: boolean } | null = null;
+  let tail: { label: string; frames: number; alpha: string | null } | null = null;
   const internal = (why: string) => new Error(`Internal error in the render graph: ${why} on ${plan.track.name}.`);
   for (const s of plan.segs) {
     if (tail ? s.kind === 'gap' || s.transIn?.frames !== tail.frames : s.kind === 'clip' && s.transIn) throw internal('a Cross Dissolve has no window on one side');
@@ -809,9 +812,12 @@ function videoTrack(ctx: Ctx, plan: TrackPlan): string | null {
     if (pieces.length > 1) ctx.chains.push(`${label}split=${pieces.length}${srcs.join('')}`);
     pieces.forEach(([a, b], i) => ctx.chains.push(`${srcs[i]}trim=start_frame=${a}:end_frame=${b},setpts=PTS-STARTPTS${outs[i]}`));
     let i = 0;
-    if (headN) parts.push(dissolveWindow(ctx, tail!.label, outs[i++], headN, !(tail!.opaque && opaqueOverFrame(ctx, s, 0, headN))));
+    if (headN) {
+      const alpha = windowAlpha(ctx, s, 0, headN);
+      parts.push(dissolveWindow(ctx, tail!.label, outs[i++], headN, alpha === null || alpha !== tail!.alpha));
+    }
     if (bodyN > 0) parts.push(outs[i++]);
-    tail = tailN ? { label: outs[i++], frames: tailN, opaque: opaqueOverFrame(ctx, s, frames - tailN, frames) } : null;
+    tail = tailN ? { label: outs[i++], frames: tailN, alpha: windowAlpha(ctx, s, frames - tailN, frames) } : null;
   }
   if (tail) throw internal('a Cross Dissolve has no window on one side');
   const trackLabel = newLabel(ctx, 'tv');
