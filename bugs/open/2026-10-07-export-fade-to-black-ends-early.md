@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | open |
+| Status | in-progress |
 | Severity | low |
 | Area | export |
 | Reported by / date | agent claude/keyframes, 2026-10-07 |
