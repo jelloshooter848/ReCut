@@ -712,7 +712,9 @@ export const useStore = create<RecutStore>()((set, get) => {
       });
     },
     setMediaProbe(id, result) {
-      // Probe results arrive asynchronously after the import step: a job mirror, not an undo step.
+      // Probe results arrive asynchronously after the import step: a job mirror, not an undo step. Unlike the other
+      // mirrors it marks the project dirty: it completes the import / relink edit, and a project is not probed again
+      // when opened, so a probe missing from the file would stay missing.
       const afterRelink = relinkAwaitingProbe.delete(id);
       quiet((d) => {
         const m = d.media[id];
@@ -728,10 +730,15 @@ export const useStore = create<RecutStore>()((set, get) => {
       if (afterRelink && !('error' in result)) fitClipsToRelinkedMedia(id);
     },
     // Job/status mirrors are quiet: they arrive asynchronously and must not become undo steps (nor clear redo).
-    setProxy(id, proxy) { quiet((d) => { const m = d.media[id]; if (m) m.proxy = proxy; }, { dirty: true }); },
+    // Nor do they mark the project dirty (bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md): proxy,
+    // channel-proxy and scene-detect state is written to the file with the next save / autosave, but it is not an
+    // edit: the jobs make it again from the content-keyed cache. A job finishing after a clean save must not ask
+    // "Save changes?" on quit nor start an autosave (which recovery would offer after the clean quit). Writes that
+    // complete an edit still do: the probe of an import / relink (never re-read on open) and the relink itself.
+    setProxy(id, proxy) { quiet((d) => { const m = d.media[id]; if (m) m.proxy = proxy; }); },
     invalidateProxy(id) {
       // A "ready" proxy whose file is gone/unreadable: forget it so playback falls back to the original.
-      quiet((d) => { const m = d.media[id]; if (m && m.proxy.status !== 'none') m.proxy = { status: 'none' }; }, { dirty: true });
+      quiet((d) => { const m = d.media[id]; if (m && m.proxy.status !== 'none') m.proxy = { status: 'none' }; });
     },
     setChannelProxies(id, patch) {
       quiet((d) => {
@@ -740,11 +747,12 @@ export const useStore = create<RecutStore>()((set, get) => {
         const next: Record<string, ProxyInfo> = { ...(m.channelProxies ?? {}) };
         for (const [k, v] of Object.entries(patch)) { if (v) next[k] = v; else delete next[k]; }
         if (Object.keys(next).length) m.channelProxies = next; else delete m.channelProxies;
-      }, { dirty: true });
+      });
     },
-    setSceneDetectStatus(id, status) { quiet((d) => { const m = d.media[id]; if (m) m.sceneDetectStatus = status; }, { dirty: true }); },
+    setSceneDetectStatus(id, status) { quiet((d) => { const m = d.media[id]; if (m) m.sceneDetectStatus = status; }); },
     setDetectedScenes(id, boundaries, duration) {
-      // Detection results also arrive from a background job; edits to the scenes (rename/merge/split) stay undoable.
+      // Detection results also arrive from a background job (a mirror: not dirty, the job's cache makes them again);
+      // edits to the scenes (rename/merge/split) stay undoable and mark the project dirty.
       quiet((d) => {
         const m = d.media[id];
         if (!m) return;
@@ -757,7 +765,7 @@ export const useStore = create<RecutStore>()((set, get) => {
         }
         m.detectedScenes = scenes;
         m.sceneDetectStatus = 'done';
-      }, { dirty: true });
+      });
     },
     renameDetectedScene(mediaId, sceneId, name) {
       commit('Rename scene', (d) => { const s = d.media[mediaId]?.detectedScenes.find((x) => x.id === sceneId); if (s) s.name = name; });
