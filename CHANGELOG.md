@@ -5,6 +5,61 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
+## [0.8.0] - 2026-10-07
+
+Every feature planned for 1.0 ([Road to 1.0](docs/ROADMAP.md#road-to-10)), in one release: local speech-to-text,
+intermediate and audio-only export, MKV with several audio tracks and soft subtitles, a centre-channel utility for
+5.1 sources, nested sequences and compound clips, and keyframes. Project files stay `formatVersion` 1; projects from
+earlier releases open unchanged.
+
+### Added
+
+- **Transcribe with Whisper…** (Transcript › Import › Transcribe…, or the Project panel's media menu) turns speech in
+  a media file into a searchable transcript track ("English (Whisper Small)"), entirely on your computer. The engine
+  (whisper.cpp) ships inside the app; models (tiny to large-v3-turbo, 78 MB to 1.6 GB) are downloaded only when you
+  install one from **File › Transcription Models…** or Preferences, from pinned addresses checked against a fixed
+  SHA-256. Transcription runs as a job you can cancel, never uses the network, and a second run of the same media is
+  instant.
+- **New export formats** (Export › Format): **MOV** with ProRes (Proxy, LT, 422, HQ, 4444) or DNxHR (LB, SQ, HQ, HQX,
+  444) and PCM audio, for editing or grading elsewhere; **WAV** and **FLAC** audio-only export, as the mix or one file
+  per audio track, sample-aligned and exactly the length of the range.
+- **MKV export** with any number of audio tracks: each one a mix of the sequence audio tracks you choose (stereo, 5.1
+  or mono; AAC, AC-3, FLAC or PCM; language and title), with presets **Main mix only**, **5.1 + stereo downmix** and
+  **Main + commentary**. The sequence's subtitle tracks become soft subtitle tracks (language, title, Default and
+  Forced flags), and chapters are written as in MP4.
+- **Channel selection for 5.1 sources** (Inspector › Audio › Channels): play a clip's normal mix, one source channel
+  as mono, or a stereo downmix with your own centre and surround levels. **Extract Centre Channel (Dialogue)** (Clip
+  menu, clip context menu) adds the centre channel as its own linked clip. The preview plays exactly what the export
+  writes, AC-3 and DTS sources included.
+- **Nested sequences and compound clips.** **Make Compound Clip** turns the selected clips into a new sequence and
+  puts one clip in their place; **Open in Timeline** (or double-click) edits it, and edits show everywhere it is used;
+  **Break Apart Compound Clip** reverses it. Drag a sequence from the Project panel onto the timeline to nest it. A
+  sequence can never contain itself. Preview and export render nested sequences through the same path, frame for
+  frame.
+- **Keyframes** for position, scale, opacity and volume (Inspector), with Linear or Ease, shown as diamonds on the
+  timeline. They stay with the picture when you trim, split, roll or slide, work inside and on compound clips, and
+  the export matches the preview (within a quarter of a pixel, 1.5 luma levels and 0.5 dB).
+
+### Fixed
+
+- The Program monitor could keep showing the previous frame after a seek while paused
+  ([report](bugs/closed/2026-10-07-program-stale-frame-after-seek.md)).
+- Mono sources played 3 dB louder in the preview than in the export
+  ([report](bugs/closed/2026-10-07-mono-preview-level.md)), and the Program monitor's peak meter always showed
+  "unavailable" ([report](bugs/closed/2026-10-07-program-meter-always-unavailable.md)).
+- Verified downloads (OCR languages, transcription models) failed on any HTTP redirect
+  ([report](bugs/closed/2026-10-07-download-redirect-net-fetch-manual.md)).
+- Double-clicking a clip on the timeline (open in Source, or open a compound clip) did not always register on
+  Windows; double-clicks are now detected by the timeline itself.
+
+### Development
+
+- The Windows, Linux and macOS builds compile whisper.cpp 1.9.5 from a pinned, checksum-verified source and bundle it
+  like FFmpeg; the release workflow checks its size and that it starts.
+- A saved-project fixture for 0.8.0 (`tests/fixtures/projects/recut-0.8.0.recut`) with keyframes and nested sequences;
+  older fixtures must open without either.
+- No new npm dependencies.
+
 ## [0.7.0] - 2026-10-07
 
 Portability and trust (the 0.10.0 milestone of the [Road to 1.0](docs/ROADMAP.md#road-to-10), shipped early): projects

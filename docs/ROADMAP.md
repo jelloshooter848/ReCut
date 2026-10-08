@@ -19,14 +19,15 @@ in every release PR (docs/RELEASING.md).
 | 2 | Fix the remaining preview gaps | Done | 0.4.0 |
 | 3 | Pre-export warnings | Done | 0.5.0 |
 | 4 | Bitmap subtitle OCR (PGS / VobSub / DVB) | Done | 0.6.0 |
-| 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS dmg built as a CI test build, waiting for signing | 0.6.1 (Linux), macOS once signed |
+| 19 | Official Linux and macOS releases | Done: Linux (0.6.1), macOS signed and notarised dmg (0.8.0) | 0.6.1, 0.8.0 |
 | 16 | Collect / Consolidate Project (with the moved-media cache fix) | Done | 0.7.0 |
-| 6 | Intermediate and audio-only export | Done | next release |
-| 7 | MKV packaging export | Done | next release |
-| 9 | Surround: centre-channel and channel-selection utility (the mixer comes after 1.0) | Quick utility done | next release |
-| 11 | Keyframes, first version (position, scale, opacity, volume; linear and ease) | Done | next release |
-| 8 | Nested sequences and compound clips | Done | next release |
-| 5, 10, 12–15, 17, 18 | Everything else | Not started | — |
+| 5 | Local speech-to-text (Whisper) | Done | 0.8.0 |
+| 6 | Intermediate and audio-only export | Done | 0.8.0 |
+| 7 | MKV packaging export | Done | 0.8.0 |
+| 9 | Surround: centre-channel and channel-selection utility (the mixer comes after 1.0) | Quick utility done | 0.8.0 |
+| 11 | Keyframes, first version (position, scale, opacity, volume; linear and ease) | Done | 0.8.0 |
+| 8 | Nested sequences and compound clips | Done | 0.8.0 |
+| 10, 12–15, 17, 18 | Everything else | Not started | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
 the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
@@ -50,13 +51,8 @@ at franchise scale), on Windows, Linux and macOS. It is not feature parity with 
 | 0.6.0 | Bitmap subtitle OCR | §4 (done) |
 | 0.6.1 | Official Linux release (AppImage) | §19, Linux part (done) |
 | 0.7.0 | Collect Project, the moved-media cache fix, the project compatibility promise and the update notice (all of 0.10.0, shipped early) | §16 (done), 0.10.0 (done) |
-| next | Official macOS release (dmg, signed and notarised) | §19, macOS part (built; waits for signing) |
-| 0.8.0 | Delivery 1: intermediates and audio | §6 (ProRes, DNxHR, WAV / audio-only, one file per audio track) and the centre-channel utility from §9 |
-| 0.9.0 | Delivery 2: MKV packaging | §7 (MKV, more than one audio track, soft subtitle tracks, chapters) |
+| 0.8.0 | Everything else for 1.0, in one release (owner's decision, 7 October 2026: "don't hold anything"): the official macOS release (dmg, signed and notarised), Delivery 1 (intermediates and audio), Delivery 2 (MKV packaging), local transcription (Whisper), nested sequences and compound clips, keyframes (first version) | §19 macOS part, §6 and the centre-channel utility from §9, §7, §5, §8, §11 (all done) |
 | 0.10.0 | Portability and trust (done early, in 0.7.0) | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/closed/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
-| 0.11.0 | Local transcription (Whisper) | §5 |
-| 0.12.0 | Nested sequences and compound clips | §8 |
-| 0.13.0 | Keyframes, first version | §11 (position, scale, opacity, volume) |
 | 1.0.0-rc.N | Feature freeze, release candidates | see below |
 | 1.0.0 | Stable release | |
 
@@ -239,8 +235,8 @@ PGS stream reads in about 28 s on 4 cores (99.96 %). Teletext and ARIB captions 
 Many sources have none, or only bitmap subtitles (see §4).
 **Why deferred:** a good model is large (hundreds of MB to GB), GPU support varies by platform, and ReCut must stay
 offline and cloud-free.
-**Scheduled:** release 0.11.0, before nested sequences (§8) (project owner's decision, 7 October 2026; see
-[Road to 1.0](#road-to-10)). Strongly preferred for 1.0, second to move to 1.1 if 1.0 needs cutting.
+**Scheduled:** before nested sequences (§8) (project owner's decision, 7 October 2026; see
+[Road to 1.0](#road-to-10)); shipped in 0.8.0 with the rest of the 1.0 features.
 **Plan:** the same model as OCR (§4): **engine built in, models downloaded on request.**
 - **Engine:** a CPU build of `whisper.cpp` (a few MB) ships inside the app for each platform (Metal on Apple Silicon
   where it helps), so it is signed with the app on macOS and nothing executable is ever downloaded. No GPU-vendor
@@ -257,7 +253,7 @@ offline and cloud-free.
   source, model (with its hash) and settings; reading the same media again is instant. Transcription never uses the
   network.
 - The disabled **Local Whisper** entry under Transcribe… is the placeholder.
-**Status: implemented, pending release 0.11.0** (not done until 0.11.0 is published). The engine is whisper.cpp
+**Status: done (7 October 2026, release 0.8.0).** The engine is whisper.cpp
 1.9.5 (`whisper-cli`, CPU, about 10 MB with five CPU-variant kernels picked at run time; Metal on Apple Silicon),
 compiled in CI from the pinned, SHA-256-checked source (`scripts/whisper-source.mjs`, `scripts/{linux,windows,mac}/
 get-whisper.*`) and bundled like FFmpeg. Seven models (tiny, base, base.en, small, small.en, medium, large-v3-turbo;
@@ -282,7 +278,7 @@ frame-exact and safe first.
 **Plan:** ProRes (`prores_ks`) and DNxHR (`dnxhd`) in MOV, PCM audio in MOV, audio-only WAV (PCM) and other audio
 containers, and per-track or per-stem export (one WAV per audio track, or per stem once §12 exists). The render graph
 already builds video and audio separately; this adds containers, codecs and a "no video" mode.
-**Status: done (7 October 2026; ships in the next release).** Export › Format offers MP4, MOV (ProRes Proxy / LT / 422 / HQ /
+**Status: done (7 October 2026, release 0.8.0).** Export › Format offers MP4, MOV (ProRes Proxy / LT / 422 / HQ /
 4444 with `prores_ks`, DNxHR LB / SQ / HQ / HQX / 444 with `dnxhd`, PCM 16- or 24-bit audio), WAV and FLAC (audio
 only, the mix or one file per audio track, sample-aligned and the length of the range); the file extension follows
 the format, and settings saved before load as MP4. Formats and encoder arguments live in `shared/exportFormat.ts`.
@@ -308,7 +304,7 @@ commentary), each with its own language and title. Subtitle tracks are muxed as 
 in or written as a sidecar. Use FFmpeg's Matroska muxer, not `mkvmerge`, so there is no new dependency. It must work
 with a user-installed FFmpeg: FFmpeg is bundled only in the Windows builds (see
 [LIMITATIONS](LIMITATIONS.md#platform-and-packaging)).
-**Status: done (7 October 2026, release 0.9.0).** Export › Format › **MKV** (FFmpeg's Matroska muxer) writes H.264 /
+**Status: done (7 October 2026, release 0.8.0).** Export › Format › **MKV** (FFmpeg's Matroska muxer) writes H.264 /
 H.265 with any number of audio tracks, each a mix definition (which sequence audio tracks, stereo / 5.1 / mono, AAC /
 AC-3 / FLAC / PCM, language, title; the first is the default; presets "Main mix only", "5.1 + stereo downmix", "Main
 + commentary"), all sample-exact and the same length; the sequence's subtitle tracks as soft SubRip streams with
@@ -332,7 +328,7 @@ share one path and no intermediate render is needed. **Make Compound Clip** repl
 sequence and a single clip that points to it; **Open in Timeline** edits the inner sequence. Interchange exports
 nested sequences as OTIO stacks, or flattens them for EDL. If interchange (§10) has shipped by then, it must be
 extended for nesting as part of this work.
-**Status: implemented, pending release 0.8.0** (7 October 2026). A clip with `sequenceId` plays a project
+**Status: done (7 October 2026, release 0.8.0).** A clip with `sequenceId` plays a project
 sequence (`formatVersion` stays 1; cycles and nesting deeper than 8 levels are refused by every command and cut by
 `normalizeProject`). `flattenSequence` in `shared/nest.ts` expands nested clips into media clips (inner time at the
 outer frame rate, composed transforms, multiplied gains, transitions at nested edges as alpha / gain ramps) and is the
@@ -360,7 +356,7 @@ master meter), stereo/5.1 panning per clip, and multichannel proxies.
 as its own audio clip, choose which source channel a mono clip uses, and set a controlled stereo downmix (centre and
 surround levels) instead of FFmpeg's default. It is cheap (FFmpeg `pan` / `channelsplit`) and useful on its own, but it
 is not a substitute for stem separation (§12): the centre channel still carries music and effects.
-**Status: quick utility done (7 October 2026, for release 0.8.0); the mixer is not started and is planned after 1.0.**
+**Status: quick utility done (7 October 2026, release 0.8.0); the mixer is not started and is planned after 1.0.**
 Clip Inspector › Audio › **Channels** plays a multichannel clip's normal mix, one source channel as mono (named from
 the ffprobe layout, numbered when it is unknown) or a stereo downmix with centre and surround levels (BS.775
 defaults, LFE left out); **Extract Centre Channel (Dialogue)** (clip context menu, **Clip** menu) adds a linked
@@ -385,7 +381,7 @@ or `sendcmd`). Static transforms were made frame-exact first.
 **Plan:** per-property keyframe lists on `ClipTransform` / `ClipAudio`, evaluated in the planner and emitted as
 FFmpeg expressions. The first version covers opacity, volume, position and scale, with linear and ease
 interpolation. Rotation, crop, audio level curves and a graph editor follow later.
-**Status: first version implemented, pending release 0.8.0** (not done until 0.8.0 is published). Position, scale,
+**Status: first version done (7 October 2026, release 0.8.0).** Position, scale,
 opacity (`ClipTransform.keyframes`) and level (`ClipAudio.keyframes`) take keyframes in clip-relative frames with
 Linear or Ease (smoothstep), evaluated by `shared/keyframes.ts` in the preview and the export; the Inspector adds,
 edits, steps through and clears them at the playhead (one undo step each) and the timeline shows them as diamonds.
