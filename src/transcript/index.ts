@@ -6,6 +6,7 @@
  */
 import type { Clip, ID, MediaItem, Project, Rational, Sequence, SubtitleCue, Track } from '../../shared/model';
 import { clipSourceOut } from '../../shared/timeline';
+import { flatOrigin, flattenSequence, outerClipId, trackGroupId } from '../../shared/nest';
 import { identityLabel } from '../state/selectors';
 
 // ------------------------------------------------------------------
@@ -253,7 +254,8 @@ export function sequenceClipsByMedia(seq: Pick<Sequence, 'videoTracks' | 'audioT
     for (const c of t.clips) {
       let l = byMedia.get(c.mediaId);
       if (!l) { l = []; byMedia.set(c.mediaId, l); }
-      l.push({ clip: c, trackId: t.id });
+      // A clip of a flattened nested sequence (shared/nest.ts) counts on the outer track it plays on.
+      l.push({ clip: c, trackId: trackGroupId(t) });
     }
   };
   for (const t of seq.videoTracks) add(t);
@@ -274,7 +276,11 @@ export function timelineHitsFor(seq: Pick<Sequence, 'id' | 'fps' | 'videoTracks'
   const seenLinks = new Set<ID>();
   const refs = sequenceClipsByMedia(seq).get(mediaId);
   if (!refs) return out;
-  for (const { clip: c, trackId } of refs) {
+  for (const { clip: flatClip, trackId } of refs) {
+    // Flattened sequences: a copy of an outer clip (moved for a transition at a nested clip) counts as the clip.
+    const o = flatOrigin(flatClip);
+    const c = o && o.path.length === 0 ? o.source : flatClip;
+    if (!c.enabled && c.sequenceId) continue; // a nested clip's placeholder
     if (c.linkId) { if (seenLinks.has(c.linkId)) continue; }
     const srcOut = clipSourceOut(c, fps);
     if (end <= c.sourceIn || start >= srcOut) continue;
@@ -282,10 +288,23 @@ export function timelineHitsFor(seq: Pick<Sequence, 'id' | 'fps' | 'videoTracks'
     const toFrame = (sec: number) => c.start + Math.round((sec - c.sourceIn) / c.speed * fps.num / fps.den);
     const f = Math.max(c.start, Math.min(c.start + c.duration - 1, toFrame(start)));
     const ef = Math.max(f + 1, Math.min(c.start + c.duration, toFrame(end)));
-    out.push({ sequenceId: seq.id, clipId: c.id, clipName: c.name, trackId, frame: f, endFrame: ef });
+    // Inside a nested clip, the hit names the nested clip (what the timeline shows and selects).
+    const outerId = outerClipId(flatClip);
+    out.push({ sequenceId: seq.id, clipId: outerId, clipName: outerId === c.id ? c.name : nestedClipName(seq, outerId) ?? c.name, trackId, frame: f, endFrame: ef });
   }
   out.sort((a, b) => a.frame - b.frame);
   return out;
+}
+
+function nestedClipName(seq: Pick<Sequence, 'videoTracks' | 'audioTracks'>, id: ID): string | undefined {
+  for (const t of [...seq.videoTracks, ...seq.audioTracks]) for (const c of t.clips) if (c.id === id) return c.name;
+  return undefined;
+}
+
+/** A sequence with its nested sequences flattened into media clips (shared/nest.ts): what plays on its timeline. */
+function playedSequence(index: TranscriptIndex, id: ID | undefined): Sequence | undefined {
+  const seq = id ? index.project.sequences[id] : undefined;
+  return seq && flattenSequence(seq, index.project.sequences, index.project.media);
 }
 
 function scopeFilter(index: TranscriptIndex, scope: SearchScope): ((e: TranscriptEntry) => boolean) | null {
@@ -297,7 +316,7 @@ function scopeFilter(index: TranscriptIndex, scope: SearchScope): ((e: Transcrip
     case 'franchise': return scope.value ? (e) => e.scopeKeys.franchise === scope.value : null;
     case 'collection': return scope.value ? (e) => e.scopeKeys.collection === scope.value : null;
     case 'sequence': {
-      const seq = scope.sequenceId ? index.project.sequences[scope.sequenceId] : undefined;
+      const seq = playedSequence(index, scope.sequenceId);
       if (!seq) return null;
       const ids = sequenceMediaIds(seq);
       return (e) => ids.has(e.mediaId);
@@ -313,7 +332,7 @@ export function searchTranscript(index: TranscriptIndex, query: string, scope: S
   if (compiled.matchers.length === 0) return emptyResult(query, scope);
   const filter = scopeFilter(index, scope);
   if (!filter) return emptyResult(query, scope);
-  const seq = scope.kind === 'sequence' && scope.sequenceId ? index.project.sequences[scope.sequenceId] : undefined;
+  const seq = scope.kind === 'sequence' ? playedSequence(index, scope.sequenceId) : undefined;
 
   const matches: TranscriptMatch[] = [];
   let total = 0;

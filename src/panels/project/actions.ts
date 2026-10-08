@@ -156,11 +156,14 @@ export async function deleteSequenceConfirmed(id: ID): Promise<boolean> {
   const seq = st.project.sequences[id];
   if (!seq) return false;
   const clips = allTracks(seq).reduce((n, t) => n + t.clips.length, 0);
-  if (clips > 0) {
+  // Nested elsewhere (Roadmap §8): those nested clips would play nothing.
+  const hosts = Object.values(st.project.sequences).filter((s) => s.id !== id && allTracks(s).some((t) => t.clips.some((c) => c.sequenceId === id)));
+  if (clips > 0 || hosts.length) {
     const api = recutApi();
+    const nestNote = hosts.length ? ` It is nested in ${hosts.map((h) => `"${h.name}"`).join(', ')}: those nested clips will play nothing.` : '';
     const choice = api
-      ? await api.message({ type: 'warning', title: 'Delete sequence', message: `Delete "${seq.name}"?`, detail: `It contains ${clips} clip${clips === 1 ? '' : 's'}.`, buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1 })
-      : (window.confirm(`Delete sequence "${seq.name}" (${clips} clips)?`) ? 0 : 1);
+      ? await api.message({ type: 'warning', title: 'Delete sequence', message: `Delete "${seq.name}"?`, detail: `It contains ${clips} clip${clips === 1 ? '' : 's'}.${nestNote}`, buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1 })
+      : (window.confirm(`Delete sequence "${seq.name}" (${clips} clips)?${nestNote}`) ? 0 : 1);
     if (choice !== 0) return false;
   }
   st.deleteSequence(id);

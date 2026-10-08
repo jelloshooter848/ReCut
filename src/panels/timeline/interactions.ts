@@ -24,6 +24,8 @@ export interface InteractionCtx {
   snapping: boolean;
   linkedSelection: boolean;
   contentEl: HTMLDivElement | null;
+  /** Double-click on a clip body with the Select tool (detected here: pointer capture swallows dblclick on some platforms). */
+  onClipDoubleClick?: (clip: Clip) => void;
 }
 
 type Drag =
@@ -114,6 +116,7 @@ export interface TimelineDrag {
 
 export function useTimelineDrag(ctxRef: React.MutableRefObject<InteractionCtx>, suppressFlip: React.MutableRefObject<boolean>): TimelineDrag {
   const active = useRef<Active | null>(null);
+  const lastClipDown = useRef<{ clipId: ID; at: number; x: number; y: number } | null>(null);
   const [preview, setPreview] = useState<DragPreview | null>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -264,6 +267,18 @@ export function useTimelineDrag(ctxRef: React.MutableRefObject<InteractionCtx>, 
         begin(e, { kind: 'slide', clipId: loc.clip.id, trackId: loc.track.id, startX: e.clientX, min, max });
         return;
       }
+      // Double-click (Select tool, no modifiers): two presses on the same clip within 500 ms and 5 px. Detected here
+      // rather than with dblclick, which pointer capture from the first press swallows on some platforms (Windows).
+      if (ctx.tool === 'select' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const now = performance.now();
+        const p = lastClipDown.current;
+        if (p && p.clipId === loc.clip.id && now - p.at < 500 && Math.abs(e.clientX - p.x) <= 5 && Math.abs(e.clientY - p.y) <= 5) {
+          lastClipDown.current = null;
+          ctx.onClipDoubleClick?.(loc.clip);
+          return;
+        }
+        lastClipDown.current = { clipId: loc.clip.id, at: now, x: e.clientX, y: e.clientY };
+      } else lastClipDown.current = null;
       // select / ripple: selection + move
       const group = clickSelect(loc.clip, e);
       const selected = useStore.getState().ui.selectedClipIds;

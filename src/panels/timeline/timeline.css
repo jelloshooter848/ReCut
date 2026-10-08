@@ -134,6 +134,11 @@
 .tl-badge { display: inline-flex; align-items: center; font-size: 9px; line-height: 12px; padding: 0 3px; border-radius: 2px; background: rgba(255,255,255,0.18); flex-shrink: 0; max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tl-badge.speed { background: var(--accent-2); color: #111; font-weight: 700; }
 .tl-badge.offline { background: var(--danger); color: #fff; font-weight: 700; }
+/* Nested sequence clips (Roadmap §8): a striped body instead of a filmstrip / waveform. */
+.tl-badge.nested { background: var(--accent); color: #111; font-weight: 700; }
+.tl-clip.nested { background: #3d4a6b; }
+.tl-clip.nested.audio { background: #33506b; }
+.tl-nest-body { position: absolute; inset: 0; background: repeating-linear-gradient(135deg, rgba(255,255,255,0.06) 0 6px, transparent 6px 12px); }
 .tl-clip-body { position: absolute; top: 16px; left: 0; right: 0; bottom: 0; overflow: hidden; }
 .tl-clip.compact .tl-clip-body { top: 0; }
 .tl-thumb { position: absolute; top: 0; height: 100%; object-fit: cover; opacity: 0.92; pointer-events: none; }
