@@ -7,6 +7,10 @@
  * calls exportTimeline and INTERCHANGE_FORMATS; the core owns everything else in this folder.
  */
 import type { ID, Project } from '../model';
+import { allClips, count, isAre, Issues, prepare, safeFileStem } from './common';
+import { writeFcpxml } from './fcpxml';
+import { writeOtio } from './otio';
+import { writeEdl } from './edl';
 
 export type InterchangeFormat = 'fcpxml' | 'otio' | 'edl';
 
@@ -62,6 +66,11 @@ export interface InterchangeIssue {
 export interface InterchangeResult {
   files: InterchangeFile[];
   issues: InterchangeIssue[];
+  /**
+   * Counts after flattening nested sequences: `clips` = every video and audio clip of the flattened sequence, enabled
+   * and disabled (a linked A/V pair counts as 2); `videoTracks` / `audioTracks` = flattened tracks (a nested clip's
+   * inner tracks become tracks of their own); `durationFrames` at the sequence rate; `media` = distinct media files.
+   */
   summary: { clips: number; videoTracks: number; audioTracks: number; durationFrames: number; media: number };
 }
 
@@ -75,6 +84,29 @@ export function exportTimeline(
   format: InterchangeFormat,
   opts: InterchangeOptions = {},
 ): InterchangeResult {
-  void project; void sequenceId; void format; void opts;
-  throw new Error('exportTimeline: not implemented yet');
+  const issues = new Issues();
+  const p = prepare(project, sequenceId, issues);
+  const stem = safeFileStem(p.name);
+  let files: InterchangeFile[];
+  switch (format) {
+    case 'fcpxml': files = [{ name: `${stem}.fcpxml`, contents: writeFcpxml(p, issues) }]; break;
+    case 'otio': files = [{ name: `${stem}.otio`, contents: writeOtio(p, issues) }]; break;
+    case 'edl': files = writeEdl(p, issues, stem, opts.edlVideoTracks); break;
+    default: throw new Error(`exportTimeline: unknown format "${String(format)}"`);
+  }
+  if (p.subtitleTracks) {
+    issues.add('subtitles', 'subtitles', 'warning', (n) => `${count(n, 'subtitle track')} ${isAre(n)} not exported; export subtitles from ReCut as SRT.`, null, p.subtitleTracks);
+  }
+  const clips = allClips(p);
+  return {
+    files,
+    issues: issues.list(),
+    summary: {
+      clips: clips.length,
+      videoTracks: p.videoTracks.length,
+      audioTracks: p.audioTracks.length,
+      durationFrames: p.durationFrames,
+      media: p.mediaIds.size,
+    },
+  };
 }
