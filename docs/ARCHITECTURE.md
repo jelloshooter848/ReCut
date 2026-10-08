@@ -332,9 +332,11 @@ frame by construction, and the unit and real-FFmpeg tests compare nested timelin
   from a newer format version (or without one) is refused and never replaced by the `.bak`.
 - **Open:** `mediaActions.openProject` is the one open path (File › Open, recent, OS open, command line). Loading or
   creating a project closes all modal dialogs of the previous one.
-- **Quit:** main sends `ev:beforeQuit`. The renderer **acks** within 3 s (otherwise main force-quits, for a hung
-  renderer), asks Save / Don't Save / Cancel if dirty, then confirms with `quit(true)`, or sends `quitCancel` to keep
-  running.
+- **Quit:** main sends `ev:beforeQuit` (`electron/quitFlow.ts`). The renderer **acks** within 3 s (otherwise main
+  force-quits, for a hung renderer), asks Save / Don't Save / Cancel if dirty, then confirms with `quit(true)`, or
+  sends `quitCancel` to keep running. After the ack no timer quits behind the prompt; a renderer that dies (crash,
+  window destroyed) finishes the quit, one that becomes unresponsive makes main ask "Quit anyway?" (Wait / Quit), and
+  a repeated quit request while a live renderer's prompt is up only brings the window forward.
 
 ## Performance design
 

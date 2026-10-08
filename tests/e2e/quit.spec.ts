@@ -3,6 +3,8 @@
  * main-process message box stubbed so a prompt is recorded instead of shown.
  *  - bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md: a background job finishing after a clean save
  *    does not make the quit ask "Save changes?".
+ *  - bugs/closed/2026-10-08-quit-stuck-after-renderer-dies.md: a renderer that dies after it acked the quit request
+ *    no longer leaves the app running for ever; a live renderer's prompt is never quit behind.
  */
 import { test, expect, type ElectronApplication } from '@playwright/test';
 import fs from 'node:fs';
@@ -92,3 +94,47 @@ test('a proxy job finishing after a clean save: quit asks nothing and exits', as
   }
 });
 
+/** A launched app with an unsaved edit and the quit prompt stubbed to stay open until __answer(n). */
+async function dirtyAppWithPromptUp() {
+  const launched = await launchApp({ tmp: fs.mkdtempSync(path.join(tmp, 'prompt-')) });
+  const { app, page } = launched;
+  proc(app);
+  await page.evaluate(() => {
+    const st = (window as unknown as W).__recut.store.getState();
+    st.addMarker(st.project.activeSequenceId, { time: 1, name: 'unsaved' });
+  });
+  expect(await page.evaluate(() => (window as unknown as W).__recut.store.getState().dirty)).toBe(true);
+  await stubQuitPrompt(app, null);
+  await app.evaluate(({ app: a }) => { a.quit(); }).catch(() => undefined);
+  // The renderer acked (main dropped its fallback) and its Save / Don't Save / Cancel prompt is up.
+  await expect.poll(() => prompts(app)).toHaveLength(1);
+  return launched;
+}
+
+test('the renderer crashes while its quit prompt is up: the app exits', async () => {
+  const { app } = await dirtyAppWithPromptUp();
+  try {
+    const gone = exited(app);
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].webContents.forcefullyCrashRenderer(); }).catch(() => undefined);
+    await within(gone, 15_000, 'the app did not quit after its renderer crashed');
+  } finally {
+    if (alive(app)) proc(app).kill('SIGKILL');
+  }
+});
+
+test('a second quit request while a live renderer shows its prompt does not quit behind it', async () => {
+  const { app, page } = await dirtyAppWithPromptUp();
+  try {
+    await app.evaluate(({ app: a }) => { a.quit(); }).catch(() => undefined);
+    await page.waitForTimeout(4000); // past the 3 s fallback of a renderer that never acked
+    expect(alive(app)).toBe(true);
+    expect(await prompts(app)).toHaveLength(1); // not asked twice
+    expect(await page.evaluate(() => (window as unknown as W).__recut.store.getState().dirty)).toBe(true);
+    // The user answers Don't Save: the app quits.
+    const gone = exited(app);
+    await app.evaluate(() => { (globalThis as unknown as { __answer(n: number): void }).__answer(1); }).catch(() => undefined);
+    await within(gone, 15_000, "the app did not quit after Don't Save");
+  } finally {
+    if (alive(app)) proc(app).kill('SIGKILL');
+  }
+});

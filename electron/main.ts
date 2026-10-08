@@ -8,7 +8,7 @@
  *  RECUT_DISABLE_GPU=1 — software rendering (xvfb)
  *  RECUT_UPDATE_CHECK=0 / RECUT_UPDATE_URL — update notice (see electron/updateIpc.ts)
  */
-import { app, BrowserWindow, net, protocol, screen, shell } from 'electron';
+import { app, BrowserWindow, dialog, net, protocol, screen, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { IPC, MEDIA_SCHEME } from '../shared/ipc';
@@ -27,6 +27,7 @@ import { ocrWorkerPath, probeOcrCore } from './ocr/engine';
 import { getWhisperCliPath, whisperCliVersion } from './whisper/engine';
 import { manualRedirectFetch, type NetClientRequest } from './net/electronFetch';
 import { registerUpdateIpc } from './updateIpc';
+import { createQuitFlow } from './quitFlow';
 import type { UpdateChecker } from './updateCheck';
 
 const isDev = Boolean(process.env.RECUT_DEV_URL) || !app.isPackaged;
@@ -59,8 +60,6 @@ export { projectPathFromArgv };
 
 let win: BrowserWindow | null = null;
 let pendingProjectPath: string | null = projectPathFromArgv(process.argv.slice(1));
-let quitConfirmed = false;
-let quitTimer: NodeJS.Timeout | null = null;
 let menu: { refresh(): void } | null = null;
 let updates: UpdateChecker | null = null;
 
@@ -87,46 +86,36 @@ function openProjectPath(p: string): void {
 }
 
 // ------------------------------------------------------------------
-// Quit flow: ask the renderer first (it may prompt to save).
+// Quit flow: ask the renderer first (it may prompt to save); electron/quitFlow.ts.
 // The renderer acks ev:beforeQuit immediately (quitAck), which cancels the 3 s fallback; the
-// fallback only covers a hung renderer. It then confirms with quit(true) or stands down with
-// quitCancel() (user chose Cancel, or the save failed).
+// fallback only covers a renderer that never got the request. It then confirms with quit(true) or
+// stands down with quitCancel() (user chose Cancel, or the save failed). A renderer that dies after
+// the ack finishes the quit; one that hangs makes main ask the user whether to quit now.
 // ------------------------------------------------------------------
 
-let quitPending = false;
+const quitFlow = createQuitFlow({
+  canAsk: () => !!win && !win.isDestroyed(),
+  ask: () => { if (win && !win.isDestroyed()) win.webContents.send(IPC.evBeforeQuit); },
+  quit: () => app.quit(),
+  focus: () => { if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.focus(); } },
+  confirmUnresponsive: async (signal) => {
+    const options: Electron.MessageBoxOptions = {
+      type: 'warning', title: 'ReCut is not responding',
+      message: 'ReCut is not responding. Quit anyway?',
+      detail: 'Changes since the last save are lost if you quit now (an autosave, if any, is offered when ReCut starts again). Wait to give it more time.',
+      buttons: ['Wait', 'Quit'], defaultId: 0, cancelId: 0, noLink: true, signal,
+    };
+    const r = win && !win.isDestroyed() ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+    return r.response === 1;
+  },
+  fallbackMs: QUIT_FALLBACK_MS,
+});
 
-function clearQuitTimer(): void {
-  if (quitTimer) { clearTimeout(quitTimer); quitTimer = null; }
-}
-
-function requestQuit(force: boolean): void {
-  if (force || quitConfirmed || !win || win.isDestroyed()) {
-    quitConfirmed = true;
-    quitPending = false;
-    clearQuitTimer();
-    app.quit();
-    return;
-  }
-  if (quitPending) return; // already asked; the renderer is handling it
-  quitPending = true;
-  win.webContents.send(IPC.evBeforeQuit);
-  quitTimer = setTimeout(() => {
-    quitTimer = null;
-    quitConfirmed = true;
-    app.quit();
-  }, QUIT_FALLBACK_MS);
-}
-
+function requestQuit(force: boolean): void { quitFlow.request(force); }
 /** The renderer received ev:beforeQuit and is handling it: no more force-quit fallback. */
-function ackQuit(): void {
-  clearQuitTimer();
-}
-
+function ackQuit(): void { quitFlow.ack(); }
 /** The renderer decided to stay open. */
-function cancelQuit(): void {
-  clearQuitTimer();
-  quitPending = false;
-}
+function cancelQuit(): void { quitFlow.cancel(); }
 
 // ------------------------------------------------------------------
 // Window
@@ -209,11 +198,18 @@ async function createWindow(): Promise<BrowserWindow> {
   // Closing the window is a quit on every platform except macOS; route it through the quit flow.
   w.on('close', (e) => {
     rememberBounds(w, true);
-    if (quitConfirmed) return;
+    if (quitFlow.confirmed) return;
     e.preventDefault();
     requestQuit(false);
   });
-  w.on('closed', () => { if (win === w) win = null; });
+  w.on('closed', () => { if (win === w) { win = null; quitFlow.rendererGone(); } });
+  // A renderer that dies or hangs while the quit waits for it (bugs/closed/2026-10-08-quit-stuck-after-renderer-dies.md).
+  w.webContents.on('render-process-gone', (_e, details) => {
+    console.warn(`renderer process gone (${details.reason}, exit code ${details.exitCode})`);
+    quitFlow.rendererGone();
+  });
+  w.webContents.on('unresponsive', () => quitFlow.rendererUnresponsive());
+  w.webContents.on('responsive', () => quitFlow.rendererResponsive());
 
   // Keep the renderer inside the app: no in-window navigation, external links go to the browser.
   const allowedOrigin = process.env.RECUT_DEV_URL ? new URL(process.env.RECUT_DEV_URL).origin : null;
@@ -229,6 +225,7 @@ async function createWindow(): Promise<BrowserWindow> {
   });
 
   w.webContents.on('did-finish-load', () => {
+    quitFlow.rendererLoaded();
     if (pendingProjectPath) {
       const p = pendingProjectPath;
       pendingProjectPath = null;
@@ -341,7 +338,7 @@ if (!gotLock) {
   app.on('open-file', (e, p) => { e.preventDefault(); openProjectPath(p); }); // macOS
 
   app.on('before-quit', (e) => {
-    if (quitConfirmed) return;
+    if (quitFlow.confirmed) return;
     e.preventDefault();
     requestQuit(false);
   });
