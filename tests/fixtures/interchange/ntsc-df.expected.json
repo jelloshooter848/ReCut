@@ -1,0 +1,139 @@
+{
+  "fixture": "ntsc-df",
+  "name": "NTSC Cut",
+  "fps": [
+    30000,
+    1001
+  ],
+  "durationFrames": 2090,
+  "files": {
+    "fcpxml": [
+      "ntsc-df.fcpxml"
+    ],
+    "otio": [
+      "ntsc-df.otio"
+    ],
+    "edl": [
+      "ntsc-df_V1.edl"
+    ]
+  },
+  "tracks": [
+    {
+      "kind": "video",
+      "index": 0,
+      "lane": 0,
+      "name": "V1",
+      "storyline": false,
+      "dissolves": 1,
+      "clips": [
+        {
+          "name": "d1",
+          "start": 0,
+          "duration": 1790,
+          "srcIn": 150,
+          "srcRate": [
+            30000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/NTSC/Show 01.mp4",
+          "url": "file:///media/NTSC/Show%2001.mp4",
+          "enabled": true,
+          "still": false
+        },
+        {
+          "name": "d2",
+          "start": 1790,
+          "duration": 300,
+          "srcIn": 3596,
+          "srcRate": [
+            30000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/NTSC/Show 01.mp4",
+          "url": "file:///media/NTSC/Show%2001.mp4",
+          "enabled": true,
+          "still": false
+        }
+      ]
+    },
+    {
+      "kind": "video",
+      "index": 1,
+      "lane": 1,
+      "name": "V2",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": []
+    },
+    {
+      "kind": "video",
+      "index": 2,
+      "lane": 2,
+      "name": "V3",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": []
+    },
+    {
+      "kind": "audio",
+      "index": 0,
+      "lane": -1,
+      "name": "A1",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": [
+        {
+          "name": "da1",
+          "start": 0,
+          "duration": 1790,
+          "srcIn": 150,
+          "srcRate": [
+            30000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/NTSC/Show 01.mp4",
+          "url": "file:///media/NTSC/Show%2001.mp4",
+          "enabled": true,
+          "still": false
+        },
+        {
+          "name": "da2",
+          "start": 1790,
+          "duration": 300,
+          "srcIn": 3596,
+          "srcRate": [
+            30000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/NTSC/Show 01.mp4",
+          "url": "file:///media/NTSC/Show%2001.mp4",
+          "enabled": true,
+          "still": false
+        }
+      ]
+    },
+    {
+      "kind": "audio",
+      "index": 1,
+      "lane": -2,
+      "name": "A2",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": []
+    },
+    {
+      "kind": "audio",
+      "index": 2,
+      "lane": -3,
+      "name": "A3",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": []
+    }
+  ],
+  "markers": 1
+}

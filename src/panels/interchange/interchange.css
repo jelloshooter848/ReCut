@@ -1,0 +1,9 @@
+/* Export Timeline dialog (ExportTimelineDialog.tsx); shares the Collect dialog's classes (collect.css). */
+.interchange-legend { padding: 0 4px; color: var(--text-dim); }
+.interchange-format { align-items: flex-start; cursor: default; }
+.interchange-format input { margin-top: 2px; }
+.interchange-summary { flex-wrap: wrap; }
+.interchange-info { color: var(--text-dim); line-height: 1.45; }
+.interchange-info ul, .interchange-files { margin: 4px 0 0; padding-left: 18px; max-height: 120px; overflow: auto; }
+.interchange-files li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.interchange-issues li { overflow: visible; white-space: normal; }

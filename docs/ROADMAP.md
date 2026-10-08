@@ -27,13 +27,15 @@ in every release PR (docs/RELEASING.md).
 | 9 | Surround: centre-channel and channel-selection utility (the mixer comes after 1.0) | Quick utility done | 0.8.0 |
 | 11 | Keyframes, first version (position, scale, opacity, volume; linear and ease) | Done | 0.8.0 |
 | 8 | Nested sequences and compound clips | Done | 0.8.0 |
-| 10, 12–15, 17, 18 | Everything else | Not started; planned after 1.0 ([After 1.0](#after-10)) | — |
+| 10 | Interchange: editable timeline export (FCPXML, OpenTimelineIO, CMX3600 EDL); import after 1.0 | Export implemented, pending release 0.9.0 | 0.9.0 (pending) |
+| 12–15, 17, 18 | Everything else | Not started; planned after 1.0 ([After 1.0](#after-10)) | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
 the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
 
 **Where things stand (8 October 2026):** every feature planned for 1.0 is done and was published together in
-**0.8.0**, with the official, signed and notarised macOS downloads (§19). Next come the 1.0 release candidates
+**0.8.0**, with the official, signed and notarised macOS downloads (§19). Next comes the timeline interchange export
+in **0.9.0** (§10, moved before 1.0 by the owner on 8 October 2026), then the 1.0 release candidates
 ([Road to 1.0](#road-to-10)). §19 keeps its number, out of list order, so existing references stay valid.
 
 ## Road to 1.0
@@ -52,6 +54,7 @@ at franchise scale), on Windows, Linux and macOS. It is not feature parity with 
 | 0.6.1 | Official Linux release (AppImage) | §19, Linux part (done) |
 | 0.7.0 | Collect Project, the moved-media cache fix, the project compatibility promise and the update notice (all of 0.10.0, shipped early) | §16 (done), 0.10.0 (done) |
 | 0.8.0 | Everything else for 1.0, in one release (owner's decision, 7 October 2026: "don't hold anything"): the official macOS release (Apple Silicon and Intel dmgs, signed and notarised), Delivery 1 (intermediates and audio), Delivery 2 (MKV packaging), local transcription (Whisper), nested sequences and compound clips, keyframes (first version) | §19 macOS part, §6 and the centre-channel utility from §9, §7, §5, §8, §11 (all done) |
+| 0.9.0 | Hand-off to DaVinci Resolve: editable timeline export (FCPXML, OTIO, EDL), moved before 1.0 by the owner on 8 October 2026 | §10 export part |
 | 0.10.0 | Portability and trust (done early, in 0.7.0) | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/closed/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
 | 1.0.0-rc.N | Feature freeze, release candidates | see below |
 | 1.0.0 | Stable release | |
@@ -63,7 +66,8 @@ and a milestone that ships early or late moves its number with it. The milestone
 **Required for 1.0:** cross-platform releases, both delivery milestones, portability and trust, nested sequences.
 **Strongly preferred:** local transcription. **First to move to 1.1 if 1.0 needs cutting:** keyframes; then local
 transcription, if it threatens stability or platform support. No optional milestone holds 1.0 back indefinitely.
-All of them shipped in 0.8.0; what remains before 1.0 is the release candidates.
+All of them shipped in 0.8.0; what remains before 1.0 is the interchange export (0.9.0, §10) and the release
+candidates.
 
 **Portability and trust (planned as 0.10.0, shipped in 0.7.0) includes:**
 - **Project compatibility promise:** every 1.x release opens projects saved by earlier stable releases, or refuses
@@ -120,7 +124,7 @@ not a promise, as for the Road to 1.0.
 | 1.1.0 | Polish what shipped | §18 smaller items (Move / Slip into Sync, Build alternate cut without matching clips, transcript hits on timeline in every scope, MP4 with more than one audio track and soft subtitles); keyframes v2 (rotation and crop keyframes, dragging keyframe diamonds on the timeline); the nested-sequence follow-ups (inner chapters and subtitles on export as an option, opacity applied to the composite, speed on nested clips) |
 | 1.2.0 | Subtitle authoring | §15: the next need once OCR (§4) and Whisper (§5) produce subtitles is fixing their text and timing |
 | 1.3.0 | Audio mixer | §9 (mixer panel, per-track meters, stereo / 5.1 panning, multichannel proxies; track volume automation built on keyframes) |
-| 1.4.0 | Interchange | §10 (export OTIO and CMX3600 EDL, nested sequences included; import afterwards) |
+| 1.4.0 | Interchange import (OTIO, FCPXML, EDL) | §10 import part (export comes in 0.9.0) |
 | 1.5.0 | Dialogue / music / effects stems | §12 (after the mixer; starts with an engine and licence spike) |
 | 1.6.0 | GPU picture | §13 and the titles generator (§18) on one WebGL compositor; §14 (hardware encoders for proxies and export, WebCodecs decode) |
 | 2.0.0 | Cloud-free collaboration | §17. It needs the first change to the project format (`formatVersion` 2: relative media roots, sidecar files), which the compatibility promise ties to a MAJOR release |
@@ -373,7 +377,18 @@ remains of this entry: the Audio Mixer panel, per-track meters, panning and mult
 sharing media.
 **Why deferred:** the timeline model (rational fps, frames, centred transitions, clip-anchored cues) had to settle
 first. It stays after nesting (§8) because few fan editors round-trip, and interchange must represent nesting anyway.
-**Plan:** export OTIO and CMX3600 EDL from `Sequence` (pure, in `shared/`), then import.
+Nesting has shipped (§8, release 0.8.0), so the export no longer waits for it.
+**Plan:** export FCPXML, OTIO and CMX3600 EDL from `Sequence` (pure, in `shared/interchange/`), then import (after
+1.0, release 1.4.0).
+**Status: implemented, pending release 0.9.0** (8 October 2026; export only, moved before 1.0 by the owner, see
+[Ordering decisions](#ordering-decisions)). **File › Export Timeline…** writes a sequence as FCPXML, OpenTimelineIO or
+CMX3600 EDL (one file per video track) linked to the original media, for DaVinci Resolve (**File › Import ›
+Timeline…**) and other editors. The dialog shows a report before saving: clips, tracks, duration and media files,
+and what does not transfer exactly (warnings) or transfers in another form (info). `exportTimeline` in
+`shared/interchange/` is pure and runs in the renderer; the main process only writes the files
+(`electron/interchange.ts`: plain `.fcpxml` / `.otio` / `.edl` names, never over a project source, atomically).
+Tests: `tests/unit/interchange-ui.test.ts`, `tests/e2e/interchange.spec.ts`. Guide: [USER-GUIDE](USER-GUIDE.md) ›
+Finishing in DaVinci Resolve. Limits: [LIMITATIONS](LIMITATIONS.md) › Export.
 
 ## 11. Keyframes
 
@@ -570,3 +585,9 @@ Recorded so they are not re-proposed without new information.
   then subtitle authoring (1.2) ahead of the mixer, because OCR and Whisper output needs fixing tools; the mixer
   before stems, as decided before; interchange once nesting has shipped; one WebGL compositor for colour, titles and
   speed; collaboration as 2.0 because it changes the project format. Releases go out as each milestone is done.
+- **Interchange export before 1.0 (8 October 2026).** The project owner moved the export part of §10 (FCPXML, OTIO,
+  CMX3600 EDL) to release 0.9.0, before 1.0, after reviewing an outside comparison of ReCut with DaVinci Resolve and
+  Kdenlive. Reason: ReCut is where fan edits are assembled and Resolve is where they are finished (grading, mixing,
+  delivery), and an editable timeline that relinks to the original media gets an edit there without generation
+  loss. Import stays after 1.0 (1.4.0). This replaces "Interchange after nesting" and "Interchange stays after
+  nesting" above for the export; nesting had shipped by then.

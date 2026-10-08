@@ -1,0 +1,26 @@
+TITLE: Fan Edit: Tom & Jerry <Cut> "Final" ✂ V1
+FCM: NON-DROP FRAME
+
+001  BL       B     C        00:00:00:00 00:00:00:00 00:00:00:00 00:00:00:00
+001  Movie_One B     D    012 00:00:10:00 00:00:12:00 00:00:00:00 00:00:02:00
+* TO CLIP NAME: Movie One.mkv
+* SOURCE FILE: /media/Films/Movie One.mkv
+* LOC: 00:00:00:10 RED     Intro & <title>
+002  Episode__2____Pilot_ B     C        00:01:39:22 00:01:43:10 00:00:03:00 00:00:06:12
+* FROM CLIP NAME: Épisode #2 & "Pilot".mp4
+* SOURCE FILE: C:\Users\Fan\Vidéos\Épisode #2 & "Pilot".mp4
+* LOC: 00:00:03:00 BLUE    Part 2
+003  Episode__2____Pilot_ B     C        00:01:43:10 00:01:43:10 00:00:06:12 00:00:06:12
+003  Movie_One B     D    024 00:03:18:19 00:03:25:07 00:00:06:12 00:00:09:18
+M2   Movie_One 048.0                00:03:18:19
+* FROM CLIP NAME: Épisode #2 & "Pilot".mp4
+* TO CLIP NAME: Movie One.mkv
+* SOURCE FILE: /media/Films/Movie One.mkv
+* LOC: 00:00:08:08 ORANGE  Jacket colour
+004  Movie_One B     C        00:03:25:07 00:03:25:07 00:00:09:18 00:00:09:18
+004  BL       B     D    006 00:00:00:00 00:00:00:06 00:00:09:18 00:00:10:00
+* FROM CLIP NAME: Movie One.mkv
+005  BL       B     C        00:00:00:00 00:00:00:00 00:00:10:00 00:00:10:00
+005  Episode__2____Pilot_ B     D    006 00:04:59:17 00:05:01:17 00:00:10:00 00:00:12:00
+* TO CLIP NAME: Épisode #2 & "Pilot".mp4
+* SOURCE FILE: C:\Users\Fan\Vidéos\Épisode #2 & "Pilot".mp4

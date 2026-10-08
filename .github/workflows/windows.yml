@@ -563,6 +563,18 @@ jobs:
       - name: Unit tests
         run: npx vitest run
 
+      # Timeline interchange (FCPXML / OTIO / EDL, shared/interchange): the goldens the unit tests just checked, read
+      # back by an independent reader, OpenTimelineIO with its cmx_3600 and fcpx_xml adapters (pinned). A format whose
+      # adapter is missing is reported and skipped by the script.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Interchange exports read back with OpenTimelineIO
+        timeout-minutes: 5
+        run: |
+          python -m pip install --disable-pip-version-check --quiet opentimelineio==0.18.1 otio-cmx3600-adapter==1.0.0 otio-fcpx-xml-adapter==1.0.0
+          python scripts/interchange-check.py
+
       - run: npm run build
       - name: End-to-end tests (xvfb)
         run: xvfb-run -a npx playwright test -c tests/e2e/playwright.config.ts

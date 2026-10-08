@@ -1,0 +1,315 @@
+{
+  "fixture": "representative",
+  "name": "Fan Edit: Tom & Jerry <Cut> \"Final\" ✂",
+  "fps": [
+    24000,
+    1001
+  ],
+  "durationFrames": 324,
+  "files": {
+    "fcpxml": [
+      "representative.fcpxml"
+    ],
+    "otio": [
+      "representative.otio"
+    ],
+    "edl": [
+      "representative_V1.edl",
+      "representative_V2.edl",
+      "representative_V3.edl",
+      "representative_V4.edl"
+    ]
+  },
+  "tracks": [
+    {
+      "kind": "video",
+      "index": 0,
+      "lane": 0,
+      "name": "V1",
+      "storyline": false,
+      "dissolves": 1,
+      "clips": [
+        {
+          "name": "Opening",
+          "start": 0,
+          "duration": 48,
+          "srcIn": 240,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/Films/Movie One.mkv",
+          "url": "file:///media/Films/Movie%20One.mkv",
+          "enabled": true,
+          "still": false
+        },
+        {
+          "name": "Rooftop & Chase",
+          "start": 72,
+          "duration": 96,
+          "srcIn": 2398,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 1,
+          "path": "C:\\Users\\Fan\\Vidéos\\Épisode #2 & \"Pilot\".mp4",
+          "url": "file:///C:/Users/Fan/Vid%C3%A9os/%C3%89pisode%20%232%20%26%20%22Pilot%22.mp4",
+          "enabled": true,
+          "still": false
+        },
+        {
+          "name": "Fast run",
+          "start": 168,
+          "duration": 72,
+          "srcIn": 4795,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 2,
+          "path": "/media/Films/Movie One.mkv",
+          "url": "file:///media/Films/Movie%20One.mkv",
+          "enabled": true,
+          "still": false
+        },
+        {
+          "name": "c4",
+          "start": 240,
+          "duration": 48,
+          "srcIn": 7193,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 1,
+          "path": "C:\\Users\\Fan\\Vidéos\\Épisode #2 & \"Pilot\".mp4",
+          "url": "file:///C:/Users/Fan/Vid%C3%A9os/%C3%89pisode%20%232%20%26%20%22Pilot%22.mp4",
+          "enabled": true,
+          "still": false
+        },
+        {
+          "name": "Cut scene",
+          "start": 300,
+          "duration": 24,
+          "srcIn": 9590,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/Films/Movie One.mkv",
+          "url": "file:///media/Films/Movie%20One.mkv",
+          "enabled": false,
+          "still": false
+        }
+      ]
+    },
+    {
+      "kind": "video",
+      "index": 1,
+      "lane": 1,
+      "name": "V2",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": [
+        {
+          "name": "Title card",
+          "start": 24,
+          "duration": 36,
+          "srcIn": 0,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/Graphics/title card.png",
+          "url": "file:///media/Graphics/title%20card.png",
+          "enabled": true,
+          "still": true
+        }
+      ]
+    },
+    {
+      "kind": "video",
+      "index": 2,
+      "lane": 2,
+      "name": "V2 (2)",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": [
+        {
+          "name": "in-v",
+          "start": 120,
+          "duration": 48,
+          "srcIn": 1222,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 1,
+          "path": "C:\\Users\\Fan\\Vidéos\\Épisode #2 & \"Pilot\".mp4",
+          "url": "file:///C:/Users/Fan/Vid%C3%A9os/%C3%89pisode%20%232%20%26%20%22Pilot%22.mp4",
+          "enabled": true,
+          "still": false
+        }
+      ]
+    },
+    {
+      "kind": "video",
+      "index": 3,
+      "lane": 3,
+      "name": "V3",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": [
+        {
+          "name": "gone",
+          "start": 288,
+          "duration": 24,
+          "srcIn": 0,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/Missing/gone.mov",
+          "url": "file:///media/Missing/gone.mov",
+          "enabled": true,
+          "still": false
+        }
+      ]
+    },
+    {
+      "kind": "audio",
+      "index": 0,
+      "lane": -1,
+      "name": "A1",
+      "storyline": true,
+      "dissolves": 1,
+      "clips": [
+        {
+          "name": "Opening",
+          "start": 0,
+          "duration": 48,
+          "srcIn": 240,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/Films/Movie One.mkv",
+          "url": "file:///media/Films/Movie%20One.mkv",
+          "enabled": true,
+          "still": false
+        },
+        {
+          "name": "a2",
+          "start": 72,
+          "duration": 96,
+          "srcIn": 2398,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 1,
+          "path": "C:\\Users\\Fan\\Vidéos\\Épisode #2 & \"Pilot\".mp4",
+          "url": "file:///C:/Users/Fan/Vid%C3%A9os/%C3%89pisode%20%232%20%26%20%22Pilot%22.mp4",
+          "enabled": true,
+          "still": false
+        },
+        {
+          "name": "a3",
+          "start": 168,
+          "duration": 72,
+          "srcIn": 4795,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 2,
+          "path": "/media/Films/Movie One.mkv",
+          "url": "file:///media/Films/Movie%20One.mkv",
+          "enabled": true,
+          "still": false
+        },
+        {
+          "name": "a4",
+          "start": 240,
+          "duration": 48,
+          "srcIn": 7193,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 1,
+          "path": "C:\\Users\\Fan\\Vidéos\\Épisode #2 & \"Pilot\".mp4",
+          "url": "file:///C:/Users/Fan/Vid%C3%A9os/%C3%89pisode%20%232%20%26%20%22Pilot%22.mp4",
+          "enabled": true,
+          "still": false
+        }
+      ]
+    },
+    {
+      "kind": "audio",
+      "index": 1,
+      "lane": -2,
+      "name": "A2",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": [
+        {
+          "name": "Theme & Song",
+          "start": 0,
+          "duration": 300,
+          "srcIn": 0,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/Music/Theme & <Song>.flac",
+          "url": "file:///media/Music/Theme%20%26%20%3CSong%3E.flac",
+          "enabled": true,
+          "still": false
+        }
+      ]
+    },
+    {
+      "kind": "audio",
+      "index": 2,
+      "lane": -3,
+      "name": "A3",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": []
+    },
+    {
+      "kind": "audio",
+      "index": 3,
+      "lane": -4,
+      "name": "A3 (2)",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": [
+        {
+          "name": "in-a",
+          "start": 120,
+          "duration": 48,
+          "srcIn": 1222,
+          "srcRate": [
+            24000,
+            1001
+          ],
+          "speed": 1,
+          "path": "C:\\Users\\Fan\\Vidéos\\Épisode #2 & \"Pilot\".mp4",
+          "url": "file:///C:/Users/Fan/Vid%C3%A9os/%C3%89pisode%20%232%20%26%20%22Pilot%22.mp4",
+          "enabled": true,
+          "still": false
+        }
+      ]
+    }
+  ],
+  "markers": 3
+}

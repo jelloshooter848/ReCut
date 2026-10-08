@@ -183,7 +183,43 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   clip in the range get no file. There is no per-clip channel routing or panning in the files: each is the track at
   the export's channel layout. There are no stems by content (dialogue / music / effects, §12).
 - **WAV files over 4 GB** are written as RF64, which some older programs cannot open.
-- No interchange formats (EDL, FCPXML, OTIO, AAF).
+- **Interchange (File › Export Timeline…) is export only.** ReCut writes FCPXML, OpenTimelineIO and CMX3600 EDL
+  but cannot import them (planned after 1.0, release 1.4.0), and writes no AAF or Premiere XML. The timeline links to
+  the original media files: it carries no media, proxies or renders, so the other editor needs the same files (or
+  relinks them). What the receiving editor cannot represent is approximated or left out, and the dialog's report
+  lists it before saving: keyframes, effects and transforms beyond what each format holds, nested sequences
+  (flattened where the format has no nesting), disabled clips, subtitles and audio channel selections.
+  An EDL holds one video track per file and only cuts and dissolves. Per format:
+  - **All formats:** nested sequences and compound clips are flattened into their media clips (no nested timelines
+    in the other editor); sequence subtitle tracks are not exported; the timeline starts at 00:00:00:00; source
+    timecode counts from 00:00:00:00 at the start of each file, because ReCut does not read timecode embedded in
+    the media, so the source points of camera files with their own start timecode come in offset; channel
+    selections (centre channel, mono channel, custom downmix) and the choice of a file's second or later audio stream
+    are not carried; offline media is written with its saved path.
+  - **FCPXML:** linked video and audio with the same in and out points arrive as one clip; other linked clips arrive
+    as separate clips (the link is not kept). An audio crossfade between linked clips takes the length of the video
+    dissolve on the same cut, and a crossfade with no video dissolve under it keeps its audio track apart; DaVinci
+    Resolve 21 imports the crossfade of linked clips as a cut on the audio (it keeps only the picture half). Dip to
+    Black and fades to / from black become opacity keyframes; eased keyframes use the other editor's ease curve; level
+    keyframes are written in dB. Marker colours are lost, and markers are clip markers. In DaVinci Resolve 21 (which
+    ignores FCPXML's video-only / audio-only mark) a video-only clip of a file with sound also brings its sound,
+    written muted, and an audio-only clip its picture, written transparent; Resolve chooses the audio track numbers.
+  - **OpenTimelineIO:** only cuts, speed, dissolves, markers and enabled states are standard. Transforms, crop,
+    opacity, levels, fades and keyframes are stored as ReCut metadata that other editors ignore. Dip to Black
+    becomes a cut, and chapter markers become plain markers. OTIO has no drop-frame flag: DaVinci Resolve 21 imports
+    a 29.97 drop-frame timeline as non-drop-frame (every frame in place, the timecode display differs).
+  - **EDL:** each file has its own reel name, its file name without the extension, kept to letters, digits, `_` and
+    `-` and 32 characters (longer than CMX3600's 8, as Avid's and Premiere's long-name EDLs, so that it matches the
+    reel name an editor takes from the file name); files with other characters in their names or with the same name
+    get a different reel. `* FROM CLIP NAME` and `* SOURCE FILE` comment lines name the file. At most four audio
+    channels, and only audio linked to the video event with the same in, out and speed: unlinked audio such as music,
+    audio on A5 and up, J- and L-cuts, audio fades and crossfades are left out. Transforms, opacity, keyframes,
+    levels and disabled clips are left out; speed is an `M2` line. In DaVinci Resolve 21: events link only to media
+    already in the Media Pool, by reel name and source timecode (see the
+    [user guide](USER-GUIDE.md#finishing-in-davinci-resolve) for the conform settings); only the picture is
+    imported, not the audio channels (`B`, `A2/V`, `AA/V`, `AUD 3 4` are standard CMX3600; use FCPXML or
+    OpenTimelineIO for the sound); the timeline starts at its first event's timecode; a Dip to Black or a fade to
+    black between two clips comes in as dissolves between the clips (no black); `* LOC:` markers are not imported.
 - **Frame-rate conversion** (an export frame rate other than the sequence's) repeats or drops whole frames. There is
   no frame blending or motion interpolation, so 23.976 → 30 shows a regular repeat cadence and 23.976 ↔ 24 repeats
   or drops one frame about every 42 s. Duration and audio sync are not affected.

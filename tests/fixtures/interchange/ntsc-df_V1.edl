@@ -1,0 +1,12 @@
+TITLE: NTSC Cut V1
+FCM: DROP FRAME
+
+001  Show_01  B     C        00:00:05;00 00:01:04;07 00:00:00;00 00:00:59;05
+* FROM CLIP NAME: Show 01.mp4
+* SOURCE FILE: /media/NTSC/Show 01.mp4
+002  Show_01  B     C        00:01:04;07 00:01:04;07 00:00:59;05 00:00:59;05
+002  Show_01  B     D    030 00:01:59;13 00:02:10;00 00:00:59;05 00:01:09;22
+* FROM CLIP NAME: Show 01.mp4
+* TO CLIP NAME: Show 01.mp4
+* SOURCE FILE: /media/NTSC/Show 01.mp4
+* LOC: 00:01:00:02 CYAN    One minute

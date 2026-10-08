@@ -1,0 +1,375 @@
+{
+    "OTIO_SCHEMA": "Timeline.1",
+    "metadata": {
+        "recut": {
+            "sequenceId": "seq-df",
+            "fps": {
+                "num": 30000,
+                "den": 1001
+            },
+            "width": 1920,
+            "height": 1080,
+            "sampleRate": 48000,
+            "channels": 2
+        }
+    },
+    "name": "NTSC Cut",
+    "global_start_time": {
+        "OTIO_SCHEMA": "RationalTime.1",
+        "rate": 29.97002997002997,
+        "value": 0
+    },
+    "tracks": {
+        "OTIO_SCHEMA": "Stack.1",
+        "metadata": {},
+        "name": "tracks",
+        "source_range": null,
+        "effects": [],
+        "markers": [
+            {
+                "OTIO_SCHEMA": "Marker.2",
+                "metadata": {
+                    "recut": {
+                        "markerId": "mdf",
+                        "kind": "marker",
+                        "color": "#30a46c"
+                    }
+                },
+                "name": "One minute",
+                "color": "CYAN",
+                "marked_range": {
+                    "OTIO_SCHEMA": "TimeRange.1",
+                    "duration": {
+                        "OTIO_SCHEMA": "RationalTime.1",
+                        "rate": 29.97002997002997,
+                        "value": 0
+                    },
+                    "start_time": {
+                        "OTIO_SCHEMA": "RationalTime.1",
+                        "rate": 29.97002997002997,
+                        "value": 1800
+                    }
+                },
+                "comment": ""
+            }
+        ],
+        "enabled": true,
+        "children": [
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "recut": {
+                        "trackId": "seq-df-V1",
+                        "volume": 1
+                    }
+                },
+                "name": "V1",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Clip.1",
+                        "metadata": {
+                            "recut": {
+                                "clipId": "d1",
+                                "linkId": "D1"
+                            }
+                        },
+                        "name": "d1",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 1790
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 150
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "media_reference": {
+                            "OTIO_SCHEMA": "ExternalReference.1",
+                            "metadata": {
+                                "recut": {
+                                    "mediaId": "m-ntsc"
+                                }
+                            },
+                            "name": "Show 01.mp4",
+                            "available_range": {
+                                "OTIO_SCHEMA": "TimeRange.1",
+                                "duration": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 107892
+                                },
+                                "start_time": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 0
+                                }
+                            },
+                            "target_url": "file:///media/NTSC/Show%2001.mp4"
+                        }
+                    },
+                    {
+                        "OTIO_SCHEMA": "Transition.1",
+                        "metadata": {
+                            "recut": {
+                                "transitionId": "t-df",
+                                "type": "crossDissolve"
+                            }
+                        },
+                        "name": "Cross Dissolve",
+                        "transition_type": "SMPTE_Dissolve",
+                        "in_offset": {
+                            "OTIO_SCHEMA": "RationalTime.1",
+                            "rate": 29.97002997002997,
+                            "value": 15
+                        },
+                        "out_offset": {
+                            "OTIO_SCHEMA": "RationalTime.1",
+                            "rate": 29.97002997002997,
+                            "value": 15
+                        }
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.1",
+                        "metadata": {
+                            "recut": {
+                                "clipId": "d2",
+                                "linkId": "D2"
+                            }
+                        },
+                        "name": "d2",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 300
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 3596
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "media_reference": {
+                            "OTIO_SCHEMA": "ExternalReference.1",
+                            "metadata": {
+                                "recut": {
+                                    "mediaId": "m-ntsc"
+                                }
+                            },
+                            "name": "Show 01.mp4",
+                            "available_range": {
+                                "OTIO_SCHEMA": "TimeRange.1",
+                                "duration": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 107892
+                                },
+                                "start_time": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 0
+                                }
+                            },
+                            "target_url": "file:///media/NTSC/Show%2001.mp4"
+                        }
+                    }
+                ],
+                "kind": "Video"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "recut": {
+                        "trackId": "seq-df-V2",
+                        "volume": 1
+                    }
+                },
+                "name": "V2",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "children": [],
+                "kind": "Video"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "recut": {
+                        "trackId": "seq-df-V3",
+                        "volume": 1
+                    }
+                },
+                "name": "V3",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "children": [],
+                "kind": "Video"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "recut": {
+                        "trackId": "seq-df-A1",
+                        "volume": 1
+                    }
+                },
+                "name": "A1",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Clip.1",
+                        "metadata": {
+                            "recut": {
+                                "clipId": "da1",
+                                "linkId": "D1"
+                            }
+                        },
+                        "name": "da1",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 1790
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 150
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "media_reference": {
+                            "OTIO_SCHEMA": "ExternalReference.1",
+                            "metadata": {
+                                "recut": {
+                                    "mediaId": "m-ntsc"
+                                }
+                            },
+                            "name": "Show 01.mp4",
+                            "available_range": {
+                                "OTIO_SCHEMA": "TimeRange.1",
+                                "duration": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 107892
+                                },
+                                "start_time": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 0
+                                }
+                            },
+                            "target_url": "file:///media/NTSC/Show%2001.mp4"
+                        }
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.1",
+                        "metadata": {
+                            "recut": {
+                                "clipId": "da2",
+                                "linkId": "D2"
+                            }
+                        },
+                        "name": "da2",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 300
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 29.97002997002997,
+                                "value": 3596
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "media_reference": {
+                            "OTIO_SCHEMA": "ExternalReference.1",
+                            "metadata": {
+                                "recut": {
+                                    "mediaId": "m-ntsc"
+                                }
+                            },
+                            "name": "Show 01.mp4",
+                            "available_range": {
+                                "OTIO_SCHEMA": "TimeRange.1",
+                                "duration": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 107892
+                                },
+                                "start_time": {
+                                    "OTIO_SCHEMA": "RationalTime.1",
+                                    "rate": 29.97002997002997,
+                                    "value": 0
+                                }
+                            },
+                            "target_url": "file:///media/NTSC/Show%2001.mp4"
+                        }
+                    }
+                ],
+                "kind": "Audio"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "recut": {
+                        "trackId": "seq-df-A2",
+                        "volume": 1
+                    }
+                },
+                "name": "A2",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "children": [],
+                "kind": "Audio"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "recut": {
+                        "trackId": "seq-df-A3",
+                        "volume": 1
+                    }
+                },
+                "name": "A3",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "children": [],
+                "kind": "Audio"
+            }
+        ]
+    }
+}

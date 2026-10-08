@@ -11,7 +11,7 @@ import type { CollectRequest } from '../shared/collect';
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import { SAVE_STREAM_IPC, type ProjectAutosaveStreamApi, type ProjectSaveStreamApi } from '../shared/projectWire';
 import type {
-  DroppedFile, ExportRequest, FilmstripRequest, LicenceFileId, MenuCommand, MessageOptions, OpenFilesOptions, ProxyRequest, ChannelProxyRequest, RecutApi,
+  DroppedFile, ExportRequest, InterchangeWriteRequest, FilmstripRequest, LicenceFileId, MenuCommand, MessageOptions, OpenFilesOptions, ProxyRequest, ChannelProxyRequest, RecutApi,
   RelinkScanRequest, SaveFileOptions, SceneDetectRequest, ThumbnailRequest,
 } from '../shared/ipc';
 
@@ -108,6 +108,7 @@ const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
   previewExportCommand: (req: ExportRequest) => ipcRenderer.invoke(IPC.exportPreviewCommand, req),
   collectPreflight: (req: CollectRequest) => ipcRenderer.invoke(IPC.collectPreflight, req),
   startCollect: (req: CollectRequest) => ipcRenderer.invoke(IPC.collectStart, req),
+  writeInterchangeFiles: (req: InterchangeWriteRequest) => ipcRenderer.invoke(IPC.interchangeWrite, req),
 
   onJobs: (cb: (jobs: JobInfo[]) => void) => subscribe<[JobInfo[]]>(IPC.evJobs, cb),
   onMenu: (cb: (command: MenuCommand) => void) => subscribe<[MenuCommand]>(IPC.evMenu, cb),

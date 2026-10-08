@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+
+<fcpxml version="1.9">
+  <resources>
+    <format id="r1" frameDuration="1001/30000s" width="1920" height="1080"/>
+    <asset id="r2" name="Show 01.mp4" start="0s" duration="8999991/2500s" hasVideo="1" format="r1" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000">
+      <media-rep kind="original-media" src="file:///media/NTSC/Show%2001.mp4"/>
+    </asset>
+    <effect id="r3" name="Cross Dissolve" uid="FxPlug:4731E73A-8DAC-4113-9A30-AE85B1761265"/>
+  </resources>
+  <library>
+    <event name="NTSC Project">
+      <project name="NTSC Cut">
+        <sequence format="r1" duration="209209/3000s" tcStart="0s" tcFormat="DF" audioLayout="stereo" audioRate="48k">
+          <spine>
+            <asset-clip ref="r2" offset="0s" name="d1" start="1001/200s" duration="179179/3000s"/>
+            <transition name="Cross Dissolve" offset="71071/1200s" duration="1001/1000s">
+              <filter-video ref="r3" name="Cross Dissolve"/>
+            </transition>
+            <asset-clip ref="r2" offset="179179/3000s" name="d2" start="899899/7500s" duration="1001/100s">
+              <marker start="601601/5000s" duration="1001/30000s" value="One minute"/>
+            </asset-clip>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>
