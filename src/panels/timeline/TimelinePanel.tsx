@@ -9,7 +9,8 @@ import type { Clip, ID, Marker, Sequence, Track, TransitionType } from '@shared/
 import { formatSequenceSecondsTimecode, formatSequenceTimecode, fpsLabel, validFpsOr } from '@shared/time';
 import { clipEnd, clipSourceOut, editPoints, findClip, removableDisabledClipIds, resolveSubtitleCues, sequenceDuration, sourceTimeAt } from '@shared/timeline';
 import { useStore, filterMatches, filtersActive, usePlayhead } from '@/state';
-import { hasClipDrag, readClipDrag } from '@/app/dnd';
+import { hasClipDrag, hasSequenceDrag, readClipDrag, SEQUENCE_DND_TYPE } from '@/app/dnd';
+import { isNestedClip, sourceUnder } from '@shared/nest';
 import { openContextMenu, type MenuItem } from '@/components/ui/ContextMenu';
 import { Splitter } from '@/components/ui/Splitter';
 import { LABEL_COLORS } from '@/components/ui/ColorSwatch';
@@ -30,7 +31,7 @@ import { useTimelineDrag, snapTargets, type InteractionCtx } from './interaction
 import { useTimelineUi } from './timelineStore';
 import { useViewScrollLeft } from './scrollSync';
 import { clipboardHasClips, copyClipsToClipboard, pasteClipboardAt } from '@/app/clipboard';
-import { runExtractCentreChannel, setTimelineViewportWidth } from '@/app/commands';
+import { runExtractCentreChannel, runOpenInTimeline, setTimelineViewportWidth } from '@/app/commands';
 import { centreExtraction } from '@shared/audioChannels';
 import { setActiveTransport } from '@/app/transport';
 import { getShortcutLabel, runCommand } from '@/keyboard/shortcuts';
@@ -267,6 +268,8 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   /** Premiere double-click: load the clip's media in the Source with In/Out = the clip's source range (E-17). */
   const openClipInSource = (clip: Clip) => {
     const st = useStore.getState();
+    // A nested clip opens its sequence in the timeline instead (Roadmap §8).
+    if (isNestedClip(clip)) { runOpenInTimeline(seqId, clip.id); return; }
     if (!st.project.media[clip.mediaId]) { toast('warn', 'Clip media is missing from the project'); return; }
     const ph = fullSeq()?.view.playhead ?? clip.start;
     const inside = ph >= clip.start && ph < clipEnd(clip);
@@ -276,6 +279,8 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     focusPanel('source');
     setActiveTransport('source');
   };
+  // Clip double-clicks are detected in interactions.ts (onPointerDown) and land here.
+  ctxRef.current.onClipDoubleClick = openClipInSource;
   useEffect(() => {
     if (!active) return;
     useTimelineUi.getState().setMarkerEditorHost(1);
@@ -395,7 +400,14 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
         return n ? [{ label: `Remove Disabled Clips (${n})…`, onSelect: () => runCommand('sequence.removeDisabledClips') }] : [];
       })(),
       { label: clip.linkId ? 'Unlink' : 'Link', shortcut: 'Ctrl+L', disabled: !clip.linkId && sel.length < 2, onSelect: () => (clip.linkId ? st.unlinkSelected(seqId) : st.linkSelected(seqId)) },
-      { label: 'Speed / Duration…', shortcut: getShortcutLabel('clip.speedDuration') || undefined, onSelect: () => setDialog({ kind: 'speed', clipId: clip.id }) },
+      { label: 'Speed / Duration…', shortcut: getShortcutLabel('clip.speedDuration') || undefined, disabled: isNestedClip(clip), onSelect: () => setDialog({ kind: 'speed', clipId: clip.id }) },
+      // Nested sequences (Roadmap §8).
+      { label: 'Make Compound Clip', disabled: track.locked, title: 'Moves the selected clips (and the clips linked to them) into a new sequence, replaced by one nested clip.',
+        onSelect: () => { st.makeCompoundClip(seqId, sel.includes(clip.id) ? sel : [clip.id]); } },
+      ...(isNestedClip(clip) ? [
+        { label: 'Open in Timeline', onSelect: () => { runOpenInTimeline(seqId, clip.id, inside ? ph : clip.start); } },
+        { label: 'Break Apart Compound Clip', disabled: track.locked, onSelect: () => { st.breakApartCompoundClip(seqId, clip.id); } },
+      ] : []),
       ...(() => {
         // Roadmap §9: shown for clips with sound; disabled (with the reason) when the source has no centre channel.
         const ex = centreExtraction(s, st.project.media, clip.id);
@@ -415,8 +427,13 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
       { separator: true },
       { label: 'Add Continuity Note…', onSelect: () => addContinuityAt(inside ? ph : clip.start, clip, at) },
       { label: 'Add to Scene Library', onSelect: () => { if (st.sceneFromClip(seqId, clip.id)) toast('ok', `Added “${clip.name}” to the scene library`); } },
-      { label: 'Reveal in Project', onSelect: () => { st.selectMedia([clip.mediaId], 'set'); focusPanel('project'); } },
-      { label: 'Match Frame', shortcut: getShortcutLabel(COMMAND_IDS.matchFrame) || 'F', onSelect: () => { st.setSourceClip(clip.mediaId, sourceTimeAt(clip, inside ? ph : clip.start, fps)); focusPanel('source'); } },
+      { label: 'Reveal in Project', disabled: isNestedClip(clip), onSelect: () => { st.selectMedia([clip.mediaId], 'set'); focusPanel('project'); } },
+      { label: 'Match Frame', shortcut: getShortcutLabel(COMMAND_IDS.matchFrame) || 'F', onSelect: () => {
+        // A nested clip matches through to the media playing inside it (Roadmap §8).
+        const under = sourceUnder(s, clip, inside ? ph : clip.start, st.project.sequences, st.project.media);
+        if (!under || !st.project.media[under.clip.mediaId]) { toast('info', 'No media plays here'); return; }
+        st.setSourceClip(under.clip.mediaId, Math.max(0, under.time)); focusPanel('source');
+      } },
       { separator: true },
       { label: 'Ripple Trim Start to Playhead', shortcut: getShortcutLabel(COMMAND_IDS.rippleTrimPrev) || 'Q', disabled: !(ph > clip.start && ph < clipEnd(clip)) || track.locked,
         onSelect: () => { if (!st.ui.selectedClipIds.includes(clip.id)) st.select([clip.id], 'set'); runCommand(COMMAND_IDS.rippleTrimPrev); } },
@@ -511,7 +528,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     return { row: rowAtY(layout, y), frame };
   };
   const onDragOver = (e: React.DragEvent) => {
-    if (!hasClipDrag(e.dataTransfer)) return;
+    if (!hasClipDrag(e.dataTransfer) && !hasSequenceDrag(e.dataTransfer)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     const { row, frame } = dropTarget(e);
@@ -520,6 +537,17 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const onDragLeave = (e: React.DragEvent) => { if (!areaRef.current?.contains(e.relatedTarget as Node | null)) setDrop(null); };
   const onDrop = (e: React.DragEvent) => {
     setDrop(null);
+    // A sequence from the Project panel is nested here (Roadmap §8; cycles are refused with a toast).
+    const nestId = e.dataTransfer.getData(SEQUENCE_DND_TYPE);
+    if (nestId) {
+      e.preventDefault();
+      const { row, frame } = dropTarget(e);
+      const created = useStore.getState().nestSequence(seqId, nestId, frame, {
+        mode: e.ctrlKey ? 'insert' : 'overwrite', videoTrackId: row?.kind === 'video' ? row.id : undefined, audioTrackId: row?.kind === 'audio' ? row.id : undefined,
+      });
+      if (created.length) rootRef.current?.focus({ preventScroll: true });
+      return;
+    }
     const payloads = readClipDrag(e.dataTransfer);
     if (!payloads?.length) return;
     e.preventDefault();
@@ -670,17 +698,6 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
               onPointerLeave={() => { useTimelineUi.getState().setHoverFrame(null); if (razorLine) setRazorLine(null); }}
               onContextMenu={onContentContextMenu}
               onDragOver={onDragOver} onDragEnter={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
-              onDoubleClick={(e) => {
-                if (tool !== 'select') return;
-                // Hit-test by position: pointer capture from the click-drag retargets dblclick to the content element.
-                const el = contentRef.current; if (!el) return;
-                const r = el.getBoundingClientRect();
-                const row = rowAtY(layout, e.clientY - r.top);
-                const track = row ? trackById.get(row.id) : undefined;
-                const f = xToFrame(e.clientX - r.left, zoom, scroll);
-                const clip = track?.clips.find((c) => c.start <= f && f < clipEnd(c));
-                if (clip) openClipInSource(clip);
-              }}
             >
               <div className="tl-tracks-inner" style={{ width: contentPx, height: totalH }}>
                 {/* lane backgrounds: static (the view sticks to the scroller's left edge) */}

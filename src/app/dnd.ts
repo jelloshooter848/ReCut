@@ -33,6 +33,13 @@ export function hasClipDrag(dt: DataTransfer): boolean {
   return Array.from(dt.types).includes(CLIP_DND_TYPE);
 }
 
+/** A sequence dragged from the Project panel: dropped on a timeline, it is nested there (Roadmap §8). */
+export const SEQUENCE_DND_TYPE = 'application/x-recut-sequence';
+
+export function hasSequenceDrag(dt: DataTransfer): boolean {
+  return Array.from(dt.types).includes(SEQUENCE_DND_TYPE);
+}
+
 /** DataTransfer type for Project-panel item drags (media / sequence / bin ids). */
 export const ITEMS_DND_TYPE = 'application/x-recut-items';
 

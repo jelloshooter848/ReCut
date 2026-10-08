@@ -262,6 +262,19 @@ async function build(outPath, version, features) {
     location: 'Anchorhead', arc: 'Friends', tags: ['deleted'], notes: 'Restore in the extended cut', rating: 4, color: '#8e4ec6', createdAt: Date.now(),
   });
 
+  // ---------------------------------------------------------------- nested sequences (Roadmap §8, from 0.8.0)
+  // The alt cut's first two picture + sound pairs become a compound clip ("Reel 1", a new sequence), and the PAL recap
+  // is nested after them: a nested clip of another frame rate.
+  if (typeof S().makeCompoundClip === 'function' && typeof S().nestSequence === 'function') {
+    const alt = () => S().project.sequences[altId];
+    const firstTwo = [...alt().videoTracks[0].clips].sort((a, b) => a.start - b.start).slice(0, 2).map((c) => c.id);
+    must(firstTwo.length === 2, 'alt cut clips');
+    const reel = must(S().makeCompoundClip(altId, firstTwo, 'Reel 1'), 'make compound clip');
+    must(S().project.sequences[reel], 'compound clip sequence');
+    const altEnd = Math.max(...[...alt().videoTracks, ...alt().audioTracks].flatMap((t) => t.clips).map((c) => c.start + c.duration));
+    must(S().nestSequence(altId, pal.id, altEnd), 'nest the PAL recap');
+  }
+
   S().setSettings({ carrySubtitles: false, useProxies: false });
   S().setActiveSequence(mainId);
 

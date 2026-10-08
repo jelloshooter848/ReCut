@@ -8,6 +8,7 @@ import { FPS_PRESETS, fpsEquals, fpsLabel, fpsValue, framesToSeconds, isValidFps
 import { allTracks, clipEnd, resolveSubtitleCues, sequenceDuration } from '@shared/timeline';
 import { activeTracks, planTrackSegments, widenRangeForTransitions, type ClipSeg, type PastEndIssue, type TransitionIssueReason, type TransitionOutcome } from '@shared/exportPlan';
 import { formatSyncOffset, linkedSyncOffsets } from '@shared/linkSync';
+import { flattenSequence, flattenWarnings, isNestedClip, outerClipId } from '@shared/nest';
 import { hasKeyframes, keyframeRange, keyframesOf } from '@shared/keyframes';
 import { channelSelectionLabel, channelSelectionProblem, clipAudioStream, resolveChannelSelection } from '@shared/audioChannels';
 import {
@@ -405,7 +406,8 @@ export function validateExportSettings(settings: ExportSettings): ValidationResu
 /** Ids of media referenced by enabled clips in the sequence (all tracks). */
 export function sequenceMediaIds(seq: Sequence): ID[] {
   const out = new Set<ID>();
-  for (const t of allTracks(seq)) for (const c of t.clips) out.add(c.mediaId);
+  // A nested clip's media id is its sequence (Roadmap §8): flatten the sequence to see the media it plays.
+  for (const t of allTracks(seq)) for (const c of t.clips) if (!isNestedClip(c)) out.add(c.mediaId);
   return [...out];
 }
 
@@ -434,9 +436,13 @@ export interface ChecklistItem { level: ChecklistLevel; text: string; target?: C
  * Client-side pre-flight checks. An 'error' item blocks the export; warnings and info do not. The timeline warnings
  * (sequenceExportWarnings) cover the export range the settings choose.
  */
-export function exportChecklist(seq: Sequence, media: Record<ID, MediaItem>, settings: ExportSettings, projectUsesProxies = false): ChecklistItem[] {
+export function exportChecklist(seq: Sequence, media: Record<ID, MediaItem>, settings: ExportSettings, projectUsesProxies = false, sequences: Record<ID, Sequence> = {}): ChecklistItem[] {
   const items: ChecklistItem[] = [];
-  const ids = sequenceMediaIds(seq);
+  // Nested sequences (Roadmap §8): media and timeline checks look at what plays, the nested content flattened in;
+  // a target inside a nested clip points at the nested clip.
+  const played = flattenSequence(seq, sequences, media);
+  for (const w of flattenWarnings(played)) items.push({ level: 'warning', text: w });
+  const ids = sequenceMediaIds(played);
   if (sequenceDuration(seq) <= 0) items.push({ level: 'error', text: 'The sequence is empty — nothing to export.' });
   const missing = ids.filter((id) => !media[id]);
   const offline = ids.map((id) => media[id]).filter((m): m is MediaItem => !!m && m.offline);
@@ -452,20 +458,29 @@ export function exportChecklist(seq: Sequence, media: Record<ID, MediaItem>, set
   // A different (valid) export frame rate is converted at the output (see fpsConversionNote); nothing to check.
   if (!audioOnly && !isValidFps(settings.fps)) items.push({ level: 'warning', text: `The export frame rate is not valid; the sequence frame rate (${fpsLabel(seq.fps)} fps) is used.` });
   const surroundOut = hasAudioOutputs(settings) ? settings.audioOutputs!.some((o) => o.layout === '5.1') : settings.audioChannels === 6;
-  if (surroundOut && maxSourceChannels(seq, media) < 6) items.push({ level: 'warning', text: 'No source has 6 audio channels; 5.1 output will be upmixed from stereo.' });
+  if (surroundOut && maxSourceChannels(played, media) < 6) items.push({ level: 'warning', text: 'No source has 6 audio channels; 5.1 output will be upmixed from stereo.' });
   const burnIn = settings.burnSubtitles && !audioOnly;
   if ((burnIn || settings.exportSubtitleSidecar) && !sequenceHasSubtitles(seq)) items.push({ level: 'warning', text: 'The sequence has no subtitle tracks; nothing will be burned in or written.' });
   if (audioOnly && settings.burnSubtitles && sequenceHasSubtitles(seq)) {
     items.push({ level: 'info', text: 'Subtitle burn-in does not apply to an audio-only format (there is no picture). Use Sidecar to write an .srt next to the audio.' });
   }
   const range = exportRange(seq, settings);
-  const timeline = sequenceExportWarnings(seq, media, range.startF, range.endF);
+  const timeline = outerTargets(played, sequenceExportWarnings(played, media, range.startF, range.endF));
   items.push(...(audioOnly ? timeline.filter((i) => i.scope !== 'video') : timeline));
   items.push(...formatChecks(seq, settings, range));
   items.push(...packagingChecks(seq, settings, range));
   const readyProxies = ids.map((id) => media[id]).filter((m): m is MediaItem => !!m && m.proxy.status === 'ready');
   if (projectUsesProxies && readyProxies.length) items.push({ level: 'info', text: 'Export always uses original media, not proxies.' });
   return items;
+}
+
+/** Checklist targets on clips of a flattened sequence point at the outer clips (the nested clip they play in). */
+function outerTargets(played: Sequence, items: ChecklistItem[]): ChecklistItem[] {
+  if (!items.some((i) => i.target)) return items;
+  const outerOf = new Map<ID, ID>();
+  for (const t of allTracks(played)) for (const c of t.clips) { const o = outerClipId(c); if (o !== c.id) outerOf.set(c.id, o); }
+  if (outerOf.size === 0) return items;
+  return items.map((i) => (i.target ? { ...i, target: { ...i.target, clipIds: [...new Set(i.target.clipIds.map((id) => outerOf.get(id) ?? id))] } } : i));
 }
 
 /** An intermediate export above this estimated size gets a "Large output" warning (a 2-hour 1080p ProRes 422 HQ is about 160 GB). */
