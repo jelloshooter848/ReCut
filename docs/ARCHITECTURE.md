@@ -177,7 +177,9 @@ SyncGroup: two SequencePlayers on one clock with a frame offset (Compare)
   (`rampKeyframedGain`), instead of the once-per-frame target other clips get.
 - While paused, the Program redraws when a pooled `<video>` presents a new frame (`requestVideoFrameCallback`), not
   only on `seeked` / `loadeddata`: Chromium can fire those before the landed frame is drawable, and a draw then paints
-  the previous frame.
+  the previous frame. A paused draw first asks each painted element which frame it holds (`new VideoFrame(el)`, the
+  frame drawImage would paint) and keeps the last picture while that is not the frame at its `currentTime`, for at
+  most 250 ms (`PRESENT_HOLD_MS`); the video-frame callback draws it once presented. Playback never makes this check.
 - The Program monitor's "Offline / Needs proxy / Can't play" chips come from the planner's `missing` list.
 
 ### Data flow: an insert edit

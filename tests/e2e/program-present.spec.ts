@@ -17,6 +17,8 @@ const CANVAS = '[data-testid="program-canvas"]';
 /** Cut-back seeks per test (10 <-> 70, across the cut at 48). */
 const CYCLES = 20;
 
+interface Draw { target: number; sig: string; ct: number; held: number | null }
+
 test.describe('Program Monitor: paused draws', () => {
   let launched: LaunchedApp;
   test.beforeAll(async () => {
@@ -43,10 +45,13 @@ test.describe('Program Monitor: paused draws', () => {
       st.insertFromSource(seqId, { mediaId, in: 5, out: 7, atFrame: 48, mode: 'insert' });
     }, { seqId, mediaId });
 
-    // Log every Program draw of a video: the playhead it was meant for and a 32x18 signature of the canvas after it.
+    // Log every Program draw of a video: the playhead it was meant for, a 32x18 signature of the canvas after it and
+    // the element's currentTime. A wrong draw (once the right pictures are known) also logs the timestamp of the frame
+    // the element holds (WebCodecs: the frame drawImage paints); right draws skip it so as not to change the timing.
     await page.evaluate((sel) => {
-      const w = window as unknown as { __draws: { target: number; sig: string }[]; __target: number };
+      const w = window as unknown as { __draws: Draw[]; __target: number; __want: Record<number, string> };
       w.__draws = [];
+      w.__want = {};
       w.__target = -1;
       const small = document.createElement('canvas');
       small.width = 32; small.height = 18;
@@ -56,12 +61,18 @@ test.describe('Program Monitor: paused draws', () => {
       proto.drawImage = function (this: CanvasRenderingContext2D, ...args: unknown[]) {
         draw.apply(this, args);
         const program = document.querySelector(sel);
-        if (this.canvas !== program || !(args[0] instanceof HTMLVideoElement)) return;
+        const video = args[0];
+        if (this.canvas !== program || !(video instanceof HTMLVideoElement)) return;
+        const ct = video.currentTime;
         draw.call(sctx, program, 0, 0, program.width, program.height, 0, 0, 32, 18);
         const d = sctx.getImageData(0, 0, 32, 18).data;
         let s = '';
         for (let i = 0; i < d.length; i += 4) s += String.fromCharCode(65 + (((d[i] + d[i + 1] + d[i + 2]) / 3) >> 3));
-        w.__draws.push({ target: w.__target, sig: s });
+        let held: number | null = null;
+        if (w.__want[w.__target] !== undefined && w.__want[w.__target] !== s) {
+          try { const f = new VideoFrame(video); held = f.timestamp / 1e6; f.close(); } catch { /* no frame */ }
+        }
+        w.__draws.push({ target: w.__target, sig: s, ct, held });
       } as typeof proto.drawImage;
     }, CANVAS);
 
@@ -85,15 +96,18 @@ test.describe('Program Monitor: paused draws', () => {
     const sig10 = await rested(await seekTo(10));
     const sig70 = await rested(await seekTo(70));
     expect(sig10).not.toBe(sig70);
+    await page.evaluate((want) => { (window as unknown as { __want: Record<number, string> }).__want = want; }, { 10: sig10, 70: sig70 });
     await page.evaluate(() => { (window as unknown as { __draws: unknown[] }).__draws = []; });
     for (let i = 0; i < CYCLES; i++) {
       expect(await rested(await seekTo(10))).toBe(sig10);
       expect(await rested(await seekTo(70))).toBe(sig70);
     }
-    const draws = await page.evaluate(() => (window as unknown as { __draws: { target: number; sig: string }[] }).__draws);
+    const draws = await page.evaluate(() => (window as unknown as { __draws: Draw[] }).__draws);
     const want: Record<number, string> = { 10: sig10, 70: sig70 };
-    const wrong = draws.filter((d) => d.sig !== want[d.target]).map((d) => `at ${d.target}: ${d.sig === sig10 ? 'frame 10' : d.sig === sig70 ? 'frame 70' : 'other'}`);
+    const name = (sig: string) => (sig === sig10 ? 'frame 10' : sig === sig70 ? 'frame 70' : 'other');
+    const wrong = draws.filter((d) => d.sig !== want[d.target]).map((d) => `at ${d.target}: ${name(d.sig)}`);
     console.log(`[program-present] ${draws.length} draws over ${2 * CYCLES} cut-back seeks, ${wrong.length} wrong`);
+    for (const d of draws.filter((x) => x.sig !== want[x.target])) console.log(`[program-present] wrong draw at ${d.target}: currentTime ${d.ct}, frame held ${d.held}`);
     expect(wrong).toEqual([]);
   });
 });
