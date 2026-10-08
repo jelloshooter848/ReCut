@@ -213,6 +213,7 @@ export interface StoreActions {
   takeSnapshot(seqId: ID, name: string): ID | null;
   restoreSnapshot(seqId: ID, snapshotId: ID): void;
   deleteSnapshot(seqId: ID, snapshotId: ID): void;
+  /** Invalid patches are ignored whole. A frame-rate change on a sequence with clips is dropped with a warning toast (the rest applies). */
   updateSequenceSettings(seqId: ID, patch: SequenceSettingsPatch): void;
 
   // ---- timeline ----
