@@ -194,9 +194,13 @@ describe('speech-to-text engine in CI (Roadmap §5)', () => {
     expect(jobText('linux')).toContain('./scripts/linux/get-whisper.sh --dest resources/whisper');
     expect(jobText('linux')).toContain("hashFiles('scripts/whisper-source.mjs', 'scripts/linux/get-whisper.sh')");
     for (const job of ['macos', 'macos-e2e']) {
-      expect(jobText(job), job).toContain('./scripts/mac/get-whisper.sh --dest resources/whisper');
       expect(jobText(job), job).toContain("hashFiles('scripts/whisper-source.mjs', 'scripts/mac/get-whisper.sh')");
     }
+    // The dmg job builds the engine of its matrix arch, cached per arch; the e2e job builds the default (arm64).
+    expect(jobText('macos')).toContain('./scripts/mac/get-whisper.sh --arch "$MAC_ARCH" --dest resources/whisper');
+    expect(jobText('macos')).toContain("key: whisper-macos-${{ matrix.arch }}-${{ hashFiles(");
+    expect(jobText('macos-e2e')).toContain('./scripts/mac/get-whisper.sh --dest resources/whisper');
+    expect(jobText('macos-e2e')).toContain('key: whisper-macos-arm64-${{ hashFiles(');
     // The macOS dmg ships the engine: checked inside the mounted app, and its smoke line is required.
     expect(jobText('macos')).toContain('- name: Bundled speech-to-text engine');
     expect(jobText('macos')).toContain("'smoke: whisper engine=[0-9.]+ ok path=[^ ]*/recut-dmg/ReCut\\.app/Contents/Resources/whisper/whisper-cli$'");
@@ -245,6 +249,30 @@ describe('Windows workflow: the macOS dmg job (advisory during bring-up)', () =>
     expect(macosE2e).toMatch(/^ {4}runs-on: macos-14$/m);
     expect(macosE2e).toContain('./scripts/mac/get-ffmpeg.sh --dest "$RUNNER_TEMP/ff"');
     expect(macosE2e).toContain('npx playwright test -c tests/e2e/playwright.config.ts');
+    // The e2e suite stays arm64 only (native on the runner): no matrix, no arch.
+    expect(macosE2e).not.toContain('matrix');
+    expect(macosE2e).not.toContain('--arch');
+  });
+
+  it('builds two dmgs, arm64 and x64, as a matrix on the same runner, and keeps going when one leg fails', () => {
+    expect(macos).toMatch(/^ {4}strategy:\n {6}fail-fast: false\n {6}matrix:\n {8}arch: \[arm64, x64\]\n/m);
+    // Per arch: the name lipo prints and the FFMPEG-BUILD.txt platform.
+    expect(macos).toMatch(/- arch: arm64\n\s+lipo: arm64\n\s+platform: arm64 macOS\n/);
+    expect(macos).toMatch(/- arch: x64\n\s+lipo: x86_64\n\s+platform: x86-64 macOS\n/);
+    expect(macos).toContain('MAC_ARCH: ${{ matrix.arch }}');
+    expect(macos).toContain('LIPO_ARCH: ${{ matrix.lipo }}');
+    expect(macos).toMatch(/^ {4}name: macOS \$\{\{ matrix\.arch \}\} dmg/m);
+    // x64 runs its programs under Rosetta 2, installed if missing, before FFmpeg is downloaded and run.
+    expect(macos).toMatch(/- name: Rosetta 2\n\s+if: matrix\.arch == 'x64'\n/);
+    expect(macos).toContain('softwareupdate --install-rosetta --agree-to-license');
+    expect(macos).toContain('arch -x86_64 /usr/bin/true');
+    expect(macos.indexOf('- name: Rosetta 2')).toBeLessThan(macos.indexOf('get-ffmpeg.sh'));
+    // The smoke test gives the first launch under Rosetta more time, and the app must be the leg's arch only.
+    expect(macos).toContain('if [ "$MAC_ARCH" = x64 ]; then limit=360; fi');
+    expect(macos).toContain('"$APP/Contents/Frameworks/Electron Framework.framework/Electron Framework"');
+    // No universal binary: every bundled program and the app itself must be exactly the leg's arch.
+    expect(macos.match(/\[ "\$got" = "\$LIPO_ARCH" \]/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(macos).not.toMatch(/--universal|lipo -create/);
   });
 
   it('is not a release gate yet: publish neither needs it nor attaches the dmg, and a TODO says how to change that', () => {
@@ -253,8 +281,11 @@ describe('Windows workflow: the macOS dmg job (advisory during bring-up)', () =>
     expect(publish).not.toContain('.dmg');
     expect(workflow).toContain('# TODO(0.7.0, when macOS becomes official');
     expect(workflow).toContain('#   1. needs: [installer, tests, e2e, launcher, linux, macos, macos-e2e]');
+    // The TODO ships both dmgs, from both arch artifacts.
     expect(workflow).toMatch(/^\s+#.*\brelease\/ReCut-\*-macos-arm64\.dmg/m);
-    expect(workflow).toMatch(/^\s+#\s+name: ReCut-macos$/m);
+    expect(workflow).toMatch(/^\s+#.*\brelease\/ReCut-\*-macos-x64\.dmg/m);
+    expect(workflow).toMatch(/^\s+#\s+pattern: ReCut-macos-\*$/m);
+    expect(workflow).toMatch(/^\s+#\s+merge-multiple: true$/m);
     // The Windows and Linux summaries say which jobs must be green: the five gates, not the advisory macOS jobs.
     for (const block of [code(job('installer')), code(job('linux'))]) {
       expect(block).toContain('the required jobs of this run (installer, tests, e2e, launcher, linux) are green');
@@ -262,15 +293,17 @@ describe('Windows workflow: the macOS dmg job (advisory during bring-up)', () =>
     }
   });
 
-  it('tests with the bundled arm64 FFmpeg, then packages the arm64 dmg, signed only when all secrets are set', () => {
-    expect(macos).toContain('./scripts/mac/get-ffmpeg.sh --dest resources/ffmpeg');
+  it('tests with the bundled FFmpeg of the leg\'s arch, then packages that arch\'s dmg, signed only when all secrets are set', () => {
+    expect(macos).toContain('./scripts/mac/get-ffmpeg.sh --arch "$MAC_ARCH" --dest resources/ffmpeg');
     expect(macos).toContain('npx vitest run');
     expect(macos.indexOf('get-ffmpeg.sh')).toBeLessThan(macos.indexOf('npx vitest run'));
     expect(macos.indexOf('npx vitest run')).toBeLessThan(macos.indexOf('electron-builder --mac'));
-    // Signed: electron-builder signs, notarizes (APPLE_API_KEY = path of the decoded .p8) and staples.
-    expect(macos).toContain('APPLE_API_KEY="$APPLE_API_KEY_PATH" npx electron-builder --mac dmg --arm64 --publish never');
+    // Signed: electron-builder signs, notarizes (APPLE_API_KEY = path of the decoded .p8) and staples. The same five
+    // secrets sign both arches.
+    expect(macos).toContain('APPLE_API_KEY="$APPLE_API_KEY_PATH" npx electron-builder --mac dmg "--$MAC_ARCH" --publish never');
     // Unsigned: no identity discovery, ad-hoc signature, hardened runtime off (a real boolean false).
-    expect(macos).toMatch(/CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg --arm64 --publish never \\\n\s+-c\.mac\.identity=- -c\.mac\.timestamp=none --no-config\.mac\.hardenedRuntime/);
+    expect(macos).toMatch(/CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg "--\$MAC_ARCH" --publish never \\\n\s+-c\.mac\.identity=- -c\.mac\.timestamp=none --no-config\.mac\.hardenedRuntime/);
+    expect(macos).not.toMatch(/electron-builder --mac dmg --(arm64|x64)/);
     expect(macos).not.toMatch(/hardenedRuntime=false/);
     expect(macos).toContain("echo 'signed=false' >> \"$GITHUB_OUTPUT\"");
     expect(macos).toContain('if [ "$have" -ne 5 ]; then');
@@ -317,23 +350,41 @@ describe('Windows workflow: the macOS dmg job (advisory during bring-up)', () =>
     }
     expect(macos).toContain("grep -E 'FAILED|layout=MISSING'");
     expect(macos).toContain('exit "$bad"');
-    expect(macos).toContain("grep -q '^Platform: *arm64 macOS$'");
+    // The bundled FFmpeg names the leg's platform and Jellyfin build.
+    expect(macos).toContain('PLATFORM: ${{ matrix.platform }}');
+    expect(macos).toContain('grep -qx "Platform: *$PLATFORM" "$ff/FFMPEG-BUILD.txt"');
+    expect(macos).toContain('_portable_$([ "$MAC_ARCH" = arm64 ] && echo macarm64 || echo mac64)-gpl');
   });
 
-  it('keeps the dmg as the ReCut-macos artifact on every run, with a job summary', () => {
+  it('checks the bundled speech-to-text engine of each arch: Metal on arm64, the CPU variants on x64', () => {
+    expect(macos).toContain("grep -q 'GGML_METAL_EMBED_LIBRARY=ON' \"$w/WHISPER-BUILD.txt\"");
+    expect(macos).toContain("grep -q 'GGML_METAL=OFF' \"$w/WHISPER-BUILD.txt\"");
+    expect(macos).toContain("grep -q 'GGML_CPU_ALL_VARIANTS=ON' \"$w/WHISPER-BUILD.txt\"");
+    expect(macos).toContain('for v in x64 sse42 sandybridge haswell skylakex; do');
+    expect(macos).toMatch(/if \[ "\$bytes" -gt \$\(\(16 \* 1024 \* 1024\)\) \]/);
+  });
+
+  it('keeps each dmg as its arch\'s artifact (ReCut-macos-arm64, ReCut-macos-x64) on every run, with a job summary', () => {
     const upload = /- uses: actions\/upload-artifact@v4\n((?:\s{8,}.*\n)+)/g;
-    const artifact = [...macos.matchAll(upload)].map((m) => m[0]).find((a) => /name: ReCut-macos\n/.test(a));
+    const artifact = [...macos.matchAll(upload)].map((m) => m[0]).find((a) => /name: ReCut-macos-\$\{\{ matrix\.arch \}\}\n/.test(a));
     expect(artifact).toBeDefined();
     expect(artifact).not.toMatch(/^\s+if:/m);
-    expect(artifact).toContain('path: release/ReCut-*-macos-arm64.dmg');
+    expect(artifact).toContain('path: release/ReCut-*-macos-${{ matrix.arch }}.dmg');
+    expect(artifact).toMatch(/if-no-files-found: error/);
     expect(artifact).toMatch(/retention-days: 14/);
     expect(macos).toContain('GITHUB_STEP_SUMMARY');
+    expect(macos).toContain("Artifacts (ReCut-macos-$MAC_ARCH)");
+    expect(macos).toContain('dmg="$(ls "$GITHUB_WORKSPACE"/release/ReCut-*-macos-"$MAC_ARCH".dmg)"');
+    // The old single-arch artifact name is gone from the workflow (docs point to the per-arch names).
+    expect(code(workflow)).not.toMatch(/name: ReCut-macos\n/);
   });
 
-  it('package.json builds an arm64 dmg with the hardened runtime and a minimal entitlement set', () => {
+  it('package.json names the dmg by arch, defaults to arm64, with the hardened runtime and a minimal entitlement set', () => {
     const mac = pkg.build.mac;
+    // CI picks the arch on the command line (--arm64 / --x64); a bare `electron-builder --mac` builds arm64 only, so
+    // one dmg never gets another arch's resources/ffmpeg and resources/whisper.
     expect(mac.target).toEqual([{ target: 'dmg', arch: ['arm64'] }]);
-    expect(mac.artifactName).toBe('ReCut-${version}-macos-arm64.${ext}');
+    expect(mac.artifactName).toBe('ReCut-${version}-macos-${arch}.${ext}');
     expect(pkg.build.dmg.artifactName).toBe(mac.artifactName);
     expect(mac.category).toBe('public.app-category.video');
     expect(mac.hardenedRuntime).toBe(true);
@@ -358,17 +409,69 @@ describe('Windows workflow: the macOS dmg job (advisory during bring-up)', () =>
     expect(script.startsWith('#!/usr/bin/env bash\n')).toBe(true);
     expect(script).toContain('set -euo pipefail');
     for (const f of ['FFMPEG-LICENSE.txt', 'FFMPEG-README.txt', 'FFMPEG-BUILD.txt']) expect(script).toContain(`'${f}'`);
-    expect(script).toContain("echo 'Platform:        arm64 macOS'");
+    expect(script).toContain('echo "Platform:        $platform"');
     expect(script).toContain("echo 'Corresponding source'");
     expect(script).toContain('--skip-run');
     expect(script).not.toMatch(/master-latest|\/latest\//);
     // Every source: a versioned release URL, the archive's SHA-256, a licence URL at the same tag and its SHA-256.
-    const entries = [...script.matchAll(/^ {2}"(\$jf\/releases\/download\/(v[\d.]+-\d+)\/[^|"]+)\|([0-9a-f]{64})\|(\$jf_raw\/(v[\d.]+-\d+)\/COPYING\.GPLv3)\|([0-9a-f]{64})\|(v[\d.]+-\d+)"$/gm)];
-    expect(entries.length).toBeGreaterThanOrEqual(1);
-    for (const e of entries) {
-      expect(e[2]).toBe(e[5]);
-      expect(e[2]).toBe(e[7]);
-      expect(e[1]).toMatch(/_portable_macarm64-gpl\.tar\.xz$/);
+    const entryRe = /^ {2}"(\$jf\/releases\/download\/(v[\d.]+-\d+)\/[^|"]+)\|([0-9a-f]{64})\|(\$jf_raw\/(v[\d.]+-\d+)\/COPYING\.GPLv3)\|([0-9a-f]{64})\|(v[\d.]+-\d+)"$/gm;
+    const list = (name: string) => {
+      const m = new RegExp(`^${name}=\\(\\n([\\s\\S]*?)^\\)$`, 'm').exec(script);
+      expect(m, name).not.toBeNull();
+      return [...m![1].matchAll(entryRe)];
+    };
+    const arm64 = list('sources_arm64');
+    const x64 = list('sources_x64');
+    expect(arm64.length).toBeGreaterThanOrEqual(1);
+    expect(x64.length).toBeGreaterThanOrEqual(1);
+    for (const [entries, variant] of [[arm64, 'macarm64-gpl'], [x64, 'mac64-gpl']] as const) {
+      for (const e of entries) {
+        expect(e[2]).toBe(e[5]);
+        expect(e[2]).toBe(e[7]);
+        expect(e[1]).toBe(`$jf/releases/download/${e[2]}/jellyfin-ffmpeg_${e[2].slice(1)}_portable_${variant}.tar.xz`);
+      }
     }
+    // The two dmgs bundle the same FFmpeg: the same releases, in the same order, with different archives.
+    expect(x64.map((e) => e[2])).toEqual(arm64.map((e) => e[2]));
+    expect(new Set([...arm64, ...x64].map((e) => e[3])).size).toBe(arm64.length + x64.length);
+    expect(script).toMatch(/^if \[\[ "\$arch" == x64 \]\]; then sources=\("\$\{sources_x64\[@\]\}"\); else sources=\("\$\{sources_arm64\[@\]\}"\); fi$/m);
+  });
+
+  it('get-ffmpeg.sh takes the arch as a parameter (default arm64) and checks the binaries\' architecture', () => {
+    expect(script).toContain('arch="${MAC_ARCH:-arm64}"');
+    expect(script).toContain('-a|--arch) arch=');
+    // arm64: Mach-O CPU type 0x0100000c, lipo "arm64"; x64: 0x01000007, lipo "x86_64".
+    expect(script).toMatch(/arm64\|aarch64\) arch='arm64'; variant='macarm64-gpl'; lipo_arch='arm64'; cpu_bytes='0c000001'; platform='arm64 macOS' ;;/);
+    expect(script).toMatch(/x64\|x86_64\|intel\) arch='x64'; variant='mac64-gpl'; lipo_arch='x86_64'; cpu_bytes='07000001'; platform='x86-64 macOS' ;;/);
+    expect(script).toContain('[[ "$cpu" == "$cpu_bytes" ]]');
+    expect(script).toContain('lipo -archs "$f"');
+    // x64 runs natively or under Rosetta 2, which the script checks before running anything.
+    expect(script).toContain('/usr/bin/arch -x86_64 /usr/bin/true');
+    expect(script).toContain('builder/variants/$variant.sh');
+  });
+
+  it('get-whisper.sh builds arm64 (Metal) by default and a CPU-only x86_64 engine for x64, checking every file\'s arch', () => {
+    const sh = fs.readFileSync(path.join(repo, 'scripts/mac/get-whisper.sh'), 'utf8').replace(/\r\n/g, '\n');
+    expect(sh.startsWith('#!/usr/bin/env bash\n')).toBe(true);
+    expect(sh).toContain('set -euo pipefail');
+    expect(sh).toContain('arch="${MAC_ARCH:-arm64}"');
+    expect(sh).toContain('-a|--arch) arch=');
+    for (const f of ['-DCMAKE_OSX_ARCHITECTURES=arm64', '-DGGML_METAL=ON', '-DGGML_METAL_EMBED_LIBRARY=ON', '-DBUILD_SHARED_LIBS=OFF']) expect(sh).toContain(f);
+    for (const f of ['-DCMAKE_OSX_ARCHITECTURES=x86_64', '-DGGML_METAL=OFF', '-DGGML_BLAS=OFF', '-DGGML_BACKEND_DL=ON', '-DGGML_CPU_ALL_VARIANTS=ON', '-DCMAKE_INSTALL_RPATH=@loader_path']) {
+      expect(sh).toContain(f);
+    }
+    expect(sh).toContain('-DCMAKE_OSX_DEPLOYMENT_TARGET="$min_macos"');
+    expect(sh).toContain(`min_macos='${pkg.build.mac.minimumSystemVersion}'`);
+    expect(sh).toContain('-DGGML_NATIVE=OFF');
+    // The same five CPU variants as the Linux and Windows engines.
+    const linux = fs.readFileSync(path.join(repo, 'scripts/linux/get-whisper.sh'), 'utf8');
+    const variants = /^CPU_VARIANTS=\(([^)]*)\)$/m.exec(linux)![1];
+    expect(sh).toContain(`CPU_VARIANTS=(${variants})`);
+    // Every Mach-O in the folder: exactly the arch, at most macOS 12, only system or bundled libraries.
+    expect(sh).toContain('[[ "$got" == "$lipo_arch" ]]');
+    expect(sh).toContain("x64|x86_64|intel) arch='x64'; lipo_arch='x86_64' ;;");
+    expect(sh).toContain('version_gt "$minos" "$min_macos"');
+    expect(sh).toContain('/usr/lib/*|/System/Library/*) ;;');
+    expect(sh).toContain('/usr/bin/arch -x86_64 /usr/bin/true');
   });
 });
