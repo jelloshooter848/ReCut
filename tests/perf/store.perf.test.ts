@@ -3,7 +3,8 @@
  * 2500-clip sequence, undo/redo, memory growth over 300 commits, history cap, serialize / parse / normalize,
  * and the per-frame work the UI derives from the store (planFrame, resolveSubtitleCues, sequenceDuration).
  * The last test adds a 3 h multi-hour sequence (buildLongSequence) and measures the same per-frame work, commits
- * and serialize sizes on it as new 'long' rows; it runs last so the earlier rows stay comparable.
+ * and serialize sizes on it as new 'long' rows; it runs last so the earlier rows stay comparable. After it, the 'nest'
+ * rows cover 0.8.0 content: nested sequences (flatten after an edit) and keyframes (planFrame on the flattened sequence).
  *
  * Run: NODE_OPTIONS=--expose-gc npx vitest run -c tests/perf/vitest.config.ts tests/perf/store.perf.test.ts
  */
@@ -12,6 +13,8 @@ import { useStore, resetStore, serializeForSave } from '../../src/state/store';
 import { normalizeProject, serializeProject } from '../../shared/project';
 import { allTracks, clipEnd, findClip, resolveSubtitleCues, sequenceDuration } from '../../shared/timeline';
 import { planFrame } from '../../src/playback/planner';
+import { flattenSequence } from '../../shared/nest';
+import { setClipKeyframes } from '../../shared/keyframes';
 import type { MediaProbe } from '../../shared/model';
 // @ts-expect-error plain JS module shared with the Electron harness
 import { buildBigProject, buildLongSequence } from './bigProject.mjs';
@@ -268,5 +271,75 @@ describe('store @ 2500 clips', () => {
     ms('long', 'JSON.parse incl. multi-hour (median of 3)', parse.median, 100, undefined, DIAGNOSTIC);
     const clone = bench(3, () => { structuredClone(project); });
     ms('long', 'structuredClone(project) incl. multi-hour (median of 3)', clone.median, 100, undefined, DIAGNOSTIC);
+  });
+
+  // 0.8.0 content (Roadmap §8 nested sequences, §11 keyframes) at normal scale. Runs after every row above, on a
+  // duplicate of the 2,500-clip sequence, so nothing above changes. Not the pathological fan-out case
+  // (bugs/open/2026-10-08-nested-fan-out-flatten-blowup.md): 20 compound clips, each nested once, one level deep.
+  it('0.8.0 content: nested sequences and keyframes (flatten after an edit, planFrame on the flattened sequence)', () => {
+    const host = big.altIds[0];
+    const media0 = S().project.media;
+    // 20 compound clips of 12 adjacent V1 clips each (+ their linked A1 audio): 480 of the 2,500 clips move into 20
+    // nested sequences; the host keeps 2,020 clips plus 40 nested clips (one video, one audio per compound).
+    const v1 = S().project.sequences[host].videoTracks[0].clips;
+    const groups: string[][] = [];
+    for (let g = 0; g < 20; g++) groups.push(v1.slice(g * 15, g * 15 + 12).map((c) => c.id));
+    const inner: string[] = [];
+    for (const ids of groups) { const id = S().makeCompoundClip(host, ids); expect(id).toBeTruthy(); inner.push(id!); }
+    S().select([], 'clear');
+    // Keyframes: inside each nested sequence every clip animates scale and opacity (video) or level (audio), 3 keys
+    // each; in the host every 4th clip of V2 and A2 animates position or level. Writes go through findClip.
+    let keyed = 0;
+    const key3 = (dur: number, a: number, b: number) => [{ frame: 0, value: a }, { frame: Math.floor(dur / 2), value: b, interp: 'ease' as const }, { frame: dur - 1, value: a }];
+    S().commit('perf keyframes', (d) => {
+      const animate = (seqId: string, ids: string[]) => {
+        const s = d.sequences[seqId];
+        for (const id of ids) {
+          const c = findClip(s, id)?.clip;
+          if (!c) continue;
+          if (c.kind === 'video') { setClipKeyframes(c, 'scale', key3(c.duration, 1, 1.2)); setClipKeyframes(c, 'opacity', key3(c.duration, 1, 0.6)); }
+          else setClipKeyframes(c, 'volume', key3(c.duration, 1, 0.5));
+          keyed++;
+        }
+      };
+      for (const id of inner) animate(id, allTracks(d.sequences[id]).flatMap((t) => t.clips.map((c) => c.id)));
+      const hs = d.sequences[host];
+      animate(host, [hs.videoTracks[1], hs.audioTracks[1]].flatMap((t) => t.clips.filter((_, i) => i % 4 === 0).map((c) => c.id)));
+    });
+    const p0 = S().project;
+    const flat0 = flattenSequence(p0.sequences[host], p0.sequences, p0.media);
+    const flatClips = allTracks(flat0).reduce((a, t) => a + t.clips.filter((c) => c.enabled && !c.sequenceId).length, 0);
+    record({ section: 'nest', metric: 'count nested sequences / keyframed clips / media clips after flatten', value: `${inner.length} / ${keyed} / ${flatClips}`, unit: '' });
+    expect(flatClips).toBe(2500);
+    expect(media0).toBe(p0.media);
+
+    // What Program does after every edit of a sequence with nested clips (ProgramPanel → flattenSequence, memoized
+    // per sequence object and the sequences it nests): an edit in the host or inside one nested sequence rebuilds the
+    // host's flattened tracks that hold nested clips.
+    const flatAfter = (edit: (i: number) => void) => {
+      const samples: number[] = [];
+      for (let i = 0; i < 20; i++) {
+        edit(i);
+        const p = S().project;
+        const t = now(); flattenSequence(p.sequences[host], p.sequences, p.media); samples.push(now() - t);
+      }
+      return stats(samples);
+    };
+    // Each edit toggles a clip (read from the current state, so every edit is a real change).
+    const toggle = (seqId: string, pick: (st: ReturnType<typeof S>) => { id: string; enabled: boolean }) => { const c = pick(S()); S().setClipEnabled(seqId, c.id, !c.enabled); };
+    const fh = flatAfter((i) => toggle(host, (st) => st.project.sequences[host].videoTracks[2].clips[i]));
+    ms('nest', 'flattenSequence after an edit in the host (20 nested sequences, 2,500 media clips; median)', fh.median, 16, 'Program re-flattens on every edit', GUARDRAIL);
+    const fi = flatAfter((i) => { const id = inner[i % inner.length]; toggle(id, (st) => st.project.sequences[id].videoTracks[0].clips[1]); });
+    ms('nest', 'flattenSequence after an edit inside a nested sequence (median)', fi.median, 16, undefined, GUARDRAIL);
+
+    // Per-frame work on the flattened, keyframed sequence: the frames sweep the whole sequence (nested ranges included).
+    const p = S().project;
+    const flat = flattenSequence(p.sequences[host], p.sequences, p.media);
+    const dur = sequenceDuration(flat);
+    const pf = bench(240, (i) => { planFrame(flat, p.media, Math.floor((dur * i) / 240), true); });
+    ms('nest', 'planFrame nested + keyframed (median over 240 frames)', pf.median, 2, 'runs every rAF while playing', GUARDRAIL);
+    ms('nest', 'planFrame nested + keyframed (max)', pf.max, 4, undefined, GUARDRAIL);
+    const animated = [0, 1, 2, 3].reduce((a, q) => a + planFrame(flat, p.media, Math.floor((dur * q) / 4) + 30, true).layers.filter((l) => l.animated).length, 0);
+    expect(animated).toBeGreaterThan(0);
   });
 });
