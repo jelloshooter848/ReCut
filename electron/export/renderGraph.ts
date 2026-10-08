@@ -496,12 +496,15 @@ function videoSegment(ctx: Ctx, seg: ClipSeg): string {
   if (motion) f.push(...motionCanvasFilters(ctx, seg, k0, totalFrames));
   else f.push(...transformFilters(ctx, seg));
   const op = seg.clip.transform.opacity;
-  if (!opacityKeys && Number.isFinite(op) && op < 1) f.push(`lut=a='val*${num(Math.max(0, op))}'`);
+  const fades = fadeWeights(seg);
+  if (!opacityKeys && !fades && Number.isFinite(op) && op < 1) f.push(`lut=a='val*${num(Math.max(0, op))}'`);
   f.push(`tpad=stop=${totalFrames}:stop_mode=clone`, `trim=end_frame=${totalFrames}`, 'setpts=PTS-STARTPTS');
   if (motion) f.push(...motionFilters(ctx, seg, k0, totalFrames));
-  if (opacityKeys) f.push(...opacityFilters(ctx, opacityKeys, k0, totalFrames));
-  if (seg.fadeIn) f.push(`fade=t=in:st=0:d=${sec(seg.fadeIn * ctx.fd)}`);
-  if (seg.fadeOut) f.push(`fade=t=out:st=${sec((totalFrames - seg.fadeOut) * ctx.fd)}:d=${sec(seg.fadeOut * ctx.fd)}`);
+  // Opacity (keyframed, or static with a fade) times the fade to / from black, as one alpha value per frame.
+  if (opacityKeys || fades) {
+    const opacityAt = (n: number) => clamp01(opacityKeys ? evaluateKeyframes(opacityKeys, k0 + n) : op);
+    f.push(...opacityFilters(ctx, fades ? (n) => opacityAt(n) * fades(n) : opacityAt, totalFrames));
+  }
   const label = newLabel(ctx, 'v');
   ctx.chains.push(`[${index}:v:0]${f.join(',')}${label}`);
   return label;
@@ -599,14 +602,34 @@ function motionFilters(ctx: Ctx, seg: ClipSeg, k0: number, totalFrames: number):
 }
 
 /**
- * Keyframed opacity: `lut` multiplies the alpha by the opacity of each frame, set per frame by `sendcmd` from values
- * computed here with the preview's evaluation (no FFmpeg formula to keep in step). A value is sent only when it
- * changes by at least 1/1024 (the alpha is 8-bit), so a long fade sends at most about a thousand commands.
+ * Fade from / to black of a single-sided transition (ClipSeg fadeIn / fadeOut): the weight of segment frame n, the
+ * preview planner's (src/playback/planner.ts contribute): (frame - start) / D over the first D frames of the clip and
+ * (end - frame) / D over its last D, multiplied. It scales the alpha, so the fade shows what is below the clip (black
+ * on V1), as the preview draws it. Null when the segment has no fade. (FFmpeg's `fade` darkened the colour instead,
+ * and towards luma 0, not 16: it treats yuva420p as full range.)
  */
-function opacityFilters(ctx: Ctx, keys: readonly Keyframe[], k0: number, totalFrames: number): string[] {
+function fadeWeights(seg: ClipSeg): ((n: number) => number) | null {
+  const fadeIn = seg.fadeIn ?? 0, fadeOut = seg.fadeOut ?? 0;
+  if (!(fadeIn > 0) && !(fadeOut > 0)) return null;
+  const end = seg.extBefore + seg.frames;
+  return (n) => {
+    let w = 1;
+    if (fadeIn > 0 && n - seg.extBefore < fadeIn) w *= (n - seg.extBefore) / fadeIn;
+    if (fadeOut > 0 && n >= end - fadeOut) w *= (end - n) / fadeOut;
+    return clamp01(w);
+  };
+}
+
+/**
+ * Per-frame opacity (keyframed opacity, fades): `lut` multiplies the alpha by `valueAt(n)` on segment frame n, set
+ * per frame by `sendcmd` from values computed here with the preview's evaluation (no FFmpeg formula to keep in step).
+ * A value is sent only when it changes by at least 1/1024 (the alpha is 8-bit), so a long fade sends at most about a
+ * thousand commands.
+ */
+function opacityFilters(ctx: Ctx, valueAt: (n: number) => number, totalFrames: number): string[] {
   const name = `lut@kfo${ctx.labelCounter++}`;
   const q = (v: number) => Math.round(clamp01(v) * 1024) / 1024;
-  const first = q(evaluateKeyframes(keys, k0));
+  const first = q(valueAt(0));
   const cmds: string[] = [];
   let last = first, startN = 0;
   // Interval [start, end) in segment seconds, half a frame early so a frame's own timestamp is inside it.
@@ -614,7 +637,7 @@ function opacityFilters(ctx: Ctx, keys: readonly Keyframe[], k0: number, totalFr
     if (startN > 0) cmds.push(`${sec((startN - 0.5) * ctx.fd)}-${sec((endN - 0.5) * ctx.fd)} ${name} a val*${exprNum(last)}`);
   };
   for (let n = 1; n < totalFrames; n++) {
-    const v = q(evaluateKeyframes(keys, k0 + n));
+    const v = q(valueAt(n));
     if (v === last) continue;
     flush(n);
     startN = n; last = v;
