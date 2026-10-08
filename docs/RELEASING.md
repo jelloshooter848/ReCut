@@ -8,7 +8,7 @@ ReCut uses [semantic versioning](https://semver.org/). Before 1.0 the version is
 |---|---|
 | MINOR (`0.2.0` → `0.3.0`) | A roadmap milestone, a user-visible feature, or a behaviour change users will notice. Reset PATCH to 0. |
 | PATCH (`0.2.0` → `0.2.1`) | Bug fixes only. |
-| `1.0.0` | The owner's call, when every item under **Ready for 1.0** in [ROADMAP → Road to 1.0](ROADMAP.md#road-to-10) holds. Release candidates (`1.0.0-rc.1`, `rc.2`, …) come first; the release workflow publishes only `X.Y.Z` today and needs pre-release support for them before rc.1. |
+| `1.0.0` | The owner's call, when every item under **Ready for 1.0** in [ROADMAP → Road to 1.0](ROADMAP.md#road-to-10) holds. Release candidates (`1.0.0-rc.1`, `rc.2`, …) come first, published as GitHub pre-releases: see [Release candidates](#release-candidates). |
 
 The version lives in `package.json` (and `package-lock.json`). The app reads it from there through Electron's
 `app.getVersion()` (Preferences › Version and Help › About), the release file names use it
@@ -28,6 +28,7 @@ Only a **release PR** changes the version. Feature and bug PRs never touch `pack
 3. Doc lines that name the current version, if any (prefer wording that does not name a version).
 4. The saved-project fixture of the new version, `tests/fixtures/projects/recut-<x.y.z>.recut`, made with
    `node scripts/make-project-fixture.mjs` after the bump (see [the fixtures' README](../tests/fixtures/projects/README.md)).
+   A release candidate has none ([Release candidates](#release-candidates)).
 
 ## How to cut a release
 
@@ -53,7 +54,9 @@ hand: agents cannot push tags (their git proxy drops tag pushes), and the owner 
    parallel. Only when all of them have passed does the final `publish` job publish the release: tag `v0.3.0` on the
    merge commit (created by the publish job), name `ReCut 0.3.0`, not a prerelease, marked **Latest**, body = that
    version's changelog section plus the install / SmartScreen / AppImage / dmg note, with the installer, the portable
-   exe, the AppImage and both dmgs attached. See [What gates a release](#what-gates-a-release).
+   exe, the AppImage and both dmgs attached. (A release candidate such as `1.0.0-rc.1` is published the same way,
+   signed and notarized dmgs included, but marked pre-release and never Latest; see
+   [Release candidates](#release-candidates).) See [What gates a release](#what-gates-a-release).
 4. Check the release page: both `.exe` files, the `.AppImage` and both `.dmg` files are attached and the notes read
    correctly. In the installer, linux and macos jobs' logs, the smoke tests list the licence files the builds ship
    (see [Licence files every release ships](#licence-files-every-release-ships)).
@@ -64,7 +67,8 @@ kept as a CI artifact, nothing published) until the next release PR is merged.
 **Only real versions appear on the Releases page** (owner's decision, 7 October 2026). CI never publishes a dev
 prerelease and never creates a `-dev.` tag; every run that is not a release is a test build whose installers are only
 the run's `ReCut-windows` artifact (its AppImage the `ReCut-linux` artifact, its dmgs the `ReCut-macos-arm64` and
-`ReCut-macos-x64` artifacts).
+`ReCut-macos-x64` artifacts). The one kind of pre-release on the Releases page is a
+[release candidate](#release-candidates): a real version with its own release PR.
 
 **Never create the release or the tag by hand before the release PR is merged**, not in the web UI ("Draft a new
 release" / "Choose a tag") and not with git. A tag made that way points at whatever commit was selected (twice so
@@ -181,7 +185,7 @@ git tag v0.3.0 <merge sha>
 git push origin v0.3.0
 ```
 
-Use a plain tag `v<MAJOR>.<MINOR>.<PATCH>`. The tag run checks that the tag equals `v` + the `package.json` version at
+Use a plain tag `v<MAJOR>.<MINOR>.<PATCH>` (or, for a release candidate, `v<MAJOR>.<MINOR>.<PATCH>-rc.<N>`). The tag run checks that the tag equals `v` + the `package.json` version at
 that commit and that `CHANGELOG.md` has a `## [<version>]` section, fails within seconds if either is wrong, and
 otherwise builds, checks and (once every gate is green) publishes the same release as the automatic path. If a
 `main` run is building the same version at that moment, it sees your tag when it re-checks before publishing, logs a
@@ -213,6 +217,90 @@ unreleased, and the next `main` run that passes every gate will release it.
 
 **Never move or re-use a published tag.** Once a release exists for `vX.Y.Z`, that tag and its files are final.
 
+## Release candidates
+
+1.0.0 is preceded by release candidates `1.0.0-rc.1`, `1.0.0-rc.2`, … ([ROADMAP → Release
+candidates](ROADMAP.md#release-candidates-100-rc1-rc2-)). A candidate is a real release: it has its own release PR,
+version, changelog section, tag and release page, it runs every gate, and it ships the same files. Only these things
+differ from a stable release:
+
+| | Stable `1.0.0` | Candidate `1.0.0-rc.2` |
+|---|---|---|
+| Version (release PR) | `npm version 1.0.0 --no-git-tag-version` | `npm version 1.0.0-rc.2 --no-git-tag-version` |
+| `CHANGELOG.md` heading | `## [1.0.0] - YYYY-MM-DD` | `## [1.0.0-rc.2] - YYYY-MM-DD` |
+| Tag and release name (made by CI) | `v1.0.0`, `ReCut 1.0.0` | `v1.0.0-rc.2`, `ReCut 1.0.0-rc.2` |
+| Releases page | Full release, marked **Latest** | Marked **Pre-release**, never Latest: Latest stays on the newest stable release |
+| Release notes | The changelog section, then the install note | A first line saying it is a release candidate for testing, then the same |
+| Files | `ReCut-Setup-1.0.0.exe`, `ReCut-Portable-1.0.0.exe`, `ReCut-1.0.0-linux-x86_64.AppImage`, `ReCut-1.0.0-macos-arm64.dmg`, `ReCut-1.0.0-macos-x64.dmg` | The same five, named `…-1.0.0-rc.2…` |
+| macOS signing | The dmgs must be Developer ID signed, notarized and stapled | The same: a candidate is a release run, so the `macos` legs fail without the signing secrets |
+| Saved-project fixture | `recut-1.0.0.recut`, required | None (see below) |
+| Update notice | Offered to everyone on an older version | Offered only to people running an earlier candidate of 1.0.0 |
+
+**How CI tells them apart.** The "Release metadata" step of `.github/workflows/windows.yml` accepts a `package.json`
+version `MAJOR.MINOR.PATCH` or `MAJOR.MINOR.PATCH-<pre-release>` (SemVer, no build metadata); a version with a
+pre-release part is published as a pre-release with `make_latest` false, and the publish job checks that again from
+the tag before publishing. The `macos` job's "Release run?" step decides the same way (a `vX.Y.Z-rc.N` tag push,
+or a push to `main` whose candidate version has its changelog section and no tag yet, is a release run), so a
+candidate's dmgs must be signed and notarized like a stable release's. ReCut uses only `-rc.<N>`: N counts from 1 without leading zeros (`rc.9`, then `rc.10`),
+and only `vX.Y.Z-rc.<N>` tags start the [tag-push fallback](#fallback-pushing-the-tag-yourself). The changelog heading
+must name the full version in brackets exactly, `## [1.0.0-rc.2] - YYYY-MM-DD`. The lookup is exact, so `1.0.0`,
+`1.0.0-rc.1` and `1.0.0-rc.10` each find only their own section, and a section ends at the next `## [` heading.
+
+**Saved-project fixtures.** The [compatibility promise](project-format.md#compatibility-promise) covers stable
+releases, so a candidate has no fixture of its own: `node scripts/make-project-fixture.mjs` refuses a pre-release
+version (unless `--out` is given, for a scratch copy), and the unit suite asks for a fixture only when the version in
+`package.json` is stable. While the candidates are out, the newest fixture is the last stable release's, which every
+candidate must open like every other build. The 1.0.0 release PR adds `recut-1.0.0.recut`.
+
+**The update notice.** Someone running a stable version asks GitHub for `releases/latest`, which never returns a
+pre-release, and is never told about a candidate. Someone running a candidate asks for the list of recent releases
+instead (still one request) and is told about a later candidate of the same version (`rc.2` after `rc.1`, `rc.10`
+after `rc.9`) or about a newer stable release (`1.0.0`), whichever comes first in SemVer precedence:
+`1.0.0-rc.1 < 1.0.0-rc.2 < … < 1.0.0-rc.10 < 1.0.0`. Once 1.0.0 is published, every candidate user is pointed at it.
+
+### Cutting 1.0.0-rc.1
+
+1. The 1.0 milestones are merged and the feature freeze starts (ROADMAP → Release candidates): from now on `main`
+   takes only fixes for release-blocking defects (and documentation).
+2. Release PR, branch `claude/release-1.0.0-rc.1` from `main`:
+   - `npm version 1.0.0-rc.1 --no-git-tag-version`
+   - add `## [1.0.0-rc.1] - YYYY-MM-DD` at the top of `CHANGELOG.md`, written like any release section
+     ([What goes in the changelog](#what-goes-in-the-changelog)) and covering everything since the last stable
+     release
+   - no saved-project fixture; no roadmap **Status** or Progress change (they name stable releases)
+   - `npm run typecheck` and `npm test`, then open the PR.
+3. Merge it. CI runs every gate and the publish job publishes `ReCut 1.0.0-rc.1` on tag `v1.0.0-rc.1`.
+4. Check the release page: the **Pre-release** label is shown, **Latest** is still on the last stable release, the
+   notes start with the release-candidate line, and both `.exe` files, the `.AppImage` and both `.dmg` files are
+   attached.
+
+### Cutting 1.0.0-rc.2 (and later candidates)
+
+1. Fixes land in normal PRs. They do not touch the version or the `## [1.0.0-rc.1]` section (it is published and
+   final).
+2. Release PR `claude/release-1.0.0-rc.2`: `npm version 1.0.0-rc.2 --no-git-tag-version`, and a new
+   `## [1.0.0-rc.2] - YYYY-MM-DD` section above `## [1.0.0-rc.1]` listing what changed since rc.1 (usually only
+   **Fixed**). No fixture. `npm run typecheck`, `npm test`, open the PR, merge it.
+3. CI publishes `ReCut 1.0.0-rc.2` as a pre-release. People running rc.1 with the update check on are told about it.
+4. A broken candidate is never fixed in place: fix forward and cut the next one (`rc.3`). The tag and the release of
+   a published candidate are final, like any release.
+
+### Releasing 1.0.0
+
+1. Every item under **Ready for 1.0** holds (ROADMAP), including a week of normal use of the last candidate.
+2. Release PR `claude/release-1.0.0`, as for any stable release ([How to cut a release](#how-to-cut-a-release)):
+   - `npm version 1.0.0 --no-git-tag-version`
+   - `## [1.0.0] - YYYY-MM-DD` at the top of `CHANGELOG.md`, above the candidates' sections, written for people
+     coming from the last stable release: it covers everything since that release, the candidates' fixes included.
+     The `## [1.0.0-rc.N]` sections stay below it unchanged, as history.
+   - `node scripts/make-project-fixture.mjs` writes `tests/fixtures/projects/recut-1.0.0.recut` (the unit suite
+     fails without it)
+   - the roadmap **Status** lines and Progress rows of what 1.0.0 ships
+   - `npm run typecheck` and `npm test`, then open the PR.
+3. Merge it. CI publishes `ReCut 1.0.0` on tag `v1.0.0`, a full release marked **Latest**. Everyone with the update
+   check on is told about it, candidate users included.
+4. The candidates' releases stay on the Releases page as pre-releases; nothing needs deleting.
+
 ## What goes in the changelog
 
 `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), newest version first. Each release
@@ -241,12 +329,14 @@ Rules:
 | Trigger | Tag | Result |
 |---|---|---|
 | Push to `main`; `CHANGELOG.md` has `## [<version>]`; no tag `v<version>` yet | `v<version>` (created by CI) | Release `ReCut <version>`, marked Latest |
-| Push of tag `v<version>` (optional fallback) | `v<version>` (yours) | Release `ReCut <version>`, marked Latest |
+| The same, with a pre-release `<version>` such as `1.0.0-rc.1` | `v1.0.0-rc.1` (created by CI) | Release `ReCut 1.0.0-rc.1`, marked **Pre-release**, never Latest |
+| Push of tag `v<version>` (optional fallback; `v<x.y.z>` or `v<x.y.z>-rc.<N>`) | `v<version>` (yours) | The same release as the automatic path (Latest, or Pre-release for a candidate) |
 | Push to `main`; `v<version>` already tagged, or no changelog section | none | [Test build](#test-builds): `ReCut-windows`, `ReCut-linux`, `ReCut-macos-arm64` and `ReCut-macos-x64` CI artifacts only |
 | Push to another watched branch, or a manual run (`workflow_dispatch`) | none | [Test build](#test-builds): `ReCut-windows`, `ReCut-linux`, `ReCut-macos-arm64` and `ReCut-macos-x64` CI artifacts only |
 
-A release is published only when all seven gates pass ([What gates a release](#what-gates-a-release)). Only real
-versions (`0.4.0`, `0.5.0`, …) ever appear on the Releases page: there are no prereleases.
+A release is published only when all seven gates pass ([What gates a release](#what-gates-a-release)), release
+candidates included, and its dmgs are always signed and notarized. Only real versions (`0.4.0`, `0.5.0`, …, and the
+release candidates `1.0.0-rc.N`) ever appear on the Releases page: there are no dev or test-build prereleases.
 
 ### Test builds
 
@@ -272,7 +362,8 @@ To make a test build of a work branch, run the workflow by hand (*Run workflow*,
 
 ### Tags
 
-The workflow only runs for plain semver tags (`v[0-9]+.[0-9]+.[0-9]+`). The `v<version>` tag of an automatic release
+The workflow only runs for plain semver tags (`v[0-9]+.[0-9]+.[0-9]+`) and release-candidate tags
+(`v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+`). The `v<version>` tag of an automatic release
 does match that pattern, but it is created with the workflow's `GITHUB_TOKEN`, and tags created with `GITHUB_TOKEN`
 do not trigger workflows, so it does not start a second build. Documentation-only pushes to a branch skip the build
 (`paths-ignore`), but GitHub does not evaluate path filters for tag pushes, so a release tag always builds.

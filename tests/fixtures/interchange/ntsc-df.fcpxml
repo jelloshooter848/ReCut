@@ -14,14 +14,11 @@
       <project name="NTSC Cut">
         <sequence format="r1" duration="209209/3000s" tcStart="0s" tcFormat="DF" audioLayout="stereo" audioRate="48k">
           <spine>
-            <asset-clip ref="r2" offset="0s" name="d1" start="1001/200s" duration="179179/3000s" srcEnable="video">
-              <asset-clip ref="r2" lane="-1" offset="1001/200s" name="da1" start="1001/200s" duration="179179/3000s" srcEnable="audio"/>
-            </asset-clip>
+            <asset-clip ref="r2" offset="0s" name="d1" start="1001/200s" duration="179179/3000s"/>
             <transition name="Cross Dissolve" offset="71071/1200s" duration="1001/1000s">
               <filter-video ref="r3" name="Cross Dissolve"/>
             </transition>
-            <asset-clip ref="r2" offset="179179/3000s" name="d2" start="899899/7500s" duration="1001/100s" srcEnable="video">
-              <asset-clip ref="r2" lane="-1" offset="899899/7500s" name="da2" start="899899/7500s" duration="1001/100s" srcEnable="audio"/>
+            <asset-clip ref="r2" offset="179179/3000s" name="d2" start="899899/7500s" duration="1001/100s">
               <marker start="601601/5000s" duration="1001/30000s" value="One minute"/>
             </asset-clip>
           </spine>

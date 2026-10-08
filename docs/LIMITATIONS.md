@@ -108,9 +108,9 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   (Program shows the **Proxy** chip). This is deliberate. "Needs proxy" appears only when no proxy exists.
 - **Still images** in PNG, JPEG, WebP, GIF and BMP are drawn directly. Every other still is previewed from a PNG
   proxy that FFmpeg makes on import, so a format previews and exports only if your FFmpeg build decodes it:
-  - **HEIC / HEIF** needs FFmpeg 7.1 or later (phone photos are tile grids). It works with the FFmpeg bundled in
-    the Windows release. FFmpeg 6.1 (e.g. Ubuntu 24.04) cannot read HEIF, so there a HEIC neither previews nor
-    exports.
+  - **HEIC / HEIF** needs FFmpeg 7.1 or later (phone photos are tile grids). The FFmpeg bundled in the Windows,
+    Linux and macOS releases (8.1 or later) is new enough. FFmpeg 6.1 (e.g. Ubuntu 24.04's, when running from source)
+    cannot read HEIF, so there a HEIC neither previews nor exports.
   - **PSD**: FFmpeg 6.1 rejects the RLE-compressed PSD files ImageMagick writes ("Not enough data for rle
     scanline"); uncompressed PSD works.
   - **JPEG XL** needs an FFmpeg built with libjxl.
@@ -194,21 +194,30 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   An EDL holds one video track per file and only cuts and dissolves. Per format:
   - **All formats:** nested sequences and compound clips are flattened into their media clips (no nested timelines
     in the other editor); sequence subtitle tracks are not exported; the timeline starts at 00:00:00:00; source
-    points count from each file's embedded start timecode (see **Embedded start timecode** under Editing and effects for what is read;
-    a file without one, or not probed since that was added, counts from 00:00:00:00, and its source points come in
-    offset in an editor that reads a timecode ReCut did not); channel
-    selections (centre channel, mono channel, custom downmix) and the choice of a file's second or later audio stream
-    are not carried; offline media is written with its saved path.
-  - **FCPXML:** linked video and audio arrive as separate clips (the link is not kept). Dip to Black and fades
-    to / from black become opacity keyframes; eased keyframes use the other editor's ease curve; level keyframes are
-    written in dB. Marker colours are lost.
+    points count from each file's embedded start timecode (see **Embedded start timecode** under Editing and effects
+    for what is read; a file without one, or not probed since that was added, counts from 00:00:00:00, and its source
+    points come in offset in an editor that reads a timecode ReCut did not); channel selections (centre channel, mono
+    channel, custom downmix) and the choice of a file's second or later audio stream are not carried; offline media
+    is written with its saved path.
+  - **FCPXML:** linked video and audio with the same in and out points arrive as one clip; other linked clips arrive
+    as separate clips (the link is not kept). An audio crossfade between linked clips takes the length of the video
+    dissolve on the same cut, and a crossfade with no video dissolve under it keeps its audio track apart. Dip to
+    Black and fades to / from black become opacity keyframes; eased keyframes use the other editor's ease curve; level
+    keyframes are written in dB. Marker colours are lost, and markers are clip markers. In DaVinci Resolve 21 (which
+    ignores FCPXML's video-only / audio-only mark) a video-only clip of a file with sound also brings its sound,
+    written muted, and an audio-only clip its picture, written transparent; Resolve chooses the audio track numbers.
   - **OpenTimelineIO:** only cuts, speed, dissolves, markers and enabled states are standard. Transforms, crop,
     opacity, levels, fades and keyframes are stored as ReCut metadata that other editors ignore. Dip to Black
-    becomes a cut, and chapter markers become plain markers.
+    becomes a cut, and chapter markers become plain markers. OTIO has no drop-frame flag: DaVinci Resolve 21 imports
+    a 29.97 drop-frame timeline as non-drop-frame (every frame in place, the timecode display differs).
   - **EDL:** every event uses the reel name `AX`, with `* FROM CLIP NAME` and `* SOURCE FILE` comment lines that
     Resolve relinks by. At most four audio channels, and only audio linked to the video event with the same in, out
     and speed: unlinked audio such as music, audio on A5 and up, J- and L-cuts, audio fades and crossfades are left
-    out. Transforms, opacity, keyframes, levels and disabled clips are left out; speed is an `M2` line.
+    out. Transforms, opacity, keyframes, levels and disabled clips are left out; speed is an `M2` line. In DaVinci
+    Resolve 21: the timeline starts at its first event's timecode; a Dip to Black or a fade to black between two
+    clips comes in as dissolves between the clips (no black); an `M2` speed on a clip that starts with a dissolve
+    is applied to the outgoing clip; `* LOC:` markers are not imported; media files without embedded timecode may
+    not link automatically (relink them, or import the media before the EDL).
 - **Frame-rate conversion** (an export frame rate other than the sequence's) repeats or drops whole frames. There is
   no frame blending or motion interpolation, so 23.976 → 30 shows a regular repeat cadence and 23.976 ↔ 24 repeats
   or drops one frame about every 42 s. Duration and audio sync are not affected.
@@ -257,7 +266,9 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - One window and one open project at a time.
 - **No automatic updates.** ReCut can only tell you that a newer release exists (opt-in daily check, or Help › Check
   for Updates…) and open its release page; you download and install it yourself. The check needs access to
-  `api.github.com` (through the system proxy, if any) and does not offer pre-releases.
+  `api.github.com` (through the system proxy, if any). It never offers a pre-release (release candidate) to someone
+  running a stable version; someone running a release candidate is told about a later candidate of the same version
+  or a newer stable release.
 
 ## Projects
 
@@ -276,8 +287,8 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   Collected projects still store absolute paths (relative media roots are [roadmap §17](ROADMAP.md#17-cloud-free-collaboration)).
   A FAT32 drive cannot hold a file over 4 GB, so collecting a large remux there fails at that file.
 - **Limits on load:** timeline positions and durations are capped at 86,400,000 frames (24 h at 1000 fps, far more
-  at normal rates), clip speed at 1 %–10 000 %, and nesting at 64 levels. An invalid sequence frame rate becomes
-  23.976.
+  at normal rates), clip speed at 1 %–10 000 %, nested sequences at 8 levels, and any value nested deeper than 64
+  levels in the JSON is dropped. An invalid sequence frame rate becomes 23.976.
 - **Repairs are lossy.** A damaged project opens with a warning that lists the repairs, and the unrepaired file is
   kept as `<file>.pre-repair-<time>`. Out-of-range items are dropped or pulled in, and overlapping clips are
   shortened at their start or moved to an extra track (at most 32 extra tracks per kind; clips beyond that are

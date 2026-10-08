@@ -103,7 +103,8 @@ shows its state, with **Rebuild** if it failed.
 ## 3. Detect scenes
 
 1. Right-click a video › **Detect Scenes…**. Set the **Threshold** (higher means fewer, stronger cuts) and click
-   **Detect**. The Media Inspector › **Detect** button and Jobs › Proxies › detect-all do the same.
+   **Detect**. The Media Inspector › **Detect** button and Jobs › Proxies › **Detect scenes: selected** / **All
+   without scenes** do the same.
 2. Detected scenes appear under the media row in the Project panel. Right-click a scene to **Load in Source**,
    **Insert at Playhead**, **Rename**, **Merge with Next**, **Split at Source Time…**, **Tag…**, **Add to Library**
    or **Delete Scene**.
@@ -213,7 +214,8 @@ Scenes in the library are reusable, tagged source ranges.
    - With only a sequence Out, the edit is back-timed to end there.
    - With all four points set, the source range wins at the sequence In.
 4. The first clip into an empty sequence asks **Change sequence to match clip?** Choosing **Change** adopts the
-   clip's frame size and rate. Do this before you build: the frame rate is fixed once a sequence has clips.
+   clip's frame size and rate. Do this before you build: once a sequence has clips its frame rate is fixed
+   (positions are frames), so neither the Inspector nor **Sequence Settings…** can change it.
 5. The source-patch buttons (**V1**, **A1**, ...) in the track headers choose the target tracks. Un-patch video for an audio-only edit
    (and the reverse).
 6. Other ways to add clips: drag from Project, Source (the grip button), Scenes or Transcript. You can also use
@@ -377,10 +379,10 @@ own sequence and drop it into as many cuts as you like: an edit made inside it s
 
 ## 14. Proxies and relinking
 
-- Proxies are controlled with **Use proxies** (Project toolbar, Jobs › Proxies, Preferences). **Jobs › Proxies**
-  lists every file with Generate / Cancel / Regenerate / Delete / Reveal and a **Size** (540p / 720p / 1080p) for new
-  proxies. The Program monitor shows a **Proxy** chip when it plays one. Its **Needs proxy: N › Generate proxies**
-  chip fixes undecodable clips under the playhead.
+- Proxies are controlled with **Use proxies** (Project toolbar; **Playback proxies** in Jobs › Proxies, **Use proxies
+  for playback** in Preferences). **Jobs › Proxies** lists every file with Generate / Cancel / Regenerate / Delete /
+  Reveal and a **Size** (540p / 720p / 1080p) for new proxies. The Program monitor shows a **Proxy** chip when it
+  plays one. Its **Needs proxy: N › Generate proxies** chip fixes undecodable clips under the playhead.
 - Proxies affect only the preview. Export always reads the originals.
 - **Moved your media?** Open the project, and offline files are listed with a banner. Click **Relink…** › **Search
   folder…** (matches by name + size) › **Apply N matches**, or **Locate…** per file. **Check files** re-verifies.
@@ -579,6 +581,12 @@ In Resolve:
 3. If clips come in offline (the media moved, or the project is opened on another computer), select them in the Media
    Pool and use **Relink Selected Clips…** (or **Relink Media**) on the folder that holds them. Collect Project first
    makes this easy: everything is in one folder.
+4. What to expect in Resolve 21: from **FCPXML**, linked audio sits under its picture on audio tracks Resolve numbers
+   itself, and a video-only clip brings its sound muted (an audio-only one its picture, transparent): delete those
+   extra items if they are in the way. From **OpenTimelineIO**, a 29.97 drop-frame sequence comes in as
+   non-drop-frame timecode (every frame in place). From an **EDL**, the timeline starts at its first clip's
+   timecode, a Dip to Black becomes a dissolve between the clips, a speed change on a clip that starts with a
+   dissolve lands on the clip before it, and markers are not imported: check those spots, or prefer FCPXML.
 
 What transfers with **FCPXML** (the most complete): the cuts on every track, source in and out points, speed, levels
 and audio fades, position, scale, rotation, crop, opacity, keyframes, dissolves, dips (as opacity keyframes) and
@@ -586,9 +594,8 @@ markers. Compound clips arrive flattened into their clips. **OpenTimelineIO** ca
 markers; **EDL** only cuts and dissolves. Source in and out points are on each file's own timecode when it carries
 one (camera files), so they match what Resolve reads from the files. Never carried: subtitle tracks, audio channel
 selections and the centre channel extraction. The timeline starts at 00:00:00:00, so set Resolve's timeline start to
-match if it asks. The report lists everything
-else before you save. Nothing in your ReCut project changes. See [FORMATS](FORMATS.md#interchange-export) and
-[LIMITATIONS](LIMITATIONS.md#export).
+match if it asks. The report lists everything else before you save. Nothing in your ReCut project changes. See
+[FORMATS](FORMATS.md#interchange-export) and [LIMITATIONS](LIMITATIONS.md#export).
 
 ## Saving
 
@@ -625,5 +632,7 @@ ReCut works offline and never updates itself. It can tell you when a newer relea
 **Privacy:** the check is one request to `api.github.com` for the latest ReCut release. It sends nothing about you,
 your projects or your media: no identifier, no cookies, no telemetry. The only header ReCut adds is
 `User-Agent: ReCut/<version>`; your network stack adds its usual ones (for example the accepted languages), and GitHub
-sees your IP address as for any web request. Pre-releases are never offered. Administrators can turn the prompt and
+sees your IP address as for any web request. Pre-releases (release candidates such as 1.0.0-rc.1) are never offered
+to a stable version. If you run a release candidate, the check asks GitHub for the list of recent releases instead
+(still one request) and tells you about a later candidate of the same version or the final release. Administrators can turn the prompt and
 the daily check off for an installation with the environment variable `RECUT_UPDATE_CHECK=0`.

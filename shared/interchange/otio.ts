@@ -14,7 +14,8 @@
  * change the clip's duration in the track. Dissolves are SMPTE_Dissolve transitions centred on the cut (in_offset =
  * out_offset = half); fades from / to black are SMPTE_Dissolve transitions against the gap (or track edge) with one
  * offset 0. ReCut-only properties (transform, opacity, levels, channel selection, keyframes, links) are kept under
- * `metadata.recut`, which other tools ignore.
+ * `metadata.recut`, which other tools ignore. A marker's note is its `comment` and also `metadata.Resolve_OTIO.Note`,
+ * where DaVinci Resolve's own OTIO files keep it (Resolve 21 imported the marker without its note from `comment`).
  */
 import type { Rational } from '../model';
 import { clipProps, count, fileUrl, isAre, markerColorName, type Issues, type PClip, type Prepared, type PTrack, type PTransition } from './common';
@@ -128,7 +129,11 @@ export function writeOtio(p: Prepared, issues: Issues): string {
 
   const markers = p.markers.map((m) => ({
     OTIO_SCHEMA: 'Marker.2',
-    metadata: { recut: { markerId: m.id, kind: m.kind, color: m.color, ...(m.kind === 'continuity' ? { resolved: !!m.resolved, category: m.category } : {}) } },
+    metadata: {
+      // DaVinci Resolve 21 imported the note empty from `comment`; its own OTIO exports keep notes here.
+      ...(m.note ? { Resolve_OTIO: { Keywords: [], Note: m.note } } : {}),
+      recut: { markerId: m.id, kind: m.kind, color: m.color, ...(m.kind === 'continuity' ? { resolved: !!m.resolved, category: m.category } : {}) },
+    },
     name: m.name, color: markerColorName(m.color),
     marked_range: range(R(m.time), R(Math.max(0, m.duration))),
     comment: m.note ?? '',

@@ -11,14 +11,14 @@
       <media-rep kind="original-media" src="file:///C:/Users/Fan/Vid%C3%A9os/%C3%89pisode%20%232%20%26%20%22Pilot%22.mp4"/>
     </asset>
     <effect id="r4" name="Cross Dissolve" uid="FxPlug:4731E73A-8DAC-4113-9A30-AE85B1761265"/>
-    <format id="r5" name="FFVideoFormatRateUndefined" width="1280" height="720"/>
-    <asset id="r6" name="title card.png" start="0s" duration="0s" hasVideo="1" format="r5">
+    <effect id="r5" name="Audio Crossfade" uid="FFAudioTransition"/>
+    <format id="r6" name="FFVideoFormatRateUndefined" width="1280" height="720"/>
+    <asset id="r7" name="title card.png" start="0s" duration="0s" hasVideo="1" format="r6">
       <media-rep kind="original-media" src="file:///media/Graphics/title%20card.png"/>
     </asset>
-    <asset id="r7" name="gone.mov" start="0s" duration="43200157/12000s" hasVideo="1" format="r1" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000">
+    <asset id="r8" name="gone.mov" start="0s" duration="43200157/12000s" hasVideo="1" format="r1" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000">
       <media-rep kind="original-media" src="file:///media/Missing/gone.mov"/>
     </asset>
-    <effect id="r8" name="Audio Crossfade" uid="FFAudioTransition"/>
     <asset id="r9" name="Theme &amp; &lt;Song&gt;.flac" start="0s" duration="959959/4000s" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000">
       <media-rep kind="original-media" src="file:///media/Music/Theme%20%26%20%3CSong%3E.flac"/>
     </asset>
@@ -28,7 +28,7 @@
       <project name="Fan Edit: Tom &amp; Jerry &lt;Cut&gt; &quot;Final&quot; ✂">
         <sequence format="r1" duration="27027/2000s" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
           <spine>
-            <asset-clip ref="r2" offset="0s" name="Opening" start="1001/100s" duration="1001/500s" srcEnable="video">
+            <asset-clip ref="r2" offset="0s" name="Opening" start="1001/100s" duration="1001/500s">
               <adjust-blend amount="0">
                 <param name="amount">
                   <keyframeAnimation>
@@ -38,28 +38,13 @@
                   </keyframeAnimation>
                 </param>
               </adjust-blend>
-              <asset-clip ref="r6" lane="1" offset="11011/1000s" name="Title card" start="0s" duration="3003/2000s">
+              <asset-clip ref="r7" lane="1" offset="11011/1000s" name="Title card" start="0s" duration="3003/2000s">
                 <adjust-crop mode="trim">
                   <trim-rect left="17.777778" top="0" right="0" bottom="5"/>
                 </adjust-crop>
                 <adjust-transform position="17.777778 10" scale="0.5 0.5" rotation="-15"/>
                 <adjust-blend amount="0.8"/>
               </asset-clip>
-              <spine lane="-1" offset="1001/100s" name="A1">
-                <asset-clip ref="r2" offset="1001/100s" name="Opening" start="1001/100s" duration="1001/500s" srcEnable="audio"/>
-                <gap name="Gap" offset="3003/250s" start="0s" duration="1001/1000s"/>
-                <asset-clip ref="r3" offset="13013/1000s" name="a2" start="1200199/12000s" duration="1001/250s" srcEnable="audio"/>
-                <transition name="Cross Dissolve" offset="67067/4000s" duration="1001/2000s">
-                  <filter-audio ref="r8" name="Audio Crossfade"/>
-                </transition>
-                <asset-clip ref="r2" offset="17017/1000s" name="a3" start="959959/4800s" duration="3003/1000s" srcEnable="audio">
-                  <timeMap>
-                    <timept time="959959/4800s" value="959959/4800s" interp="linear"/>
-                    <timept time="4871867/24000s" value="4943939/24000s" interp="linear"/>
-                  </timeMap>
-                </asset-clip>
-                <asset-clip ref="r3" offset="1001/50s" name="a4" start="7200193/24000s" duration="1001/500s" srcEnable="audio"/>
-              </spine>
               <asset-clip ref="r9" lane="-2" offset="1001/100s" name="Theme &amp; Song" start="0s" duration="1001/80s">
                 <adjust-volume amount="-6dB">
                   <param name="amount">
@@ -71,31 +56,31 @@
               <marker start="1001/96s" duration="1001/24000s" value="Intro &amp; &lt;title&gt;" note="first beat"/>
             </asset-clip>
             <gap name="Gap" offset="1001/500s" start="0s" duration="1001/1000s"/>
-            <asset-clip ref="r3" offset="3003/1000s" name="Rooftop &amp; Chase" start="1200199/12000s" duration="1001/250s" srcEnable="video">
-              <asset-clip ref="r3" lane="2" offset="1224223/12000s" name="in-v" start="611611/12000s" duration="1001/500s" srcEnable="video"/>
-              <asset-clip ref="r3" lane="-4" offset="1224223/12000s" name="in-a" start="611611/12000s" duration="1001/500s" srcEnable="audio"/>
+            <asset-clip ref="r3" offset="3003/1000s" name="Rooftop &amp; Chase" start="1200199/12000s" duration="1001/250s">
+              <asset-clip ref="r3" lane="2" offset="1224223/12000s" name="in-v" start="611611/12000s" duration="1001/500s"/>
               <chapter-marker start="1200199/12000s" duration="1001/1000s" value="Part 2" posterOffset="0s"/>
             </asset-clip>
             <transition name="Cross Dissolve" offset="13013/2000s" duration="1001/1000s">
               <filter-video ref="r4" name="Cross Dissolve"/>
+              <filter-audio ref="r5" name="Audio Crossfade"/>
             </transition>
-            <asset-clip ref="r2" offset="7007/1000s" name="Fast run" start="959959/4800s" duration="3003/1000s" srcEnable="video">
+            <asset-clip ref="r2" offset="7007/1000s" name="Fast run" start="959959/9600s" duration="3003/1000s">
               <timeMap>
-                <timept time="959959/4800s" value="959959/4800s" interp="linear"/>
-                <timept time="4871867/24000s" value="4943939/24000s" interp="linear"/>
+                <timept time="0s" value="0s" interp="linear"/>
+                <timept time="4943939/48000s" value="4943939/24000s" interp="linear"/>
               </timeMap>
               <adjust-blend amount="1">
                 <param name="amount">
                   <keyframeAnimation>
-                    <keyframe time="959959/4800s" value="1" interp="linear" curve="linear"/>
-                    <keyframe time="4865861/24000s" value="1" interp="linear" curve="linear"/>
-                    <keyframe time="4871867/24000s" value="0" interp="linear" curve="linear"/>
+                    <keyframe time="959959/9600s" value="1" interp="linear" curve="linear"/>
+                    <keyframe time="4931927/48000s" value="1" interp="linear" curve="linear"/>
+                    <keyframe time="4943939/48000s" value="0" interp="linear" curve="linear"/>
                   </keyframeAnimation>
                 </param>
               </adjust-blend>
-              <marker start="1610609/8000s" duration="1001/24000s" value="Jacket colour" completed="0" note="wardrobe"/>
+              <marker start="4863859/48000s" duration="1001/24000s" value="Jacket colour" completed="0" note="wardrobe"/>
             </asset-clip>
-            <asset-clip ref="r3" offset="1001/100s" name="c4" start="7200193/24000s" duration="1001/500s" srcEnable="video">
+            <asset-clip ref="r3" offset="1001/100s" name="c4" start="7200193/24000s" duration="1001/500s">
               <adjust-blend amount="0">
                 <param name="amount">
                   <keyframeAnimation>
@@ -107,9 +92,13 @@
               </adjust-blend>
             </asset-clip>
             <gap name="Gap" offset="3003/250s" start="0s" duration="1001/2000s">
-              <asset-clip ref="r7" lane="3" offset="0s" name="gone" start="0s" duration="1001/1000s" srcEnable="video"/>
+              <asset-clip ref="r8" lane="3" offset="0s" name="gone" start="0s" duration="1001/1000s" srcEnable="video">
+                <adjust-volume amount="-96dB"/>
+              </asset-clip>
             </gap>
-            <asset-clip ref="r2" offset="1001/80s" name="Cut scene" start="959959/2400s" duration="1001/1000s" srcEnable="video" enabled="0"/>
+            <asset-clip ref="r2" offset="1001/80s" name="Cut scene" start="959959/2400s" duration="1001/1000s" srcEnable="video" enabled="0">
+              <adjust-volume amount="-96dB"/>
+            </asset-clip>
           </spine>
         </sequence>
       </project>

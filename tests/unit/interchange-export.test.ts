@@ -137,7 +137,10 @@ describe('issues of the representative sequence', () => {
     expect(issue(fcp, 'transition')).toEqual([
       expect.objectContaining({ severity: 'info', count: 1, message: '1 fade from or to black is exported as an opacity fade.' }),
       expect.objectContaining({ severity: 'info', count: 1, message: '1 Dip to Black transition is exported as opacity fades on the two clips.' }),
+      expect.objectContaining({ severity: 'info', count: 1, message: '1 audio crossfade of linked clips takes the length of the video dissolve on the same cut.' }),
     ]);
+    // Linked pairs are one asset-clip; the disabled clip and the offline one use only the picture of a file with sound.
+    expect(issue(fcp, 'other').map((i) => [i.severity, i.count, [...i.clipIds!].sort()])).toEqual([['info', 2, ['c5', 'gone']]]);
     expect(total(fcp, 'markers', 'info')).toBe(3);
     expect(fcp.issues.filter((i) => i.severity === 'warning').map((i) => i.kind)).toEqual(['offline']);
   });
@@ -255,17 +258,24 @@ describe('issues of single lossy cases', () => {
 describe('embedded source start timecode', () => {
   const R25 = { num: 25, den: 1 };
   /** A 25 fps camera file whose timecode starts at `tc`, cut into a sequence at `fps`. */
-  const cam = (tc: string, fps = R25) => {
+  const cam = (tc: string, fps = R25, speed = 1) => {
     const m = media('m', '/cam/C0001.MXF', {}, { fps: R25, dur: 60, tc });
     const s = mkSeq('s', 'S', fps);
-    put(s.videoTracks[0], clip('c', 'm', 0, 50, 4));
+    put(s.videoTracks[0], clip('c', 'm', 0, 50, 4, { speed }));
     return mkProject('P', [m], [s]);
   };
 
   it('FCPXML: the asset starts at the file timecode and clip starts are media time from there', () => {
     const x = exportTimeline(cam('10:00:00:00'), 's', 'fcpxml').files[0].contents;
     expect(x).toMatch(/<asset id="r\d+" name="C0001.MXF" start="36000s" duration="60s"/);
-    expect(x).toMatch(/<asset-clip ref="r\d+" offset="0s" name="c" start="36004s" duration="2s" srcEnable="video" tcFormat="NDF"\/>/);
+    expect(x).toMatch(/<asset-clip ref="r\d+" offset="0s" name="c" start="36004s" duration="2s" srcEnable="video" tcFormat="NDF">/);
+  });
+
+  it('FCPXML: a retimed clip maps local time to media time from the file timecode (T0 -> T0)', () => {
+    const x = exportTimeline(cam('10:00:00:00', R25, 2), 's', 'fcpxml').files[0].contents;
+    // In point 36004 s: local start 36000 + 4 / 2 = 36002 s; end 36004 s -> media 36000 + 4 * 2 = 36008 s.
+    expect(x).toMatch(/<asset-clip ref="r\d+" offset="0s" name="c" start="36002s" duration="2s" srcEnable="video" tcFormat="NDF">/);
+    expect(x).toMatch(/<timept time="36000s" value="36000s" interp="linear"\/>\s+<timept time="36004s" value="36008s" interp="linear"\/>/);
   });
 
   it('OTIO: available_range starts at the file timecode, source_range on the same base', () => {

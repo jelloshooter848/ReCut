@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { TextField } from '@/components/ui/TextField';
 import { Select } from '@/components/ui/Select';
 import { NumberField } from '@/components/ui/NumberField';
-import { useStore } from '@/state/store';
+import { FPS_LOCKED_REASON, sequenceHasClips, useStore } from '@/state/store';
 import { activeSequence } from '@/state/selectors';
 import { createSequence } from '@shared/project';
 import { FPS_PRESETS, MAX_FPS, MIN_FPS, fpsEquals, fpsLabel, isValidFps } from '@shared/time';
@@ -66,6 +66,14 @@ export function matchMediaSettings(p: MediaProbe, f: FormState): FormState {
   };
 }
 
+/**
+ * Why the edited sequence's frame rate cannot change (null when it can, and always for a new sequence): clip positions
+ * are frames at the sequence rate, so a sequence with clips keeps its rate (as the Inspector says; the store refuses too).
+ */
+export function sequenceFpsLock(edit: Sequence | null): string | null {
+  return edit && sequenceHasClips(edit) ? FPS_LOCKED_REASON : null;
+}
+
 function initialForm(edit: Sequence | null, count: number): FormState {
   if (edit) return { name: edit.name, fps: edit.fps, width: edit.width, height: edit.height, sampleRate: edit.sampleRate, channels: edit.channels };
   return { name: `Sequence ${String(count + 1).padStart(2, '0')}`, fps: { num: 24000, den: 1001 }, width: 1920, height: 1080, sampleRate: 48000, channels: 2 };
@@ -77,6 +85,7 @@ export function NewSequenceDialog() {
   const editSeq = useStore((s) => (editId ? s.project.sequences[editId] ?? null : null));
   const count = useStore((s) => s.project.sequenceOrder.length);
   const open = storeOpen || !!editSeq;
+  const fpsLocked = sequenceFpsLock(editSeq) !== null;
   const [form, setForm] = useState<FormState>(() => initialForm(null, 0));
   const [customFps, setCustomFps] = useState(false);
 
@@ -96,7 +105,7 @@ export function NewSequenceDialog() {
     const media = id ? st.project.media[id] : undefined;
     if (!media?.probe) { toast('info', 'Select a probed media item in the Project panel first'); return; }
     const p = media.probe;
-    setForm((f) => matchMediaSettings(p, f));
+    setForm((f) => { const m = matchMediaSettings(p, f); return fpsLocked ? { ...m, fps: f.fps } : m; });
     setCustomFps(false);
     if (!form.name.trim() || /^Sequence \d+$/.test(form.name)) setForm((f) => ({ ...f, name: media.name.replace(/\.[^.]+$/, '') }));
   };
@@ -107,7 +116,7 @@ export function NewSequenceDialog() {
     if (!isValidFps(form.fps)) { toast('error', `Choose a frame rate between ${MIN_FPS} and ${MAX_FPS} fps`); return; }
     const st = useStore.getState();
     if (editSeq) {
-      st.updateSequenceSettings(editSeq.id, { name, fps: form.fps, width, height, sampleRate: form.sampleRate, channels: form.channels });
+      st.updateSequenceSettings(editSeq.id, { name, ...(fpsLocked ? {} : { fps: form.fps }), width, height, sampleRate: form.sampleRate, channels: form.channels });
     } else {
       const seq = createSequence(name, form.fps, width, height);
       seq.sampleRate = form.sampleRate; seq.channels = form.channels;
@@ -135,12 +144,13 @@ export function NewSequenceDialog() {
       <form className="col" style={{ gap: 10 }} data-testid="sequence-dialog" onSubmit={(e) => { e.preventDefault(); submit(); }}>
         {row('Name', <TextField autoFocus selectOnFocus value={form.name} onChange={(name) => setForm((f) => ({ ...f, name }))} />)}
         {row('Frame rate', <>
-          <Select value={fpsPreset} options={fpsOptions} onChange={(v) => {
+          <Select value={fpsPreset} options={fpsOptions} disabled={fpsLocked} title={fpsLocked ? FPS_LOCKED_REASON : undefined} data-testid="sequence-dialog-fps" onChange={(v) => {
             if (v === 'custom') { setCustomFps(true); return; }
             const p = FPS_PRESETS.find((x) => x.label === v); if (p) { setCustomFps(false); setForm((f) => ({ ...f, fps: p.fps })); }
           }} />
           {fpsPreset === 'custom' ? (
             <NumberField value={Math.round((form.fps.num / form.fps.den) * 1000) / 1000} precision={3} min={1} max={240} step={1} unit="fps"
+              disabled={fpsLocked} title={fpsLocked ? FPS_LOCKED_REASON : undefined}
               onChange={(v) => setForm((f) => ({ ...f, fps: Number.isInteger(v) ? { num: v, den: 1 } : { num: Math.round(v * 1000), den: 1000 } }))} />
           ) : <span className="text-faint text-sm mono">{form.fps.num}/{form.fps.den}</span>}
         </>)}
@@ -160,7 +170,7 @@ export function NewSequenceDialog() {
           <Select value={String(form.sampleRate)} options={SAMPLE_RATES} onChange={(v) => setForm((f) => ({ ...f, sampleRate: Number(v) }))} />
           <Select value={String(form.channels)} options={CHANNELS} onChange={(v) => setForm((f) => ({ ...f, channels: Number(v) }))} />
         </>)}
-        {editSeq ? <div className="text-faint text-sm">Changing the frame rate does not re-time existing clips (positions stay in frames). Timebase: {fpsLabel(form.fps)} fps.</div> : null}
+        {editSeq ? <div className="text-faint text-sm" data-testid="sequence-dialog-fps-note">{fpsLocked ? FPS_LOCKED_REASON : 'The frame rate can change while the sequence has no clips.'} Timebase: {fpsLabel(form.fps)} fps.</div> : null}
       </form>
     </Dialog>
   );

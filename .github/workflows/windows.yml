@@ -37,9 +37,12 @@ name: Windows build
 # fix the problem and push again (docs/RELEASING.md).
 #
 # Only real versions (vX.Y.Z) ever appear on the Releases page (owner's decision, 7 October 2026): there are no dev
-# prereleases. Every other run is a test build: it runs every gate the same way and keeps the installer and portable
-# exe as the run's ReCut-windows artifact, the AppImage as its ReCut-linux artifact and the dmgs as its
-# ReCut-macos-arm64 / ReCut-macos-x64 artifacts (Actions -> the run -> Artifacts), but creates no tag and no release.
+# prereleases. The one kind of pre-release is a release candidate such as v1.0.0-rc.1: a real version, with its own
+# package.json version and CHANGELOG.md section, published like any release but marked pre-release and never
+# Latest (docs/RELEASING.md, Release candidates). Every other run is a test build: it runs every gate the same way
+# and keeps the installer and portable exe as the run's ReCut-windows artifact, the AppImage as its ReCut-linux
+# artifact and the dmgs as its ReCut-macos-arm64 / ReCut-macos-x64 artifacts (Actions -> the run -> Artifacts), but
+# creates no tag and no release.
 #
 # Releases are automatic (docs/RELEASING.md). The normal flow is: a release PR bumps package.json
 # (npm version X.Y.Z --no-git-tag-version) and adds a "## [X.Y.Z]" section to CHANGELOG.md -> the PR is merged ->
@@ -50,8 +53,10 @@ name: Windows build
 # Release or test build, decided by the "Release metadata" step:
 #   - push to main, package.json version v has a "## [v]" CHANGELOG.md section, and no tag v<v> exists on origin:
 #                                  release v<v>  "ReCut <v>", marked Latest, notes from CHANGELOG.md   (auto == 'true')
-#   - push of a tag v<MAJOR.MINOR.PATCH> (optional manual fallback): the same release. The tag must equal
-#     "v" + package.json version, and CHANGELOG.md must have a "## [<version>]" section, or the run fails in seconds.
+#     When v has a SemVer pre-release part (1.0.0-rc.1, section "## [1.0.0-rc.1]"), the release is marked
+#     pre-release and NOT Latest (prerelease == 'true'); the files and the gates are the same.
+#   - push of a tag v<MAJOR.MINOR.PATCH> or v<MAJOR.MINOR.PATCH>-rc.<N> (optional manual fallback): the same
+#     release. The tag must equal "v" + package.json version, and CHANGELOG.md must have a "## [<version>]" section, or the run fails in seconds.
 #   - anything else (push to main when v<v> is already tagged or has no changelog section, other branches,
 #     workflow_dispatch): test build. The publish job is skipped; the installers are only the run's ReCut-windows
 #     artifact, and the installer job's summary says where to download them.
@@ -60,8 +65,9 @@ name: Windows build
 #   released, publishes nothing and succeeds.
 #
 # Trigger notes:
-#   - Only plain semver tags (v0.2.0, v1.10.3) trigger a tag build. GitHub filter patterns treat '.' literally and '+'
-#     as "one or more of the preceding character", so the old v*-dev.* / v*-win.* prerelease tags never match.
+#   - Only plain semver tags (v0.2.0, v1.10.3) and release-candidate tags (v1.0.0-rc.1) trigger a tag build. GitHub
+#     filter patterns treat '.' and '-' literally and '+' as "one or more of the preceding character", so the old
+#     v*-dev.* / v*-win.* prerelease tags never match.
 #   - The release tag this workflow creates itself (the automatic v<v> on main) is created by
 #     softprops/action-gh-release with GITHUB_TOKEN. GitHub never starts a workflow run for events caused by
 #     GITHUB_TOKEN, so an automatic release does not trigger a second (tag) build of the same commit.
@@ -71,7 +77,7 @@ name: Windows build
 on:
   push:
     branches: [claude/build-recut, main]
-    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+    tags: ['v[0-9]+.[0-9]+.[0-9]+', 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+']
     paths-ignore: ['**/*.md', 'docs/**']
   workflow_dispatch:
     inputs:
@@ -99,11 +105,14 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     # What the publish job needs. release is 'true' only for a real release (automatic on main, or the tag-push
-    # fallback); the publish job runs only then. notes is the file name inside the release-notes artifact (a file
-    # does not cross jobs, so the notes travel as an artifact and stay byte-identical).
+    # fallback); the publish job runs only then. prerelease is 'true' when the version has a SemVer pre-release part
+    # (a release candidate such as 1.0.0-rc.1): published as a pre-release, never marked Latest. notes is the file
+    # name inside the release-notes artifact (a file does not cross jobs, so the notes travel as an artifact and stay
+    # byte-identical).
     outputs:
       release: ${{ steps.rel.outputs.release }}
       auto: ${{ steps.rel.outputs.auto }}
+      prerelease: ${{ steps.rel.outputs.prerelease }}
       tag: ${{ steps.rel.outputs.tag }}
       name: ${{ steps.rel.outputs.name }}
       notes: ${{ steps.rel.outputs.notes }}
@@ -127,7 +136,13 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $false   # git ls-remote exit codes are checked by hand
           $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          if ($v -notmatch '^\d+\.\d+\.\d+$') { Write-Host "::error::package.json version '$v' is not MAJOR.MINOR.PATCH"; exit 1 }
+          # MAJOR.MINOR.PATCH, or a SemVer pre-release MAJOR.MINOR.PATCH-<pre> such as 1.0.0-rc.1 (a release candidate,
+          # docs/RELEASING.md). No leading zeros, no build metadata (+...).
+          $semver = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-(0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$'
+          if ($v -cnotmatch $semver) { Write-Host "::error::package.json version '$v' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-PRERELEASE (for example 1.0.0-rc.1)"; exit 1 }
+          # A pre-release (release candidate) is published as a pre-release and never marked Latest.
+          $prerelease = if ($v.Contains('-')) { 'true' } else { 'false' }
+          $core = ($v -split '-', 2)[0]
           $install = @(
             "**ReCut-Setup-$v.exe** — installer. Adds Start-menu and desktop shortcuts, opens ``.recut`` projects, and can be removed from *Settings › Apps*.",
             "**ReCut-Portable-$v.exe** — no install; double-click to run (starts a little slower).",
@@ -155,9 +170,12 @@ jobs:
             return ($lines[($start + 1)..($end - 1)] -join "`n").Trim()
           }
           # Release body: the changelog section, then the install note. Repository-relative links (bugs/closed/...)
-          # do not resolve in a release body, so they are pointed at the release tag.
+          # do not resolve in a release body, so they are pointed at the release tag. A pre-release starts with a note
+          # saying what it is.
+          $preNote = "**Pre-release: a release candidate of ReCut $core, for testing.** It is not the latest stable release (that is the one marked **Latest**). ReCut's update notice tells people running an earlier candidate of $core about it, and nobody else."
           function Get-ReleaseBody([string]$section, [string]$tag) {
             $section = [regex]::Replace($section, '\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:|#|/)([^)\s]+)\)', "](https://github.com/$env:REPO/blob/$tag/`$1)")
+            if ($prerelease -eq 'true') { $section = "$preNote`n`n$section" }
             return "$section`n`n---`n`n$install"
           }
           # Whether tag $tag exists on origin (actions/checkout left its credentials in the git config).
@@ -207,12 +225,12 @@ jobs:
             New-Item -ItemType Directory -Force -Path $notesDir | Out-Null
             $notes = Join-Path $notesDir 'release-notes.md'
             Set-Content -Path $notes -Value $body -Encoding utf8
-            Write-Host "Release: $name (tag $tag, automatic $auto)"; Get-Content $notes
+            Write-Host "Release: $name (tag $tag, automatic $auto, pre-release $prerelease)"; Get-Content $notes
           } else {
             Write-Host "Test build: $name. Nothing is published; the installers are this run's ReCut-windows artifact."
           }
           Add-Content -Path $env:GITHUB_OUTPUT -Value @(
-            "version=$v", "release=$release", "auto=$auto", "tag=$tag", "name=$name", "notes=release-notes.md",
+            "version=$v", "release=$release", "auto=$auto", "prerelease=$prerelease", "tag=$tag", "name=$name", "notes=release-notes.md",
             "notes_dir=$notesDir")
           exit 0
 
@@ -736,8 +754,10 @@ jobs:
           cache: npm
 
       # Whether this run publishes a release, decided as the installer job's "Release metadata" step decides it: a push
-      # of a vX.Y.Z tag (the installer job fails a tag that does not match package.json), or a push to main whose
-      # package.json version has a non-empty "## [<version>]" CHANGELOG.md section and no v<version> tag on origin.
+      # of a vX.Y.Z or vX.Y.Z-rc.N tag (the installer job fails a tag that does not match package.json), or a push to
+      # main whose package.json version has a non-empty "## [<version>]" CHANGELOG.md section and no v<version> tag
+      # on origin. A release candidate (1.0.0-rc.1, section "## [1.0.0-rc.1]") is a release here like any other, so
+      # it must be signed and notarized too.
       # A release must be signed, so a release run without all five signing secrets fails here, before anything is
       # built. The HAVE_* values are 'true' or 'false' (whether the secret is set), never the secrets themselves.
       - name: Release run? (a release must be signed)
@@ -1167,7 +1187,8 @@ jobs:
           name: e2e-results-macos
           path: test-results/
 
-  # The only job that publishes, and it only ever publishes a real release (vX.Y.Z, never a prerelease). It runs
+  # The only job that publishes, and it only ever publishes a real release: vX.Y.Z (marked Latest) or a release
+  # candidate vX.Y.Z-rc.N (marked pre-release, never Latest); never a dev prerelease. It runs
   # only when the installer job decided this run is a release (automatic on main, or the tag-push fallback); a test
   # build skips it. It needs every required gate (macos means both matrix legs, arm64 and x64) and has no
   # always()/failure()/cancelled() in its if:, so the implicit success() applies: if installer, tests, e2e, launcher,
@@ -1207,16 +1228,16 @@ jobs:
           path: ${{ runner.temp }}/release-notes
 
       # Exactly the five files the release attaches, each named for the version being released (the tag without its
-      # "v"): a missing or empty file, a second match or a file of another version fails the run before anything is
-      # published.
+      # "v", pre-release part included: ReCut-Setup-1.0.0-rc.1.exe for v1.0.0-rc.1): a missing or empty file, a second
+      # match or a file of another version fails the run before anything is published.
       - name: Release files
         shell: pwsh
         env:
           TAG: ${{ needs.installer.outputs.tag }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:TAG -cmatch '^v(\d+\.\d+\.\d+)$') { $v = $Matches[1] }
-          else { Write-Host "::error::Refusing to publish '$env:TAG': only vMAJOR.MINOR.PATCH releases are published."; exit 1 }
+          if ($env:TAG -cmatch '^v(\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)$') { $v = $Matches[1] }
+          else { Write-Host "::error::Refusing to publish '$env:TAG': only vMAJOR.MINOR.PATCH releases and vMAJOR.MINOR.PATCH-PRERELEASE release candidates are published."; exit 1 }
           $bad = 0
           foreach ($want in @(
               @{ glob = 'ReCut-Setup-*.exe'; name = "ReCut-Setup-$v.exe" },
@@ -1238,19 +1259,25 @@ jobs:
       # An automatic release re-checks its tag right before publishing. If v<version> appeared while this run was
       # building (someone pushed the tag or made the release by hand), the version is already released: the job
       # logs a warning, publishes nothing, leaves that release alone and succeeds. The tag-push fallback passes
-      # through unchanged (its tag exists by definition).
+      # through unchanged (its tag exists by definition). It also decides pre-release / Latest from the tag itself and
+      # refuses to publish when that disagrees with the installer job's prerelease output.
       - name: Final release check
         id: pub
         shell: pwsh
         env:
           AUTO: ${{ needs.installer.outputs.auto }}
+          PRERELEASE: ${{ needs.installer.outputs.prerelease }}
           TAG: ${{ needs.installer.outputs.tag }}
           NAME: ${{ needs.installer.outputs.name }}
           NOTES: ${{ runner.temp }}/release-notes/${{ needs.installer.outputs.notes }}
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $false
-          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+$') { Write-Host "::error::Refusing to publish '$env:TAG': only vMAJOR.MINOR.PATCH releases are published."; exit 1 }
+          if ($env:TAG -cnotmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$') { Write-Host "::error::Refusing to publish '$env:TAG': only vMAJOR.MINOR.PATCH releases and vMAJOR.MINOR.PATCH-PRERELEASE release candidates are published."; exit 1 }
+          # A tag with a pre-release part is a pre-release and never Latest; a plain vX.Y.Z is a full release, Latest.
+          $prerelease = if ($env:TAG.Contains('-')) { 'true' } else { 'false' }
+          $latest = if ($prerelease -eq 'true') { 'false' } else { 'true' }
+          if ($env:PRERELEASE -cne $prerelease) { Write-Host "::error::Tag $env:TAG means prerelease=$prerelease, but the installer job decided prerelease='$env:PRERELEASE'. Publishing nothing."; exit 1 }
           $publish = 'true'
           if ($env:AUTO -eq 'true') {
             git ls-remote --exit-code --tags origin "refs/tags/$env:TAG" | Out-Host
@@ -1262,13 +1289,19 @@ jobs:
               Write-Host "::error::git ls-remote failed (exit $rc) while re-checking tag $env:TAG."; exit 1
             }
           }
-          if ($publish -eq 'true') { Write-Host "Publishing: $env:NAME (tag $env:TAG, marked Latest)" }
-          Add-Content -Path $env:GITHUB_OUTPUT -Value @("publish=$publish", "tag=$env:TAG", "name=$env:NAME", "notes=$env:NOTES")
+          if ($publish -eq 'true') {
+            if ($prerelease -eq 'true') { Write-Host "Publishing: $env:NAME (tag $env:TAG, pre-release, not marked Latest)" }
+            else { Write-Host "Publishing: $env:NAME (tag $env:TAG, marked Latest)" }
+          }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value @("publish=$publish", "tag=$env:TAG", "name=$env:NAME", "notes=$env:NOTES",
+            "prerelease=$prerelease", "make_latest=$latest")
           exit 0
 
       # softprops creates the tag (with GITHUB_TOKEN, on target_commitish = the commit this run built) when it does
       # not exist yet. That is how an automatic release gets its v<version> tag on the release PR's merge commit.
-      # Always a full release marked Latest: this workflow never publishes a prerelease.
+      # A full release is marked Latest; a release candidate (tag vX.Y.Z-<pre>) is a pre-release and make_latest is
+      # 'false', so the Latest release and GitHub's releases/latest (the update notice of stable users) stay on the
+      # newest stable version.
       - name: Publish GitHub Release
         if: steps.pub.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
@@ -1276,8 +1309,8 @@ jobs:
           tag_name: ${{ steps.pub.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: ${{ steps.pub.outputs.name }}
-          prerelease: false
-          make_latest: true
+          prerelease: ${{ steps.pub.outputs.prerelease }}
+          make_latest: ${{ steps.pub.outputs.make_latest }}
           body_path: ${{ steps.pub.outputs.notes }}
           files: |
             release/ReCut-Setup-*.exe

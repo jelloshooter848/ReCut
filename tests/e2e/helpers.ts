@@ -23,22 +23,48 @@ export async function launchApp(opts: { tmp?: string; env?: Record<string, strin
     // RECUT_UPDATE_CHECK=0: no update opt-in prompt and no update check (tests/e2e/update.spec.ts turns it back on).
     env: { ...process.env, RECUT_USER_DATA: userData, RECUT_CACHE_DIR: cacheDir, RECUT_DISABLE_GPU: '1', RECUT_UPDATE_CHECK: '0', ...(opts.env ?? {}) },
   });
-  // Closing a project with unsaved changes now (correctly) asks Save/Don't Save/Cancel, which would hang
-  // teardown. Tests that care about the prompt drive it explicitly; plain close() discards changes.
+  // Closing a project with unsaved changes (correctly) asks Save/Don't Save/Cancel, which would hang teardown.
+  // Tests that care about the prompt drive it explicitly; plain close() discards changes (discardChangesOnQuit).
   const rawClose = app.close.bind(app);
   app.close = async () => {
-    try {
-      await app.windows()[0]?.evaluate(() => {
-        const w = window as unknown as { __recut?: { store: { setState(p: object): void } } };
-        w.__recut?.store.setState({ dirty: false });
-      });
-    } catch { /* window already gone */ }
+    await discardChangesOnQuit(app);
     await rawClose();
   };
   const page = await app.firstWindow();
   await page.waitForSelector('#root .layout', { timeout: 60_000 });
   await page.waitForFunction(() => Boolean((window as unknown as { __recut?: unknown }).__recut));
   return { app, page, userData, cacheDir, tmp };
+}
+
+/**
+ * Make the next quit discard unsaved changes without a prompt: the project is marked clean, and the quit prompt
+ * (Save / Don't Save / Cancel) is answered "Don't Save" in the main process should it come anyway. Marking the
+ * project clean alone is not enough: a background job mirror (a proxy finishing: store.setProxy marks the project
+ * dirty) can land after it and before the renderer reads `dirty` for the quit request, and the native box then
+ * waits for an answer nobody gives, so close() never returns
+ * (bugs/closed/2026-10-08-e2e-close-hangs-on-quit-prompt.md). Call it right before ElectronApplication.close().
+ */
+export async function discardChangesOnQuit(app: ElectronApplication): Promise<void> {
+  try {
+    await app.evaluate(({ dialog }) => {
+      type Box = (...args: unknown[]) => Promise<unknown>;
+      const d = dialog as unknown as { showMessageBox: Box };
+      const prev = d.showMessageBox.bind(dialog) as Box;
+      d.showMessageBox = (...args: unknown[]) => {
+        const opts = args.find((a) => !!a && typeof a === 'object' && Array.isArray((a as { buttons?: unknown }).buttons)) as { buttons: string[] } | undefined;
+        const dontSave = opts ? opts.buttons.indexOf("Don't Save") : -1;
+        return dontSave >= 0 ? Promise.resolve({ response: dontSave, checkboxChecked: false }) : prev(...args);
+      };
+    });
+  } catch { /* the app is already gone */ }
+  for (const page of app.windows()) {
+    try {
+      await page.evaluate(() => {
+        const w = window as unknown as { __recut?: { store: { setState(p: object): void } } };
+        w.__recut?.store.setState({ dirty: false });
+      });
+    } catch { /* window already gone */ }
+  }
 }
 
 /** Generates the synthetic media set once per tmp dir. Returns the directory. */

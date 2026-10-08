@@ -7,8 +7,9 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  UPDATE_API_URL, UPDATE_CHECK_INTERVAL_MS, RELEASES_PAGE_URL, autoCheckDue, availableUpdate, compareSemver, isNewerRelease,
-  isReleasePageUrl, parseLatestRelease, parseLatestReleaseText, parseSemver, parseUpdateUrlOverride,
+  UPDATE_API_URL, UPDATE_CHECK_INTERVAL_MS, UPDATE_LIST_API_URL, RELEASES_PAGE_URL, autoCheckDue, availableUpdate, checksReleaseList,
+  compareSemver, formatSemver, isNewerRelease, isOfferableRelease, isReleasePageUrl, parseLatestRelease, parseLatestReleaseText,
+  parseReleaseList, parseSemver, parseUpdateReplyText, parseUpdateUrlOverride, updateApiUrlFor,
 } from '../../shared/update';
 import { UpdateChecker, type UpdateFetch } from '../../electron/updateCheck';
 import { normalizePrefs, readPrefs, updatePrefs } from '../../electron/project/io';
@@ -55,6 +56,103 @@ describe('semver', () => {
     expect(isNewerRelease('1.1.0-rc.1', '1.0.0')).toBe(false); // pre-releases are never offered
     expect(isNewerRelease('garbage', '1.0.0')).toBe(false);
     expect(isNewerRelease('2.0.0', 'garbage')).toBe(false);
+  });
+});
+
+// Release candidates (docs/RELEASING.md, Release candidates): 1.0.0-rc.N are GitHub pre-releases. A stable user is
+// never told about one; someone running a candidate is told about a later candidate of the same version or a newer
+// stable release, from one request to the release list (GitHub's releases/latest never returns a pre-release).
+describe('release candidates', () => {
+  const entry = (tag: string, extra: Record<string, unknown> = {}) => ({
+    tag_name: tag, html_url: tagPage(tag.replace(/^v/, '')), draft: false, prerelease: /-/.test(tag), name: `ReCut ${tag}`, ...extra,
+  });
+  const pick = (list: unknown[], current: string) => {
+    const r = parseReleaseList(list, current);
+    return r.ok ? r.release.version : r.error;
+  };
+
+  it('orders candidates by semver precedence', () => {
+    expect(cmp('1.0.0-rc.2', '1.0.0-rc.1')).toBe(1);
+    expect(cmp('1.0.0', '1.0.0-rc.9')).toBe(1);
+    expect(cmp('1.0.0-rc.10', '1.0.0-rc.9')).toBe(1);
+    expect(cmp('1.0.0-rc.9', '1.0.0-rc.10')).toBe(-1);
+    expect(cmp('1.0.0-rc.1', '0.13.0')).toBe(1);
+    expect(formatSemver(sv('v1.0.0-rc.10+build.3'))).toBe('1.0.0-rc.10');
+    expect(formatSemver(sv('1.0.0'))).toBe('1.0.0');
+  });
+
+  it('a stable user is never told about a pre-release', () => {
+    for (const cur of ['0.7.0', '0.13.0', '1.0.0', '1.0.1']) {
+      for (const rc of ['1.0.0-rc.1', '1.0.0-rc.10', '1.1.0-rc.1', '2.0.0-beta.1']) {
+        expect(isOfferableRelease(rc, cur), `${rc} to ${cur}`).toBe(false);
+        expect(isNewerRelease(rc, cur), `${rc} to ${cur}`).toBe(false);
+      }
+    }
+    expect(isNewerRelease('1.0.0', '0.13.0')).toBe(true);
+  });
+
+  it('someone on a candidate is told about a later candidate of the same version or the final release', () => {
+    expect(isNewerRelease('1.0.0-rc.2', '1.0.0-rc.1')).toBe(true);
+    expect(isNewerRelease('1.0.0-rc.10', '1.0.0-rc.9')).toBe(true);
+    expect(isNewerRelease('1.0.0', '1.0.0-rc.9')).toBe(true);
+    expect(isNewerRelease('1.0.1', '1.0.0-rc.2')).toBe(true);
+    expect(isNewerRelease('1.0.0-rc.1', '1.0.0-rc.2')).toBe(false); // older candidate
+    expect(isNewerRelease('1.0.0-rc.9', '1.0.0-rc.10')).toBe(false);
+    expect(isNewerRelease('1.0.0-rc.2', '1.0.0-rc.2')).toBe(false);
+    expect(isNewerRelease('0.13.0', '1.0.0-rc.1')).toBe(false);
+    // A candidate of another version is not offered (once 1.0.0 is out, a 1.0.0-rc.N user is pointed at 1.0.0).
+    expect(isOfferableRelease('1.1.0-rc.1', '1.0.0-rc.2')).toBe(false);
+    expect(isNewerRelease('1.1.0-rc.1', '1.0.0-rc.2')).toBe(false);
+  });
+
+  it('asks for the release list only when running a pre-release', () => {
+    expect(updateApiUrlFor('0.7.0')).toBe(UPDATE_API_URL);
+    expect(updateApiUrlFor('1.0.0')).toBe(UPDATE_API_URL);
+    expect(updateApiUrlFor('1.0.0-rc.1')).toBe(UPDATE_LIST_API_URL);
+    expect(updateApiUrlFor('garbage')).toBe(UPDATE_API_URL);
+    expect(checksReleaseList('1.0.0-rc.3')).toBe(true);
+    expect(checksReleaseList('1.0.0')).toBe(false);
+    expect(UPDATE_LIST_API_URL).toBe('https://api.github.com/repos/jelloshooter848/ReCut/releases?per_page=10');
+  });
+
+  it('picks the highest release that may be offered from the list (newest first or not)', () => {
+    const list = [entry('v1.1.0-rc.1'), entry('v1.0.0-rc.10'), entry('v1.0.0-rc.9'), entry('v1.0.0-rc.2'), entry('v0.13.0'), entry('v0.12.0')];
+    expect(pick(list, '1.0.0-rc.2')).toBe('1.0.0-rc.10');
+    expect(pick([...list].reverse(), '1.0.0-rc.2')).toBe('1.0.0-rc.10');
+    expect(pick(list, '1.0.0-rc.10')).toBe('1.0.0-rc.10'); // up to date
+    expect(pick([entry('v1.0.0'), ...list], '1.0.0-rc.9')).toBe('1.0.0');
+    // A stable version reading a list (for example through the test override) only ever gets a stable release.
+    expect(pick(list, '0.12.0')).toBe('0.13.0');
+    expect(pick([entry('v1.0.0-rc.1')], '0.13.0')).toBe('GitHub lists no published release');
+    expect(parseReleaseList(list, '1.0.0-rc.2')).toEqual({ ok: true, release: { version: '1.0.0-rc.10', url: tagPage('1.0.0-rc.10') } });
+  });
+
+  it('ignores drafts, entries without a version tag and entries whose pre-release flag contradicts the tag', () => {
+    const base = [entry('v1.0.0-rc.1')];
+    expect(pick([entry('v1.0.0-rc.5', { draft: true }), ...base], '1.0.0-rc.1')).toBe('1.0.0-rc.1');
+    expect(pick([entry('v1.0.0', { prerelease: true }), ...base], '1.0.0-rc.1')).toBe('1.0.0-rc.1');
+    expect(pick([entry('v1.0.0-rc.5', { prerelease: false }), ...base], '1.0.0-rc.1')).toBe('1.0.0-rc.1');
+    expect(pick([entry('nightly'), { tag_name: 7 }, null, 'v9.0.0', [], ...base], '1.0.0-rc.1')).toBe('1.0.0-rc.1');
+    expect(pick([entry('v1.0.0-rc.2', { html_url: 'https://evil.example/x' })], '1.0.0-rc.1')).toBe('1.0.0-rc.2');
+    expect(parseReleaseList([entry('v1.0.0-rc.2', { html_url: 'https://evil.example/x' })], '1.0.0-rc.1'))
+      .toEqual({ ok: true, release: { version: '1.0.0-rc.2', url: tagPage('1.0.0-rc.2') } });
+    expect(pick([], '1.0.0-rc.1')).toBe('GitHub lists no published release');
+    expect(parseReleaseList({ tag_name: 'v1.0.0' }, '1.0.0-rc.1')).toEqual({ ok: false, error: 'the reply is not a list of releases' });
+  });
+
+  it('reads either reply shape: a single release keeps the stable-only rules', () => {
+    expect(parseUpdateReplyText(JSON.stringify([entry('v1.0.0-rc.2')]), '1.0.0-rc.1')).toMatchObject({ ok: true, release: { version: '1.0.0-rc.2' } });
+    expect(parseUpdateReplyText(reply('v1.0.0'), '1.0.0-rc.1')).toMatchObject({ ok: true, release: { version: '1.0.0' } });
+    expect(parseUpdateReplyText(JSON.stringify(entry('v1.0.0-rc.2')), '1.0.0-rc.1')).toEqual({ ok: false, error: 'the latest release is a pre-release' });
+    expect(parseUpdateReplyText('[', '1.0.0-rc.1')).toEqual({ ok: false, error: 'the reply is not valid JSON' });
+  });
+
+  it('what to show: a remembered candidate is dropped once a stable version runs', () => {
+    const rc2 = { version: '1.0.0-rc.2', url: tagPage('1.0.0-rc.2') };
+    expect(availableUpdate(rc2, '1.0.0-rc.1', undefined)).toEqual(rc2);
+    expect(availableUpdate(rc2, '1.0.0-rc.1', '1.0.0-rc.2')).toBeNull(); // skipped
+    expect(availableUpdate(rc2, '1.0.0', undefined)).toBeNull();
+    expect(availableUpdate(rc2, '0.13.0', undefined)).toBeNull();
   });
 });
 
@@ -303,5 +401,44 @@ describe('UpdateChecker (main process)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('UpdateChecker on a release candidate', () => {
+  let userData: string;
+  let calls: string[];
+  let list: unknown[];
+  const entry = (tag: string) => ({ tag_name: tag, html_url: tagPage(tag.replace(/^v/, '')), draft: false, prerelease: /-/.test(tag) });
+  const fetchFake: UpdateFetch = async (url) => { calls.push(url); return new Response(JSON.stringify(list), { status: 200 }); };
+  const make = (currentVersion: string) => new UpdateChecker({ currentVersion, userData, fetch: fetchFake, now: () => 1_800_000_000_000, log: () => {} });
+
+  beforeEach(async () => {
+    userData = await fsp.mkdtemp(path.join(os.tmpdir(), 'recut-update-rc-'));
+    calls = [];
+    list = [entry('v1.0.0-rc.2'), entry('v1.0.0-rc.1'), entry('v0.13.0')];
+  });
+  afterEach(async () => { await fsp.rm(userData, { recursive: true, force: true }); });
+
+  it('sends one GET to the release list and reports a later candidate', async () => {
+    const c = make('1.0.0-rc.1');
+    expect(await c.check()).toEqual({ kind: 'newer', current: '1.0.0-rc.1', release: { version: '1.0.0-rc.2', url: tagPage('1.0.0-rc.2') }, skipped: false });
+    expect(calls).toEqual([UPDATE_LIST_API_URL]);
+    expect((await c.status()).available?.version).toBe('1.0.0-rc.2');
+  });
+
+  it('reports the final release over any candidate, and up to date on the newest candidate', async () => {
+    list = [entry('v1.0.0'), ...list];
+    expect(await make('1.0.0-rc.2').check()).toMatchObject({ kind: 'newer', release: { version: '1.0.0' } });
+    list = [entry('v1.0.0-rc.10'), entry('v1.0.0-rc.9')];
+    expect(await make('1.0.0-rc.10').check()).toEqual({ kind: 'current', current: '1.0.0-rc.10', latestVersion: '1.0.0-rc.10' });
+    expect(await make('1.0.0-rc.9').check()).toMatchObject({ kind: 'newer', release: { version: '1.0.0-rc.10' } });
+    expect(calls.every((u) => u === UPDATE_LIST_API_URL)).toBe(true);
+  });
+
+  it('a stable version still asks for the latest release only', async () => {
+    list = [entry('v1.0.0-rc.2')];
+    const r = await make('0.13.0').check();
+    expect(calls).toEqual([UPDATE_API_URL]);
+    expect(r.kind).toBe('failed'); // the fake answers a list; a stable version is never offered the candidate in it
   });
 });

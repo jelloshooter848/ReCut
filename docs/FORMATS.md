@@ -88,7 +88,8 @@ not supported by Chromium"). Typical cases:
 - Proxies from before 0.4 carry one stream (`<key>_<height>p_a<N>.mp4`, or `<key>_<height>p.mp4` for the first).
   They stay in use while every clip plays that stream; when a clip or the media needs another one, the proxy is
   marked stale and, with proxies on, rebuilt with every stream.
-- Proxies are cached under `<cache>/proxies/` and keyed by path + size + mtime, so a re-import reuses them.
+- Proxies are cached under `<cache>/proxies/` and keyed by the file's content (its size and a fingerprint of sampled
+  blocks), so a re-import, a moved or renamed file and a relink reuse them.
 - You can also generate a proxy manually: right-click › **Generate Proxy**, Media Inspector › **Generate**, the
   Program chip **Generate proxies**, or the bulk buttons in Jobs › Proxies.
 - **Proxies off:** browser-playable originals play directly. For an undecodable original that already has a ready
@@ -311,7 +312,7 @@ these formats yet (planned for 1.4.0).
 
 | | FCPXML | OpenTimelineIO | EDL |
 |---|---|---|---|
-| Tracks | Every track (V1 is the main storyline, the others connected clips) | Every track | One video track per file; up to four audio channels linked to the video events |
+| Tracks | Every track (V1 is the main storyline, the others connected clips); linked audio rides in its video clip | Every track | One video track per file; up to four audio channels linked to the video events |
 | Speed (constant) | `timeMap` | `LinearTimeWarp` | `M2` line |
 | Position, scale, rotation, crop, opacity | Yes | ReCut metadata only | No |
 | Levels and audio fades | Yes (dB) | ReCut metadata only | No |
@@ -322,6 +323,13 @@ these formats yet (planned for 1.4.0).
 | Disabled clips, muted tracks | Disabled clips | `enabled: false` | Left out |
 | Stills | Yes | Yes | Listed from 00:00:00:00 |
 
+- FCPXML linked clips: a video clip and its linked audio clip with the same in and out points, speed and enabled
+  state are written as one clip carrying both (Final Cut Pro's own form); an audio crossfade between two such clips
+  rides on the video dissolve at the same cut and takes its length. Any other use of a file that has both picture and
+  sound is marked video-only or audio-only (`srcEnable`), and because DaVinci Resolve ignores that mark, the unused
+  half is also written muted (−96 dB) or transparent (opacity 0). A retimed clip's `timeMap` starts at the file's
+  start (the asset's `start`: its embedded start timecode, else `0s`, mapped to itself), the form Final Cut Pro
+  writes and Resolve reads.
 - EDL names: one file per video track, `<name>_V1.edl`, `<name>_V2.edl` … (track numbers after flattening, so a
   compound clip's inner tracks get their own numbers). Every event uses reel `AX` with `* FROM CLIP NAME:` (the file
   name) and `* SOURCE FILE:` (the full path), which Resolve uses to relink.
@@ -331,6 +339,19 @@ these formats yet (planned for 1.4.0).
 - Before saving, the dialog shows a report from the writer: clips, tracks, duration and media files, and every issue
   with how many clips it affects, as **warnings** (lost or approximated in this format) or **info** (transferred in
   another form, for example flattened).
+- What DaVinci Resolve 21.1 does with the files (tested on macOS with the Resolve test kit; see LIMITATIONS):
+  - FCPXML: audio track numbers are Resolve's own (FCPXML has no audio track numbers; linked audio goes under its
+    picture), and Resolve adds the muted sound of video-only clips and the transparent picture of audio-only clips
+    as extra items. Markers sit on clips (FCPXML has no timeline markers).
+  - OpenTimelineIO: tracks, cuts, speed, dissolves, fades from black, the disabled state and marker names, colours and
+    durations come in exactly. A 29.97 drop-frame timeline comes in as non-drop-frame (the frames are right, only the
+    timecode display differs): OTIO has no drop-frame flag. Marker notes are also written where Resolve's own OTIO
+    files keep them (`metadata.Resolve_OTIO.Note`).
+  - EDL: a timeline starts at the timecode of its first event (a `_V2.edl` whose first clip is at 00:00:01:00 starts
+    there). A fade from black at the start of a track works, but a dissolve to black (`BL`) between two clips, as in
+    a Dip to Black, comes in as dissolves between the clips; an `M2` speed in a dissolve event goes to the outgoing
+    clip when both use reel `AX`; `* LOC:` comments do not become markers. Media without embedded timecode may not
+    link ("timecode extents do not match"): relink, or import the media first and then the EDL.
 - EDL: the name chosen in the save dialog is the base name; the files are `<base>_V1.edl`, `<base>_V2.edl`, … (the
   part that tells them apart comes from the writer).
 - Files are written atomically (a temporary file in the same folder, then renamed). A name that is a project source

@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ROOT, ffprobeJson, frameColor } from './helpers';
+import { ROOT, discardChangesOnQuit, ffprobeJson, frameColor } from './helpers';
 
 export { ROOT, ffprobeJson, frameColor };
 export { MEDIA } from './helpers';
@@ -90,10 +90,10 @@ export async function launchGauntlet(tmp: string, opts: { projectArg?: string; w
   throw new Error(`Could not launch ReCut: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
 
-/** Close without a quit prompt (clears dirty first). */
+/** Close without a quit prompt: unsaved changes are discarded (helpers.ts discardChangesOnQuit). */
 export async function closeApp(l: Launched | null | undefined): Promise<void> {
   if (!l) return;
-  try { await l.page.evaluate(() => (window as unknown as W).__recut.store.setState({ dirty: false })); } catch { /* window may be gone */ }
+  await discardChangesOnQuit(l.app);
   await l.app.close().catch(() => undefined);
 }
 

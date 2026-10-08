@@ -29,6 +29,10 @@
             {
                 "OTIO_SCHEMA": "Marker.2",
                 "metadata": {
+                    "Resolve_OTIO": {
+                        "Keywords": [],
+                        "Note": "first beat"
+                    },
                     "recut": {
                         "markerId": "mk1",
                         "kind": "marker",
@@ -81,6 +85,10 @@
             {
                 "OTIO_SCHEMA": "Marker.2",
                 "metadata": {
+                    "Resolve_OTIO": {
+                        "Keywords": [],
+                        "Note": "wardrobe"
+                    },
                     "recut": {
                         "markerId": "mk3",
                         "kind": "continuity",
