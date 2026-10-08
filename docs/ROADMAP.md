@@ -19,7 +19,7 @@ in every release PR (docs/RELEASING.md).
 | 2 | Fix the remaining preview gaps | Done | 0.4.0 |
 | 3 | Pre-export warnings | Done | 0.5.0 |
 | 4 | Bitmap subtitle OCR (PGS / VobSub / DVB) | Done | 0.6.0 |
-| 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS dmgs (Apple Silicon and Intel) built and tested in CI, waiting for signing | 0.6.1 (Linux), 0.8.0 (macOS) |
+| 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS dmgs (Apple Silicon and Intel) built, signed and notarised in CI and required for releases; ships in 0.8.0 | 0.6.1 (Linux), 0.8.0 (macOS) |
 | 16 | Collect / Consolidate Project (with the moved-media cache fix) | Done | 0.7.0 |
 | 5 | Local speech-to-text (Whisper) | Implemented, on main | 0.8.0 (pending) |
 | 6 | Intermediate and audio-only export | Implemented, on main | 0.8.0 (pending) |
@@ -476,10 +476,10 @@ server.
 
 ## 19. Official Linux and macOS releases
 
-**Status:** done (release 0.8.0): Linux and macOS are official release platforms, Linux since 0.6.1 and macOS since
-0.8.0. Scheduled by the project owner on 7 October 2026 (it was parked at the bottom until then), next after Bitmap
-subtitle OCR (§4, 0.6.0); the order was Linux first, then macOS once signing was in place (planned for 0.7.0, shipped
-in 0.8.0). Source of the decision: the owner's review of the "ReCut Cross-Platform Release Support Proposal". The
+**Status:** Linux done (release 0.6.1); macOS implemented, pending release 0.8.0 (not done until 0.8.0 publishes the
+signed dmgs). Scheduled by the project owner on 7 October 2026 (it was parked at the bottom until then), next after Bitmap
+subtitle OCR (§4, 0.6.0); the order was Linux first, then macOS once signing was in place (planned for 0.7.0, now
+part of 0.8.0). Source of the decision: the owner's review of the "ReCut Cross-Platform Release Support Proposal". The
 section keeps its number because other documents and bug files cite § numbers.
 **Linux part done (7 October 2026, release 0.6.1):** the x86-64 AppImage
 `ReCut-<version>-linux-x86_64.AppImage` with a bundled BtbN `linux64-gpl` FFmpeg and its `FFMPEG-LICENSE.txt` /
@@ -487,7 +487,7 @@ section keeps its number because other documents and bug files cite § numbers.
 `THIRD_PARTY_NOTICES.md`; the blocking `linux` job in `.github/workflows/windows.yml` on `ubuntu-22.04` (unit tests,
 e2e under xvfb, packaging, AppImage smoke test mounted and extracted), which the `publish` job needs; the AppImage
 attached to the release with run instructions in the notes.
-**macOS part done (release 0.8.0):** two dmgs, both
+**macOS part implemented, pending release 0.8.0:** two dmgs, both
 macOS 12+ (owner's decision, 8 October 2026; Intel support may be retired after 1.0): `ReCut-<version>-macos-arm64.dmg`
 for Apple Silicon and `ReCut-<version>-macos-x64.dmg` for Intel, each with its own architecture's bundled, pinned and
 checksum-verified jellyfin-ffmpeg build of the same release (`macarm64-gpl` / `mac64-gpl`) and its
