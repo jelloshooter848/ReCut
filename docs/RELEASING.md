@@ -12,7 +12,7 @@ ReCut uses [semantic versioning](https://semver.org/). Before 1.0 the version is
 
 The version lives in `package.json` (and `package-lock.json`). The app reads it from there through Electron's
 `app.getVersion()` (Preferences › Version and Help › About), the release file names use it
-(`ReCut-Setup-<version>.exe`, `ReCut-<version>-linux-x86_64.AppImage`), and CI names releases after it. Do not write the version anywhere else.
+(`ReCut-Setup-<version>.exe`, `ReCut-<version>-linux-x86_64.AppImage`, `ReCut-<version>-macos-arm64.dmg`), and CI names releases after it. Do not write the version anywhere else.
 
 **The project file format is versioned separately.** `formatVersion` in `.recut` files (`PROJECT_FORMAT_VERSION` in
 `shared/model.ts`, read and migrated in `shared/project.ts`) changes only when the file format changes, never because
@@ -47,22 +47,24 @@ hand: agents cannot push tags (their git proxy drops tag pushes), and the owner 
 3. **CI publishes.** The merge is a push to `main`, so `.github/workflows/windows.yml` runs. Its first step sees that
    the `package.json` version (`0.3.0`) has a `## [0.3.0]` section in `CHANGELOG.md` and that no tag `v0.3.0` exists
    yet, and makes this run a release. It then builds, smoke-tests the unpacked app, installs and uninstalls the
-   installer and launches the portable exe, while the Windows unit tests, end-to-end tests and launcher check and the
-   Linux job (unit and end-to-end tests, AppImage build and AppImage smoke test) run in parallel. Only when all of
-   them have passed does the final `publish` job publish the release: tag `v0.3.0` on the merge commit (created by the
-   publish job), name `ReCut 0.3.0`, not a prerelease, marked **Latest**, body = that version's changelog section plus
-   the install / SmartScreen / AppImage note, with the installer, the portable exe and the AppImage attached.
-   See [What gates a release](#what-gates-a-release).
-4. Check the release page: both `.exe` files and the `.AppImage` are attached and the notes read correctly. In the
-   installer job's and the linux job's logs, the smoke tests list the licence files the builds ship (see
-   [Licence files every release ships](#licence-files-every-release-ships)).
+   installer and launches the portable exe, while the Windows unit tests, end-to-end tests and launcher check, the
+   Linux job (unit and end-to-end tests, AppImage build and AppImage smoke test) and the macOS jobs (unit tests, the
+   Apple Silicon and Intel dmgs, signed and notarized, with their smoke tests, and the end-to-end tests) run in
+   parallel. Only when all of them have passed does the final `publish` job publish the release: tag `v0.3.0` on the
+   merge commit (created by the publish job), name `ReCut 0.3.0`, not a prerelease, marked **Latest**, body = that
+   version's changelog section plus the install / SmartScreen / AppImage / dmg note, with the installer, the portable
+   exe, the AppImage and both dmgs attached. See [What gates a release](#what-gates-a-release).
+4. Check the release page: both `.exe` files, the `.AppImage` and both `.dmg` files are attached and the notes read
+   correctly. In the installer, linux and macos jobs' logs, the smoke tests list the licence files the builds ship
+   (see [Licence files every release ships](#licence-files-every-release-ships)).
 
 Every later push to `main` finds `v0.3.0` already tagged and makes a [test build](#test-builds) (all gates, installers
 kept as a CI artifact, nothing published) until the next release PR is merged.
 
 **Only real versions appear on the Releases page** (owner's decision, 7 October 2026). CI never publishes a dev
 prerelease and never creates a `-dev.` tag; every run that is not a release is a test build whose installers are only
-the run's `ReCut-windows` artifact (and its AppImage the `ReCut-linux` artifact).
+the run's `ReCut-windows` artifact (its AppImage the `ReCut-linux` artifact, its dmgs the `ReCut-macos-arm64` and
+`ReCut-macos-x64` artifacts).
 
 **Never create the release or the tag by hand before the release PR is merged**, not in the web UI ("Draft a new
 release" / "Choose a tag") and not with git. A tag made that way points at whatever commit was selected (twice so
@@ -81,15 +83,17 @@ Details:
   merge's run, which then publishes the release from that newer commit (the version is still untagged).
 - Just before publishing, a release run checks the tag again. If `vX.Y.Z` appeared during the build (someone tagged or
   released by hand), the version is already released: the publish job logs a warning, publishes nothing, leaves that
-  release alone and finishes successfully. The run's installers are still in its `ReCut-windows` artifact and its
-  AppImage in `ReCut-linux`.
+  release alone and finishes successfully. The run's installers are still in its `ReCut-windows` artifact, its
+  AppImage in `ReCut-linux` and its dmgs in `ReCut-macos-arm64` and `ReCut-macos-x64`.
 - The tag is created by the workflow's `GITHUB_TOKEN`, and GitHub does not start workflows for events caused by
   `GITHUB_TOKEN`, so the new tag does not start a second build.
 
 ### What gates a release
 
-`.github/workflows/windows.yml` (display name "Windows build"; it builds Linux too) has five required jobs, the
-release gates. They run in parallel, four on `windows-latest` and one on `ubuntu-22.04`:
+`.github/workflows/windows.yml` (display name "Windows build"; it builds Linux and macOS too) has seven required
+jobs, the release gates. They run in parallel, four on `windows-latest`, one on `ubuntu-22.04` and two on `macos-14`
+(`macos` runs twice, once per dmg; `needs: macos` waits for both legs, and `fail-fast: false` lets both finish and
+report even when one fails):
 
 | Job | Checks |
 |---|---|
@@ -98,21 +102,23 @@ release gates. They run in parallel, four on `windows-latest` and one on `ubuntu
 | `e2e` (End-to-end tests on Windows) | The Playwright suite driving the built app. |
 | `launcher` (Start ReCut.cmd from a fresh clone) | `Start ReCut.cmd -Smoke`. |
 | `linux` (Linux AppImage + tests) | On `ubuntu-22.04`: typecheck, the vitest suite and the Playwright suite under xvfb, all with the FFmpeg that gets bundled; builds the x86-64 AppImage with that FFmpeg (`scripts/linux/get-ffmpeg.sh`), checks the OCR packaging budget and the bundled FFmpeg files, and smoke-tests the AppImage twice, mounted with FUSE and with `--appimage-extract-and-run` (media protocol, encode + probe with the FFmpeg inside the AppImage, licence files, OCR worker, UI mounted). Uploads the `ReCut-linux` artifact. |
+| `macos` (macOS arm64 / x64 dmg + smoke test) | A matrix over `arm64` and `x64`, both on `macos-14` (Apple Silicon; the x64 leg runs its programs under Rosetta 2, never on Intel hardware): typecheck and the vitest suite with the FFmpeg and speech-to-text engine that get bundled; builds that arch's dmg, Developer ID signed and notarized when the signing secrets are set ([MACOS-SIGNING.md](MACOS-SIGNING.md)); checks the OCR packaging budget, the bundled FFmpeg and engine files (that arch only) and the signature of every binary (plus Gatekeeper and the stapled ticket when signed); mounts the dmg and smoke-tests the app inside it. **On a release run it fails unless all five signing secrets are set and the app is signed, notarized and stapled**; a test build without the secrets is ad-hoc signed. Uploads the `ReCut-macos-arm64` / `ReCut-macos-x64` artifact. |
+| `macos-e2e` (End-to-end tests on macOS) | The Playwright suite on `macos-14` (arm64 only). |
 
-Two more jobs run on every build but are **advisory** while macOS is in bring-up (docs/ROADMAP.md §19): `macos`
-(a matrix over arm64 and x64, both on `macos-14`, the x64 leg under Rosetta 2: unit tests, the Apple Silicon and
-Intel dmgs, code-signature checks and a smoke test of each app inside its mounted dmg; artifacts `ReCut-macos-arm64`
-and `ReCut-macos-x64`) and `macos-e2e` (the Playwright suite on macOS, arm64 only). They are not gates: `publish`
-does not need them and does not attach the dmg, so a red macOS job does not stop a release, and "green" in this
-document and in the run summaries means the five required gates (installer, tests, e2e, launcher, linux). The dmg is signed and notarized when the signing secrets are set
-([MACOS-SIGNING.md](MACOS-SIGNING.md)). When macOS becomes official, follow the TODO above the `publish` job.
+The macos job decides "release or test build" itself, by the same rules as the installer job's release metadata
+step (it runs in parallel and cannot wait for it), in its first step, so a release run without the signing secrets
+fails within a minute. A release is never published with an ad-hoc signed dmg.
 
-Publishing happens in a separate last job, `publish`, which runs only on a release run and only when all five gates
-succeeded. It downloads the installer job's build, the Linux job's AppImage and the release notes, re-checks the tag,
-and publishes. If any gate fails, is cancelled or is skipped, `publish` is skipped. None of the gates is allowed to
+Publishing happens in a separate last job, `publish`, which runs only on a release run and only when all seven gates
+succeeded (both `macos` legs included). It downloads the installer job's build, the Linux job's AppImage, both
+macOS dmgs and the release notes, checks that exactly the five release files are there and named for the version
+being released (`ReCut-Setup-<version>.exe`, `ReCut-Portable-<version>.exe`,
+`ReCut-<version>-linux-x86_64.AppImage`, `ReCut-<version>-macos-arm64.dmg`, `ReCut-<version>-macos-x64.dmg`),
+re-checks the tag, and publishes. If any gate fails, is cancelled or is skipped, `publish` is skipped. None of the gates is allowed to
 fail (`continue-on-error` is not used). On a test build `publish` is always skipped.
 
-Every run, release or test build, runs all five gates the same way. A run with any red gate publishes nothing and
+Every run, release or test build, runs all seven gates the same way (the only difference: a release run's dmgs
+must be signed). A run with any red gate publishes nothing and
 creates no tag. `installer-stress` (manual only) is not a gate.
 
 **On a red run:** nothing was published. Look at the failed job, fix the problem in a normal PR (or push the fix to
@@ -142,24 +148,24 @@ of these, in the installed app, in the portable exe and in the AppImage:
   x86-64 or that link to shared libraries other than glibc's own (and libgcc_s), so the AppImage does not depend on
   libraries a user's distribution may lack.
 - The installer job's and the linux job's smoke tests log `smoke: licences shipped=... absent=...` for the unpacked
-  app and the AppImage; on a release run `absent=` should list nothing but, at most, `FFMPEG-README.txt` (always
-  absent on Linux).
+  app and the AppImage, and the macos job for the app inside each dmg; on a release run `absent=` should list
+  nothing but, at most, `FFMPEG-README.txt` (always absent on Linux and macOS).
 - After changing a runtime dependency (`package.json` → `dependencies`), run `node scripts/third-party-notices.mjs`
   and commit the updated `THIRD_PARTY_NOTICES.md`; the unit suite fails while it is out of date.
-- Do not remove any of these files from the packaging config. If FFmpeg is ever bundled for macOS, the same files
-  must go next to those binaries (see `docs/INSTALL.md`, "Bundling FFmpeg").
-- **macOS (advisory until 0.7.0):** the `macos` job bundles an arm64 FFmpeg (Apple Silicon dmg) or an x86-64
+- Do not remove any of these files from the packaging config (see `docs/INSTALL.md`, "Bundling FFmpeg").
+- **macOS:** the `macos` job bundles an arm64 FFmpeg (Apple Silicon dmg) or an x86-64
   FFmpeg (Intel dmg), both from the same jellyfin-ffmpeg release, with the same three files
   (`scripts/mac/get-ffmpeg.sh`; `FFMPEG-LICENSE.txt` is the build's `COPYING.GPLv3`, there is no readme) plus
   `LICENSE.electron.txt` and `LICENSES.chromium.html` in `ReCut.app/Contents/Resources`. Signing and notarization
   of the dmg: [MACOS-SIGNING.md](MACOS-SIGNING.md).
-- **Before every release, check the FFmpeg source links still work**, for Windows and Linux. The release does not
-  carry FFmpeg's source code; `FFMPEG-BUILD.txt` points to where it can be downloaded (the owner's decision, 7 October
-  2026: a link, not an attached copy). After the release run, open the latest release build's logs (the linux job
-  prints the Linux `FFMPEG-BUILD.txt` in its "Bundled FFmpeg files" step) or the shipped `FFMPEG-BUILD.txt`, and
-  confirm that the "Corresponding source" links still download: for gyan.dev builds
+- **Before every release, check the FFmpeg source links still work**, for Windows, Linux and macOS. The release
+  does not carry FFmpeg's source code; `FFMPEG-BUILD.txt` points to where it can be downloaded (the owner's decision,
+  7 October 2026: a link, not an attached copy). After the release run, open the latest release build's logs (the
+  linux job and each macos leg print their `FFMPEG-BUILD.txt` in the "Bundled FFmpeg files" step) or the shipped
+  `FFMPEG-BUILD.txt`, and confirm that the "Corresponding source" links still download: for gyan.dev builds
   `https://ffmpeg.org/releases/ffmpeg-<version>.tar.xz`, for BtbN builds the FFmpeg commit archive
-  `https://github.com/FFmpeg/FFmpeg/archive/<commit>.tar.gz`. If one no longer does, attach that version's source
+  `https://github.com/FFmpeg/FFmpeg/archive/<commit>.tar.gz`, for jellyfin-ffmpeg builds the source archive of the
+  release tag (`https://github.com/jellyfin/jellyfin-ffmpeg/archive/refs/tags/<tag>.tar.gz`). If one no longer does, attach that version's source
   archive to the release by hand or switch to attaching it in CI. The GPL expects the source to stay available for as
   long as the release is offered.
 
@@ -196,6 +202,10 @@ unreleased, and the next `main` run that passes every gate will release it.
   that passes every gate publishes `X.Y.Z` from the fixed commit; nothing else is needed. If the fix belongs in the
   notes, the fix PR may add its line to the unreleased `## [X.Y.Z]` section (it does not change the heading or the
   version). A new PATCH release PR is only needed once `X.Y.Z` has actually been published (next item).
+- **A macos leg fails with "a release must be signed and notarized"**: one or more of the five signing secrets are
+  missing (or were removed), or signing or notarization failed. Set the secrets or fix the cause
+  ([MACOS-SIGNING.md](MACOS-SIGNING.md)), then **Re-run failed jobs**; the version is still unreleased. Never work
+  around it by publishing without macOS: the dmgs are required release files.
 - **Manual tag does not match the version** (fallback path only, for example a tag on the wrong commit): delete the
   tag (`git push origin :refs/tags/v0.3.0`, `git tag -d v0.3.0`) and tag the right commit, or let the next `main`
   run release it. This is only allowed while no release exists for that tag.
@@ -232,18 +242,20 @@ Rules:
 |---|---|---|
 | Push to `main`; `CHANGELOG.md` has `## [<version>]`; no tag `v<version>` yet | `v<version>` (created by CI) | Release `ReCut <version>`, marked Latest |
 | Push of tag `v<version>` (optional fallback) | `v<version>` (yours) | Release `ReCut <version>`, marked Latest |
-| Push to `main`; `v<version>` already tagged, or no changelog section | none | [Test build](#test-builds): `ReCut-windows` and `ReCut-linux` CI artifacts only |
-| Push to another watched branch, or a manual run (`workflow_dispatch`) | none | [Test build](#test-builds): `ReCut-windows` and `ReCut-linux` CI artifacts only |
+| Push to `main`; `v<version>` already tagged, or no changelog section | none | [Test build](#test-builds): `ReCut-windows`, `ReCut-linux`, `ReCut-macos-arm64` and `ReCut-macos-x64` CI artifacts only |
+| Push to another watched branch, or a manual run (`workflow_dispatch`) | none | [Test build](#test-builds): `ReCut-windows`, `ReCut-linux`, `ReCut-macos-arm64` and `ReCut-macos-x64` CI artifacts only |
 
-A release is published only when all five gates pass ([What gates a release](#what-gates-a-release)). Only real
+A release is published only when all seven gates pass ([What gates a release](#what-gates-a-release)). Only real
 versions (`0.4.0`, `0.5.0`, …) ever appear on the Releases page: there are no prereleases.
 
 ### Test builds
 
 Every run that is not a release is a test build of an unreleased commit. It runs every gate exactly like a release
-(installer build, smoke test, install check, unit tests, end-to-end tests, launcher check, the Linux job), but
-creates no tag and publishes nothing. Its installer and portable exe are kept only as the run's `ReCut-windows`
-workflow artifact and its AppImage as the `ReCut-linux` artifact, for 14 days. The file names carry the last released
+(installer build, smoke test, install check, unit tests, end-to-end tests, launcher check, the Linux and macOS
+jobs), but creates no tag and publishes nothing. Its installer and portable exe are kept only as the run's
+`ReCut-windows` workflow artifact, its AppImage as the `ReCut-linux` artifact and its dmgs as the `ReCut-macos-arm64`
+and `ReCut-macos-x64` artifacts, for 14 days. Its dmgs are signed and notarized only if the signing secrets are set;
+otherwise they are ad-hoc signed and need the first-launch steps in [INSTALL.md](INSTALL.md#macos). The file names carry the last released
 version (the version in `package.json` on that commit), so `ReCut-Setup-0.5.0.exe` from a test build is a build made
 after 0.5.0, not 0.5.0 itself.
 
@@ -251,8 +263,10 @@ To download a test build: open the repository's **Actions** tab → **Windows bu
 "Test build: download the installers from this run's Artifacts (ReCut-windows)") → **Artifacts** → **ReCut-windows**.
 GitHub downloads a zip with `ReCut-Setup-<version>.exe` and `ReCut-Portable-<version>.exe`; you must be signed in to
 GitHub. The Linux build is the **ReCut-linux** artifact of the same run, a zip with
-`ReCut-<version>-linux-x86_64.AppImage` (unzipping drops the executable bit: run `chmod +x` on it). Use a test build only if the five required jobs of its run (installer, tests, e2e, launcher, linux) are green; the
-advisory macOS jobs do not count (for the macOS dmg itself, its `macos` job must be green). Users should install the release marked **Latest**.
+`ReCut-<version>-linux-x86_64.AppImage` (unzipping drops the executable bit: run `chmod +x` on it). The macOS
+builds are the **ReCut-macos-arm64** (Apple Silicon) and **ReCut-macos-x64** (Intel) artifacts, each a zip with one
+dmg. Use a test build only if the seven required jobs of its run (installer, tests, e2e, launcher, linux, macos,
+macos-e2e) are green. Users should install the release marked **Latest**.
 
 To make a test build of a work branch, run the workflow by hand (*Run workflow*, `workflow_dispatch`) on that branch.
 

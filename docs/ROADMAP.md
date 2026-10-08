@@ -19,7 +19,7 @@ in every release PR (docs/RELEASING.md).
 | 2 | Fix the remaining preview gaps | Done | 0.4.0 |
 | 3 | Pre-export warnings | Done | 0.5.0 |
 | 4 | Bitmap subtitle OCR (PGS / VobSub / DVB) | Done | 0.6.0 |
-| 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS dmgs (Apple Silicon and Intel) built and tested in CI, waiting for signing | 0.6.1 (Linux), 0.8.0 (macOS) |
+| 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS dmgs (Apple Silicon and Intel) built, signed and notarised in CI and required for releases; ships in 0.8.0 | 0.6.1 (Linux), 0.8.0 (macOS) |
 | 16 | Collect / Consolidate Project (with the moved-media cache fix) | Done | 0.7.0 |
 | 5 | Local speech-to-text (Whisper) | Implemented, on main | 0.8.0 (pending) |
 | 6 | Intermediate and audio-only export | Implemented, on main | 0.8.0 (pending) |
@@ -476,28 +476,30 @@ server.
 
 ## 19. Official Linux and macOS releases
 
-**Status:** scheduled by the project owner on 7 October 2026 (it was parked at the bottom until then), next after
-Bitmap subtitle OCR (§4, 0.6.0). Order: **Linux first, in 0.6.1; macOS in 0.7.0.** Source of the decision: the owner's
-review of the "ReCut Cross-Platform Release Support Proposal". The section keeps its number because other documents
-and bug files cite § numbers.
+**Status:** Linux done (release 0.6.1); macOS implemented, pending release 0.8.0 (not done until 0.8.0 publishes the
+signed dmgs). Scheduled by the project owner on 7 October 2026 (it was parked at the bottom until then), next after Bitmap
+subtitle OCR (§4, 0.6.0); the order was Linux first, then macOS once signing was in place (planned for 0.7.0, now
+part of 0.8.0). Source of the decision: the owner's review of the "ReCut Cross-Platform Release Support Proposal". The
+section keeps its number because other documents and bug files cite § numbers.
 **Linux part done (7 October 2026, release 0.6.1):** the x86-64 AppImage
 `ReCut-<version>-linux-x86_64.AppImage` with a bundled BtbN `linux64-gpl` FFmpeg and its `FFMPEG-LICENSE.txt` /
 `FFMPEG-BUILD.txt` (`scripts/linux/get-ffmpeg.sh`; the BtbN builds have no readme), listed in
 `THIRD_PARTY_NOTICES.md`; the blocking `linux` job in `.github/workflows/windows.yml` on `ubuntu-22.04` (unit tests,
 e2e under xvfb, packaging, AppImage smoke test mounted and extracted), which the `publish` job needs; the AppImage
 attached to the release with run instructions in the notes.
-**macOS part implemented, pending CI validation and signing** (not done until 0.7.0 publishes it): two dmgs, both
+**macOS part implemented, pending release 0.8.0:** two dmgs, both
 macOS 12+ (owner's decision, 8 October 2026; Intel support may be retired after 1.0): `ReCut-<version>-macos-arm64.dmg`
 for Apple Silicon and `ReCut-<version>-macos-x64.dmg` for Intel, each with its own architecture's bundled, pinned and
 checksum-verified jellyfin-ffmpeg build of the same release (`macarm64-gpl` / `mac64-gpl`) and its
 `FFMPEG-LICENSE.txt` / `FFMPEG-BUILD.txt` (`scripts/mac/get-ffmpeg.sh --arch`) and speech-to-text engine (Metal on
 arm64; CPU-only with CPU-variant kernels on x64, `scripts/mac/get-whisper.sh --arch`), no universal binary, hardened
-runtime with only the `allow-jit` entitlement, and the advisory `macos` (a matrix over arm64 and x64, both on
+runtime with only the `allow-jit` entitlement, and the blocking `macos` (a matrix over arm64 and x64, both on
 `macos-14`; the x64 leg runs under Rosetta 2, never on Intel hardware) and `macos-e2e` (arm64 only) jobs in
 `.github/workflows/windows.yml` (unit tests, dmg, per-binary signature and architecture checks, smoke test of the app
-in the mounted dmg; artifacts `ReCut-macos-arm64` and `ReCut-macos-x64`; signing and notarization of both when the
-five secrets of `docs/MACOS-SIGNING.md` are set, ad-hoc signed test builds otherwise). Not yet in the `publish` job's
-`needs` and not attached to releases (TODO block above the `publish` job).
+in the mounted dmg; artifacts `ReCut-macos-arm64` and `ReCut-macos-x64`; Developer ID signing and notarization of
+both with the five secrets of `docs/MACOS-SIGNING.md`, which a release run requires, ad-hoc signed test builds
+without them). Both jobs are in the `publish` job's `needs`, and both dmgs are attached to the release with a
+which-dmg line in the notes.
 **Why:** ReCut ships only Windows builds. `package.json` → `build.linux` already targets `AppImage` and `build.mac`
 `dmg`, and the app has macOS menu and quit handling, but neither package has been released or tested: the Linux
 unpacked build is what the test suites run on, and no Mac build has ever been made. Fan editors work on all three

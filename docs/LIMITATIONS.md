@@ -202,17 +202,15 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   Linux x86-64 AppImage (built on Ubuntu 22.04 in CI, launched and smoke-tested; the unit and end-to-end suites run on
   Linux on every build and must pass before anything is published). Nothing is signed for Windows, so SmartScreen
   warns on first launch.
-- **macOS: test builds only, not released.** CI builds two dmgs on every build, arm64 (Apple Silicon) and x64
-  (Intel), each with its own architecture's FFmpeg and speech-to-text engine bundled, and smoke-tests each app from
-  its mounted dmg, but the macOS jobs are advisory: they do not gate releases and the dmgs are not attached to them
-  (planned for 0.7.0, [ROADMAP](ROADMAP.md) §19). No universal build: pick the dmg for your Mac
-  ([INSTALL](INSTALL.md#macos-test-builds)). Needs macOS 12 or newer (the bundled FFmpeg's minimum); tested in CI on
-  macOS 14 on Apple Silicon only. **The Intel build has never run on an Intel Mac:** CI runs it under Rosetta 2 on
-  the Apple Silicon runner (Rosetta there reports no AVX, so the AVX / AVX2 / AVX-512 speech-to-text kernels an Intel
-  Mac would use are built but not exercised). Intel Macs do not need Rosetta. Intel support may be retired after 1.0. Until the Developer ID
-  signing secrets are set up ([MACOS-SIGNING](MACOS-SIGNING.md)) the dmg is ad-hoc signed and not notarized, so macOS
-  blocks the first launch until it is allowed under System Settings › Privacy & Security. The end-to-end suite on
-  macOS (advisory `macos-e2e` job) has not passed on a Mac yet.
+- **macOS: two dmgs, no universal build.** Each release has an arm64 (Apple Silicon) and an x64 (Intel) dmg, each
+  with its own architecture's FFmpeg and speech-to-text engine bundled, signed with a Developer ID and notarized
+  ([MACOS-SIGNING](MACOS-SIGNING.md)); pick the one for your Mac ([INSTALL](INSTALL.md#macos)). Needs macOS 12 or
+  newer (the bundled FFmpeg's minimum); tested in CI on macOS 14 on Apple Silicon only. **The Intel build has never run
+  on an Intel Mac:** CI runs it under Rosetta 2 on the Apple Silicon runner (Rosetta there reports no AVX, so the AVX /
+  AVX2 / AVX-512 speech-to-text kernels an Intel Mac would use are built but not exercised). Intel Macs do not need
+  Rosetta. Intel support may be retired after 1.0. Test builds from CI artifacts (not releases) are ad-hoc signed when
+  the signing secrets are not available, so macOS blocks their first launch until it is allowed under System Settings ›
+  Privacy & Security.
 - **Linux: AppImage only, x86-64 only.** No `.deb`, `.rpm`, Flatpak or Snap, and no ARM build. The AppImage needs the
   FUSE 2 library (`libfuse2`) unless it is started with `--appimage-extract-and-run`, and it does not add itself to
   the application menu or register `.recut` files (an AppImage integration tool can). The bundled FFmpeg needs glibc

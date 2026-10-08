@@ -154,19 +154,20 @@ on every push.
 
 The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow on every push.
 
-## macOS (Apple Silicon and Intel): test builds
+## macOS (Apple Silicon and Intel): download and run
 
-- **Not released yet** (planned for 0.7.0). CI builds two dmgs on every push, both for macOS 12 or newer:
-  `ReCut-<version>-macos-arm64.dmg` for Apple Silicon Macs (M1 or newer) and `ReCut-<version>-macos-x64.dmg` for
-  Intel Macs. Each is launched from the mounted dmg on an Apple Silicon runner (the Intel one under Rosetta 2).
-  Download them from the **ReCut-macos-arm64** and **ReCut-macos-x64** artifacts of a run whose macos jobs are green
-  (Actions › Windows build › the run › Artifacts). FFmpeg and the speech-to-text engine are bundled in both.
-- **Which one:** Apple menu › **About This Mac**. "Chip: Apple M…" means arm64; "Processor: Intel" means x64. On Intel
-  Macs speech-to-text runs on the CPU only (no Metal), so it is slower. Intel support may be retired after 1.0.
-- Open the dmg and drag ReCut to Applications. Until the build is signed with a Developer ID, macOS refuses the first
-  launch: open **System Settings › Privacy & Security** and click **Open Anyway** (on macOS 14 and earlier you can
-  also right-click ReCut › **Open**). See [docs/INSTALL.md](docs/INSTALL.md#macos-test-builds); signing
-  is set up as described in [docs/MACOS-SIGNING.md](docs/MACOS-SIGNING.md).
+- **dmg (macOS 12 or newer):** download the dmg for your Mac from the release marked **Latest** on the
+  [Releases](https://github.com/jelloshooter848/ReCut/releases) page: `ReCut-<version>-macos-arm64.dmg` for Apple
+  Silicon (M1 or newer) or `ReCut-<version>-macos-x64.dmg` for Intel. Not sure which? Apple menu › **About This Mac**:
+  "Chip: Apple M…" means arm64; "Processor: Intel" means x64. Open the dmg and drag ReCut to Applications. The dmgs are
+  signed and notarized, so ReCut opens normally. FFmpeg and the speech-to-text engine are bundled, so nothing else is
+  needed. On Intel Macs speech-to-text runs on the CPU only (no Metal), so it is slower; Intel support may be retired
+  after 1.0. See [docs/INSTALL.md](docs/INSTALL.md#macos).
+
+Both dmgs are built, signed, notarized and launched from the mounted dmg by the same workflow on every push, on an
+Apple Silicon runner (the Intel one under Rosetta 2). Builds of unreleased commits are the **ReCut-macos-arm64** and
+**ReCut-macos-x64** artifacts of a CI run (Actions › Windows build › the run › Artifacts); see
+[macOS test builds](docs/INSTALL.md#macos-test-builds).
 
 ## Quick start (from source, any OS)
 
@@ -216,7 +217,7 @@ are responsible for having the rights to the material you edit and for how you s
 
 ReCut is licensed under the [MIT License](LICENSE).
 
-The Windows releases and the Linux AppImage bundle FFmpeg (`ffmpeg` and `ffprobe`), which ReCut runs as a separate program. The bundled
+The Windows releases, the Linux AppImage and the macOS dmgs bundle FFmpeg (`ffmpeg` and `ffprobe`), which ReCut runs as a separate program. The bundled
 builds include libx264 and are licensed under the GPL version 3 or later, not under ReCut's licence; each release
 ships the FFmpeg licence and a record of the exact build with where to get its source. ReCut also ships Electron,
 Chromium and a few npm packages under their own licences. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), or

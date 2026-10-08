@@ -45,7 +45,7 @@ describe('Windows workflow: no dev prereleases', () => {
 
   it('the publish job runs only for a real release and only after every gate passed', () => {
     expect(jobIf(publish)).toBe("needs.installer.outputs.release == 'true'");
-    expect(publish).toMatch(/^ {4}needs: \[installer, tests, e2e, launcher, linux\]$/m);
+    expect(publish).toMatch(/^ {4}needs: \[installer, tests, e2e, launcher, linux, macos, macos-e2e\]$/m);
     // No status function: the implicit success() keeps a red, cancelled or skipped gate from publishing.
     expect(publish).not.toMatch(/always\(\)|failure\(\)|cancelled\(\)/);
   });
@@ -233,12 +233,13 @@ describe('speech-to-text engine in CI (Roadmap §5)', () => {
   });
 });
 
-// The macOS dmg (docs/ROADMAP.md §19, release 0.7.0): during bring-up the macos and macos-e2e jobs are ADVISORY. They
-// run on every run, but publish does not need them and does not attach the dmg (docs/MACOS-SIGNING.md for signing).
-describe('Windows workflow: the macOS dmg job (advisory during bring-up)', () => {
+// The macOS dmgs (docs/ROADMAP.md §19): the macos (both arch legs) and macos-e2e jobs are release gates, a release run
+// must be Developer ID signed and notarized (docs/MACOS-SIGNING.md), and publish attaches both dmgs.
+describe('Windows workflow: the macOS dmg gate', () => {
   const macos = code(job('macos'));
   const macosE2e = code(job('macos-e2e'));
   const publish = code(job('publish'));
+  const installer = code(job('installer'));
   const pkg = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8'));
   const script = fs.readFileSync(path.join(repo, 'scripts/mac/get-ffmpeg.sh'), 'utf8').replace(/\r\n/g, '\n'); // CRLF on a Windows checkout
 
@@ -275,22 +276,78 @@ describe('Windows workflow: the macOS dmg job (advisory during bring-up)', () =>
     expect(macos).not.toMatch(/--universal|lipo -create/);
   });
 
-  it('is not a release gate yet: publish neither needs it nor attaches the dmg, and a TODO says how to change that', () => {
-    expect(publish).toMatch(/^ {4}needs: \[installer, tests, e2e, launcher, linux\]$/m);
-    expect(publish).not.toContain('ReCut-macos');
-    expect(publish).not.toContain('.dmg');
-    expect(workflow).toContain('# TODO(0.7.0, when macOS becomes official');
-    expect(workflow).toContain('#   1. needs: [installer, tests, e2e, launcher, linux, macos, macos-e2e]');
-    // The TODO ships both dmgs, from both arch artifacts.
-    expect(workflow).toMatch(/^\s+#.*\brelease\/ReCut-\*-macos-arm64\.dmg/m);
-    expect(workflow).toMatch(/^\s+#.*\brelease\/ReCut-\*-macos-x64\.dmg/m);
-    expect(workflow).toMatch(/^\s+#\s+pattern: ReCut-macos-\*$/m);
-    expect(workflow).toMatch(/^\s+#\s+merge-multiple: true$/m);
-    // The Windows and Linux summaries say which jobs must be green: the five gates, not the advisory macOS jobs.
-    for (const block of [code(job('installer')), code(job('linux'))]) {
-      expect(block).toContain('the required jobs of this run (installer, tests, e2e, launcher, linux) are green');
+  it('is a release gate: publish needs both legs and macos-e2e, and nothing calls the macOS jobs advisory', () => {
+    expect(publish).toMatch(/^ {4}needs: \[installer, tests, e2e, launcher, linux, macos, macos-e2e\]$/m);
+    // `needs: macos` waits for every matrix leg; fail-fast stays off so both legs always report.
+    expect(macos).toMatch(/^ {4}strategy:\n {6}fail-fast: false\n/m);
+    expect(workflow).not.toMatch(/advisory|ADVISORY|bring-up/);
+    expect(workflow).not.toMatch(/TODO\(0\.7\.0|when macOS becomes official/);
+    expect(macos).toMatch(/^ {4}name: macOS \$\{\{ matrix\.arch \}\} dmg \+ smoke test$/m);
+    expect(macosE2e).toMatch(/^ {4}name: End-to-end tests on macOS$/m);
+    // The Windows, Linux and macOS summaries name all seven required jobs.
+    for (const block of [installer, code(job('linux')), macos]) {
+      expect(block).toContain('the required jobs of this run (installer, tests, e2e, launcher, linux, macos, macos-e2e) are green');
       expect(block).not.toContain('every job in this run is green');
     }
+  });
+
+  it('a release run must be signed: the macos job decides release like the installer job and fails without the secrets', () => {
+    // The decision, made first: a tag push, or a push to main with a non-empty changelog section and no tag on origin.
+    const rel = /- name: Release run\? \(a release must be signed\)\n\s+id: rel\n([\s\S]*?)\n\n/.exec(macos)?.[1];
+    expect(rel).toBeDefined();
+    expect(macos.indexOf('- name: Release run?')).toBeLessThan(macos.indexOf('npm ci'));
+    expect(rel).toContain('if [ "$REF_TYPE" = tag ]; then\n            release=true');
+    expect(rel).toContain('elif [ "$EVENT_NAME" = push ] && [ "$REF" = refs/heads/main ] && [ "$section" = true ]; then');
+    expect(rel).toContain('git ls-remote --exit-code --tags origin "refs/tags/v$v" || rc=$?');
+    expect(rel).toMatch(/if \[ "\$rc" -eq 2 \]; then\n\s+release=true\n\s+elif \[ "\$rc" -ne 0 \]; then\n\s+echo "::error::git ls-remote failed/);
+    // The same changelog rule as the installer job's Get-ChangelogSection.
+    expect(installer).toContain("$head = '^## \\[' + [regex]::Escape($ver) + '\\](\\s|$)'");
+    expect(rel).toContain('new RegExp("^## \\\\[" + v.split(".").join("\\\\.") + "\\\\](\\\\s|$)")');
+    expect(rel).toContain('if (/^## \\[/.test(l) || /^\\[[^\\]]+\\]:\\s/.test(l)) break;');
+    // Only whether each secret is set reaches the step, and a release with any missing fails.
+    for (const s of ['CSC_LINK', 'CSC_KEY_PASSWORD', 'APPLE_API_KEY', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER']) {
+      expect(rel).toContain(`HAVE_${s}: \${{ secrets.${s} != '' }}`);
+    }
+    expect(rel).toContain('echo "release=$release" >> "$GITHUB_OUTPUT"');
+    expect(rel).toMatch(/if \[ -n "\$missing" \]; then\n\s+echo "::error::This run releases v\$v, and a release must be signed and notarized[^\n]*\n\s+exit 1/);
+    // Checked again where signing is set up and where the signature is checked.
+    expect(macos).toMatch(/- name: Code signing setup\n\s+id: sign\n\s+env:\n\s+RELEASE: \$\{\{ steps\.rel\.outputs\.release \}\}\n/);
+    expect(macos).toMatch(/if \[ "\$have" -eq 0 \] && \[ "\$RELEASE" = true \]; then\n\s+echo '::error::[^\n]*\n\s+exit 1/);
+    expect(macos).toMatch(/- name: Code signature\n\s+env:\n(?:\s+[A-Z]+: .*\n)*\s+RELEASE: \$\{\{ steps\.rel\.outputs\.release \}\}\n/);
+    expect(macos).toMatch(/if \[ "\$RELEASE" = true \] && \[ "\$SIGNED" != true \]; then\n\s+echo '::error::[^\n]*\n\s+exit 1/);
+    // A signed build is not accepted unless Gatekeeper sees it as notarized and the ticket is stapled.
+    expect(macos).toMatch(/grep -q 'source=Notarized Developer ID' [^\n]*bad=1/);
+    expect(macos).toMatch(/xcrun stapler validate "\$APP" \|\| \{[^\n]*bad=1/);
+  });
+
+  it('publish attaches both dmgs, after checking that all five release files exist and carry the version', () => {
+    for (const arch of ['arm64', 'x64']) {
+      expect(publish).toMatch(new RegExp(`- uses: actions/download-artifact@v4\\n\\s+with:\\n\\s+name: ReCut-macos-${arch}\\n\\s+path: release\\n`));
+      expect(publish).toMatch(new RegExp(`files: \\|\\n(?:\\s+release/.*\\n)*\\s+release/ReCut-\\*-macos-${arch}\\.dmg\\n`));
+    }
+    const files = /- name: Release files\n([\s\S]*?)\n\n/.exec(publish)?.[1];
+    expect(files).toBeDefined();
+    expect(publish.indexOf('- name: Release files')).toBeLessThan(publish.indexOf('- name: Publish GitHub Release'));
+    for (const name of [
+      'ReCut-Setup-$v.exe',
+      'ReCut-Portable-$v.exe',
+      'ReCut-$v-linux-x86_64.AppImage',
+      'ReCut-$v-macos-arm64.dmg',
+      'ReCut-$v-macos-x64.dmg',
+    ]) {
+      expect(files, name).toContain(`name = "${name}"`);
+    }
+    expect(files).toContain("if ($env:TAG -cmatch '^v(\\d+\\.\\d+\\.\\d+)$') { $v = $Matches[1] }");
+    expect(files).toContain('$found.Count -ne 1 -or $found[0].Name -cne $want.name -or $found[0].Length -eq 0');
+    expect(files).toContain('exit $bad');
+  });
+
+  it('the release notes say which dmg to pick and that macOS 12 or later is needed', () => {
+    expect(installer).toContain('**ReCut-$v-macos-arm64.dmg** (Apple Silicon');
+    expect(installer).toContain('**ReCut-$v-macos-x64.dmg** (Intel');
+    expect(installer).toContain('macOS 12 or later');
+    expect(installer).toContain('FFmpeg is bundled in every download');
+    expect(installer).toContain('on Windows, Linux and macOS runners before publishing');
   });
 
   it('tests with the bundled FFmpeg of the leg\'s arch, then packages that arch\'s dmg, signed only when all secrets are set', () => {
