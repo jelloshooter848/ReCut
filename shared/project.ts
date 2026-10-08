@@ -908,11 +908,26 @@ function repairProbe(pr: Obj): MediaProbe {
   pr.size = num(pr.size, 0, nonNeg);
   pr.startTime = num(pr.startTime, 0);
   pr.browserPlayable = bool(pr.browserPlayable, false);
-  pr.audio = objList(pr.audio, 'probed audio stream');
+  pr.audio = objList(pr.audio, 'probed audio stream').filter(repairAudioStream);
   pr.subtitles = objList(pr.subtitles, 'probed subtitle stream');
   optional(pr, 'bitrate', isFiniteNum); optional(pr, 'playabilityReason', isStr);
   if ('video' in pr) { if (isObj(pr.video)) pr.video = repairVideoStream(pr.video); else { delete pr.video; note(FIELD_RESET); } }
   return pr as unknown as MediaProbe;
+}
+
+/**
+ * A stored audio stream entry: it is used as is until the file is probed again (an offline file never is), so an
+ * entry without a usable stream index is dropped (clips on it fall back to the first stream, as for a stream the
+ * file no longer has) and the other fields are reset when unusable.
+ */
+function repairAudioStream(a: Obj): boolean {
+  if (!isNonNegInt(a.index)) { note('probed audio stream without a usable index removed'); return false; }
+  a.codec = str(a.codec, 'unknown');
+  a.channels = num(a.channels, 0, (n) => Number.isSafeInteger(n) && n >= 0);
+  a.layout = str(a.layout, '');
+  a.sampleRate = num(a.sampleRate, 0, nonNeg);
+  optional(a, 'language', isStr); optional(a, 'title', isStr); optional(a, 'layoutGuessed', isBool);
+  return true;
 }
 
 /**
