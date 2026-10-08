@@ -9,7 +9,8 @@ All notable changes to ReCut are listed here, newest first. The format follows
 
 Every feature planned for 1.0 ([Road to 1.0](docs/ROADMAP.md#road-to-10)), in one release: local speech-to-text,
 intermediate and audio-only export, MKV with several audio tracks and soft subtitles, a centre-channel utility for
-5.1 sources, nested sequences and compound clips, and keyframes. Project files stay `formatVersion` 1; projects from
+5.1 sources, nested sequences and compound clips, and keyframes. **ReCut is now released for macOS** (Apple Silicon
+and Intel, signed and notarized), next to Windows and Linux. Project files stay `formatVersion` 1; projects from
 earlier releases open unchanged.
 
 ### Added
@@ -40,8 +41,22 @@ earlier releases open unchanged.
   timeline. They stay with the picture when you trim, split, roll or slide, work inside and on compound clips, and
   the export matches the preview (within a quarter of a pixel, 1.5 luma levels and 0.5 dB).
 
+- **macOS downloads:** `ReCut-<version>-macos-arm64.dmg` for Apple Silicon Macs and `ReCut-<version>-macos-x64.dmg`
+  for Intel Macs, macOS 12 or newer, signed with a Developer ID and notarized by Apple, so they open normally. Each
+  bundles FFmpeg and the speech-to-text engine for its processor (on Intel Macs transcription runs on the CPU only and
+  is slower). See [INSTALL](docs/INSTALL.md#macos) for which one to pick.
+
 ### Fixed
 
+- Fades to and from black exported darker than the preview showed (up to 16 luma levels), and on upper tracks they
+  covered the track below with black instead of fading the clip out
+  ([report](bugs/closed/2026-10-07-export-fade-to-black-ends-early.md)).
+- Transitions between two clips now export what the preview shows: a Cross Dissolve no longer dims halfway in the
+  preview, and a Dip to Black exports as the preview shows it (each clip fades over its own half, without needing
+  extra media past the cut; dips also export faster)
+  ([report](bugs/closed/2026-10-08-two-sided-transition-preview-mismatch.md)).
+- The Program monitor could briefly show the other clip's frame after a cut-back seek while paused, under load
+  ([report](bugs/closed/2026-10-07-program-transient-stale-frame-before-present.md)).
 - The Program monitor could keep showing the previous frame after a seek while paused
   ([report](bugs/closed/2026-10-07-program-stale-frame-after-seek.md)).
 - Mono sources played 3 dB louder in the preview than in the export
@@ -55,7 +70,11 @@ earlier releases open unchanged.
 ### Development
 
 - The Windows, Linux and macOS builds compile whisper.cpp 1.9.5 from a pinned, checksum-verified source and bundle it
-  like FFmpeg; the release workflow checks its size and that it starts.
+  like FFmpeg; the release workflow checks its size and that it starts. On macOS it is built without Accelerate's
+  BLAS, whose interface needs macOS 13.3, so transcription works from macOS 12; the build fails if such an import
+  returns.
+- Releases need the macOS jobs (both dmgs, signed and notarized) as well as Windows and Linux, and attach both dmgs.
+- A thumbnail-cancel unit test waits for the real event instead of a timing assumption.
 - A saved-project fixture for 0.8.0 (`tests/fixtures/projects/recut-0.8.0.recut`) with keyframes and nested sequences;
   older fixtures must open without either.
 - No new npm dependencies.
