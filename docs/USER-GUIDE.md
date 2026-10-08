@@ -209,9 +209,8 @@ Scenes in the library are reusable, tagged source ranges.
    - With only a sequence Out, the edit is back-timed to end there.
    - With all four points set, the source range wins at the sequence In.
 4. The first clip into an empty sequence asks **Change sequence to match clip?** Choosing **Change** adopts the
-   clip's frame size and rate. Do this before you build: the Inspector shows the frame rate but does not change it,
-   and the **Sequence Settings…** command changes it without re-timing the clips already in it (positions stay in
-   frames).
+   clip's frame size and rate. Do this before you build: once a sequence has clips its frame rate is fixed
+   (positions are frames), so neither the Inspector nor **Sequence Settings…** can change it.
 5. The source-patch buttons (**V1**, **A1**, ...) in the track headers choose the target tracks. Un-patch video for an audio-only edit
    (and the reverse).
 6. Other ways to add clips: drag from Project, Source (the grip button), Scenes or Transcript. You can also use
