@@ -56,6 +56,8 @@ The release PR adds `recut-<new version>.recut` ([docs/RELEASING.md](../../../do
 node scripts/make-project-fixture.mjs          # this checkout, at the version in package.json
 ```
 
-The unit suite fails while the fixture for the stable version in `package.json` is missing. When a release adds data
+The unit suite fails while the fixture for the stable version in `package.json` is missing. A release candidate
+(`1.0.0-rc.N`) has no fixture: the script refuses a pre-release version, and the candidates must open the last stable
+release's fixture like every other build ([docs/RELEASING.md → Release candidates](../../../docs/RELEASING.md#release-candidates)). When a release adds data
 to the project file, extend the scenario first (behind a check that the checkout has the feature) so the new
 fixture covers it, and add assertions for it to `tests/unit/project-compat.test.ts`.

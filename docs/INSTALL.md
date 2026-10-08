@@ -123,7 +123,7 @@ as the run's `ReCut-macos-arm64` and `ReCut-macos-x64` artifacts (see [RELEASING
 | Requirement | Version | Notes |
 |---|---|---|
 | Node.js | 20 or 22 (developed on 22) | npm comes with it. |
-| FFmpeg + FFprobe | 6.0 or newer (developed on 6.1.1) | On `PATH`, set with `RECUT_FFMPEG` / `RECUT_FFPROBE`, or bundled in a package you build yourself (see [Bundling FFmpeg](#bundling-ffmpeg)). Not needed for the released Windows builds and Linux AppImage, which bundle it. |
+| FFmpeg + FFprobe | 6.0 or newer (developed on 6.1.1) | On `PATH`, set with `RECUT_FFMPEG` / `RECUT_FFPROBE`, or bundled in a package you build yourself (see [Bundling FFmpeg](#bundling-ffmpeg)). Not needed for the released Windows builds, Linux AppImage and macOS dmgs, which bundle it. |
 | libx264 in your FFmpeg build | | Required for proxies and H.264 export. |
 | libx265 | optional | Only for H.265 / HEVC export. |
 | libass (`subtitles` filter) | optional | Only for burned-in subtitles. |
@@ -207,8 +207,8 @@ npm run dist       # build + electron-builder         → AppImage (Linux), dmg 
   signing is not set up.
 - A package you build yourself does **not** include FFmpeg unless `resources/ffmpeg/` exists when you build it, so
   its users install FFmpeg themselves as described above (on Windows, `Start ReCut.cmd` may already have downloaded
-  it there). The Windows builds and the Linux AppImage from CI are the published builds that bundle FFmpeg: the
-  workflow downloads it into `resources/ffmpeg/` before packaging. To ship it inside your own package, see
+  it there). The Windows builds, the Linux AppImage and the macOS dmgs from CI are the published builds that bundle
+  FFmpeg: the workflow downloads it into `resources/ffmpeg/` before packaging. To ship it inside your own package, see
   [Bundling FFmpeg](#bundling-ffmpeg).
 
 ### Bundling FFmpeg
@@ -283,6 +283,9 @@ All are optional. They are read by the main process (`electron/`).
 | `RECUT_UPDATE_URL` | Test-only URL asked instead of GitHub's latest-release API (for example `http://127.0.0.1:8080/latest`). Accepted only for a loopback `http(s)://127.0.0.1`, `localhost` or `[::1]` address; any other value is ignored. |
 | `RECUT_SMOKE=1` | Smoke test: disables the GPU, checks that the `recut-media://` protocol serves byte ranges / HEAD / 404 / 416, prints `smoke:` lines to stdout and quits after about 2 s. |
 | `RECUT_SMOKE_FILE` | The file the smoke test fetches (default `/usr/bin/ffmpeg`, or the Electron executable on Windows; the Linux CI job passes the AppImage itself). |
+| `RECUT_SMOKE_OUT` | Also writes the smoke test's `smoke:` lines to this file (a Windows GUI app has no console). |
+| `RECUT_WHISPER_CLI` | Absolute path to a `whisper-cli` to use instead of the bundled speech-to-text engine (tests, developers). ReCut never looks for one on `PATH`. |
+| `RECUT_WHISPER_MODEL_URL` | Test-only base URL for Whisper model downloads, like `RECUT_OCR_LANG_URL` (loopback addresses only; any other value is ignored). |
 
 Test and benchmark scripts use their own variables (`ATTACK_MEDIA_DIR`, `RECUT_PERF_*`). See
 [DEVELOPMENT](DEVELOPMENT.md).
@@ -294,28 +297,39 @@ Test and benchmark scripts use their own variables (`ATTACK_MEDIA_DIR`, `RECUT_P
 
 | Data | Location |
 |---|---|
-| Preferences (recent projects, shortcut overrides, window bounds, last export folder, optional `cacheDir`) | `<userData>/prefs.json` |
+| Preferences (recent projects, shortcut overrides, window bounds, last export folder, update-check setting, optional `cacheDir`) | `<userData>/prefs.json` |
 | Project | Wherever you save it: `*.recut` (JSON). Saves are atomic, and the previous version is kept as `*.recut.bak`. A project that had to be repaired on open is copied to `*.recut.pre-repair-<time>` first; a damaged one opened from its `.bak` is kept as `*.recut.corrupt-<time>`. |
 | Autosave of a saved project | Next to it: `<project>.recut.autosave` |
 | Autosave of a never-saved project | `<userData>/autosave/untitled.recut.autosave` |
-| Cache (`thumbs/`, `waves/`, `proxies/`, `scenes/`, `ocr/` for OCR results) | `$RECUT_CACHE_DIR`, else `cacheDir` in `prefs.json`, else `<userData>/cache` |
+| Cache (`thumbs/`, `waves/`, `proxies/`, `scenes/`, `ocr/` for OCR results, `whisper/` for transcription results, `ids/` for content keys) | `$RECUT_CACHE_DIR`, else `cacheDir` in `prefs.json`, else `<userData>/cache` |
 | OCR language data (`<code>.traineddata`, one file per installed language; `*.part` while a download runs) | `<userData>/ocr/tessdata` |
+| Whisper models (`ggml-<model>.bin`; `*.part` while a download runs) and transcription temp folders (`tmp/`, removed after each job) | `<userData>/whisper/models`, `<userData>/whisper/tmp` |
 | Panel layouts, the Jobs tab, Inspector collapsed sections, last export settings per project | Renderer `localStorage` (inside `userData`) |
-| Export temp files | `<os tmpdir>/recut-export-<id>/` (filter script, burn-in subtitles, chunks), deleted after each export. The render itself is written next to the output as `<name>.recut-part-<random>.mp4` and renamed at the end; if that rename fails it is kept as `<name>.recut-unsaved-<time>.mp4`. |
+| Export temp files | `<os tmpdir>/recut-export-<id>/` (filter script, burn-in and soft subtitles, chapters, chunks), deleted after each export. The render itself is written next to the output as `<name>.recut-part-<random>.<ext>` (`.mp4`, `.mkv`, `.mov`, `.wav`, `.flac`) and renamed at the end; if that rename fails it is kept as `<name>.recut-unsaved-<time>.<ext>`. |
 
-Cache entries are keyed by file path + size + mtime, so a changed source file gets fresh thumbnails and proxies. You
-can delete the cache folder at any time; it is rebuilt on demand. Thumbnails cached by builds before 5 October 2026
-are regenerated once: the thumbnail cache version changed when anamorphic sources started getting their display
-shape. Preferences › Application › **Cache folder** shows the current location and has a **Reveal** button. The
-location cannot be changed from the UI: edit `cacheDir` in `prefs.json` or set `RECUT_CACHE_DIR`.
+Cache entries are keyed by the file's content (its size and a fingerprint of sampled blocks), so a changed source file
+gets fresh thumbnails and proxies, and a moved or renamed one keeps them. You can delete the cache folder at any time;
+it is rebuilt on demand. Thumbnails cached by builds before 5 October 2026 are regenerated once: the thumbnail cache
+version changed when anamorphic sources started getting their display shape. Preferences › Application › **Cache
+folder** shows the current location and has a **Reveal** button. The location cannot be changed from the UI: edit
+`cacheDir` in `prefs.json` or set `RECUT_CACHE_DIR`.
 
 ### Network access
 
-ReCut works offline. The only network access it makes is an OCR language install you start yourself (**File › OCR
-Languages…** › **Install**, the Read with OCR dialog's **Install <Language>** button, or Preferences › Application ›
-OCR languages › **Manage…**): it downloads that one
-language file from `raw.githubusercontent.com` (Tesseract `tessdata_fast`, pinned to one commit), checks its size
-and SHA-256 against the list built into ReCut and only then saves it in `<userData>/ocr/tessdata`. Downloads use the
-system proxy settings. Where the network is blocked, **Install from file…** accepts the same file downloaded
-elsewhere, with the same SHA-256 check. Removing a language deletes its file; **Open folder** shows the folder.
-Reading subtitles with OCR itself never uses the network.
+ReCut works offline. It uses the network only for three things, each of which you start or allow yourself:
+
+- **An OCR language install** (**File › OCR Languages…** › **Install**, the Read with OCR dialog's **Install
+  <Language>** button, or Preferences › Application › OCR languages › **Manage…**): it downloads that one language
+  file from `raw.githubusercontent.com` (Tesseract `tessdata_fast`, pinned to one commit), checks its size and SHA-256
+  against the list built into ReCut and only then saves it in `<userData>/ocr/tessdata`. Where the network is
+  blocked, **Install from file…** accepts the same file downloaded elsewhere, with the same SHA-256 check. Removing a
+  language deletes its file; **Open folder** shows the folder. Reading subtitles with OCR itself never uses the
+  network.
+- **A Whisper model install** (**File › Transcription Models…** › **Install**): it downloads that one model from
+  `huggingface.co` (redirected only to Hugging Face's file storage), pinned to one commit, checks its size and SHA-256
+  the same way and saves it in `<userData>/whisper/models`. **Install from file…** works offline. Transcribing never
+  uses the network.
+- **The update check**, only after you agree to it or choose **Help › Check for Updates…**: one request to
+  `api.github.com` for the latest release (see [USER-GUIDE › Updates](USER-GUIDE.md#updates)). Nothing is downloaded.
+
+Downloads and the update check use the system proxy settings.

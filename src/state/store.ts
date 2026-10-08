@@ -16,7 +16,7 @@ import type {
   SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock, SubtitleTrack, Track, Transition, TransitionType, TagVocabulary, SequenceView,
 } from '../../shared/model';
 import { uid } from '../../shared/ids';
-import { isValidFps, secondsToFrames } from '../../shared/time';
+import { fpsEquals, isValidFps, secondsToFrames } from '../../shared/time';
 import { createProject, createSequence, LiveView } from '../../shared/project';
 import {
   breakApartCompoundClip as nestBreakApart, innerFrameAt, isNestedClip, makeCompoundClip as nestMakeCompound, nestedClipsFor, nestProblem,
@@ -45,6 +45,17 @@ import type {
 // ------------------------------------------------------------------
 
 function isPosInt(v: unknown): v is number { return Number.isSafeInteger(v) && (v as number) > 0; }
+
+/** Why a sequence's frame rate cannot change (the Inspector tooltip and the Sequence Settings dialog say the same). */
+export const FPS_LOCKED_REASON = 'Frame rate is fixed once a sequence has clips (positions are frames).';
+
+/**
+ * True when the sequence holds any clip: its frame rate is then fixed, because clip positions are stored in frames
+ * at that rate and changing it would silently re-time every clip.
+ */
+export function sequenceHasClips(seq: Sequence): boolean {
+  return allTracks(seq).some((t) => t.clips.length > 0);
+}
 
 /**
  * A sequence settings patch keeps the invariants normalizeProject enforces on load (shared/project.ts
@@ -928,6 +939,14 @@ export const useStore = create<RecutStore>()((set, get) => {
     updateSequenceSettings(seqId, patch) {
       // An invalid patch is ignored as a whole (never half-applied, no undo step).
       if (!isValidSequenceSettingsPatch(patch)) return;
+      // The frame rate of a sequence with clips is fixed: drop a change (with a warning) and apply the rest.
+      const cur = get().project.sequences[seqId];
+      if (patch.fps && cur && !fpsEquals(patch.fps, cur.fps) && sequenceHasClips(cur)) {
+        get().toast('warning', `Frame rate not changed. ${FPS_LOCKED_REASON}`);
+        const { fps: _dropped, ...rest } = patch;
+        if (!Object.keys(rest).length) return;
+        patch = rest;
+      }
       commit('Sequence settings', (d) => {
         const seq = d.sequences[seqId];
         if (seq) Object.assign(seq, patch.fps ? { ...patch, fps: { num: patch.fps.num, den: patch.fps.den } } : patch);

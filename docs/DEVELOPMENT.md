@@ -16,18 +16,27 @@ shared/        Pure TypeScript shared by main and renderer. No DOM, no Node.
   pathKey.ts     Lexical path resolve + case folding for the renderer's "is this a source file?" check
   subtitles.ts   SRT / WebVTT parse + serialize
   ipc.ts         IPC channel names, request/response types, recut-media:// URL helpers
+  ...            exportFormat, exportPlan, nest, keyframes, audioChannels, collect, ocr, whisper, update and more
+                 (one line each in ARCHITECTURE › Shared code)
 electron/      Main process
   main.ts        Window, single-instance lock, quit protocol, smoke test
   menu.ts        Application menu (sends command ids to the renderer)
   ipc.ts         ipcMain handlers (dialogs, project I/O, prefs, fs, media, jobs, export)
   preload.ts     contextBridge → window.recut
-  project/       io.ts (atomic save, .bak, autosave/recovery, prefs), argv.ts (--project parsing)
-  media/         ffmpeg/ffprobe runners, probe, protocol + range, thumbs, waveform, proxy, sceneDetect, subtitlesExtract, cache
+  project/       io.ts (atomic save, .bak, autosave/recovery, prefs), argv.ts (--project parsing),
+                 collect.ts (Collect Project)
+  media/         ffmpeg/ffprobe runners, probe, protocol + range, thumbs, waveform, proxy, channelProxy, sceneDetect,
+                 subtitlesExtract, cache + identity (content keys)
+  ocr/           Bitmap-subtitle OCR job, Tesseract worker pool, language installer
+  whisper/       Speech-to-text job, bundled whisper-cli, model installer
+  net/           Verified, resumable downloads (OCR languages, Whisper models)
   jobs/          JobQueue (lanes) + in-flight de-duplication
   export/        renderGraph.ts (pure graph builder), chunks.ts (chunk planner), exporter.ts (runs ffmpeg)
   safeMkdir.ts   Non-recursive, time-bounded output-folder creation
   pathSafety.ts  realpath / device+inode "same file as a project source?" checks (video and subtitle export)
   fs.ts          fs helpers for IPC, relink scan, guarded atomic subtitle export (writeSubtitleFile)
+  updateCheck.ts Opt-in update notice (updateIpc.ts: its IPC)
+  licences.ts    The licence files Help › About › Licences opens
 src/           Renderer (React 18)
   main.tsx, App.tsx    Entry, shell, window.__recut automation hook
   state/         store.ts (single zustand + immer store), history.ts, mediaActions.ts (IPC-backed actions), selectors
@@ -35,11 +44,16 @@ src/           Renderer (React 18)
   keyboard/      Command ids, default bindings, binding engine, Keyboard Shortcuts dialog
   playback/      Clock, element pool, frame planner, SequencePlayer, SourcePlayer, SyncGroup, thumbnails
   panels/        One directory per panel (project, source, program, timeline, inspector, transcript, subtitles,
-                 scenes, continuity, storyline, compare, export, jobs, markers, history) + registry.ts
+                 scenes, continuity, storyline, compare, export, jobs, markers, history) and dialog (collect, ocr,
+                 whisper) + registry.ts
   components/    Layout (workspaces, tabbed zones, top bar) and UI primitives
   transcript/    Transcript index/search and TranscriptProvider implementations
-tests/         unit, e2e, attack, attack-qa, perf (see below)
-scripts/       dev.mjs, build-electron.mjs, make-test-media.sh, screenshot.mjs
+  ocr/, whisper/ OCR and transcription dialog state and menu helpers
+tests/         unit, e2e, attack, attack-qa, perf (see below); fixtures (a saved project per release, OCR language
+               data), helpers
+scripts/       dev.mjs, build-electron.mjs, make-test-media.sh, screenshot.mjs, make-project-fixture.mjs,
+               third-party-notices.mjs, ocr-manifest.mjs, whisper-source.mjs, readme-media.mjs;
+               linux/, mac/, windows/: get-ffmpeg and get-whisper per platform (Windows: also the launcher)
 docs/          This documentation, attack reports (docs/attack), screenshots
 ```
 

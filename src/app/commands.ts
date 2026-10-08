@@ -14,7 +14,7 @@ import { registerCommand, runCommand, type CommandInput } from '@/keyboard/short
 import { useStore } from '@/state/store';
 import { activeSequence, selectedClips } from '@/state/selectors';
 import { importSubtitleFile, recutApi } from '@/state/mediaActions';
-import { importPaths } from '@/panels/project/actions';
+import { IMPORT_FILTERS, SUBTITLE_FILTERS, importPaths } from '@/panels/project/actions';
 import { useLayoutStore } from '@/components/layout/layoutStore';
 import { toast } from '@/components/ui/toastStore';
 import type { Clip, ID, Sequence, Track, TransitionType } from '@shared/model';
@@ -95,14 +95,12 @@ const EXTRA_META: Record<string, { title: string; category: string; keys: string
   [EXTRA_COMMAND_IDS.breakApartCompound]: { title: 'Break Apart Compound Clip', category: 'Editing', keys: [] },
 };
 
-const MEDIA_FILTERS = [
-  { name: 'Media', extensions: ['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', 'mpg', 'mpeg', 'ts', 'm2ts', 'wmv', 'flv', 'mp3', 'wav', 'aac', 'm4a', 'flac', 'ogg', 'ac3', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'] },
-  { name: 'Video', extensions: ['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', 'mpg', 'mpeg', 'ts', 'm2ts', 'wmv', 'flv'] },
-  { name: 'Audio', extensions: ['mp3', 'wav', 'aac', 'm4a', 'flac', 'ogg', 'ac3'] },
-  { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'] },
-  { name: 'All Files', extensions: ['*'] },
-];
-const SUBTITLE_FILTERS = [{ name: 'Subtitles', extensions: ['srt', 'vtt'] }, { name: 'All Files', extensions: ['*'] }];
+/**
+ * The About dialog's licence line. Every release build (Windows installer, Linux AppImage, both macOS dmgs) bundles a
+ * GPL-3.0-or-later FFmpeg build: see THIRD_PARTY_NOTICES.md.
+ */
+export const ABOUT_LICENCE_TEXT = 'ReCut is free software under the MIT License. FFmpeg is a separate program with its own licence '
+  + '(the FFmpeg bundled with every ReCut release build is GPL-3.0-or-later); see Licences.';
 
 // ------------------------------------------------------------------
 // Helpers
@@ -290,7 +288,7 @@ function copySelection(): boolean {
 async function importMediaViaDialog(): Promise<void> {
   const api = recutApi();
   if (!api) { toast('warn', 'Importing requires the desktop app'); return; }
-  const paths = await api.openFiles({ title: 'Import Media', filters: MEDIA_FILTERS, multi: true });
+  const paths = await api.openFiles({ title: 'Import Media', filters: IMPORT_FILTERS, multi: true });
   if (!paths.length) return;
   // Same path as the Project panel's Import button: auto-routes into Movies / TV › Series › Season bins,
   // picks up sidecar subtitles and reports results with its own toasts.
@@ -610,8 +608,7 @@ export function buildEditingCommands(): CommandInput[] {
       if (!api) { toast('info', 'ReCut — fan-edit video editor'); return; }
       const info = await api.appInfo();
       const files = await api.licenceFiles?.().catch(() => []) ?? [];
-      const licence = 'ReCut is free software under the MIT License. FFmpeg is a separate program with its own licence '
-        + '(the FFmpeg bundled with the Windows builds is GPL); see Licences.';
+      const licence = ABOUT_LICENCE_TEXT;
       const choice = await api.message({
         type: 'info', title: 'About ReCut', message: `ReCut ${info.version}`,
         detail: `${licence}\n\nFFmpeg: ${info.ffmpegVersion ?? 'not found'}\n${info.ffmpegPath ?? ''}\nCache: ${info.cacheDir}`,

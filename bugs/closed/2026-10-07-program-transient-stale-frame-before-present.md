@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | open |
+| Status | fixed |
 | Severity | low |
 | Area | playback (Program monitor) |
 | Reported by / date | Claude (agent), 2026-10-07 |
