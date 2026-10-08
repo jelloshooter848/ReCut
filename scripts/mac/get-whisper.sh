@@ -14,8 +14,10 @@
 #
 # arm64 build: one static executable (no dylibs to sign or find): ggml with Metal for the GPU and the Metal shader
 # library embedded in the binary (GGML_METAL_EMBED_LIBRARY), so nothing looks for a .metal / .metallib file at run
-# time; Accelerate for BLAS; GGML_NATIVE=OFF with the generic Apple Silicon CPU target, so it runs on every M-series
-# Mac (macOS 12 or later). Must be built on an Apple Silicon Mac.
+# time; no BLAS backend (GGML_BLAS=OFF: ggml's Accelerate BLAS backend uses Accelerate's new BLAS interface, which
+# exists only from macOS 13.3, so whisper-cli would not load on macOS 12.0-13.2; Metal does the heavy work and the CPU
+# fallback uses ggml's own kernels, as on the other platforms); GGML_NATIVE=OFF with the generic Apple Silicon CPU
+# target, so it runs on every M-series Mac (macOS 12 or later). Must be built on an Apple Silicon Mac.
 #
 # x64 build (Intel Macs): CPU only, no Metal and no BLAS backend, built like the Linux and Windows engines: shared ggml
 # with the CPU kernels as loadable modules (GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS, GGML_NATIVE=OFF), so at start
@@ -116,7 +118,7 @@ if [[ "$arch" == arm64 ]]; then
     -DBUILD_SHARED_LIBS=OFF
     -DGGML_METAL=ON
     -DGGML_METAL_EMBED_LIBRARY=ON
-    -DGGML_BLAS=ON
+    -DGGML_BLAS=OFF
     "${common_flags[@]}"
   )
   what='arm64, Metal'
@@ -208,11 +210,13 @@ for f in "${machos[@]}"; do
       *) echo "[ReCut] $name links to $lib, outside the system and the engine folder" >&2; otool -L "$f" >&2; exit 1 ;;
     esac
   done < <(otool -L "$f" | tail -n +2 | awk '{print $1}')
-  # Accelerate's new (ILP64) BLAS / LAPACK interface exists only from macOS 13.3: its symbols are weak imports that
-  # would be missing on macOS 12.
+  # Accelerate's new (ILP64) BLAS / LAPACK interface exists only from macOS 13.3, newer than the macOS $min_macos
+  # target: its symbols are weak imports that are missing on macOS 12.0-13.2, so the engine would not load there.
+  # Both archs: any such import fails the build.
   if nm -u "$f" 2>/dev/null | grep -q 'NEWLAPACK'; then
-    if [[ "$arch" == x64 ]]; then echo "[ReCut] $name uses Accelerate's macOS 13.3 BLAS interface" >&2; exit 1; fi
-    echo "[ReCut] note: $name imports Accelerate's new BLAS interface (macOS 13.3+): $(nm -u "$f" | grep -c NEWLAPACK) symbols"
+    echo "[ReCut] $name imports Accelerate's new BLAS interface, which needs macOS 13.3 (the target is macOS $min_macos):" >&2
+    nm -u "$f" | grep 'NEWLAPACK' >&2
+    exit 1
   fi
 done
 if [[ "$arch" == x64 ]]; then

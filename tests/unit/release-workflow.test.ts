@@ -457,6 +457,12 @@ describe('Windows workflow: the macOS dmg job (advisory during bring-up)', () =>
     expect(sh).toContain('arch="${MAC_ARCH:-arm64}"');
     expect(sh).toContain('-a|--arch) arch=');
     for (const f of ['-DCMAKE_OSX_ARCHITECTURES=arm64', '-DGGML_METAL=ON', '-DGGML_METAL_EMBED_LIBRARY=ON', '-DBUILD_SHARED_LIBS=OFF']) expect(sh).toContain(f);
+    // No BLAS on either arch: ggml's Accelerate backend imports the macOS 13.3 BLAS interface (target: macOS 12), and
+    // any such import fails the build on both archs.
+    expect(sh).not.toContain('-DGGML_BLAS=ON');
+    expect(sh.match(/^ {4}-DGGML_BLAS=OFF$/gm)).toHaveLength(2);
+    expect(sh).toMatch(/if nm -u "\$f" 2>\/dev\/null \| grep -q 'NEWLAPACK'; then\n(?:.*\n){1,2}\s+exit 1\n\s+fi/);
+    expect(sh).not.toContain('note: $name imports');
     for (const f of ['-DCMAKE_OSX_ARCHITECTURES=x86_64', '-DGGML_METAL=OFF', '-DGGML_BLAS=OFF', '-DGGML_BACKEND_DL=ON', '-DGGML_CPU_ALL_VARIANTS=ON', '-DCMAKE_INSTALL_RPATH=@loader_path']) {
       expect(sh).toContain(f);
     }
