@@ -49,7 +49,7 @@ in statically, so they too are licensed under the GPL version 3 or later as a wh
 architecture's build. The two programs load only macOS's own libraries and frameworks and need macOS 12 or newer;
 `FFMPEG-BUILD.txt` records the platform (`arm64 macOS` or `x86-64 macOS`), the build name, the minimum macOS, the
 linking and the archive's SHA-256. Its licence file is `COPYING.GPLv3` from the same jellyfin-ffmpeg release tag.
-Until macOS is an official platform the dmgs are only CI test builds, not releases.
+Both dmgs are attached to every release from 0.8.0 on.
 
 **Corresponding source.** `FFMPEG-BUILD.txt` is written by the download script when the build is downloaded. It records
 the URL the build came from, the build name, the full `ffmpeg -version` output (version and configuration), the
