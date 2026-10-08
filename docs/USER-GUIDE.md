@@ -300,6 +300,48 @@ first keyframe's, after the last it is the last one's.
    deltas), **only in A** or **only in B**. Click an entry to jump there.
 4. To restore a snapshot, use the restore button next to it (Compare › Alternate cuts, or Inspector › Sequence).
 
+### Acts and reels: nested sequences and compound clips
+
+A sequence can be used as a clip in another sequence (a **nested sequence**). Build each act, episode or reel as its
+own sequence and drop it into as many cuts as you like: an edit made inside it shows everywhere it is nested.
+
+- **Make Compound Clip** (Clip menu, or right-click a clip): the selected clips, and the clips linked to them, move
+  into a new sequence ("Nested Sequence 01", next to the current one in the Project panel) at the same relative
+  positions and track numbers, with the transitions between them. One linked nested picture + sound pair takes their
+  place. Subtitle cues attached to those clips stay where they were, attached to the nested clip. It is one undo step.
+- **Nest a whole sequence:** drag it from the Project panel onto the timeline (overwrite; hold Ctrl to insert), or
+  right-click it › **Nest in Active Sequence** (at the playhead). A sequence that has picture and sound becomes a
+  linked pair. A sequence cannot contain itself, directly or through another nested sequence, and nesting is limited
+  to 8 levels; ReCut refuses those with a message.
+- **Open in Timeline:** double-click the nested clip (or Clip menu, right-click, or the Inspector's button). Its
+  sequence becomes the active one, with the playhead on the frame you were looking at.
+- **Break Apart Compound Clip** (Clip menu or right-click) puts the inner clips back on this timeline, over the range
+  the nested clip plays, with the nested clip's position, scale, opacity and audio levels folded into them. It goes
+  one level deep (nested clips inside stay nested), keeps the inner sequence in the project, and needs both
+  sequences at the same frame rate.
+- A nested clip is edited like any clip: move, trim, razor, transitions at its edges, transform, crop, opacity, gain,
+  level, fades, mute, tags. Its **speed is always 100 %**. It shows a **NEST** badge and a striped body instead of
+  thumbnails and a waveform. A nested clip on a video track shows the inner sequence's picture (its video tracks); one
+  on an audio track plays its sound (its audio tracks, with their volume, mute and solo).
+- **Keyframes** work inside nested sequences and on the nested clip itself. Keyframes on inner clips play where
+  they are on the inner timeline. Keyframes on the nested clip (position, scale, opacity, level, added in the Inspector
+  as on any clip) animate the whole inner picture or sound on top of them, frame for frame in the Program monitor and
+  the export. Like the nested clip's other settings, its keyframes count frames of the outer sequence.
+- **Frame rate and size:** the inner sequence plays in real time at the outer sequence's frame rate (a 25 fps reel in
+  a 23.976 fps cut keeps its duration), and a different frame size is fitted like a media file.
+- **When the inner sequence changes length,** nested clips keep their own length. If the inner sequence gets shorter,
+  the part of the nested clip past its new end is black and silent (the Inspector says so): trim the nested clip. If
+  it gets longer, trim the nested clip out to show more; trims stop at the inner sequence's end.
+- **Match Frame** (F) on a nested clip goes through to the media that plays inside it at the playhead, and the
+  Program monitor's SRC timecode shows that media's timecode. Transcript search in a sequence finds lines spoken inside
+  its nested clips ("on timeline", on the nested clip). Compare lists a nested clip as one clip.
+- **Export** renders the nested content directly into the cut (no intermediate file), exactly as the Program monitor
+  shows it. A nested clip's sound belongs to the outer track it is on (for one file per audio track and for MKV audio
+  tracks). Chapters, subtitle tracks and burned-in subtitles come from the exported sequence only: markers and subtitle
+  tracks inside nested sequences are not exported. Put chapter markers and subtitle tracks on the outer sequence.
+- Deleting a sequence that is nested elsewhere asks first; its nested clips then play nothing, and the Export
+  dialog's Checks warn about them. Collect Project copies the media used inside nested sequences.
+
 ## 12. Continuity notes
 
 - **Continuity** panel › **Add note at playhead**, or right-click the timeline › **Add Continuity Note Here…**. Give

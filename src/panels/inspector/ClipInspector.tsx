@@ -5,13 +5,14 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { FolderOpen, Link2, Plus, RotateCcw, Unlink2, X } from 'lucide-react';
-import type { AudioChannelSelection, Clip, ClipAudio, ClipTransform, ID, MediaItem, Rational, TagVocabulary, Track, Transition, TransitionType } from '@shared/model';
+import type { AudioChannelSelection, Clip, ClipAudio, ClipTransform, ID, MediaItem, Rational, Sequence, TagVocabulary, Track, Transition, TransitionType } from '@shared/model';
+import { innerFrameAt, isNestedClip } from '@shared/nest';
 import {
   canDownmix, channelLabel, channelSelectionLabel, channelSelectionProblem, clampDownmixDb, clipAudioStream, DEFAULT_CENTRE_DB, DEFAULT_SURROUND_DB,
   DOWNMIX_DB_MAX, DOWNMIX_DB_MIN, isMultichannel, streamChannelIds,
 } from '@shared/audioChannels';
-import { clampSpeedPercent, clipEnd, clipSourceOut, defaultAudio, defaultTransform, findClip, linkedClips, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN, transitionsForClip } from '@shared/timeline';
-import { formatSequenceSecondsTimecode, fpsEquals, fpsLabel, validFpsOr } from '@shared/time';
+import { clampSpeedPercent, clipEnd, clipSourceOut, defaultAudio, defaultTransform, findClip, linkedClips, sequenceDuration, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN, transitionsForClip } from '@shared/timeline';
+import { formatSequenceSecondsTimecode, formatSequenceTimecode, fpsEquals, fpsLabel, validFpsOr } from '@shared/time';
 import { activeSequence, identityLabel, originalTimecode, selectedAudioTargets, selectedClips, selectedClipTracks, selectedLinkedCount, setClipsAudioStream, useStore } from '@/state';
 import { clipChannelProxy, resolveAudioStream } from '@/playback/mediaSource';
 import { channelProxyJobId, rebuildChannelProxy } from '@/app/channelProxies';
@@ -59,18 +60,22 @@ export function ClipInspector({ seqId, fps }: { seqId: ID; fps: Rational }) {
   const audioTargets = useStore(selectedAudioTargets);
   const media = useStore((s) => (clips.length ? s.project.media[clips[0].mediaId] : undefined));
   const linkedCount = useStore(selectedLinkedCount);
+  // Nested sequence clips (Roadmap §8): the sequence they play instead of a media file.
+  const nestedSeq = useStore((s) => (clips.length && isNestedClip(clips[0]) && Object.hasOwn(s.project.sequences, clips[0].sequenceId) ? s.project.sequences[clips[0].sequenceId] : undefined));
 
   if (clips.length === 0) return <div className="insp-empty p-8">Selected clips are not in the active sequence.</div>;
   const single = clips.length === 1 ? clips[0] : null;
   const videoClips = clips.filter((c) => c.kind === 'video');
   const ids = clips.map((c) => c.id);
+  const anyNested = clips.some(isNestedClip);
 
   return (
     <>
-      <ClipHeader seqId={seqId} clips={clips} media={media} linkedCount={linkedCount} />
-      <SourceSection seqId={seqId} fps={fps} clips={clips} media={media} />
+      <ClipHeader seqId={seqId} clips={clips} media={media} linkedCount={linkedCount} nestedName={nestedSeq?.name} />
+      {single && isNestedClip(single) ? <NestedSection seqId={seqId} fps={fps} clip={single} inner={nestedSeq} />
+        : anyNested ? null : <SourceSection seqId={seqId} fps={fps} clips={clips} media={media} />}
       {videoClips.length > 0 ? <VideoSection seqId={seqId} clips={videoClips} /> : null}
-      <SpeedSection seqId={seqId} fps={fps} clips={clips} />
+      {anyNested ? null : <SpeedSection seqId={seqId} fps={fps} clips={clips} />}
       <AudioSection seqId={seqId} fps={fps} targets={audioTargets} selectedIds={ids} />
       <TagsSection seqId={seqId} clips={clips} />
       {single && tracks[0] ? <TransitionsSection seqId={seqId} fps={fps} clip={single} track={tracks[0]} /> : null}
@@ -80,7 +85,7 @@ export function ClipInspector({ seqId, fps }: { seqId: ID; fps: Rational }) {
 }
 
 // ------------------------------------------------------------------ header
-function ClipHeader({ seqId, clips, media, linkedCount }: { seqId: ID; clips: Clip[]; media: MediaItem | undefined; linkedCount: number }) {
+function ClipHeader({ seqId, clips, media, linkedCount, nestedName }: { seqId: ID; clips: Clip[]; media: MediaItem | undefined; linkedCount: number; nestedName?: string }) {
   const single = clips.length === 1 ? clips[0] : null;
   const ids = clips.map((c) => c.id);
   const allEnabled = clips.every((c) => c.enabled);
@@ -103,7 +108,8 @@ function ClipHeader({ seqId, clips, media, linkedCount }: { seqId: ID; clips: Cl
       </div>
       <div className="insp-sub">
         <span className="badge dim">{kindLabel}</span>
-        {media ? <span className="ellipsis" title={media.path}>{media.name}</span> : <span className="text-danger">media missing</span>}
+        {isNestedClip(clips[0]) ? (nestedName !== undefined ? <span className="ellipsis" title="Nested sequence">Sequence: {nestedName}</span> : <span className="text-danger">sequence missing</span>)
+          : media ? <span className="ellipsis" title={media.path}>{media.name}</span> : <span className="text-danger">media missing</span>}
         {media?.offline ? <span className="badge danger">offline</span> : null}
         {!allEnabled ? <span className="badge warn">disabled</span> : null}
         {single ? (
@@ -123,6 +129,30 @@ function ClipHeader({ seqId, clips, media, linkedCount }: { seqId: ID; clips: Cl
         {color ? <span className="text-xs text-dim">{labelColorHex(color)}</span> : null}
       </div>
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ nested sequence (Roadmap §8)
+function NestedSection({ seqId, fps, clip, inner }: { seqId: ID; fps: Rational; clip: Clip; inner: Sequence | undefined }) {
+  if (!inner) {
+    return <Section id="source" title="Nested sequence"><div className="insp-note warn">Its sequence is no longer in the project: the clip plays nothing.</div></Section>;
+  }
+  const innerFrames = sequenceDuration(inner);
+  const inF = innerFrameAt(clip, clip.start, fps, inner.fps);
+  const outF = Math.round(((clip.sourceIn + (clip.duration * fps.den) / fps.num) * inner.fps.num) / inner.fps.den);
+  const st = useStore.getState;
+  return (
+    <Section id="source" title="Nested sequence" badge={`${fpsLabel(inner.fps)} fps`}>
+      <Row label="Sequence"><Value>{inner.name}</Value></Row>
+      <Row label="Plays" title="In → out on the nested sequence's timeline"><Range a={formatSequenceTimecode(inF, inner.fps)} b={formatSequenceTimecode(outF, inner.fps)} testId="nested-range" /></Row>
+      <Row label="Length"><Value dim>{formatSequenceTimecode(innerFrames, inner.fps)} · {inner.width}×{inner.height}</Value></Row>
+      {outF > innerFrames ? <div className="insp-note warn">The clip runs past the end of its sequence: the rest is black and silent.</div> : null}
+      {!fpsEquals(inner.fps, fps) ? <div className="insp-note">Plays at this sequence's {fpsLabel(fps)} fps (the nested sequence is {fpsLabel(inner.fps)} fps).</div> : null}
+      <div className="row gap-4 p-4">
+        <button type="button" className="btn btn-sm" data-testid="open-nested" onClick={() => { st().openNestedSequence(seqId, clip.id); }}>Open in Timeline</button>
+        <button type="button" className="btn btn-sm btn-ghost" onClick={() => { st().breakApartCompoundClip(seqId, clip.id); }}>Break Apart</button>
+      </div>
+    </Section>
   );
 }
 

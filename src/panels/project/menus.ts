@@ -103,6 +103,11 @@ export function sequenceMenu(row: SequenceRow, env: MenuEnv): MenuItem[] {
   return [
     { label: 'Open in Timeline', shortcut: 'Enter', onSelect: () => openSequence(s.id) },
     { label: 'Duplicate', onSelect: () => { const id = st.duplicateSequence(s.id, `${s.name} copy`); if (id) toast('ok', 'Sequence duplicated'); } },
+    {
+      // Roadmap §8: nest this sequence in the active one at its playhead (cycles are refused with a toast).
+      label: 'Nest in Active Sequence', disabled: !st.project.activeSequenceId || st.project.activeSequenceId === s.id,
+      onSelect: () => { const a = st.project.activeSequenceId; if (a) st.nestSequence(a, s.id, st.project.sequences[a]?.view.playhead ?? 0); },
+    },
     { separator: true },
     { label: 'Rename', shortcut: 'F2', onSelect: () => env.startRename(row.key) },
     { label: 'Delete Sequence', shortcut: 'Del', onSelect: () => { void deleteSequenceConfirmed(s.id); } },

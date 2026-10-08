@@ -20,6 +20,7 @@ import { toast } from '@/components/ui/toastStore';
 import type { Clip, ID, Sequence, Track, TransitionType } from '@shared/model';
 import { secondsToFrames, validFpsOr } from '@shared/time';
 import { addTransition, allTracks, clipAt, clipEnd, findClip, nextEdit, prevEdit, removableDisabledClipIds, sequenceDuration, sourceTimeAt } from '@shared/timeline';
+import { isNestedClip, sourceUnder } from '@shared/nest';
 import { MAX_ZOOM, MIN_ZOOM, minZoomFor, zoomAround, zoomToFit } from '@/panels/timeline/viewMath';
 import { useTimelineUi } from '@/panels/timeline/timelineStore';
 import { insertSourceIntoSequence } from '@/panels/source/insert';
@@ -58,6 +59,9 @@ export const EXTRA_COMMAND_IDS = {
   sequenceSettings: 'sequence.settings',
   about: 'help.about',
   extractCentreChannel: 'clip.extractCentreChannel',
+  makeCompoundClip: 'clip.makeCompound',
+  openInTimeline: 'clip.openInTimeline',
+  breakApartCompound: 'clip.breakApart',
 } as const;
 
 const EXTRA_META: Record<string, { title: string; category: string; keys: string[] }> = {
@@ -83,6 +87,9 @@ const EXTRA_META: Record<string, { title: string; category: string; keys: string
   [EXTRA_COMMAND_IDS.sequenceSettings]: { title: 'Sequence Settings…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.about]: { title: 'About ReCut', category: 'Help', keys: [] },
   [EXTRA_COMMAND_IDS.extractCentreChannel]: { title: 'Extract Centre Channel (Dialogue)', category: 'Editing', keys: [] },
+  [EXTRA_COMMAND_IDS.makeCompoundClip]: { title: 'Make Compound Clip', category: 'Editing', keys: [] },
+  [EXTRA_COMMAND_IDS.openInTimeline]: { title: 'Open in Timeline', category: 'Editing', keys: [] },
+  [EXTRA_COMMAND_IDS.breakApartCompound]: { title: 'Break Apart Compound Clip', category: 'Editing', keys: [] },
 };
 
 const MEDIA_FILTERS = [
@@ -114,6 +121,19 @@ export function runExtractCentreChannel(seqId: ID, clipId: ID | undefined): bool
   return true;
 }
 const seqNow = (): Sequence | null => activeSequence(S());
+
+/** The selected nested clip under (or nearest to) the playhead, else the first selected nested clip (Roadmap §8). */
+function selectedNestedClip(seq: Sequence): Clip | undefined {
+  const nested = selectedClips(S()).filter(isNestedClip);
+  const ph = seq.view.playhead;
+  return nested.find((c) => c.kind === 'video' && c.start <= ph && clipEnd(c) > ph) ?? nested.find((c) => c.start <= ph && clipEnd(c) > ph) ?? nested[0];
+}
+
+/** Open in Timeline (Roadmap §8): the nested clip's sequence becomes the active one, at the frame under the playhead. */
+export function runOpenInTimeline(seqId: ID, clipId: ID | undefined, frame?: number): boolean {
+  if (!clipId) { toast('info', 'Select a nested sequence clip first'); return false; }
+  return S().openNestedSequence(seqId, clipId, frame);
+}
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Visible timeline width in px, reported by the Timeline panel on resize (fallback when it is not mounted). */
@@ -424,9 +444,13 @@ export function buildEditingCommands(): CommandInput[] {
       const sel = selectedClips(S()).filter((c) => c.start <= seq.view.playhead && clipEnd(c) > seq.view.playhead);
       const hit = sel[0] ? { clip: sel[0] } : topmostClipAt(seq, seq.view.playhead);
       if (!hit) { toast('info', 'No clip under the playhead'); return; }
-      const media = S().project.media[hit.clip.mediaId];
+      // A nested clip matches through to the media playing inside it at this frame (Roadmap §8).
+      const p = S().project;
+      const under = sourceUnder(seq, hit.clip, seq.view.playhead, p.sequences, p.media);
+      if (!under) { toast('info', 'Nothing plays inside the nested clip at the playhead'); return; }
+      const media = p.media[under.clip.mediaId];
       if (!media) { toast('warn', 'Clip media is missing from the project'); return; }
-      S().setSourceClip(media.id, Math.max(0, sourceTimeAt(hit.clip, seq.view.playhead, seq.fps)));
+      S().setSourceClip(media.id, Math.max(0, under.time));
       S().setActivePanel('source');
       layout().focusPanel('source');
     }, hasSeq),
@@ -497,6 +521,14 @@ export function buildEditingCommands(): CommandInput[] {
     }, hasSeq),
     cmd(X.speedDuration, () => openSpeedDialog(), () => hasSeq() && hasClipSelection()),
     cmd(X.extractCentreChannel, () => { const seq = seqNow(); if (seq) runExtractCentreChannel(seq.id, selectedClips(S())[0]?.id); }, () => hasSeq() && hasClipSelection()),
+    // ---- nested sequences (Roadmap §8) ----
+    cmd(X.makeCompoundClip, () => { const seq = seqNow(); if (seq) S().makeCompoundClip(seq.id); }, () => hasSeq() && hasClipSelection()),
+    cmd(X.openInTimeline, () => { const seq = seqNow(); if (seq) runOpenInTimeline(seq.id, selectedNestedClip(seq)?.id); }, () => hasSeq() && selectedClips(S()).some(isNestedClip)),
+    cmd(X.breakApartCompound, () => {
+      const seq = seqNow(); const c = seq && selectedNestedClip(seq);
+      if (!seq || !c) { toast('info', 'Select a nested sequence clip first'); return; }
+      S().breakApartCompoundClip(seq.id, c.id);
+    }, () => hasSeq() && selectedClips(S()).some(isNestedClip)),
 
     // ---- tools ----
     toolCmd(C.toolSelect, 'select'),

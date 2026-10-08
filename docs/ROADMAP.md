@@ -25,7 +25,8 @@ in every release PR (docs/RELEASING.md).
 | 7 | MKV packaging export | Done | next release |
 | 9 | Surround: centre-channel and channel-selection utility (the mixer comes after 1.0) | Quick utility done | next release |
 | 11 | Keyframes, first version (position, scale, opacity, volume; linear and ease) | Done | next release |
-| 5, 8, 10, 12–15, 17, 18 | Everything else | Not started | — |
+| 8 | Nested sequences and compound clips | Done | next release |
+| 5, 10, 12–15, 17, 18 | Everything else | Not started | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
 the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
@@ -331,6 +332,21 @@ share one path and no intermediate render is needed. **Make Compound Clip** repl
 sequence and a single clip that points to it; **Open in Timeline** edits the inner sequence. Interchange exports
 nested sequences as OTIO stacks, or flattens them for EDL. If interchange (§10) has shipped by then, it must be
 extended for nesting as part of this work.
+**Status: implemented, pending release 0.8.0** (7 October 2026). A clip with `sequenceId` plays a project
+sequence (`formatVersion` stays 1; cycles and nesting deeper than 8 levels are refused by every command and cut by
+`normalizeProject`). `flattenSequence` in `shared/nest.ts` expands nested clips into media clips (inner time at the
+outer frame rate, composed transforms, multiplied gains, transitions at nested edges as alpha / gain ramps) and is the
+one path both the preview planner and the export render graph render, memoized per sequence. Commands, each one undo
+step: **Make Compound Clip**, **Open in Timeline** (double-click), **Break Apart Compound Clip**, and nesting a sequence
+by dropping it on the timeline or Project panel › **Nest in Active Sequence**. Edits inside show everywhere the
+sequence is nested; a shorter inner sequence leaves the rest of the nested clip black and silent. Walkers: export
+(nested audio belongs to its outer track for per-track files and MKV output tracks; chapters and subtitles come from
+the outer sequence only), Export Checks, Match Frame and the SRC timecode through to the media, transcript "on
+timeline" hits, the Compare diff and link sync (a nested clip is one clip), Collect Project, the Inspector, the
+timeline's NEST badge, the scene library (refused). Tests: `tests/unit/nest*.test.ts` (nested vs flat timelines in the
+planner, the segment plan and real FFmpeg renders, including an fps mismatch and dissolves at the boundaries),
+`tests/e2e/nest.spec.ts`, and nesting in the compatibility fixture scenario. Interchange (§10) has not shipped, so it
+needs nothing yet. Limits: [LIMITATIONS](LIMITATIONS.md) › Editing.
 
 ## 9. Surround mixing beyond pass-through / downmix
 

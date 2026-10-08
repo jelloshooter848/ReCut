@@ -8,7 +8,8 @@
  *  file.importSubtitles, file.export
  *  edit.undo, edit.redo, edit.cut, edit.copy, edit.paste, edit.delete, edit.rippleDelete, edit.selectAll
  *  sequence.new, sequence.duplicate, sequence.addEdit, (Render & Export → file.export)
- *  clip.speedDuration, edit.linkUnlink, edit.toggleClipEnabled, clip.extractCentreChannel
+ *  clip.speedDuration, edit.linkUnlink, edit.toggleClipEnabled, clip.extractCentreChannel, clip.makeCompound,
+ *  clip.openInTimeline, clip.breakApart
  *  view.zoomIn, view.zoomOut, view.zoomFit
  *  help.shortcuts, help.checkForUpdates, help.about
  * Open Recent entries send `ev:openProjectPath` with the file path instead.
@@ -104,6 +105,10 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       cmd('Enable / Disable', 'edit.toggleClipEnabled'),
       { type: 'separator' },
       cmd('Extract Centre Channel (Dialogue)', 'clip.extractCentreChannel'),
+      { type: 'separator' },
+      cmd('Make Compound Clip', 'clip.makeCompound'),
+      cmd('Open in Timeline', 'clip.openInTimeline'),
+      cmd('Break Apart Compound Clip', 'clip.breakApart'),
     ],
   };
 

@@ -17,7 +17,7 @@
 import type { ExportRequest } from '@shared/ipc';
 import type { Clip, MediaItem, Track } from '@shared/model';
 import { clipEnd, sourceTimeAt } from '@shared/timeline';
-import { activeTracks } from './renderGraph';
+import { activeTracks, renderSequence } from './renderGraph';
 
 /** Chunk when the single-pass graph would have more inputs than this... */
 export const CHUNK_INPUT_THRESHOLD = 150;
@@ -100,7 +100,7 @@ export interface ChunkPlanInput {
 
 /** Clip segment counts (video, audio) a render of `[startF, endF)` would have. */
 export function countSegments({ req, startF, endF }: ChunkPlanInput): { video: number; audio: number } {
-  const seq = req.sequence;
+  const seq = renderSequence(req); // nested sequences flattened (shared/nest.ts)
   let video = 0, audio = 0;
   for (const t of activeTracks(seq.videoTracks)) video += renderedClips(t, startF, endF).length;
   for (const t of activeTracks(seq.audioTracks)) audio += renderedClips(t, startF, endF).length;
@@ -109,7 +109,7 @@ export function countSegments({ req, startF, endF }: ChunkPlanInput): { video: n
 
 /** Estimated peak ffmpeg memory (MB) of rendering all video segments of `[startF, endF)` in one process. */
 export function estimateVideoMemoryMB({ req, startF, endF }: ChunkPlanInput): number {
-  const seq = req.sequence;
+  const seq = renderSequence(req); // nested sequences flattened (shared/nest.ts)
   const outW = Math.round(Number(req.settings.width) || seq.width);
   const outH = Math.round(Number(req.settings.height) || seq.height);
   let mb = 0;
@@ -144,7 +144,7 @@ export function planExportChunks(
   memoryBudgetMB = CHUNK_VIDEO_MEMORY_BUDGET_MB,
 ): ExportChunk[] {
   const { req, startF, endF } = input;
-  const seq = req.sequence;
+  const seq = renderSequence(req); // nested sequences flattened (shared/nest.ts)
   const fps = seq.fps;
   const fd = fps.den / fps.num;
   const vTracks = pass === 'audio' ? [] : activeTracks(seq.videoTracks);

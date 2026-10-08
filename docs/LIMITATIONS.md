@@ -15,7 +15,28 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   opacity and crop.
 - **No titles or generators.** Text, shapes and solids are not available. Import a still image instead.
 - **Three transitions:** Cross Dissolve, Dip to Black, Audio Crossfade.
-- **No nested sequences or compound clips.**
+- **Nested sequences and compound clips** (see the [user guide](USER-GUIDE.md#acts-and-reels-nested-sequences-and-compound-clips)):
+  - A nested clip always plays at 100 % speed (no speed change or reverse on it; change the speed of the clips
+    inside).
+  - An inner sequence of another frame rate plays in real time at the outer rate by picking the inner frame shown at
+    each outer frame's start time (frames are repeated or skipped, never blended).
+  - A nested clip's opacity applies to each inner layer on its own, not to the inner picture as a whole, so where
+    semi-transparent inner layers overlap they show through each other. Inner layers that are rotated are not cut
+    off at the inner frame's edge or by the nested clip's crop.
+  - Keyframes inside a nested sequence of another frame rate play at the same times, so their frames are rescaled
+    to the outer rate (a keyframe can land between two outer frames).
+  - An inner layer whose own position or scale is keyed is not cut to the inner frame edge or the nested crop.
+  - A long clip animated both inside and on the nested clip is sampled into keyframes, at most 2,000 points per
+    property: beyond 2,000 frames the motion is followed through every second (or n-th) frame, in straight lines
+    between them. Such long keyframe lists export slowly, because FFmpeg evaluates the whole list on every frame
+    (a 6-second clip with 2,000 keyframes on position, scale and level took about 13 seconds to export).
+  - **Break Apart** goes one level deep and needs the same frame rate inside and outside.
+  - Chapters, markers and subtitle tracks inside a nested sequence are not exported (only the exported sequence's
+    own), and the Subtitles panel does not show them on the outer timeline.
+  - Compare lists a nested clip as one clip; it does not compare what changed inside it.
+  - Nested clips show no thumbnails or waveform on the timeline, and cannot be added to the scene library.
+  - The preview decodes every inner layer itself, so a nested clip costs what the same clips cost on the outer
+    timeline.
 - **Speed:** forward only (no reverse). The Speed / Duration dialog (Ctrl+R) and the Inspector's Speed field both
   accept 1 %–10 000 %.
 - **Sync:** linked clips that drift show an out-of-sync badge with the frame offset. There is no "Move / Slip into
