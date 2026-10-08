@@ -635,9 +635,9 @@ function motionFilters(ctx: Ctx, seg: ClipSeg, k0: number, totalFrames: number):
 }
 
 /**
- * Fade from / to black of a single-sided transition (ClipSeg fadeIn / fadeOut): the weight of segment frame n, the
- * preview planner's (src/playback/planner.ts contribute): (frame - start) / D over the first D frames of the clip and
- * (end - frame) / D over its last D, multiplied. It scales the alpha, so the fade shows what is below the clip (black
+ * Fade from / to black of a single-sided transition, or either half of a two-sided Dip to Black (ClipSeg fadeIn /
+ * fadeOut: D, or D / 2 for a dip): the weight of segment frame n, the preview planner's (src/playback/planner.ts
+ * contribute): (frame - start) / D over the first D frames of the clip and (end - frame) / D over its last D, multiplied. It scales the alpha, so the fade shows what is below the clip (black
  * on V1), as the preview draws it. Null when the segment has no fade. (FFmpeg's `fade` darkened the colour instead,
  * and towards luma 0, not 16: it treats yuva420p as full range.)
  */
@@ -702,28 +702,58 @@ function videoGap(ctx: Ctx, frames: number): string {
   return label;
 }
 
-/** Builds one full-range video track stream. Returns its label, or null when the track is empty. */
+/**
+ * Cross Dissolve of two `D`-frame windows (the outgoing segment's last `D` frames, the incoming one's first `D`): the
+ * linear mix `(1 - t) * out + t * in` with `t = k / D` on frame k, premultiplied, so where the clips' alphas differ
+ * (opacity, letterboxing, transforms, fades) the result composites over the tracks below as
+ * `(1 - t) * (out over below) + t * (in over below)`, the preview's picture (src/playback/planner.ts LayerPlan.mixWith).
+ * Only the window's frames are converted to 4:4:4 (premultiply needs the alpha at every chroma sample).
+ */
+function dissolveWindow(ctx: Ctx, tail: string, head: string, D: number): string {
+  const a = newLabel(ctx, 'xa'), b = newLabel(ctx, 'xb'), out = newLabel(ctx, 'x');
+  ctx.chains.push(`${tail}format=yuva444p,premultiply=inplace=1${a}`);
+  ctx.chains.push(`${head}format=yuva444p,premultiply=inplace=1${b}`);
+  ctx.chains.push(`${a}${b}xfade=transition=fade:duration=${sec(D * ctx.fd)}:offset=0,unpremultiply=inplace=1,format=yuva420p${out}`);
+  return out;
+}
+
+/**
+ * Builds one full-range video track stream. Returns its label, or null when the track is empty.
+ *
+ * A segment with a Cross Dissolve at an edge is split into its transition windows (the `2h` frames of the incoming
+ * transition at its head, of the outgoing one at its tail) and its body; each pair of windows is mixed
+ * (dissolveWindow) and everything is joined with one concat. A Dip to Black is a per-frame alpha ramp inside each
+ * clip (exportPlan.ts; fadeWeights), so it needs no join.
+ */
 function videoTrack(ctx: Ctx, plan: TrackPlan): string | null {
   if (!plan.segs.some((s) => s.kind === 'clip')) return null;
   const parts: string[] = [];
-  let run: { label: string; frames: number } | null = null;
-  const flush = () => { if (run) { parts.push(run.label); run = null; } };
+  /** The previous segment's tail window, waiting for the incoming segment's head window. */
+  let tail: { label: string; frames: number } | null = null;
+  const internal = (why: string) => new Error(`Internal error in the render graph: ${why} on ${plan.track.name}.`);
   for (const s of plan.segs) {
-    if (s.kind === 'gap') { flush(); parts.push(videoGap(ctx, s.frames)); continue; }
+    if (tail ? s.kind === 'gap' || s.transIn?.frames !== tail.frames : s.kind === 'clip' && s.transIn) throw internal('a Cross Dissolve has no window on one side');
+    if (s.kind === 'gap') { parts.push(videoGap(ctx, s.frames)); continue; }
     const label = videoSegment(ctx, s);
     const frames = s.extBefore + s.frames + s.extAfter;
-    if (run && s.transIn) {
-      const D = s.transIn.frames;
-      const out = newLabel(ctx, 'x');
-      const kind = s.transIn.type === 'dipToBlack' ? 'fadeblack' : 'fade';
-      ctx.chains.push(`${run.label}${label}xfade=transition=${kind}:duration=${sec(D * ctx.fd)}:offset=${sec((run.frames - D) * ctx.fd)}${out}`);
-      run = { label: out, frames: run.frames + frames - D };
-    } else {
-      flush();
-      run = { label, frames };
-    }
+    const headN = tail ? tail.frames : 0;
+    const tailN = 2 * s.extAfter;
+    if (!headN && !tailN) { parts.push(label); continue; }
+    const bodyN = frames - headN - tailN;
+    const pieces: [number, number][] = [];
+    if (headN) pieces.push([0, headN]);
+    if (bodyN > 0) pieces.push([headN, headN + bodyN]);
+    if (tailN) pieces.push([frames - tailN, frames]);
+    const outs = pieces.map(() => newLabel(ctx, 'vs'));
+    const srcs = pieces.length > 1 ? pieces.map(() => newLabel(ctx, 'vsp')) : [label];
+    if (pieces.length > 1) ctx.chains.push(`${label}split=${pieces.length}${srcs.join('')}`);
+    pieces.forEach(([a, b], i) => ctx.chains.push(`${srcs[i]}trim=start_frame=${a}:end_frame=${b},setpts=PTS-STARTPTS${outs[i]}`));
+    let i = 0;
+    if (headN) parts.push(dissolveWindow(ctx, tail!.label, outs[i++], headN));
+    if (bodyN > 0) parts.push(outs[i++]);
+    tail = tailN ? { label: outs[i++], frames: tailN } : null;
   }
-  flush();
+  if (tail) throw internal('a Cross Dissolve has no window on one side');
   const trackLabel = newLabel(ctx, 'tv');
   if (parts.length === 1) {
     // Integer timestamps in the frame time base: N*den/num/TB evaluated in floating point truncates to

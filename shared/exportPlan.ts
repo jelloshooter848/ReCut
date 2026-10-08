@@ -58,9 +58,12 @@ export interface ClipSeg {
   extAfter: number;
   /** Transition INTO this segment from the previous segment (centered on the cut). */
   transIn?: { type: Transition['type']; frames: number };
-  /** Fade from black/silence at segment start (transition with outClipId null). */
+  /**
+   * Fade from black/silence at segment start, in frames (may be fractional): a transition with outClipId null (its
+   * length), or the incoming half of a two-sided Dip to Black (half its length; video only).
+   */
   fadeIn?: number;
-  /** Fade to black/silence at segment end (transition with inClipId null). */
+  /** Fade to black/silence at segment end: a transition with inClipId null, or the outgoing half of a Dip to Black. */
   fadeOut?: number;
   isImage: boolean;
   speed: number;
@@ -236,6 +239,15 @@ export function planTrackSegments(
       if (outSeg.start + outSeg.frames !== cut || inSeg.start !== cut) {
         warnings.push(`Transition at the edge of the export range is dropped (hard cut).`);
         transitions.push(outcome(0, 'rangeEdge'));
+        continue;
+      }
+      if (tr.type === 'dipToBlack') {
+        // The preview's dip (src/playback/planner.ts contribute): the outgoing clip fades to black over its last D / 2
+        // frames, the incoming one from black over its first D / 2, each on frames it shows anyway. No handles, so
+        // it is never shortened. The render graph multiplies these weights into the alpha (fadeWeights).
+        transitions.push(outcome(D, null));
+        outSeg.fadeOut = D / 2;
+        inSeg.fadeIn = D / 2;
         continue;
       }
       const { h, hClips, hSource } = transitionHandles(D, outSeg, inSeg, fd);

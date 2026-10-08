@@ -20,7 +20,7 @@ import { secondsToFramesFloor, framesToSeconds, fpsValue } from '../../shared/ti
 import { sequenceDuration, resolveSubtitleCues, type ResolvedCue } from '../../shared/timeline';
 import { PlaybackClock } from './clock';
 import { MediaElementPool, poolKey } from './elementPool';
-import { planFrame, type FramePlan, type LayerPlan, type AudioPlan, type MissingMedia } from './planner';
+import { mixesWith, planFrame, type FramePlan, type LayerPlan, type AudioPlan, type MissingMedia } from './planner';
 import { clampElementTime, toElementTime } from './mediaSource';
 import { selectAudioTrack } from './audioTracks';
 import { pathToMediaUrl } from '../../shared/ipc';
@@ -143,6 +143,8 @@ interface ScrubRound {
 }
 
 /** Layers the canvas paints for a plan, bottom to top, from index `first` (everything below it is covered). */
+type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
 interface Composite {
   drawable: { layer: LayerPlan; el: HTMLVideoElement | HTMLImageElement; vw: number; vh: number }[];
   first: number;
@@ -219,6 +221,8 @@ export class SequencePlayer {
   private destroyed = false;
   private offPoolRelease: (() => void) | null = null;
   private ctx: CanvasRenderingContext2D | null;
+  /** Scratch canvas of a Cross Dissolve pair (paintMix): undefined until first used, null when none can be made. */
+  private mixCtx: Ctx2D | null | undefined;
   /** Redraw when a still image finishes loading (paused display would otherwise stay black). */
   private readonly imageRedraw = () => { if (!this.destroyed) { this.invalidate(); this.requestTick(); } };
 
@@ -984,28 +988,75 @@ export class SequencePlayer {
     ctx.scale(sx, sy);
 
     for (let i = first; i < drawable.length; i++) {
-      const { layer, el, vw, vh } = drawable[i];
-      const fit = Math.min(seq.width / vw, seq.height / vh);
-      const tr = layer.transform;
-      const c = tr.crop;
-      const cx = Math.max(0, Math.min(1, c.left)) * vw;
-      const cy = Math.max(0, Math.min(1, c.top)) * vh;
-      const cw = Math.max(0, 1 - c.left - c.right) * vw;
-      const ch = Math.max(0, 1 - c.top - c.bottom) * vh;
-      if (cw <= 0 || ch <= 0) continue;
-      ctx.save();
-      ctx.globalAlpha = Math.max(0, Math.min(1, layer.alpha));
-      ctx.translate(seq.width / 2 + tr.x, seq.height / 2 + tr.y);
-      if (tr.rotation) ctx.rotate((tr.rotation * Math.PI) / 180);
-      if (tr.scale !== 1) ctx.scale(tr.scale, tr.scale);
-      try {
-        ctx.drawImage(el, cx, cy, cw, ch, (cx - vw / 2) * fit, (cy - vh / 2) * fit, cw * fit, ch * fit);
-      } catch { /* element not decodable yet */ }
-      ctx.restore();
+      const next = drawable[i + 1];
+      // A Cross Dissolve's two layers are added, not drawn one over the other (LayerPlan.mixWith).
+      if (next && mixesWith(drawable[i].layer, next.layer) && this.paintMix(drawable[i], next, seq, W, H)) { i++; continue; }
+      this.drawLayer(ctx, drawable[i], seq);
     }
 
     if (this.drawSubtitles) this.drawSubtitleOverlay(ctx, seq, frame);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /** Draw one layer at its alpha with the context's composite operation (the context is in sequence units). */
+  private drawLayer(ctx: Ctx2D, { layer, el, vw, vh }: Composite['drawable'][number], seq: Sequence): void {
+    const fit = Math.min(seq.width / vw, seq.height / vh);
+    const tr = layer.transform;
+    const c = tr.crop;
+    const cx = Math.max(0, Math.min(1, c.left)) * vw;
+    const cy = Math.max(0, Math.min(1, c.top)) * vh;
+    const cw = Math.max(0, 1 - c.left - c.right) * vw;
+    const ch = Math.max(0, 1 - c.top - c.bottom) * vh;
+    if (cw <= 0 || ch <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, layer.alpha));
+    ctx.translate(seq.width / 2 + tr.x, seq.height / 2 + tr.y);
+    if (tr.rotation) ctx.rotate((tr.rotation * Math.PI) / 180);
+    if (tr.scale !== 1) ctx.scale(tr.scale, tr.scale);
+    try {
+      ctx.drawImage(el, cx, cy, cw, ch, (cx - vw / 2) * fit, (cy - vh / 2) * fit, cw * fit, ch * fit);
+    } catch { /* element not decodable yet */ }
+    ctx.restore();
+  }
+
+  /**
+   * A Cross Dissolve pair (LayerPlan.mixWith), only while a dissolve is on screen: the outgoing layer is drawn at its
+   * alpha (1 - t) * a into a cleared scratch canvas, the incoming one at t * b with `lighter` (a premultiplied add), and
+   * the sum over the canvas: (1 - t) * (out over below) + t * (in over below), whatever the layers' opacity and
+   * coverage. False when no scratch canvas can be made; the pair is then drawn one over the other.
+   */
+  private paintMix(out: Composite['drawable'][number], inc: Composite['drawable'][number], seq: Sequence, W: number, H: number): boolean {
+    const ctx = this.ctx;
+    const mix = this.mixContext(W, H);
+    if (!ctx || !mix) return false;
+    mix.setTransform(1, 0, 0, 1, 0, 0);
+    mix.globalCompositeOperation = 'source-over';
+    mix.globalAlpha = 1;
+    mix.clearRect(0, 0, W, H);
+    mix.scale(W / seq.width, H / seq.height);
+    this.drawLayer(mix, out, seq);
+    mix.globalCompositeOperation = 'lighter';
+    this.drawLayer(mix, inc, seq);
+    mix.globalCompositeOperation = 'source-over';
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.drawImage(mix.canvas, 0, 0);
+    ctx.restore();
+    return true;
+  }
+
+  /** The scratch canvas of paintMix at the canvas size, made on first use (null when it cannot be). */
+  private mixContext(W: number, H: number): Ctx2D | null {
+    if (this.mixCtx === undefined) {
+      try {
+        const c = typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(W, H) : document.createElement('canvas');
+        this.mixCtx = (c.getContext('2d') as Ctx2D | null) ?? null;
+      } catch { this.mixCtx = null; }
+    }
+    const m = this.mixCtx;
+    if (m && (m.canvas.width !== W || m.canvas.height !== H)) { m.canvas.width = W; m.canvas.height = H; }
+    return m;
   }
 
   /**
