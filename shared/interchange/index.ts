@@ -38,9 +38,21 @@ export const INTERCHANGE_FORMATS: Readonly<Record<InterchangeFormat, Interchange
   },
 };
 
+/** EDL reels: `file` a reel name per media file (default), `aux` every event on reel AX (see shared/interchange/edl.ts). */
+export type EdlReelNames = 'file' | 'aux';
+/**
+ * FCPXML audio crossfades between linked clips: `transition` (default) Final Cut Pro's form, an Audio Crossfade in
+ * the video dissolve; `split` overlapping audio with fades (split edits), see shared/interchange/fcpxml.ts.
+ */
+export type FcpxmlAudioCrossfades = 'transition' | 'split';
+
 export interface InterchangeOptions {
   /** EDL: which video tracks to write (0-based indexes into the flattened sequence's videoTracks); default all. */
   edlVideoTracks?: number[];
+  /** EDL: reel names (default `file`). */
+  edlReelNames?: EdlReelNames;
+  /** FCPXML: how audio crossfades of linked clips are written (default `transition`). */
+  fcpxmlAudioCrossfades?: FcpxmlAudioCrossfades;
 }
 
 /** One output file. `name` is a file name without directory (the UI picks the folder / base name). */
@@ -89,9 +101,9 @@ export function exportTimeline(
   const stem = safeFileStem(p.name);
   let files: InterchangeFile[];
   switch (format) {
-    case 'fcpxml': files = [{ name: `${stem}.fcpxml`, contents: writeFcpxml(p, issues) }]; break;
+    case 'fcpxml': files = [{ name: `${stem}.fcpxml`, contents: writeFcpxml(p, issues, opts.fcpxmlAudioCrossfades) }]; break;
     case 'otio': files = [{ name: `${stem}.otio`, contents: writeOtio(p, issues) }]; break;
-    case 'edl': files = writeEdl(p, issues, stem, opts.edlVideoTracks); break;
+    case 'edl': files = writeEdl(p, issues, stem, opts.edlVideoTracks, opts.edlReelNames); break;
     default: throw new Error(`exportTimeline: unknown format "${String(format)}"`);
   }
   if (p.subtitleTracks) {

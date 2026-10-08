@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import type { ID, Project } from '../../shared/model';
 import { exportTimeline, INTERCHANGE_FORMATS, type InterchangeFormat, type InterchangeResult } from '../../shared/interchange';
 import { fileUrl, Issues, prepare, safeFileStem } from '../../shared/interchange/common';
+import { edlReels, REEL_MAX, reelBase } from '../../shared/interchange/edl';
 import { clip, dropFrame, media, mkProject, mkSeq, put, R23, representative, sourceTimecode, tr } from '../fixtures/interchange/fixture';
 
 const DIR = path.resolve(__dirname, '../fixtures/interchange');
@@ -158,6 +159,8 @@ describe('issues of the representative sequence', () => {
     for (const k of ['transform', 'rotation', 'crop', 'opacity']) expect(total(edl, k, 'warning'), k).toBe(1);
     expect(total(edl, 'speed', 'info')).toBe(1);
     expect(total(edl, 'stills', 'info')).toBe(1);
+    // Movie One, Épisode #2 & "Pilot" and title card get reel names other than their file names; gone does not.
+    expect(issue(edl, 'other', 'info')).toEqual([expect.objectContaining({ count: 3, message: 'The reel names of 3 files differ from the file names (spaces, other characters, length or a shared name).' })]);
     expect(edl.files.map((f) => f.name.slice(-7))).toEqual(['_V1.edl', '_V2.edl', '_V3.edl', '_V4.edl']);
   });
 });
@@ -217,7 +220,7 @@ describe('issues of single lossy cases', () => {
     const r = exportTimeline(p, 's', 'edl');
     expect(issue(r, 'audio-channels', 'warning')).toEqual([expect.objectContaining({ count: 1, clipIds: ['a5'] })]);
     expect(issue(r, 'other', 'warning')).toEqual([expect.objectContaining({ count: 1, clipIds: ['a2'] })]);
-    expect(r.files[0].contents).toContain('001  AX       B     C        00:00:00:00 00:00:01:00 00:00:00:00 00:00:01:00\nAUD  4\n');
+    expect(r.files[0].contents).toContain('001  m        B     C        00:00:00:00 00:00:01:00 00:00:00:00 00:00:01:00\nAUD  4\n');
   });
 
   it('muted tracks and disabled clips are exported disabled (FCPXML / OTIO) and left out of the EDL', () => {
@@ -287,14 +290,101 @@ describe('embedded source start timecode', () => {
   });
 
   it('EDL: source timecode from the file timecode, wrapping at 24 hours', () => {
-    expect(exportTimeline(cam('10:00:00:00'), 's', 'edl').files[0].contents).toContain('001  AX       V     C        10:00:04:00 10:00:06:00 00:00:00:00 00:00:02:00');
-    expect(exportTimeline(cam('23:59:58:00'), 's', 'edl').files[0].contents).toContain('001  AX       V     C        00:00:02:00 00:00:04:00 00:00:00:00 00:00:02:00');
+    expect(exportTimeline(cam('10:00:00:00'), 's', 'edl').files[0].contents).toContain('001  C0001    V     C        10:00:04:00 10:00:06:00 00:00:00:00 00:00:02:00');
+    expect(exportTimeline(cam('23:59:58:00'), 's', 'edl').files[0].contents).toContain('001  C0001    V     C        00:00:02:00 00:00:04:00 00:00:00:00 00:00:02:00');
   });
 
   it('a file at another rate than the sequence keeps its own timecode base', () => {
     const p = cam('01:00:00:00', R23);
     const o = JSON.parse(exportTimeline(p, 's', 'otio').files[0].contents);
     expect(o.tracks.children[0].children[0].source_range.start_time).toEqual({ OTIO_SCHEMA: 'RationalTime.1', rate: 25, value: 90100 });
-    expect(exportTimeline(p, 's', 'edl').files[0].contents).toMatch(/^001 {2}AX {7}V {5}C {8}01:00:04:00 01:00:06:02 /m);
+    expect(exportTimeline(p, 's', 'edl').files[0].contents).toMatch(/^001 {2}C0001 {4}V {5}C {8}01:00:04:00 01:00:06:02 /m);
+  });
+});
+
+describe('EDL reel names', () => {
+  /** A sequence with one 1-second clip per path on V1, in the given order. */
+  const seq = (paths: string[]) => {
+    const M = paths.map((path, i) => media(`m${i}`, path));
+    const s = mkSeq('s', 'S', R23);
+    put(s.videoTracks[0], ...paths.map((_, i) => clip(`c${i}`, `m${i}`, i * 24, 24, 0)));
+    return mkProject('P', M, [s]);
+  };
+  const reelsOf = (paths: string[]) => {
+    const { reels } = edlReels(prepare(seq(paths), 's', new Issues()));
+    return paths.map((_, i) => reels.get(`m${i}`));
+  };
+
+  it('a reel is the file name without its extension, sanitised to one word', () => {
+    expect(reelBase('/media/A_Red.mp4')).toBe('A_Red');
+    expect(reelBase('C:\\Clips\\B-roll 2.MOV')).toBe('B-roll_2');
+    expect(reelBase('/x/Épisode #2 & "Pilot".mkv')).toBe('Episode__2____Pilot_');
+    expect(reelBase('/x/clip.v2.mp4')).toBe('clip_v2');
+    expect(reelBase('/x/.hidden')).toBe('_hidden');
+    expect(reelBase('/x/名前.mp4')).toBe('__');
+    expect(reelBase('/x/.mp4')).toBe('_mp4');
+  });
+
+  it('every file gets its own reel, in path order, whatever the edit order; reserved names are avoided', () => {
+    const paths = ['/b/clip.mp4', '/a/clip.mov', '/a/CLIP.mkv', '/x/BL.mp4', '/x/ax.mov', '/x/E_NTSC_2997.mp4'];
+    // Path order (code units): /a/CLIP.mkv, /a/clip.mov, /b/clip.mp4, /x/BL.mp4, /x/E_NTSC_2997.mp4, /x/ax.mov.
+    const want = ['clip_3', 'clip_2', 'CLIP', 'BL_2', 'ax_2', 'E_NTSC_2997'];
+    expect(reelsOf(paths)).toEqual(want);
+    expect(reelsOf([...paths].reverse())).toEqual([...want].reverse());
+    const long = `/x/${'L'.repeat(40)}.mp4`;
+    const [a, b] = reelsOf([long, `${long.slice(0, -4)}x.mp4`]);
+    expect(a).toBe('L'.repeat(REEL_MAX));
+    expect(b).toBe(`${'L'.repeat(REEL_MAX - 2)}_2`);
+  });
+
+  it('writes the reels on every event line and M2, AX with the aux option; reports renamed files', () => {
+    const p = seq(['/m/A_Red.mp4', '/m/b blue.mp4']);
+    Object.assign(p.sequences.s.videoTracks[0].clips[1], { speed: 2, sourceIn: 10 });
+    p.sequences.s.videoTracks[0].transitions.push(tr('t', 'crossDissolve', 12, 'c0', 'c1'));
+    const r = exportTimeline(p, 's', 'edl');
+    const x = r.files[0].contents;
+    expect(x).toMatch(/^001 {2}A_Red {4}V {5}C {8}00:00:00:00 /m);
+    expect(x).toMatch(/^002 {2}A_Red {4}V {5}C {8}(\S+) \1 00:00:00:18 00:00:00:18\n002 {2}b_blue {3}V {5}D {4}012 .*\nM2 {3}b_blue {3}048\.0 /m);
+    expect(issue(r, 'other', 'info')).toEqual([expect.objectContaining({ count: 1 })]);
+    const ax = exportTimeline(p, 's', 'edl', { edlReelNames: 'aux' });
+    expect(ax.files[0].contents).not.toMatch(/A_Red {3}|b_blue/);
+    expect(ax.files[0].contents).toMatch(/^002 {2}AX {7}V {5}D {4}012 .*\nM2 {3}AX {7}048\.0 /m);
+    expect(issue(ax, 'other', 'info')).toEqual([]);
+    // Comments are unchanged.
+    expect(x).toContain('* FROM CLIP NAME: A_Red.mp4\n* TO CLIP NAME: b blue.mp4\n* SOURCE FILE: /m/b blue.mp4');
+  });
+});
+
+describe('FCPXML audio crossfades of linked clips', () => {
+  /** v1|v2 dissolve (24 frames) over a1|a2 crossfade (12 frames), linked pairs; v2 at 200%. */
+  const proj = () => {
+    const m = media('m', '/m.mp4');
+    const s = mkSeq('s', 'S', R23);
+    put(s.videoTracks[0], clip('v1', 'm', 0, 48, 10, { linkId: 'L1' }), clip('v2', 'm', 48, 48, 100, { linkId: 'L2', speed: 2 }));
+    s.videoTracks[0].transitions.push(tr('tv', 'crossDissolve', 24, 'v1', 'v2'));
+    put(s.audioTracks[0], clip('a1', 'm', 0, 48, 10, { linkId: 'L1' }), clip('a2', 'm', 48, 48, 100, { linkId: 'L2', speed: 2 }));
+    s.audioTracks[0].transitions.push(tr('ta', 'audioCrossfade', 12, 'a1', 'a2'));
+    return mkProject('P', [m], [s]);
+  };
+
+  it('default: Final Cut Pro\'s form, the Audio Crossfade in the video dissolve', () => {
+    const r = exportTimeline(proj(), 's', 'fcpxml');
+    expect(r.files[0].contents).toMatch(/<transition name="Cross Dissolve" offset="[^"]+" duration="1001\/1000s">\s+<filter-video [^>]+\/>\s+<filter-audio ref="r\d+" name="Audio Crossfade"\/>/);
+    expect(r.files[0].contents).not.toMatch(/audioStart|audioDuration|fadeIn|fadeOut/);
+  });
+
+  it('split: overlapping audio (split edits) with linear fades over the crossfade, the transition picture only', () => {
+    const r = exportTimeline(proj(), 's', 'fcpxml', { fcpxmlAudioCrossfades: 'split' });
+    const x = r.files[0].contents;
+    expect(x).not.toContain('filter-audio');
+    expect(x).toMatch(/<transition name="Cross Dissolve" offset="[^"]+" duration="1001\/1000s">\s+<filter-video [^>]+\/>\s+<\/transition>/);
+    // v1: in point 10 s, 48 frames; its audio runs 6 frames past its end and fades out over the 12-frame crossfade.
+    expect(x).toMatch(/<asset-clip ref="r\d+" offset="0s" name="v1" start="1001\/100s" duration="1001\/500s" audioDuration="9009\/4000s">\s+<adjust-volume amount="0dB">\s+<param name="amount">\s+<fadeOut type="linear" duration="1001\/2000s"\/>/);
+    // v2 (200%): its audio starts 6 frames (local time runs at the timeline's pace) before its in point and fades in.
+    const v2 = /name="v2" start="([^"]+)" duration="1001\/500s" audioStart="([^"]+)" audioDuration="9009\/4000s">/.exec(x)!;
+    const sec = (t: string) => { const [n, d] = t.replace(/s$/, '').split('/').map(Number); return n / (d || 1); };
+    expect(sec(v2[1]) - sec(v2[2])).toBeCloseTo(6 * 1001 / 24000, 9);
+    expect(x).toMatch(/<fadeIn type="linear" duration="1001\/2000s"\/>/);
+    expect(issue(r, 'transition', 'info')).toEqual([expect.objectContaining({ count: 1, message: '1 audio crossfade of linked clips is written as overlapping audio with fades.' })]);
   });
 });

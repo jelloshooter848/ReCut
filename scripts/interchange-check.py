@@ -11,7 +11,8 @@ exports count source times (source in = tcStart + srcIn). This script reads the 
   source in, rate, time warp, enabled state and file URL, and the media reference's available range starting at the
   file's start timecode;
 - `_Vn.edl` with the cmx_3600 adapter: every enabled clip of video track n in order, its record range within the
-  clip (dissolves borrow handles), its source frames at its record frames, and the SOURCE FILE comment;
+  clip (dissolves borrow handles), its source frames at its record frames, the SOURCE FILE comment, and one distinct
+  reel name per file;
 - `.fcpxml` with the fcpx_xml adapter (lanes and clips per lane: the adapter truncates frame rates to integers, so
   it cannot check NTSC times) and with an exact reader written here on ElementTree + Fraction (record and source
   frames of every clip and its asset's start, FCPXML 1.9 time semantics as documented in shared/interchange/fcpxml.ts).
@@ -111,7 +112,7 @@ def check_edl(exp, path):
     text = open(path, encoding='utf-8').read()
     # The cmx_3600 reader cannot start a track with a transition ("Transitions can't be at the very beginning of a
     # track"): a fade from black at record 00:00:00:00 is read here as a cut (the timing is unchanged).
-    text = re.sub(r'^(\d+)  BL +V +C +(\S+) \2 (00:00:00[:;]00) \3\n\1(  AX +\S+ +)D +\d+ ', lambda g: f'{g.group(1)}{g.group(4)}C        ', text, flags=re.M)
+    text = re.sub(r'^(\d+)  BL +\S+ +C +(\S+) \2 (00:00:00[:;]00) \3\n\1(  \S+ +\S+ +)D +\d+ ', lambda g: f'{g.group(1)}{g.group(4)}C        ', text, flags=re.M)
     tl = otio.adapters.read_from_string(text, 'cmx_3600', rate=rate)
     v = [t for t in tl.tracks if t.name == 'V']
     clips = [c for c in et['clips'] if c['enabled']]
@@ -120,6 +121,7 @@ def check_edl(exp, path):
     got = [c for c in (v[0] if v else []) if isinstance(c, otio.schema.Clip) and not isinstance(c.media_reference, otio.schema.GeneratorReference)]
     if not check(len(got) == len(clips), f'edl V{ti + 1}: {len(got)} clips, want {len(clips)}'):
         return
+    reels = {}
     for g, c in zip(got, clips):
         rip = v[0].range_of_child(g)
         # The reader starts the track at its first record in point (track source_range.start_time = -record in).
@@ -136,6 +138,16 @@ def check_edl(exp, path):
         check(si == want_si, f'edl {name}: source in {si}, want {want_si}')
         comments = g.metadata.get('cmx_3600', {}).get('comments', [])
         check(f"SOURCE FILE: {c['path']}" in comments, f'edl {name}: SOURCE FILE comment ({comments})')
+        reels.setdefault(c['path'], set()).add(g.metadata.get('cmx_3600', {}).get('reel'))
+    # Reel names: one per file, a distinct one for each file, a single word of letters, digits, _ and - (32 at most).
+    names = {}
+    for f, rs in reels.items():
+        if check(len(rs) == 1, f'edl V{ti + 1}: one reel name for {f}, got {rs}'):
+            r = next(iter(rs))
+            if r is None:
+                continue
+            check(re.fullmatch(r'[A-Za-z0-9_-]{1,32}', r) and r.upper() not in ('AX', 'BL', 'BLK', 'BLACK', 'AUX'), f'edl V{ti + 1}: reel name {r!r} of {f}')
+            check(names.setdefault(r.upper(), f) == f, f'edl V{ti + 1}: reel name {r!r} is shared by {names[r.upper()]} and {f}')
 
 
 # --------------------------------------------------------------------------------------------- FCPXML

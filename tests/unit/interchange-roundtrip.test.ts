@@ -9,6 +9,7 @@ import type { ID, Project } from '../../shared/model';
 import { exportTimeline } from '../../shared/interchange';
 import { fileUrl, Issues, prepare, type PClip, type Prepared } from '../../shared/interchange/common';
 import { Q } from '../../shared/interchange/rational';
+import { edlReels } from '../../shared/interchange/edl';
 import { parseTimecode } from '../../shared/time';
 import { clip, dropFrame, media, mkProject, mkSeq, put, R23, R29, representative, sourceTimecode, tr } from '../fixtures/interchange/fixture';
 
@@ -306,14 +307,15 @@ describe('EDL read back', () => {
       const { project, seqId } = make();
       const p = prep(project, seqId);
       const r = exportTimeline(project, seqId, 'edl');
+      const { reels } = edlReels(p);
       for (const file of r.files) {
         const ti = Number(/_V(\d+)\.edl$/.exec(file.name)![1]) - 1;
         const { title, fcm, lines } = parseEdl(file.contents);
         expect(title).toBe(`TITLE: ${p.name} V${ti + 1}`);
         expect(fcm).toBe(p.fps.num === 30000 ? 'FCM: DROP FRAME' : 'FCM: NON-DROP FRAME');
         const clips = p.videoTracks[ti].clips.filter((c) => c.enabled);
-        // A clip's main event: its AX line that is not the zero-length "from" line of a dissolve pair.
-        const main = lines.filter((l, i) => l.reel === 'AX' && !(lines[i + 1]?.ev === l.ev && lines[i + 1].type === 'D'));
+        // A clip's main event: its line that is not black and not the zero-length "from" line of a dissolve pair.
+        const main = lines.filter((l, i) => l.reel !== 'BL' && !(lines[i + 1]?.ev === l.ev && lines[i + 1].type === 'D'));
         expect(main.length).toBe(clips.length);
         main.forEach((l, k) => {
           const c = clips[k];
@@ -329,7 +331,9 @@ describe('EDL read back', () => {
           if (!p.videoTracks[ti].transitions.some((t) => t.in === c || t.out === c)) { expect(ri).toBe(c.start); expect(ro).toBe(c.end); }
           const all = lines.filter((x) => x.ev === l.ev).flatMap((x) => x.comments);
           expect(all).toContain(`* SOURCE FILE: ${c.media.path}`);
-          if (c.speed !== 1) expect(all.some((x) => x.startsWith('M2   AX'))).toBe(true);
+          // Reel: the file's own (one per file); an M2 names the reel of the clip it times.
+          expect(l.reel).toBe(reels.get(c.media.id));
+          if (c.speed !== 1) expect(all.some((x) => x.startsWith(`M2   ${l.reel} `))).toBe(true);
         });
       }
     });
@@ -338,10 +342,12 @@ describe('EDL read back', () => {
   it('writes the dissolve, the fade from black and the dip as CMX dissolves', () => {
     const { project, seqId } = representative();
     const v1 = exportTimeline(project, seqId, 'edl').files[0].contents;
-    expect(v1).toContain('001  BL       V     C        00:00:00:00 00:00:00:00 00:00:00:00 00:00:00:00\n001  AX       B     D    012 ');
-    expect(v1).toMatch(/003 {2}AX {7}B {5}C {8}(\S+) \1 00:00:06:12 00:00:06:12\n003 {2}AX {7}B {5}D {4}024 /);
-    expect(v1).toContain('004  BL       V     D    006 00:00:00:00 00:00:00:06 00:00:09:18 00:00:10:00');
-    expect(v1).toContain('005  BL       V     C        00:00:00:00 00:00:00:00 00:00:10:00 00:00:10:00\n005  AX       B     D    006 ');
+    // Black lines carry the event's channels (both lines of a transition do, in CMX3600).
+    expect(v1).toContain('001  BL       B     C        00:00:00:00 00:00:00:00 00:00:00:00 00:00:00:00\n001  Movie_One B     D    012 ');
+    // The B -> C dissolve: the from line names the outgoing file's reel, the D line and its M2 the incoming one's.
+    expect(v1).toMatch(/003 {2}Episode__2____Pilot_ B {5}C {8}(\S+) \1 00:00:06:12 00:00:06:12\n003 {2}Movie_One B {5}D {4}024 .*\nM2 {3}Movie_One 048\.0 /);
+    expect(v1).toContain('004  Movie_One B     C        00:03:25:07 00:03:25:07 00:00:09:18 00:00:09:18\n004  BL       B     D    006 00:00:00:00 00:00:00:06 00:00:09:18 00:00:10:00');
+    expect(v1).toContain('005  BL       B     C        00:00:00:00 00:00:00:00 00:00:10:00 00:00:10:00\n005  Episode__2____Pilot_ B     D    006 ');
     expect(v1).toContain('* LOC: 00:00:00:10 RED     Intro & <title>');
   });
 
