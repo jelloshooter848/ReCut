@@ -30,6 +30,7 @@ import { initUpdates } from '@/app/updates';
 import { ExportDialog } from '@/panels/export/ExportDialog';
 import { OcrLanguagesDialog } from '@/panels/ocr/OcrLanguagesDialog';
 import { CollectDialog } from '@/panels/collect/CollectDialog';
+import { ExportTimelineDialog } from '@/panels/interchange/ExportTimelineDialog';
 import { OcrDialog } from '@/panels/ocr/OcrDialog';
 import { TranscribeDialog } from '@/panels/whisper/TranscribeDialog';
 import { WhisperModelsDialog } from '@/panels/whisper/WhisperModelsDialog';
@@ -127,6 +128,7 @@ export function App() {
       <TranscribeDialog />
       <WhisperModelsDialog />
       <CollectDialog />
+      <ExportTimelineDialog />
       <DialogHost />
     </>
   );

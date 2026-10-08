@@ -5,7 +5,7 @@
  *
  * Commands sent:
  *  file.new, file.open, file.clearRecent, file.save, file.saveAs, file.collect, file.importMedia,
- *  file.importSubtitles, file.export
+ *  file.importSubtitles, file.export, file.exportTimeline
  *  edit.undo, edit.redo, edit.cut, edit.copy, edit.paste, edit.delete, edit.rippleDelete, edit.selectAll
  *  sequence.new, sequence.duplicate, sequence.addEdit, (Render & Export → file.export)
  *  clip.speedDuration, edit.linkUnlink, edit.toggleClipEnabled, clip.extractCentreChannel, clip.makeCompound,
@@ -60,6 +60,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       cmd('Transcription Models…', 'app.whisperModels'),
       { type: 'separator' },
       cmd('Export…', 'file.export', 'CmdOrCtrl+M'),
+      cmd('Export Timeline…', 'file.exportTimeline'),
       ...(isMac ? [] : [{ type: 'separator' as const }, { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: () => deps.requestQuit() }]),
     ],
   };

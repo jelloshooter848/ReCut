@@ -29,6 +29,7 @@ import type {
 import { encodeProjectWire, isAutosaveStreamRef, SAVE_STREAM_IPC as IPC_SAVE, type SaveBeginResult } from '../shared/projectWire';
 import * as io from './project/io';
 import * as fsApi from './fs';
+import { writeInterchangeFiles } from './interchange';
 
 // ------------------------------------------------------------------
 // Media / jobs / export contract (implemented by electron/media/index.ts)
@@ -441,6 +442,8 @@ export function registerIpc(deps: IpcDeps): void {
   // No generic text write: the renderer can only write subtitle exports, checked here against the project's sources.
   ipcMain.handle(IPC.subtitlesExport, (_e, p: unknown, content: unknown, protectedPaths: unknown) =>
     fsApi.writeSubtitleFile(p as string, content as string, protectedPaths as string[]));
+  // File › Export Timeline…: only .fcpxml / .otio / .edl names in a folder, checked in electron/interchange.ts.
+  ipcMain.handle(IPC.interchangeWrite, (_e, req: unknown) => writeInterchangeFiles(req));
   ipcMain.handle(IPC.fsListDir, (_e, p: string) => fsApi.listDir(assertString(p, 'path')));
   ipcMain.handle(IPC.fsScanForRelink, (_e, req: RelinkScanRequest) => fsApi.scanForRelink(req));
 
