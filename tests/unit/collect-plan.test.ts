@@ -95,6 +95,12 @@ describe('collectedProxyName', () => {
     expect(collectedProxyName('pic.tif', '/c/proxies/k_still.png')).toBe('pic.tif_still.png');
     expect(collectedProxyName('a.mkv', '/elsewhere/odd-name.mov')).toBe('a.mkv_proxy.mov');
   });
+
+  it('keeps the stream and selection of a channel proxy (electron/media/channelProxy.ts channelProxyOutputPath)', () => {
+    expect(collectedProxyName('movie.mkv', '/c/proxies/0123abcd_ch1.ch-FC_v1.m4a')).toBe('movie.mkv_ch1.ch-FC_v1.m4a');
+    expect(collectedProxyName('movie.mkv', 'C:\\c\\proxies\\0123abcd_ch2.dm-c-4.5-s-3_v1.m4a')).toBe('movie.mkv_ch2.dm-c-4.5-s-3_v1.m4a');
+    expect(collectedProxyName('movie.mkv', '/c/proxies/0123abcd_ch1.ch-c3_v2.m4a')).toBe('movie.mkv_ch1.ch-c3_v2.m4a');
+  });
 });
 
 describe('selection', () => {
@@ -147,6 +153,20 @@ describe('selection', () => {
     expect(p.subtitleTracks.t2.path).toBe('/m/ep2.srt'); // not collected: unchanged
     expect(seq.subtitleTracks[0].sourcePaths).toEqual(['/d/Subtitles/fan.srt']);
   });
+
+  it('subtitle sources only a sequence snapshot still names are collected and rewritten too', () => {
+    const p = createProject('Snap subs');
+    const seq = Object.values(p.sequences)[0];
+    seq.subtitleTracks.push({ id: 's1', name: 'Fan subs', language: 'eng', enabled: true, cues: [], sourcePaths: ['/subs/fan v2.srt'] });
+    const snapData = JSON.parse(JSON.stringify(seq));
+    snapData.subtitleTracks[0].sourcePaths = ['/subs/old/fan v1.srt'];
+    seq.snapshots.push({ id: 'snap1', name: 'v1', createdAt: 0, data: snapData });
+    expect(collectSources(p, SEQ).map((s) => s.path).sort()).toEqual(['/subs/fan v2.srt', '/subs/old/fan v1.srt']);
+    const plan = planCollect(p, SEQ, allExist());
+    rewriteCollectedProject(p, plan, (rel) => `/d/${rel}`);
+    expect(seq.subtitleTracks[0].sourcePaths).toEqual(['/d/Subtitles/fan v2.srt']);
+    expect(seq.snapshots[0].data.subtitleTracks[0].sourcePaths).toEqual(['/d/Subtitles/fan v1.srt']);
+  });
 });
 
 describe('planCollect', () => {
@@ -196,6 +216,38 @@ describe('planCollect', () => {
     const c = addMedia(q, '/r/c.mkv');
     c.proxy = { status: 'failed', path: '/c/3_540p_all.mp4' };
     expect(planCollect(q, ALL, allExist()).entries.map((e) => e.kind)).toEqual(['media']);
+  });
+
+  it('channel proxies (preview audio of channel selections) follow the proxy option like media proxies', () => {
+    const p = createProject('Ch');
+    const m = addMedia(p, '/r/Disc 1/movie.mkv');
+    const gone = addMedia(p, '/gone/lost.mkv');
+    m.proxy = { status: 'ready', path: '/c/k_540p_all.mp4' };
+    m.channelProxies = {
+      '1.ch-FC': { status: 'ready', path: '/c/k_ch1.ch-FC_v1.m4a', progress: 1 },
+      '1.dm-c-3-s-3': { status: 'ready', path: '/c/k_ch1.dm-c-3-s-3_v1.m4a', progress: 1 },
+      '2.ch-FL': { status: 'failed', error: 'Canceled' },
+    };
+    gone.channelProxies = { '1.ch-FC': { status: 'ready', path: '/c/g_ch1.ch-FC_v1.m4a' } };
+    const stat = (path: string): CollectSourceStat => (path.startsWith('/gone') ? { exists: false } : { exists: true, isFile: true, size: 10 });
+    const plan = planCollect(p, ALL, stat);
+    expect(plan.entries.filter((e) => e.kind === 'proxy').map((e) => e.rel).sort()).toEqual([
+      'Proxies/movie.mkv_540p_all.mp4', 'Proxies/movie.mkv_ch1.ch-FC_v1.m4a', 'Proxies/movie.mkv_ch1.dm-c-3-s-3_v1.m4a',
+    ]);
+    expect(plan.missing.map((x) => x.path)).toEqual(['/gone/lost.mkv']); // a missing proxy is no warning
+    const copy = JSON.parse(JSON.stringify(p)) as Project;
+    rewriteCollectedProject(copy, plan, (rel) => `/d/${rel}`);
+    expect(copy.media[m.id].channelProxies).toEqual({
+      '1.ch-FC': { status: 'ready', path: '/d/Proxies/movie.mkv_ch1.ch-FC_v1.m4a', progress: 1 },
+      '1.dm-c-3-s-3': { status: 'ready', path: '/d/Proxies/movie.mkv_ch1.dm-c-3-s-3_v1.m4a', progress: 1 },
+      '2.ch-FL': { status: 'failed', error: 'Canceled' },
+    });
+    expect(copy.media[gone.id].channelProxies).toEqual(gone.channelProxies); // its media is not copied
+    // Without the option: not copied, and they keep their cache paths.
+    const without = planCollect(p, { ...ALL, includeProxies: false }, stat);
+    expect(without.entries.map((e) => e.kind)).toEqual(['media']);
+    rewriteCollectedProject(p, without, (rel) => `/d/${rel}`);
+    expect(p.media[m.id].channelProxies!['1.ch-FC'].path).toBe('/c/k_ch1.ch-FC_v1.m4a');
   });
 
   it('names the folder and project file after the project', () => {

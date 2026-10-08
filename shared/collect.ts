@@ -9,7 +9,9 @@
  *     <Project name>.recut
  *     Media/        the media files
  *     Subtitles/    subtitle files the project imported (option)
- *     Proxies/      ready proxies (option): `<media file name>_<proxy suffix>`, e.g. `title_t00.mkv_540p_all.mp4`
+ *     Proxies/      ready proxies (option): `<media file name>_<proxy suffix>`, e.g. `title_t00.mkv_540p_all.mp4`;
+ *                   also the channel proxies (preview audio of clips' channel selections, MediaItem.channelProxies),
+ *                   e.g. `movie.mkv_ch1.ch-FC_v1.m4a`
  *     COLLECT-INCOMPLETE.txt   only while copying, or when the collect failed or was canceled
  *
  * Names (allocateCollectNames): a file keeps its own name directly in its folder (`Media/feature.mkv`). Files from
@@ -25,16 +27,16 @@
  *
  * Pure: no DOM, no Node. Paths are handled as strings (POSIX, or Windows when they look like Windows paths).
  */
-import type { ID, MediaItem, Project, Sequence } from './model';
+import type { ID, MediaItem, Project, ProxyInfo, Sequence } from './model';
 
 export type CollectScope = 'sequences' | 'all';
 
 export interface CollectOptions {
   /** 'sequences': only media used by a clip in some sequence (or sequence snapshot); 'all': every project media. */
   scope: CollectScope;
-  /** Copy the subtitle files the project imported (media subtitle tracks, sequence subtitle sources). */
+  /** Copy the subtitle files the project imported (media subtitle tracks, sequence subtitle sources, also in snapshots). */
   includeSubtitles: boolean;
-  /** Copy ready proxies, so the collected project previews without rebuilding them on another machine. */
+  /** Copy ready proxies (and channel proxies), so the collected project previews without rebuilding them on another machine. */
   includeProxies: boolean;
 }
 
@@ -245,8 +247,11 @@ export function allocateCollectNames(paths: readonly string[], folder: string, c
   return out;
 }
 
-/** The part of a cache proxy's file name after its key: `540p_all.mp4`, `720p_a1_a3.mp4`, `still.png`. */
-const PROXY_SUFFIX = /_(\d+p(?:_all|(?:_a\d+)*)\.mp4|still\.png)$/i;
+/**
+ * The part of a cache proxy's file name after its key: `540p_all.mp4`, `720p_a1_a3.mp4`, `still.png`, and a channel
+ * proxy's `ch1.ch-FC_v1.m4a` (stream, shared/audioChannels.ts channelProxyKey selection, version).
+ */
+const PROXY_SUFFIX = /_(\d+p(?:_all|(?:_a\d+)*)\.mp4|still\.png|ch\d+\.[A-Za-z0-9.-]+_v\d+\.m4a)$/i;
 
 /** File name of a collected proxy: the media's collected name + the proxy's suffix (keeps `_all` / `_a<N>` readable). */
 export function collectedProxyName(mediaFileName: string, proxyPath: string): string {
@@ -306,16 +311,26 @@ export function collectSources(project: Project, options: CollectOptions): Colle
       if (t.mediaId && !chosen.has(t.mediaId)) continue;
       addSource(subtitles, 'subtitle', t.path, t.mediaId, t.name);
     }
+    const addSequenceSources = (tracks: Sequence['subtitleTracks'] | undefined) => {
+      for (const t of tracks ?? []) for (const p of t.sourcePaths ?? []) if (!mediaSources.has(p)) addSource(subtitles, 'subtitle', p, null, t.name);
+    };
     for (const seq of Object.values(project.sequences)) {
-      for (const t of seq.subtitleTracks ?? []) for (const p of t.sourcePaths ?? []) if (!mediaSources.has(p)) addSource(subtitles, 'subtitle', p, null, t.name);
+      addSequenceSources(seq.subtitleTracks);
+      // Restoring a snapshot brings its tracks' sources back, so they are the project's too (as rewriteCollectedProject treats them).
+      for (const snap of seq.snapshots ?? []) addSequenceSources(snap.data?.subtitleTracks);
     }
   }
 
   const proxies = new Map<string, CollectSource>();
   if (options.includeProxies) {
-    for (const m of media) {
-      const p = m.proxy?.status === 'ready' ? m.proxy.path : undefined;
+    const addProxy = (m: MediaItem, px: ProxyInfo | undefined) => {
+      const p = px?.status === 'ready' ? px.path : undefined;
       if (p && !mediaSources.has(p) && !subtitles.has(p)) addSource(proxies, 'proxy', p, m.id, m.name);
+    };
+    for (const m of media) {
+      addProxy(m, m.proxy);
+      // Channel proxies (preview audio of clips' channel selections) are proxies too: same option, same folder.
+      for (const cp of Object.values(m.channelProxies ?? {})) addProxy(m, cp);
     }
   }
   return [...mediaSources.values(), ...subtitles.values(), ...proxies.values()];
@@ -382,8 +397,8 @@ export function collectTotalsByKind(plan: Pick<CollectPlan, 'entries'>): Record<
 
 /**
  * Rewrite `project` (MUTATED, pass a copy) to the collected locations: `abs(rel)` is the absolute path of a planned
- * file. Media paths, ready proxy paths, subtitle track files and sequence subtitle sources (also in snapshots) that
- * were copied point at their copies; everything else keeps its path. Returns the same object.
+ * file. Media paths, ready proxy and channel proxy paths, subtitle track files and sequence subtitle sources (also in
+ * snapshots) that were copied point at their copies; everything else keeps its path. Returns the same object.
  */
 export function rewriteCollectedProject(project: Project, plan: Pick<CollectPlan, 'entries'>, abs: (rel: string) => string): Project {
   const bySource = new Map<string, CollectEntry>();
@@ -395,9 +410,9 @@ export function rewriteCollectedProject(project: Project, plan: Pick<CollectPlan
   for (const m of Object.values(project.media)) {
     const np = moved('media', m.path);
     if (np) m.path = np;
-    if (m.proxy?.path) {
-      const pp = moved('proxy', m.proxy.path);
-      if (pp) m.proxy.path = pp;
+    for (const px of [m.proxy, ...Object.values(m.channelProxies ?? {})]) {
+      const pp = px?.path ? moved('proxy', px.path) : undefined;
+      if (pp) px.path = pp;
     }
   }
   for (const t of Object.values(project.subtitleTracks)) {
