@@ -203,7 +203,7 @@ measures every frame against it (bugs/closed/2026-10-08-two-sided-transition-pre
   (the out-handle); B's segment starts `h` frames earlier using the source before `sourceIn` (the in-handle).
 - Each segment with a dissolve at an edge is cut with `split` + `trim=start_frame:end_frame` into its windows (the
   `2h` frames of a dissolve at its head and at its tail) and its body. A's tail window and B's head window are
-  mixed: `format=yuva444p,premultiply=inplace=1` on each, `xfade=transition=fade:duration=2h:offset=0`,
+  mixed: `format=yuva444p16le,premultiply=inplace=1` on each, `xfade=transition=fade:duration=2h:offset=0`,
   `unpremultiply=inplace=1,format=yuva420p`. Mixing premultiplied pictures makes the result, laid over the tracks
   below, `(1 − t)·(A over below) + t·(B over below)` also where the clips' alphas differ (opacity, a letterboxed or
   scaled picture, fades): a plain `xfade` of straight-alpha frames darkened those places. Only the window's frames

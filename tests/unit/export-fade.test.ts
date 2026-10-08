@@ -388,7 +388,7 @@ describe('two-sided transitions: export matches the preview per frame', () => {
     s.videoTracks[0].clips[1].transform.opacity = 0.99;
     g = buildRenderGraph(req(s)).filterGraph;
     expect(g.match(/xfade=transition=fade:duration=0\.25:offset=0,unpremultiply=inplace=1,format=yuva420p/g)).toHaveLength(1);
-    expect(g.match(/format=yuva444p,premultiply=inplace=1/g)).toHaveLength(2);
+    expect(g.match(/format=yuva444p16le,premultiply=inplace=1/g)).toHaveLength(2);
     // The same static opacity on both sides: equal alphas again, a plain xfade.
     s.videoTracks[0].clips[0].transform.opacity = 0.99;
     expect(buildRenderGraph(req(s)).filterGraph).not.toMatch(/premultiply/);

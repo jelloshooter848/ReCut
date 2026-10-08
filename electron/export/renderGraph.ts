@@ -736,7 +736,9 @@ function videoGap(ctx: Ctx, frames: number): string {
  * `(1 - t) * (out over below) + t * (in over below)`, the preview's picture (src/playback/planner.ts LayerPlan.mixWith).
  * `xfade` mixes straight-alpha pixels, which is that mix only where the two alphas are equal; where they may differ
  * (`premultiply`: see windowAlpha) the windows are mixed premultiplied, in 4:4:4 (premultiply
- * needs the alpha at every chroma sample), only over the window's frames.
+ * needs the alpha at every chroma sample), only over the window's frames. In 16 bits: FFmpeg 9's 8-bit premultiply
+ * is not the identity at alpha 255 (luma 235 became 234 and unpremultiply did not restore it), so an opaque pixel came
+ * back a level dark; the 16-bit round trip returns the 8-bit values exactly on FFmpeg 6.1 and 9.0.
  */
 function dissolveWindow(ctx: Ctx, tail: string, head: string, D: number, premultiply: boolean): string {
   const out = newLabel(ctx, 'x');
@@ -746,7 +748,7 @@ function dissolveWindow(ctx: Ctx, tail: string, head: string, D: number, premult
     return out;
   }
   const a = newLabel(ctx, 'xa'), b = newLabel(ctx, 'xb');
-  ctx.chains.push(`${tail}format=yuva444p,premultiply=inplace=1${a}`, `${head}format=yuva444p,premultiply=inplace=1${b}`);
+  ctx.chains.push(`${tail}format=yuva444p16le,premultiply=inplace=1${a}`, `${head}format=yuva444p16le,premultiply=inplace=1${b}`);
   ctx.chains.push(`${a}${b}${xfade},unpremultiply=inplace=1,format=yuva420p${out}`);
   return out;
 }

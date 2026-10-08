@@ -147,7 +147,7 @@ disagreed on odd lengths, and the export's straight-alpha `xfade` is not a mix o
 - **Export, dissolve** (`renderGraph.ts` `videoTrack`, `dissolveWindow`, `windowAlpha`): no more `xfade` chained over
   whole segments. A segment with a dissolve at an edge is `split` and `trim`med into its head window, body and tail
   window; each pair of windows is mixed and the track is one `concat` of bodies, mixes and gaps. The mix is
-  premultiplied (`format=yuva444p,premultiply=inplace=1` → `xfade=fade:offset=0` →
+  premultiplied (`format=yuva444p16le,premultiply=inplace=1` → `xfade=fade:offset=0` →
   `unpremultiply=inplace=1,format=yuva420p`) unless both windows provably have the same alpha (`windowAlpha`: no
   alpha in the source, no motion, the same static opacity, no ramp over the window, the same coverage; the usual
   full-frame clips at opacity 1), where a plain `xfade` is already the same mix. A track without dissolves builds the
@@ -164,13 +164,19 @@ one below).
 | Cross Dissolve of 1–8 frames | 54.3 | 0.88 |
 | Dip to Black of 1–8 and 12 frames | 146.0 | 1.20 |
 | Dip to Black where the media has no handles | dropped (hard cut) | 0.40 |
-| on V2 over V1: opacity 0.6 → a pillarboxed 4:3 clip, then a dip; centre / pillar | 81.3 / 113.0 | 1.25 / 1.35 |
-| keyframed and static opacity, dissolve and dip | 52.6 | 1.20 |
+| on V2 over V1: opacity 0.6 → a pillarboxed 4:3 clip, then a dip; centre / pillar | 81.3 / 113.0 | 0.40 / 0.40 |
+| keyframed and static opacity, dissolve and dip | 52.6 | 0.49 |
 | nested: dissolve and dip inside, dissolve and dip at the nested clip's edges | 70.4 | 1.20 |
 | chunked export (dissolves and dips, several chunks) / In/Out starting inside a dissolve | 118.5 / 70.4 | 1.20 / 1.20 |
 
-The remaining error is the 8-bit rounding of the alpha `lut` and of premultiply, plus 4:2:0 / x264 rounding (the
-export reads about 1 level low).
+The remaining error is the 8-bit rounding of the alpha `lut`, plus 4:2:0 / x264 rounding (the export reads about 1
+level low). The same numbers come out on FFmpeg 6.1.1 and on the CI build (BtbN n9.0.2, `scripts/linux/get-ffmpeg.sh`).
+
+**FFmpeg 9 (CI run #160):** the premultiplied mix first ran in 8 bits and failed the nested case on CI (frame 41:
+197.0 vs 198.67). FFmpeg 9's 8-bit `premultiply` is not the identity at alpha 255 (luma 235 → 234, 6.1 keeps 235)
+and `unpremultiply` does not restore it, so opaque pixels of a premultiplied window came back a level dark. The mix
+now runs in `yuva444p16le`, whose round trip returns the 8-bit values exactly on both versions (and lowered the V2
+case from 1.35 to 0.40).
 
 The Program monitor itself, in Electron (`tests/e2e/program-transitions.spec.ts`, flat stills, canvas RGB): white →
 gray dissolve at the cut 192.0 (expected 191.5; drawn one over the other it would be 127.8), at a quarter 223.0
@@ -219,7 +225,9 @@ Same-host A/B against 94bb18e (Linux container shared with other agents, so wall
 ### Tests run
 Linux, FFmpeg 6.1.1, at b164c79: `npm run typecheck` clean; `npm test` 111 files, 1929 passed, 2 skipped; e2e under
 xvfb (`export`, `export-intermediates`, `export-mkv`, `keyframes`, `nest`, `program`, `program-transitions` (new),
-`timeline`): 24/24 passed. Windows and macOS were not run.
+`timeline`): 24/24 passed. Windows and macOS were not run. After the 16-bit change: `tests/unit/export-fade.test.ts`
+18/18 on FFmpeg 6.1.1 and on the CI build n9.0.2, `export.test.ts` "(c) cross dissolve" passed; the full suites were
+not re-run then (a perf comparison held the machine).
 
 ### Changed existing assertions
 - `tests/unit/export.test.ts` "(c) a cross dissolve mixes both clips at the cut": asserted the old graph string
