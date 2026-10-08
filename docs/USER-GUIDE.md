@@ -393,8 +393,11 @@ move it to another drive or hand it to someone else.
 1. **Choose…** a destination folder. ReCut creates a folder named after the project inside it; that folder must not
    exist yet, or be empty.
 2. Pick **Media used in sequences only** (every file a clip or a sequence snapshot uses) or **All project media**.
-   Turn on **Include subtitle files** to copy the subtitle files the project imported, and **Include proxies** to copy
-   ready proxies so the copy previews without rebuilding them on another computer.
+   Turn on **Include subtitle files** to copy the subtitle files the project imported (also those only a snapshot
+   still names), and **Include proxies** to copy ready proxies, including the preview audio of channel selections
+   (an extracted centre channel, a downmix), so the copy previews without rebuilding them on another computer.
+   Media used only inside a nested sequence or compound clip count as used. Whisper and OCR tracks, keyframes and
+   nested sequences are part of the project file and need no copying.
 3. Check the summary: the folder it creates, the total size and the free space on the destination. Media that are
    offline are listed and skipped. **Collect** stays disabled when the folder is not empty or the space is short.
 4. **Collect** runs as a job: the dialog (and **Jobs**) shows the bytes copied, and **Cancel collect** stops it.
@@ -407,7 +410,7 @@ Saga Fan Cut/
   Saga Fan Cut.recut
   Media/        title_t00.mkv, Disc 1/title_t01.mkv, Disc 2/title_t01.mkv, …
   Subtitles/    the subtitle files (option)
-  Proxies/      the proxies (option)
+  Proxies/      the proxies and channel-selection preview audio (option)
 ```
 
 - Each file keeps its own name. Files with the same name from different folders go into subfolders named after the
