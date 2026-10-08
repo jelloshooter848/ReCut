@@ -279,6 +279,8 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     focusPanel('source');
     setActiveTransport('source');
   };
+  // Clip double-clicks are detected in interactions.ts (onPointerDown) and land here.
+  ctxRef.current.onClipDoubleClick = openClipInSource;
   useEffect(() => {
     if (!active) return;
     useTimelineUi.getState().setMarkerEditorHost(1);
@@ -696,17 +698,6 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
               onPointerLeave={() => { useTimelineUi.getState().setHoverFrame(null); if (razorLine) setRazorLine(null); }}
               onContextMenu={onContentContextMenu}
               onDragOver={onDragOver} onDragEnter={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
-              onDoubleClick={(e) => {
-                if (tool !== 'select') return;
-                // Hit-test by position: pointer capture from the click-drag retargets dblclick to the content element.
-                const el = contentRef.current; if (!el) return;
-                const r = el.getBoundingClientRect();
-                const row = rowAtY(layout, e.clientY - r.top);
-                const track = row ? trackById.get(row.id) : undefined;
-                const f = xToFrame(e.clientX - r.left, zoom, scroll);
-                const clip = track?.clips.find((c) => c.start <= f && f < clipEnd(c));
-                if (clip) openClipInSource(clip);
-              }}
             >
               <div className="tl-tracks-inner" style={{ width: contentPx, height: totalH }}>
                 {/* lane backgrounds: static (the view sticks to the scroller's left edge) */}
