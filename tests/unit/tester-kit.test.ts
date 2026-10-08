@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   bestWindow, fillTemplate, formatDuration, formatManifest, formatSize, kitText, messySrt, normalizeSubtitleBytes,
-  parseFrameStats, pickShots, quietSpans, readCues, windowCues, writeSrt, type FrameStat,
+  parseFrameStats, pickShots, quietSpans, readCues, searchWord, windowCues, writeSrt, type FrameStat,
 } from '../../scripts/tester-kit/lib';
 import { parseSubtitles } from '../../shared/subtitles';
 
@@ -100,6 +100,21 @@ describe('tester kit: shots for the trailer', () => {
     const text = 'frame:0    pts:0       pts_time:0\nlavfi.scene_score=0.000000\nlavfi.signalstats.YAVG=81.5\n'
       + 'frame:1    pts:512     pts_time:0.041667\nlavfi.scene_score=0.512000\nlavfi.signalstats.YMIN=16\nlavfi.signalstats.YAVG=40.25\n';
     expect(parseFrameStats(text)).toEqual([{ t: 0, scene: 0, yavg: 81.5 }, { t: 0.041667, scene: 0.512, yavg: 40.25 }]);
+  });
+});
+
+describe('tester kit: search words', () => {
+  const cue = (text: string) => ({ start: 0, end: 1, text });
+  const tos = [cue("You're a jerk, Thom."), cue('Celia, the robots are here.'), cue('Robots everywhere. Celia, run!'), cue('I was alone.')];
+  const sintel = [cue('The dragon is gone.'), cue('I am alone now, alone.'), cue('(roars) Scales!')];
+  it('prefers a listed word, else the most frequent one', () => {
+    expect(searchWord(tos, [], ['robots'])).toBe('robots');
+    expect(searchWord(tos)).toBe('robots'); // 'celia' is as frequent, 'robots' longer
+    expect(searchWord(sintel)).toBe('alone');
+  });
+  it('finds a word both films say', () => {
+    expect(searchWord(tos, [sintel])).toBe('alone');
+    expect(searchWord([cue('Robots')], [sintel])).toBeNull();
   });
 });
 

@@ -730,10 +730,9 @@ async function build() {
   note('projects/Start here.recut', 'An empty project with one sequence, to start your own edit.');
 
   // ---------------------------------------------------------------- docs
-  const has = (cues, w) => cues.some((c) => c.text.toLowerCase().includes(w.toLowerCase()));
-  const searchTos = ['robot', 'Celia', 'Thom', 'line'].find((w) => has(subs.tos.en.cues, w) && has(subs.tos.de.cues, w)) ?? ['robot', 'Celia', 'line'].find((w) => has(subs.tos.en.cues, w));
-  const searchSintel = ['dragon', 'Scales', 'line'].find((w) => has(subs.sintel.en.cues, w));
-  const searchBoth = ['dragon', 'alone', 'remember', 'home', 'sorry', 'never', 'help', 'time', 'line'].find((w) => has(subs.tos.en.cues, w) && has(subs.sintel.en.cues, w));
+  const searchTos = L.searchWord(subs.tos.en.cues, [], ['robot', 'robots']);
+  const searchSintel = L.searchWord(subs.sintel.en.cues, [], ['dragon', 'scales']);
+  const searchBoth = L.searchWord(subs.tos.en.cues, [subs.sintel.en.cues], ['alone', 'remember', 'home', 'sorry', 'help', 'time']);
   if (!searchTos || !searchSintel || !searchBoth) throw new Error('no search words for TRY-THIS (task 2)');
   log(`search words: ${searchBoth} (both), ${searchTos} (Tears of Steel), ${searchSintel} (Sintel)`);
   const docVals = {

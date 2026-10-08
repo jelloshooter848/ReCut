@@ -208,3 +208,30 @@ export function kitText(text: string): string {
 }
 
 function round3(n: number): number { return Math.round(n * 1000) / 1000; }
+
+// ------------------------------------------------------------------ search words for TRY-THIS.md
+
+const STOP = new Set(('that this with have from your what they there were when will would could should about into just like then them than '
+  + 'been here come know dont didnt cant wont youre thats well yeah okay right want going gonna said tell these those where which while '
+  + 'their again because some something nothing really still only over very much more even also make made take look need back down away '
+  + 'other every after before through never ever always maybe sure think thing things doing done does lets let').split(' '));
+
+/** Lower-case words of at least `min` letters in the cues (bracketed sound notes left out). */
+export function cueWords(cues: Cue[], min = 4): string[] {
+  return cues.flatMap((c) => c.text.toLowerCase().replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').replace(/[’']/g, '').split(/[^a-z]+/))
+    .filter((w) => w.length >= min);
+}
+
+/**
+ * A word worth searching for: the most frequent non-stopword (ties: the longer, then alphabetical) of `a` that is
+ * also in every list of `alsoIn`, preferring the `preferred` ones. Null when there is none.
+ */
+export function searchWord(a: Cue[], alsoIn: Cue[][] = [], preferred: string[] = []): string | null {
+  const count = new Map<string, number>();
+  for (const w of cueWords(a)) if (!STOP.has(w)) count.set(w, (count.get(w) ?? 0) + 1);
+  const others = alsoIn.map((c) => new Set(cueWords(c)));
+  const ok = (w: string) => count.has(w) && others.every((s) => s.has(w));
+  for (const p of preferred) if (ok(p)) return p;
+  const ranked = [...count.keys()].filter(ok).sort((x, y) => count.get(y)! - count.get(x)! || y.length - x.length || x.localeCompare(y));
+  return ranked[0] ?? null;
+}
