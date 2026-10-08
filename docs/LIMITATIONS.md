@@ -24,6 +24,12 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
     pictures, so it dims in the middle (by a quarter of the outgoing picture at the cut), in the preview and the
     export alike. Dissolves between clips inside the nested sequence, or between two plain clips, mix linearly.
 - **Nested sequences and compound clips** (see the [user guide](USER-GUIDE.md#acts-and-reels-nested-sequences-and-compound-clips)):
+  - Nesting is limited to 8 levels, and to 1,000 tracks or 50,000 clips (picture and sound together) once
+    flattened: every inner track of every nested clip becomes a track of the outer sequence, with the inner clips the
+    nested clip plays, counting every clip and track as enabled. Nesting, pasting, Make Compound Clip and Break
+    Apart refuse what would go past it; a project file past it opens with the nested clips past it made offline
+    (listed in the repair warning). Adding clips or tracks inside a nested sequence is not checked, so a project can
+    grow past the limit that way and is then cut the next time it is opened.
   - A nested clip always plays at 100 % speed (no speed change or reverse on it; change the speed of the clips
     inside).
   - An inner sequence of another frame rate plays in real time at the outer rate by picking the inner frame shown at
@@ -283,7 +289,8 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   Collected projects still store absolute paths (relative media roots are [roadmap §17](ROADMAP.md#17-cloud-free-collaboration)).
   A FAT32 drive cannot hold a file over 4 GB, so collecting a large remux there fails at that file.
 - **Limits on load:** timeline positions and durations are capped at 86,400,000 frames (24 h at 1000 fps, far more
-  at normal rates), clip speed at 1 %–10 000 %, nested sequences at 8 levels, and any value nested deeper than 64
+  at normal rates), clip speed at 1 %–10 000 %, nested sequences at 8 levels and at 1,000 tracks or 50,000 clips
+  once flattened (the nested clips past either limit are made offline), and any value nested deeper than 64
   levels in the JSON is dropped. An invalid sequence frame rate becomes 23.976.
 - **Repairs are lossy.** A damaged project opens with a warning that lists the repairs, and the unrepaired file is
   kept as `<file>.pre-repair-<time>`. Out-of-range items are dropped or pulled in, and overlapping clips are

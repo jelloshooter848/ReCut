@@ -758,6 +758,12 @@ console.log('\n--- main process ---');
     const missBusy = await page.evaluate(async (p) => { const out = []; for (let i = 0; i < 6; i++) { const t = performance.now(); await window.recut.thumbnail({ path: p, time: 40 + i * 1.73, width: 96 }); out.push(performance.now() - t); } return out; }, files[2]);
     ms('fairness', 'thumbnail MISS via IPC while export encodes (median)', stats(missBusy).median, 600, `idle median ${stats(miss).median} -> x${r2(stats(missBusy).median / Math.max(1, stats(miss).median), 1)}`, GUARDRAIL);
     const copy2 = path.join(tmp, 'copy-exp.mp4'); fs.copyFileSync(files[6], copy2);
+    // Media caches are keyed on content since 0.7.0 (electron/media/identity.ts: size + sampled bytes), so a plain copy
+    // found files[6]'s proxy from the 20-proxy step and this "proxy while export encodes" finished in ~0.6 s instead
+    // of encoding (~22 s), which also moved the autosave below into the busiest part of the export. A trailing MP4
+    // `free` box with a per-run stamp makes the copy new content again; players and FFmpeg skip `free` boxes.
+    const free = Buffer.alloc(32); free.writeUInt32BE(32, 0); free.write('free', 4, 'latin1'); free.write(`recut-perf ${Date.now()}`.padEnd(24).slice(0, 24), 8, 'latin1');
+    fs.appendFileSync(copy2, free);
     const [pid2] = await page.evaluate((p) => window.__recut.actions.importMediaFiles(p), [copy2]);
     await page.waitForFunction((id) => { const m = window.__recut.store.getState().project.media[id]; return m && m.probe; }, pid2, { timeout: 60_000 });
     const tp = Date.now();
