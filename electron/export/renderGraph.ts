@@ -755,17 +755,23 @@ function dissolveWindow(ctx: Ctx, tail: string, head: string, D: number, premult
 
 /**
  * The alpha of segment frames `[a, b)` as a key, when it is known to be the same on all of them and to depend only on
- * the key: a picture without an alpha channel (the probe says so), no motion keyframes, a static opacity, no fade or
- * dip ramp over those frames, no nested ramp and no late-starting video stream (made transparent). The key is
+ * the key: a picture without an alpha channel (its probed pixel format; without one, a codec in NO_ALPHA_CODECS), no
+ * motion keyframes, a static opacity, no fade or dip ramp over those frames, no nested ramp and no late-starting video stream (made transparent). The key is
  * `full@<opacity>` when the picture fills the frame (its display shape is the frame's, no transform or crop), else the
  * fitted size and the transform. Null otherwise. Two windows with the same key have equal alphas, so dissolveWindow's
  * plain xfade is already the premultiplied mix and skips the 4:4:4 round trip (the costly part: on a 1080p export with
  * a 24-frame dissolve at every 3-second cut, about 40 % longer).
  */
+/**
+ * Codecs that can never carry an alpha channel: a probe without `pixFmt` (an older project's stored probe) is taken as
+ * alpha-free for these only. Anything else unknown (HEVC, VP8/9, AV1, PNG, ProRes...) stays on the premultiplied path.
+ */
+const NO_ALPHA_CODECS = new Set(['h264', 'mpeg2video', 'mpeg4', 'mjpeg', 'mpeg1video', 'vc1', 'theora', 'dvvideo']);
+
 function windowAlpha(ctx: Ctx, seg: ClipSeg, a: number, b: number): string | null {
   const c = seg.clip, t = c.transform;
   const v = seg.media.probe?.video;
-  if (!v?.pixFmt || /^(rgba|bgra|argb|abgr|ya\d|yuva|gbrap|ayuv|pal8)/.test(v.pixFmt)) return null;
+  if (!v || (v.pixFmt ? /^(rgba|bgra|argb|abgr|ya\d|yuva|gbrap|ayuv|pal8)/.test(v.pixFmt) : !NO_ALPHA_CODECS.has(v.codec))) return null;
   const d = fitInputSize(v);
   if (!d || hasMotionKeyframes(c) || keyframesOf(c, 'opacity') || !Number.isFinite(t.opacity)) return null;
   // Fade / dip ramps: weight < 1 on frames n < extBefore + ramp-in and n > end - ramp-out (fadeWeights, dipFilters).

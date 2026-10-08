@@ -398,6 +398,24 @@ describe('two-sided transitions: export matches the preview per frame', () => {
     expect(buildRenderGraph(req(plain)).filterGraph).not.toMatch(/split=|yuva444p|premultiply|xfade/);
   });
 
+  it('the graph: a probe without a pixel format is alpha-free only for codecs that cannot carry alpha', () => {
+    // Older projects' stored probes (and some fixtures) have no pixFmt. h264 and the like never have alpha: plain xfade.
+    // Anything else (ProRes 4444, HEVC, VP9, PNG, an unknown codec) may: the premultiplied mix.
+    const premultiplied = (codec: string, pixFmt?: string) => {
+      const m: MediaItem = { ...white, id: 'np', probe: { ...white.probe!, video: { ...white.probe!.video!, codec, pixFmt } } };
+      const s = createSequence('nopix', F24, 320, 180);
+      const a = clipOf(m, 0, 16, { sourceIn: 1 }), b = clipOf(m, 16, 16, { sourceIn: 1 });
+      s.videoTracks[0].clips.push(a, b);
+      s.videoTracks[0].transitions.push(fade('x', a.id, b.id, 6));
+      return /premultiply/.test(buildRenderGraph({ ...req(s), media: { [m.id]: m } }).filterGraph);
+    };
+    for (const codec of ['h264', 'mpeg1video', 'mpeg2video', 'mpeg4', 'mjpeg', 'vc1', 'theora', 'dvvideo']) expect(premultiplied(codec), codec).toBe(false);
+    for (const codec of ['prores', 'hevc', 'vp9', 'png', 'something-new']) expect(premultiplied(codec), codec).toBe(true);
+    // A recorded pixel format decides: with alpha premultiplied, without plain, whatever the codec.
+    expect(premultiplied('h264', 'yuva420p')).toBe(true);
+    expect(premultiplied('prores', 'yuv422p10le')).toBe(false);
+  });
+
   it('the graph: a dip opens the same input as its linked audio crossfade, so the pair still shares it', () => {
     const av: MediaItem = { ...white, id: 'av', probe: { ...white.probe!, audio: [{ index: 1, codec: 'aac', channels: 2, layout: 'stereo', sampleRate: 48000 }] } };
     const s = createSequence('shared', F24, 320, 180);

@@ -231,8 +231,8 @@ not re-run then (a perf comparison held the machine).
 
 ### Changed existing assertions
 - `tests/unit/export.test.ts` "(c) a cross dissolve mixes both clips at the cut": asserted the old graph string
-  `xfade=transition=fade:duration=0.5:offset=1.75`; now the two 12-frame window trims and the premultiplied `xfade`
-  with `offset=0`. Its picture checks are unchanged.
+  `xfade=transition=fade:duration=0.5:offset=1.75`; now the two 12-frame window trims and a plain `xfade`
+  with `offset=0` (same size and transform on both sides). Its picture checks are unchanged.
 - `tests/unit/export-warnings.test.ts` "random sequences: the checklist predicts every transition": read every
   rendered transition's length from `xfade` durations; a dip has no `xfade` now, so dips are checked separately
   (always `to = D`, no reason).
