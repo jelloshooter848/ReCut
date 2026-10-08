@@ -1,0 +1,52 @@
+name: Feature request
+description: Suggest something ReCut should do.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! Please check the [Roadmap](https://github.com/jelloshooter848/ReCut/blob/main/docs/ROADMAP.md) and
+        [Limitations](https://github.com/jelloshooter848/ReCut/blob/main/docs/LIMITATIONS.md) first: many features are
+        already planned, with the reasons for their order. For an open-ended idea or a question, start a thread in
+        [Discussions](https://github.com/jelloshooter848/ReCut/discussions) instead.
+
+        ReCut edits media you supply. Requests to download, rip, stream or decrypt content will be closed.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the task and where ReCut gets in the way. A real fan-edit example helps a lot.
+      placeholder: "When I merge two films, I want to ..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help?
+      description: How you imagine it working. Mention how another editor does it, if you know one.
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How do you work around it today?
+    validations:
+      required: false
+  - type: input
+    id: roadmap
+    attributes:
+      label: Related Roadmap entry (if any)
+      placeholder: "§15 Multi-language subtitle authoring"
+    validations:
+      required: false
+  - type: dropdown
+    id: help
+    attributes:
+      label: Would you like to work on it?
+      options:
+        - "No, just suggesting"
+        - "Maybe, with some guidance"
+        - "Yes"
+    validations:
+      required: false

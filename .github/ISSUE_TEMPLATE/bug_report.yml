@@ -1,0 +1,120 @@
+name: Bug report
+description: Something in ReCut doesn't work as it should.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. Please search [existing issues](https://github.com/jelloshooter848/ReCut/issues?q=is%3Aissue) first.
+        For questions, use [Discussions](https://github.com/jelloshooter848/ReCut/discussions). Please don't report a security vulnerability here.
+
+        **Don't attach or link copyrighted footage**, not even a short clip. If the bug needs media, reproduce it with
+        `scripts/make-test-media.sh` or a file you made yourself, and paste `ffprobe` output for the original instead.
+  - type: input
+    id: version
+    attributes:
+      label: ReCut version
+      description: Help › About ReCut, or the commit (`git rev-parse --short HEAD`) if you run from source.
+      placeholder: "0.8.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows (installer or portable exe)
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux (AppImage)
+        - Running from source (any OS)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "Windows 11 24H2 / macOS 15.1 / Ubuntu 24.04"
+    validations:
+      required: true
+  - type: input
+    id: ffmpeg
+    attributes:
+      label: FFmpeg version (if media is involved)
+      description: Shown in Help › About ReCut. "bundled" is fine for the release downloads.
+      placeholder: "bundled"
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Import / media / proxies
+        - Playback / preview
+        - Timeline editing
+        - Transcript search / subtitles
+        - Speech-to-text (Whisper)
+        - OCR (bitmap subtitles)
+        - Storyline / what-if / compare
+        - Nested sequences / keyframes
+        - Export
+        - Project save / open / autosave
+        - Collect Project / relink
+        - Install / packaging / startup
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Steps someone else can follow. If it only happens sometimes, say how often and under what conditions.
+      placeholder: |
+        1. Import ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happened instead, with exact error text and values. Paste; don't paraphrase.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output and logs
+      description: |
+        ReCut does not write log files. Paste what applies: the full error of a failed job from the Jobs panel (click
+        the error line to expand it), the text of an error dialog, errors from View › Toggle Developer Tools › Console,
+        or terminal output if you started ReCut from a terminal.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots, ffprobe output, other context
+      description: Screenshots of the ReCut UI are welcome; make sure no copyrighted footage is visible in them.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
+        - label: This report contains no copyrighted footage or links to it.
+          required: true
