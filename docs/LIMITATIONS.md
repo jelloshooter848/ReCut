@@ -100,9 +100,9 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   (Program shows the **Proxy** chip). This is deliberate. "Needs proxy" appears only when no proxy exists.
 - **Still images** in PNG, JPEG, WebP, GIF and BMP are drawn directly. Every other still is previewed from a PNG
   proxy that FFmpeg makes on import, so a format previews and exports only if your FFmpeg build decodes it:
-  - **HEIC / HEIF** needs FFmpeg 7.1 or later (phone photos are tile grids). It works with the FFmpeg bundled in
-    the Windows release. FFmpeg 6.1 (e.g. Ubuntu 24.04) cannot read HEIF, so there a HEIC neither previews nor
-    exports.
+  - **HEIC / HEIF** needs FFmpeg 7.1 or later (phone photos are tile grids). The FFmpeg bundled in the Windows,
+    Linux and macOS releases (8.1 or later) is new enough. FFmpeg 6.1 (e.g. Ubuntu 24.04's, when running from source)
+    cannot read HEIF, so there a HEIC neither previews nor exports.
   - **PSD**: FFmpeg 6.1 rejects the RLE-compressed PSD files ImageMagick writes ("Not enough data for rle
     scanline"); uncompressed PSD works.
   - **JPEG XL** needs an FFmpeg built with libjxl.
@@ -247,8 +247,8 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   Collected projects still store absolute paths (relative media roots are [roadmap §17](ROADMAP.md#17-cloud-free-collaboration)).
   A FAT32 drive cannot hold a file over 4 GB, so collecting a large remux there fails at that file.
 - **Limits on load:** timeline positions and durations are capped at 86,400,000 frames (24 h at 1000 fps, far more
-  at normal rates), clip speed at 1 %–10 000 %, and nesting at 64 levels. An invalid sequence frame rate becomes
-  23.976.
+  at normal rates), clip speed at 1 %–10 000 %, nested sequences at 8 levels, and any value nested deeper than 64
+  levels in the JSON is dropped. An invalid sequence frame rate becomes 23.976.
 - **Repairs are lossy.** A damaged project opens with a warning that lists the repairs, and the unrepaired file is
   kept as `<file>.pre-repair-<time>`. Out-of-range items are dropped or pulled in, and overlapping clips are
   shortened at their start or moved to an extra track (at most 32 extra tracks per kind; clips beyond that are

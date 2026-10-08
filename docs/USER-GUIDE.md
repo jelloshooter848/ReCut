@@ -98,7 +98,8 @@ shows its state, with **Rebuild** if it failed.
 ## 3. Detect scenes
 
 1. Right-click a video › **Detect Scenes…**. Set the **Threshold** (higher means fewer, stronger cuts) and click
-   **Detect**. The Media Inspector › **Detect** button and Jobs › Proxies › detect-all do the same.
+   **Detect**. The Media Inspector › **Detect** button and Jobs › Proxies › **Detect scenes: selected** / **All
+   without scenes** do the same.
 2. Detected scenes appear under the media row in the Project panel. Right-click a scene to **Load in Source**,
    **Insert at Playhead**, **Rename**, **Merge with Next**, **Split at Source Time…**, **Tag…**, **Add to Library**
    or **Delete Scene**.
@@ -208,7 +209,8 @@ Scenes in the library are reusable, tagged source ranges.
    - With only a sequence Out, the edit is back-timed to end there.
    - With all four points set, the source range wins at the sequence In.
 4. The first clip into an empty sequence asks **Change sequence to match clip?** Choosing **Change** adopts the
-   clip's frame size and rate. Do this before you build: the frame rate is fixed once a sequence has clips.
+   clip's frame size and rate. Do this before you build: once a sequence has clips its frame rate is fixed
+   (positions are frames), so neither the Inspector nor **Sequence Settings…** can change it.
 5. The source-patch buttons (**V1**, **A1**, ...) in the track headers choose the target tracks. Un-patch video for an audio-only edit
    (and the reverse).
 6. Other ways to add clips: drag from Project, Source (the grip button), Scenes or Transcript. You can also use
@@ -370,10 +372,10 @@ own sequence and drop it into as many cuts as you like: an edit made inside it s
 
 ## 14. Proxies and relinking
 
-- Proxies are controlled with **Use proxies** (Project toolbar, Jobs › Proxies, Preferences). **Jobs › Proxies**
-  lists every file with Generate / Cancel / Regenerate / Delete / Reveal and a **Size** (540p / 720p / 1080p) for new
-  proxies. The Program monitor shows a **Proxy** chip when it plays one. Its **Needs proxy: N › Generate proxies**
-  chip fixes undecodable clips under the playhead.
+- Proxies are controlled with **Use proxies** (Project toolbar; **Playback proxies** in Jobs › Proxies, **Use proxies
+  for playback** in Preferences). **Jobs › Proxies** lists every file with Generate / Cancel / Regenerate / Delete /
+  Reveal and a **Size** (540p / 720p / 1080p) for new proxies. The Program monitor shows a **Proxy** chip when it
+  plays one. Its **Needs proxy: N › Generate proxies** chip fixes undecodable clips under the playhead.
 - Proxies affect only the preview. Export always reads the originals.
 - **Moved your media?** Open the project, and offline files are listed with a banner. Click **Relink…** › **Search
   folder…** (matches by name + size) › **Apply N matches**, or **Locate…** per file. **Check files** re-verifies.

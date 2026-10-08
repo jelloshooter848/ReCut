@@ -4,7 +4,7 @@ A ReCut project is a single UTF-8 JSON document. It references source media by a
 copies media. Derived data (thumbnails, waveforms, proxies, scene-detection caches) lives in the cache
 directory (`<userData>/cache` or `$RECUT_CACHE_DIR`) keyed by the media file's content (its size and a
 fingerprint of nine sampled 64 KiB blocks, `electron/media/identity.ts`; not its path or modification time, so
-derived data survives moving, renaming and copying the file; entries from before 0.10, keyed by path + size + mtime,
+derived data survives moving, renaming and copying the file; entries from before 0.7.0, keyed by path + size + mtime,
 are still read), so a project file stays small (typically well under 10 MB even for long-form work) and can be put under version control.
 
 The authoritative TypeScript definitions are in `shared/model.ts`; `shared/project.ts` contains
@@ -162,14 +162,15 @@ trim, and still shapes the curve). `value` is in the property's unit (pixels, sc
 non-empty list ignores its static value; before the first keyframe the first value holds, after the last the last.
 On load, entries without a finite frame and value are dropped, frames are rounded, values clamped to the property's
 range, duplicates and unknown properties dropped, lists sorted and cut at 2,000 keyframes; any of this is reported
-as a repair. Added in 0.8.0 (planned); `formatVersion` stays 1, and older files (no keyframes) open unchanged.
+as a repair. Added in 0.8.0; `formatVersion` stays 1, and older files (no keyframes) open unchanged.
 
 ### Transition
 
 `{ id, type: 'crossDissolve'|'dipToBlack'|'audioCrossfade', duration (frames), outClipId, inClipId }`.
 A transition is centred on the cut between `outClipId` and `inClipId`; either may be `null` for a
-fade from/to black (silence). It uses source handles (media beyond the clip's in/out) and never changes
-timeline positions. Transitions are automatically dropped when their clips stop being adjacent.
+fade from/to black (silence). A Cross Dissolve or Audio Crossfade uses source handles (media beyond the clip's
+in/out); a Dip to Black needs none. Transitions never change timeline positions, and are automatically dropped
+when their clips stop being adjacent.
 
 ### Markers and continuity notes
 

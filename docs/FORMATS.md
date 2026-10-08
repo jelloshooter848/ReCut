@@ -88,7 +88,8 @@ not supported by Chromium"). Typical cases:
 - Proxies from before 0.4 carry one stream (`<key>_<height>p_a<N>.mp4`, or `<key>_<height>p.mp4` for the first).
   They stay in use while every clip plays that stream; when a clip or the media needs another one, the proxy is
   marked stale and, with proxies on, rebuilt with every stream.
-- Proxies are cached under `<cache>/proxies/` and keyed by path + size + mtime, so a re-import reuses them.
+- Proxies are cached under `<cache>/proxies/` and keyed by the file's content (its size and a fingerprint of sampled
+  blocks), so a re-import, a moved or renamed file and a relink reuse them.
 - You can also generate a proxy manually: right-click › **Generate Proxy**, Media Inspector › **Generate**, the
   Program chip **Generate proxies**, or the bulk buttons in Jobs › Proxies.
 - **Proxies off:** browser-playable originals play directly. For an undecodable original that already has a ready

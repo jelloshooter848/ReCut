@@ -54,6 +54,7 @@ or Timeline, whichever was clicked last), or Compare when it is focused.
 | Apply Default Audio Transition (crossfade) | Ctrl+Shift+D |
 | Enable / Disable Clip | Shift+E |
 | Remove Disabled Clips… (ripple, asks first) | unbound (Sequence menu, Storyline › What if, clip context menu) |
+| Extract Centre Channel (Dialogue), Make Compound Clip, Open in Timeline, Break Apart Compound Clip | unbound (Clip menu, clip context menu) |
 | Link / Unlink | Ctrl+L |
 | Speed / Duration… | Ctrl+R |
 | Nudge Selection Left / Right 1 Frame | Alt+← / Alt+→ |
@@ -90,7 +91,7 @@ The default transition length is set in **Preferences › Default transition** (
 | New Sequence… | Ctrl+Shift+N |
 | Preferences… | Ctrl+, (menu: **Edit › Preferences…** on Linux / Windows, **ReCut › Preferences…** on macOS) |
 | Quit | Ctrl+Q |
-| Import Subtitles…, Duplicate Sequence…, Duplicate as Cut Without Disabled Clips…, Take Sequence Snapshot…, Rename Sequence…, Sequence Settings…, Clear Recent Projects | unbound (assign them in the dialog) |
+| Import Subtitles…, Collect Project…, OCR Languages…, Transcription Models…, Duplicate Sequence…, Duplicate as Cut Without Disabled Clips…, Take Sequence Snapshot…, Rename Sequence…, Sequence Settings…, Clear Recent Projects | unbound (assign them in the dialog) |
 
 ## View & panels
 
@@ -116,7 +117,7 @@ The default transition length is set in **Preferences › Default transition** (
 | Command | Keys |
 |---|---|
 | Keyboard Shortcuts… | Ctrl+Alt+K |
-| About ReCut | unbound (Help menu) |
+| Check for Updates…, About ReCut | unbound (Help menu) |
 
 ## Timecode entry
 
@@ -147,9 +148,9 @@ does not change. A valid entry is clamped to the field's range.
 | Source monitor focused | Space, J/K/L, ←/→ (Shift = 5), Home/End, I/O, Shift+I/O, `,` insert, `.` overwrite |
 | Program monitor focused | Space, J/K/L, ←/→ (Shift = 5), Home/End, I/O, Shift+I/O |
 | Timeline focused | Esc cancels a drag, closes a popover or clears the selection. Delete/Backspace deletes (Shift = ripple). Ctrl+A / Ctrl+Shift+A, Ctrl+C / X / V |
-| Project panel | ↑/↓ move, ←/→ collapse/expand, Enter opens (loads media in Source, opens a sequence, toggles a bin), F2 rename, Delete remove, Esc clear selection, Ctrl+A select all media |
-| Transcript search | ↑/↓ pick a result, Enter loads it in Source with In/Out on the line, Ctrl+Enter inserts it at the playhead, Esc leaves the field |
-| Scenes panel | ↑/↓ select, Enter load in Source, Delete delete |
+| Project panel | ↑/↓ move (Shift extends the selection), ←/→ collapse/expand, Enter opens (loads media in Source, opens a sequence, toggles a bin), F2 rename, Delete remove, Esc clear selection, Ctrl+A select all media |
+| Transcript search | ↑/↓ pick a result, Enter loads it in Source with In/Out on the line, Ctrl+Enter inserts it at the playhead, Esc clears the query, then leaves the field |
+| Scenes panel | ↑/↓ select (Shift extends the selection), Ctrl+A select all shown, Enter load in Source, Delete delete |
 | Continuity panel | ↑/↓ select, Space resolve/reopen, Enter or F2 edit, Delete delete, Esc clear focus |
 | Compare panel focused | Alt (pressed alone) toggles A only / B only |
 | Subtitle cue / name fields | Enter commits, Esc reverts |
