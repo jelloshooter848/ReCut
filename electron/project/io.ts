@@ -64,9 +64,17 @@ export const RENAME_RETRY = { enabled: process.platform === 'win32', delaysMs: [
 const RENAME_RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
 
 async function renameRetrying(from: string, to: string): Promise<void> {
+  await retryingRefused(() => fsp.rename(from, to));
+}
+
+/**
+ * `op` (a rename, or the removal of a file a scan may hold open) retried by the RENAME_RETRY rule while Windows
+ * refuses it with EPERM, EACCES or EBUSY.
+ */
+async function retryingRefused(op: () => Promise<void>): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
-      await fsp.rename(from, to);
+      await op();
       return;
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
@@ -630,7 +638,15 @@ export async function discardRecovery(autosavePath: string): Promise<void> {
     throw new Error('Refusing to delete a file that is not an autosave offered for recovery');
   }
   offeredAutosaves.delete(resolved);
-  await fsp.rm(resolved, { force: true });
+  await removeAutosave(resolved);
+}
+
+/**
+ * Remove an autosave file. A removal Windows refuses for a moment (a scan holds the just-written file) is retried
+ * like a rename (RENAME_RETRY): an autosave left behind after a save is offered for recovery on the next launch.
+ */
+async function removeAutosave(p: string): Promise<void> {
+  await retryingRefused(() => fsp.rm(p, { force: true }));
 }
 
 /**
@@ -666,8 +682,11 @@ export async function clearUntitledAutosaveForId(projectId: unknown, userData: s
       const raw = JSON.parse(await fsp.readFile(p, 'utf8')) as { id?: unknown } | null;
       id = raw && typeof raw.id === 'string' ? raw.id : null;
     }
-    if (id === projectId) await fsp.rm(p, { force: true });
-  } catch { /* nothing to do */ }
+    if (id === projectId) await removeAutosave(p);
+  } catch (e) {
+    // No untitled autosave (ENOENT) is the usual case; anything else leaves it to be offered for recovery: say so.
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`[autosave] could not remove ${p}: ${errMsg(e)}`);
+  }
 }
 
 const JSON_WS = new Set([' ', '\n', '\r', '\t']);
