@@ -359,11 +359,15 @@ function addInput(ctx: Ctx, seg: ClipSeg, kind: 'video' | 'audio'): InputInfo {
   const srcStart = Math.max(0, seg.srcStart - seg.extBefore * ctx.fd * seg.speed);
   // Same lead for video and audio so a linked pair produces identical input args (and shares the input).
   const lead = halfMediaFrame(seg.media);
-  const from = Math.max(0, srcStart - lead);
+  // The input covers the frames read but not shown too (ClipSeg readBefore / readAfter); the trims pick the segment.
+  const readBefore = seg.readBefore ?? 0, readAfter = seg.readAfter ?? 0;
+  const readStart = Math.max(0, srcStart - readBefore * ctx.fd * seg.speed);
+  const readLen = srcLen + (readBefore + readAfter) * ctx.fd * seg.speed;
+  const from = Math.max(0, readStart - lead);
   const seek = Math.max(0, from - inputPreroll(seg.media));
   const args: string[] = ['-copyts', '-start_at_zero'];
   if (seek > 0) args.push('-ss', sec(seek));
-  args.push('-t', sec((srcStart - seek) + srcLen + 0.25), '-i', seg.media.path);
+  args.push('-t', sec((readStart - seek) + readLen + 0.25), '-i', seg.media.path);
   const key = args.join('\u0000');
   const same = ctx.inputKeys.get(key) ?? [];
   const shared = same.find((e) => !e.kinds.has(kind));
@@ -506,6 +510,7 @@ function videoSegment(ctx: Ctx, seg: ClipSeg): string {
     const opacityAt = (n: number) => clamp01(opacityKeys ? evaluateKeyframes(opacityKeys, k0 + n) : op);
     f.push(...opacityFilters(ctx, fades ? (n) => opacityAt(n) * fades(n) : opacityAt, totalFrames));
   }
+  f.push(...dipFilters(seg));
   f.push(...envelopeFilters(ctx, seg, 'video', totalFrames));
   const label = newLabel(ctx, 'v');
   ctx.chains.push(`[${index}:v:0]${f.join(',')}${label}`);
@@ -634,15 +639,38 @@ function motionFilters(ctx: Ctx, seg: ClipSeg, k0: number, totalFrames: number):
   ];
 }
 
+/** A Dip to Black half that is not a whole number of frames (an odd length), else 0. */
+function halfFrameDip(half: number | undefined): number {
+  return half && half > 0 && !Number.isInteger(half) ? half : 0;
+}
+
 /**
- * Fade from / to black of a single-sided transition (ClipSeg fadeIn / fadeOut): the weight of segment frame n, the
- * preview planner's (src/playback/planner.ts contribute): (frame - start) / D over the first D frames of the clip and
- * (end - frame) / D over its last D, multiplied. It scales the alpha, so the fade shows what is below the clip (black
+ * The halves of a two-sided Dip to Black (ClipSeg dipIn / dipOut) that are a whole number of frames H: `fade` with
+ * alpha=1 counting frames (start_frame, nb_frames) multiplies the alpha by k / H on frame k of the incoming clip's
+ * first H, and by (H - k) / H on its last H, the planner's weights (src/playback/planner.ts contribute), so a dip shows
+ * what is below the clip (black on V1). It leaves the frames outside the ramp untouched and keeps the graph short
+ * (a lut + sendcmd ramp costs a command per frame). An odd length has half-frame ramps, which `fade` cannot place
+ * (its time options round them); fadeWeights takes those into the per-frame lut.
+ */
+function dipFilters(seg: ClipSeg): string[] {
+  const f: string[] = [];
+  const whole = (h: number | undefined): h is number => !!h && h > 0 && Number.isInteger(h);
+  if (whole(seg.dipIn)) f.push(`fade=t=in:start_frame=${seg.extBefore}:nb_frames=${seg.dipIn}:alpha=1`);
+  if (whole(seg.dipOut)) f.push(`fade=t=out:start_frame=${Math.max(0, seg.extBefore + seg.frames - seg.dipOut)}:nb_frames=${seg.dipOut}:alpha=1`);
+  return f;
+}
+
+/**
+ * Fade from / to black of a single-sided transition (ClipSeg fadeIn / fadeOut), or a half-frame half of a Dip to
+ * Black (dipIn / dipOut; whole ones are dipFilters): the weight of segment frame n, the preview planner's
+ * (src/playback/planner.ts contribute): (frame - start) / D over the first D frames of the clip and (end - frame) / D
+ * over its last D, multiplied. It scales the alpha, so the fade shows what is below the clip (black
  * on V1), as the preview draws it. Null when the segment has no fade. (FFmpeg's `fade` darkened the colour instead,
  * and towards luma 0, not 16: it treats yuva420p as full range.)
  */
 function fadeWeights(seg: ClipSeg): ((n: number) => number) | null {
-  const fadeIn = seg.fadeIn ?? 0, fadeOut = seg.fadeOut ?? 0;
+  // A dip half of a whole number of frames is a `fade` filter instead (dipFilters).
+  const fadeIn = seg.fadeIn || halfFrameDip(seg.dipIn), fadeOut = seg.fadeOut || halfFrameDip(seg.dipOut);
   if (!(fadeIn > 0) && !(fadeOut > 0)) return null;
   const end = seg.extBefore + seg.frames;
   return (n) => {
@@ -702,28 +730,104 @@ function videoGap(ctx: Ctx, frames: number): string {
   return label;
 }
 
-/** Builds one full-range video track stream. Returns its label, or null when the track is empty. */
+/**
+ * Cross Dissolve of two `D`-frame windows (the outgoing segment's last `D` frames, the incoming one's first `D`): the
+ * linear mix `(1 - t) * out + t * in` with `t = k / D` on frame k, so the result composites over the tracks below as
+ * `(1 - t) * (out over below) + t * (in over below)`, the preview's picture (src/playback/planner.ts LayerPlan.mixWith).
+ * `xfade` mixes straight-alpha pixels, which is that mix only where the two alphas are equal; where they may differ
+ * (`premultiply`: see windowAlpha) the windows are mixed premultiplied, in 4:4:4 (premultiply
+ * needs the alpha at every chroma sample), only over the window's frames. In 16 bits: FFmpeg 9's 8-bit premultiply
+ * is not the identity at alpha 255 (luma 235 became 234 and unpremultiply did not restore it), so an opaque pixel came
+ * back a level dark; the 16-bit round trip returns the 8-bit values exactly on FFmpeg 6.1 and 9.0.
+ */
+function dissolveWindow(ctx: Ctx, tail: string, head: string, D: number, premultiply: boolean): string {
+  const out = newLabel(ctx, 'x');
+  const xfade = `xfade=transition=fade:duration=${sec(D * ctx.fd)}:offset=0`;
+  if (!premultiply) {
+    ctx.chains.push(`${tail}${head}${xfade}${out}`);
+    return out;
+  }
+  const a = newLabel(ctx, 'xa'), b = newLabel(ctx, 'xb');
+  ctx.chains.push(`${tail}format=yuva444p16le,premultiply=inplace=1${a}`, `${head}format=yuva444p16le,premultiply=inplace=1${b}`);
+  ctx.chains.push(`${a}${b}${xfade},unpremultiply=inplace=1,format=yuva420p${out}`);
+  return out;
+}
+
+/**
+ * The alpha of segment frames `[a, b)` as a key, when it is known to be the same on all of them and to depend only on
+ * the key: a picture without an alpha channel (its probed pixel format; without one, a codec in NO_ALPHA_CODECS), no
+ * motion keyframes, a static opacity, no fade or dip ramp over those frames, no nested ramp and no late-starting video stream (made transparent). The key is
+ * `full@<opacity>` when the picture fills the frame (its display shape is the frame's, no transform or crop), else the
+ * fitted size and the transform. Null otherwise. Two windows with the same key have equal alphas, so dissolveWindow's
+ * plain xfade is already the premultiplied mix and skips the 4:4:4 round trip (the costly part: on a 1080p export with
+ * a 24-frame dissolve at every 3-second cut, about 40 % longer).
+ */
+/**
+ * Codecs that can never carry an alpha channel: a probe without `pixFmt` (an older project's stored probe) is taken as
+ * alpha-free for these only. Anything else unknown (HEVC, VP8/9, AV1, PNG, ProRes...) stays on the premultiplied path.
+ */
+const NO_ALPHA_CODECS = new Set(['h264', 'mpeg2video', 'mpeg4', 'mjpeg', 'mpeg1video', 'vc1', 'theora', 'dvvideo']);
+
+function windowAlpha(ctx: Ctx, seg: ClipSeg, a: number, b: number): string | null {
+  const c = seg.clip, t = c.transform;
+  const v = seg.media.probe?.video;
+  if (!v || (v.pixFmt ? /^(rgba|bgra|argb|abgr|ya\d|yuva|gbrap|ayuv|pal8)/.test(v.pixFmt) : !NO_ALPHA_CODECS.has(v.codec))) return null;
+  const d = fitInputSize(v);
+  if (!d || hasMotionKeyframes(c) || keyframesOf(c, 'opacity') || !Number.isFinite(t.opacity)) return null;
+  // Fade / dip ramps: weight < 1 on frames n < extBefore + ramp-in and n > end - ramp-out (fadeWeights, dipFilters).
+  const rampIn = Math.max(seg.fadeIn ?? 0, seg.dipIn ?? 0), rampOut = Math.max(seg.fadeOut ?? 0, seg.dipOut ?? 0);
+  if (rampIn > 0 && a < seg.extBefore + rampIn) return null;
+  if (rampOut > 0 && b > seg.extBefore + seg.frames - rampOut) return null;
+  if (flatOrigin(c)?.env.length || videoStreamStart(seg.media) > 0) return null;
+  const crop = t.crop ?? { left: 0, top: 0, right: 0, bottom: 0 };
+  const cr = [crop.left, crop.right, crop.top, crop.bottom].map(clamp01);
+  const rot = ((t.rotation % 360) + 360) % 360, X = Math.round(t.x || 0), Y = Math.round(t.y || 0);
+  const op = num(clamp01(t.opacity));
+  const identity = cr.every((x) => x === 0) && t.scale === 1 && rot === 0 && X === 0 && Y === 0;
+  if (identity && d.w * ctx.H === d.h * ctx.W) return `full@${op}`;
+  return `${d.w}x${d.h}:${cr.join(',')}:${t.scale}:${rot}:${X}:${Y}@${op}`;
+}
+
+/**
+ * Builds one full-range video track stream. Returns its label, or null when the track is empty.
+ *
+ * A segment with a Cross Dissolve at an edge is split into its transition windows (the `2h` frames of the incoming
+ * transition at its head, of the outgoing one at its tail) and its body; each pair of windows is mixed
+ * (dissolveWindow) and everything is joined with one concat. A Dip to Black is a per-frame alpha ramp inside each
+ * clip (exportPlan.ts; dipFilters, fadeWeights), so it needs no join.
+ */
 function videoTrack(ctx: Ctx, plan: TrackPlan): string | null {
   if (!plan.segs.some((s) => s.kind === 'clip')) return null;
   const parts: string[] = [];
-  let run: { label: string; frames: number } | null = null;
-  const flush = () => { if (run) { parts.push(run.label); run = null; } };
+  /** The previous segment's tail window, waiting for the incoming segment's head window. */
+  let tail: { label: string; frames: number; alpha: string | null } | null = null;
+  const internal = (why: string) => new Error(`Internal error in the render graph: ${why} on ${plan.track.name}.`);
   for (const s of plan.segs) {
-    if (s.kind === 'gap') { flush(); parts.push(videoGap(ctx, s.frames)); continue; }
+    if (tail ? s.kind === 'gap' || s.transIn?.frames !== tail.frames : s.kind === 'clip' && s.transIn) throw internal('a Cross Dissolve has no window on one side');
+    if (s.kind === 'gap') { parts.push(videoGap(ctx, s.frames)); continue; }
     const label = videoSegment(ctx, s);
     const frames = s.extBefore + s.frames + s.extAfter;
-    if (run && s.transIn) {
-      const D = s.transIn.frames;
-      const out = newLabel(ctx, 'x');
-      const kind = s.transIn.type === 'dipToBlack' ? 'fadeblack' : 'fade';
-      ctx.chains.push(`${run.label}${label}xfade=transition=${kind}:duration=${sec(D * ctx.fd)}:offset=${sec((run.frames - D) * ctx.fd)}${out}`);
-      run = { label: out, frames: run.frames + frames - D };
-    } else {
-      flush();
-      run = { label, frames };
+    const headN = tail ? tail.frames : 0;
+    const tailN = 2 * s.extAfter;
+    if (!headN && !tailN) { parts.push(label); continue; }
+    const bodyN = frames - headN - tailN;
+    const pieces: [number, number][] = [];
+    if (headN) pieces.push([0, headN]);
+    if (bodyN > 0) pieces.push([headN, headN + bodyN]);
+    if (tailN) pieces.push([frames - tailN, frames]);
+    const outs = pieces.map(() => newLabel(ctx, 'vs'));
+    const srcs = pieces.length > 1 ? pieces.map(() => newLabel(ctx, 'vsp')) : [label];
+    if (pieces.length > 1) ctx.chains.push(`${label}split=${pieces.length}${srcs.join('')}`);
+    pieces.forEach(([a, b], i) => ctx.chains.push(`${srcs[i]}trim=start_frame=${a}:end_frame=${b},setpts=PTS-STARTPTS${outs[i]}`));
+    let i = 0;
+    if (headN) {
+      const alpha = windowAlpha(ctx, s, 0, headN);
+      parts.push(dissolveWindow(ctx, tail!.label, outs[i++], headN, alpha === null || alpha !== tail!.alpha));
     }
+    if (bodyN > 0) parts.push(outs[i++]);
+    tail = tailN ? { label: outs[i++], frames: tailN, alpha: windowAlpha(ctx, s, frames - tailN, frames) } : null;
   }
-  flush();
+  if (tail) throw internal('a Cross Dissolve has no window on one side');
   const trackLabel = newLabel(ctx, 'tv');
   if (parts.length === 1) {
     // Integer timestamps in the frame time base: N*den/num/TB evaluated in floating point truncates to

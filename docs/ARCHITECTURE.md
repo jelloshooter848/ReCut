@@ -160,7 +160,9 @@ SequencePlayer                  SourcePlayer (one <video>, JKL; native at 0<rate
    │  planFrame(seq, media, frame)  ← pure planner: per-track indexes, transitions → layers (alpha) + audio (gain)
    │  MediaElementPool.acquire()    ← pooled <video> per (path, role), LRU capacity 12
    │  keep elements at sourceTime + ½ media frame (drift > 80 ms → re-seek)
-   │  draw bottom→top on a 2D canvas (transform, crop, opacity, transition alpha), subtitles on top
+   │  draw bottom→top on a 2D canvas (transform, crop, opacity, transition alpha), subtitles on top; a Cross
+   │    Dissolve pair (incoming layer's mixWith = outgoing clip, mixesWith) is added in a scratch canvas
+   │    ('lighter') and the sum drawn over what is below: the linear mix, as the export
    │  WebAudio: element → clip gain → track gain → master gain (→ AudioMeter tap); a mono stream played directly
    │            gets 1/√2 in its clip gain, the export's equal-power up-mix (previewUpmixGain)
 SyncGroup: two SequencePlayers on one clock with a frame offset (Compare)
@@ -271,8 +273,11 @@ frame by construction, and the unit and real-FFmpeg tests compare nested timelin
     in-points, mixed rates and VFR.
   - `tpad` + `trim=end_frame=N` make every segment exactly N frames. Tracks are re-stamped with
     `settb=den/num,setpts=N`.
-  - **Centred transitions:** a D-frame transition covers `[cut − D/2, cut + D/2)` using source handles. Timeline
-    positions never move. `xfade` / `acrossfade` consume the extended segments, and the sequence length is unchanged.
+  - **Centred transitions:** timeline positions never move and the sequence length is unchanged. A Cross Dissolve
+    covers `2⌊D/2⌋` frames around the cut using source handles: each segment is split into its transition windows
+    and body, each pair of windows is mixed with `xfade` (plain where both windows provably have the same alpha,
+    premultiplied in 4:4:4 otherwise) and the track is one `concat`. A Dip to Black is a per-clip alpha fade over
+    each clip's own `D/2` frames (no handles). Audio crossfades use `acrossfade` on handle-extended segments.
   - Audio is rebased to the clip's in-point (a late-starting stream keeps its offset), converted to the output
     layout, mixed with `amix normalize=0`, and padded or trimmed to the exact length.
   - An In/Out range edge inside a transition widens the rendered range, and the composite is trimmed back, so the
