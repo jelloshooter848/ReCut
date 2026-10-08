@@ -368,9 +368,9 @@ describe('two-sided transitions: export matches the preview per frame', () => {
     const kinds: ([number, Transition['type']] | null)[] = [[6, 'crossDissolve'], [5, 'dipToBlack'], null, [8, 'crossDissolve'], [4, 'dipToBlack'], [3, 'crossDissolve']];
     kinds.forEach((k, i) => { if (k) s.videoTracks[0].transitions.push(fade(`t${i}`, clips[i].id, clips[i + 1].id, k[0], k[1])); });
     // Chunk boundaries are never inside a transition window (chunks.ts); each transition renders whole in its chunk.
-    expect((await check(s, 'chunked', { run: { chunked: true, maxSegmentsPerChunk: 1 } })).chunks).toBeGreaterThan(1);
+    expect((await check(s, 'chunked transitions', { run: { chunked: true, maxSegmentsPerChunk: 1 } })).chunks).toBeGreaterThan(1);
     s.view = { ...s.view, inPoint: 14, outPoint: 70 };
-    await check(s, 'in/out', { settings: { rangeMode: 'inOut' }, first: 14 });
+    await check(s, 'in/out transitions', { settings: { rangeMode: 'inOut' }, first: 14 });
   }, 180000);
 
   it('the graph: a dissolve mixes premultiplied pictures over its window only; no fadeblack; nothing extra without one', () => {

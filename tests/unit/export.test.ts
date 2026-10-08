@@ -178,7 +178,10 @@ describe('export pipeline', () => {
     s.videoTracks[0].transitions.push(tr);
     const g = buildRenderGraph(req(s));
     expect(g.warnings).toEqual([]);
-    expect(g.filterGraph).toContain('xfade=transition=fade:duration=0.5:offset=1.75');
+    // The 12-frame window of each clip (A's last 6 + 6 handle frames, B's 6 handle + first 6), mixed premultiplied.
+    expect(g.filterGraph).toContain('trim=start_frame=42:end_frame=54,setpts=PTS-STARTPTS');
+    expect(g.filterGraph).toContain('trim=start_frame=0:end_frame=12,setpts=PTS-STARTPTS');
+    expect(g.filterGraph).toContain('xfade=transition=fade:duration=0.5:offset=0,unpremultiply=inplace=1');
     const res = await runExport(req(s));
     const info = await probeOut(res.outputPath);
     expect(Math.abs(info.duration - 4.0)).toBeLessThan(0.05);
