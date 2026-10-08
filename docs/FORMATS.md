@@ -282,3 +282,29 @@ MP4 details:
 Exports are frame-exact: the output has exactly the frame count of the exported range, and each frame is the one the
 Program monitor shows. With a converted frame rate the output has `round(range duration × export rate)` frames and
 each one shows the sequence frame on screen at its midpoint. See [export-pipeline.md](export-pipeline.md).
+
+## Interchange export
+
+**File › Export Timeline…** (Roadmap §10) writes one sequence as an editable timeline for another editor, linked to
+the original media files by their absolute paths. No media is copied or rendered. Export only: ReCut does not import
+these formats yet (planned for 1.4.0).
+
+| Format | Extension | Files | Opens in | Carries |
+|---|---|---|---|---|
+| **FCPXML** | `.fcpxml` | one | DaVinci Resolve (File › Import › Timeline…), Final Cut Pro | Every video and audio track, speed, levels, position, scale, opacity, dissolves and markers |
+| **OpenTimelineIO** | `.otio` | one (JSON) | DaVinci Resolve 18.5+, other OTIO tools | Every track, speed, dissolves and markers |
+| **CMX3600 EDL** | `.edl` | one per video track | Any editor | Cuts and dissolves, with up to four audio channels |
+
+- The sequence is written at its own frame rate and frame size. Nested sequences and compound clips are flattened
+  into their media clips where the format has no nesting.
+  <!-- TODO(core): how each format writes nested sequences, timecode start, reel / clip names in the EDL, speed
+  changes, keyframes (static value or per-format support), stills, disabled and offline clips, audio channel
+  selections. -->
+- Before saving, the dialog shows a report from the writer: clips, tracks, duration and media files, and every issue
+  with how many clips it affects, as **warnings** (lost or approximated in this format) or **info** (transferred in
+  another form, for example flattened).
+- EDL: the name chosen in the save dialog is the base name; the files are `<base>_V1.edl`, `<base>_V2.edl`, … (the
+  part that tells them apart comes from the writer).
+- Files are written atomically (a temporary file in the same folder, then renamed). A name that is a project source
+  file (media, proxy, subtitle) is refused, as for video export; existing timeline files are replaced only after you
+  confirm.

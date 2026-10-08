@@ -177,7 +177,16 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   clip in the range get no file. There is no per-clip channel routing or panning in the files: each is the track at
   the export's channel layout. There are no stems by content (dialogue / music / effects, §12).
 - **WAV files over 4 GB** are written as RF64, which some older programs cannot open.
-- No interchange formats (EDL, FCPXML, OTIO, AAF).
+- **Interchange (File › Export Timeline…) is export only.** ReCut writes FCPXML, OpenTimelineIO and CMX3600 EDL
+  but cannot import them (planned after 1.0, release 1.4.0), and writes no AAF or Premiere XML. The timeline links to
+  the original media files: it carries no media, proxies or renders, so the other editor needs the same files (or
+  relinks them). What the receiving editor cannot represent is approximated or left out, and the dialog's report
+  lists it before saving: keyframes, effects and transforms beyond what each format holds, nested sequences
+  (flattened where the format has no nesting), disabled clips, subtitles and audio channel selections.
+  <!-- TODO(core): per-format specifics from the writers (which keyframes / transforms / speed changes / transitions
+  each format keeps, how nested sequences are written, EDL reel names and the four-audio-channel limit, timecode
+  start, still images, markers). -->
+  An EDL holds one video track per file and only cuts and dissolves.
 - **Frame-rate conversion** (an export frame rate other than the sequence's) repeats or drops whole frames. There is
   no frame blending or motion interpolation, so 23.976 → 30 shows a regular repeat cadence and 23.976 ↔ 24 repeats
   or drops one frame about every 42 s. Duration and audio sync are not affected.

@@ -7,6 +7,7 @@ import type { AppPreferences, AudioChannelSelection, ExportSettings, ID, JobInfo
 import type { OcrLanguageState, OcrRequest } from './ocr';
 import type { TranscribeRequest, WhisperEngineInfo, WhisperModelState } from './whisper';
 import type { CollectRequest, CollectStartResult, CollectSummary } from './collect';
+import type { InterchangeFile } from './interchange';
 import type { ProjectWire } from './projectWire';
 import type { UpdateCheckResult, UpdateCheckSetting, UpdateStatus } from './update';
 
@@ -85,6 +86,8 @@ export const IPC = {
   // Collect Project (shared/collect.ts)
   collectPreflight: 'collect:preflight',
   collectStart: 'collect:start',
+  // Timeline interchange export (File › Export Timeline…, shared/interchange): write the files the renderer made
+  interchangeWrite: 'interchange:write',
   // events (main -> renderer)
   evJobs: 'ev:jobs',
   evMenu: 'ev:menu',
@@ -238,6 +241,23 @@ export type ExportStartResult =
   /** `code: 'exists'`: the output or sidecar exists; ask the user and resend with `overwrite: true`. */
   | { ok: false; error: string; code?: 'exists' }
 
+/**
+ * File › Export Timeline…: the files `exportTimeline` made (shared/interchange), written into `folder` under their
+ * `name`s. Main writes only `.fcpxml` / `.otio` / `.edl` plain file names, never over a project source file
+ * (`protectedPaths`) or a non-file, and each file atomically. Without `overwrite`, existing targets are refused
+ * with code 'exists' (the renderer asks, then resends with `overwrite: true`).
+ */
+export interface InterchangeWriteRequest {
+  folder: string;
+  files: InterchangeFile[];
+  protectedPaths: string[];
+  overwrite?: boolean;
+}
+export type InterchangeWriteResult =
+  | { ok: true; paths: string[] }
+  /** `code: 'exists'`: `existing` lists the targets that exist already. */
+  | { ok: false; error: string; code?: 'exists'; existing?: string[] };
+
 export type MenuCommand = string;
 
 export interface RecutApi {
@@ -348,6 +368,8 @@ export interface RecutApi {
   collectPreflight(req: CollectRequest): Promise<CollectSummary>;
   /** Start Collect Project: a job of kind 'collect' (cancel with cancelJob); its result is a CollectResult. */
   startCollect(req: CollectRequest): Promise<CollectStartResult>;
+  /** File › Export Timeline…: write the interchange files (see InterchangeWriteRequest). */
+  writeInterchangeFiles(req: InterchangeWriteRequest): Promise<InterchangeWriteResult>;
 
   onJobs(cb: (jobs: JobInfo[]) => void): () => void;
   onMenu(cb: (command: MenuCommand) => void): () => void;

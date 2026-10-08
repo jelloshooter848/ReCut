@@ -33,6 +33,7 @@ import { openSequenceDialog } from './dialogs/NewSequenceDialog';
 import { openOcrLanguages } from '@/ocr/ocrUi';
 import { openWhisperModels } from '@/whisper/whisperUi';
 import { openCollectDialog } from '@/panels/collect/collectUi';
+import { openExportTimelineDialog } from '@/panels/interchange/interchangeUi';
 import type { Tool } from '@/state/types';
 
 /** Command ids implemented here that are not part of the shell's COMMAND_IDS (menu names match electron/menu.ts). */
@@ -50,6 +51,7 @@ export const EXTRA_COMMAND_IDS = {
   ocrLanguages: 'app.ocrLanguages',
   whisperModels: 'app.whisperModels',
   collectProject: 'file.collect',
+  exportTimeline: 'file.exportTimeline',
   quit: 'file.quit',
   duplicateSequence: 'sequence.duplicate',
   removeDisabledClips: 'sequence.removeDisabledClips',
@@ -78,6 +80,7 @@ const EXTRA_META: Record<string, { title: string; category: string; keys: string
   [EXTRA_COMMAND_IDS.ocrLanguages]: { title: 'OCR Languages…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.whisperModels]: { title: 'Transcription Models…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.collectProject]: { title: 'Collect Project…', category: 'File', keys: [] },
+  [EXTRA_COMMAND_IDS.exportTimeline]: { title: 'Export Timeline…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.quit]: { title: 'Quit', category: 'File', keys: ['Ctrl+Q'] },
   [EXTRA_COMMAND_IDS.duplicateSequence]: { title: 'Duplicate Sequence…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.removeDisabledClips]: { title: 'Remove Disabled Clips…', category: 'Editing', keys: [] },
@@ -565,6 +568,7 @@ export function buildEditingCommands(): CommandInput[] {
     cmd(X.ocrLanguages, () => openOcrLanguages()),
     cmd(X.whisperModels, () => openWhisperModels()),
     cmd(X.collectProject, () => openCollectDialog()),
+    cmd(X.exportTimeline, () => { const seq = seqNow(); if (seq) openExportTimelineDialog(seq.id); }, hasSeq),
     cmd(X.quit, () => { const api = recutApi(); if (api) void api.quit(false); }),
 
     // ---- sequence ----
