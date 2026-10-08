@@ -100,8 +100,9 @@ release gates. They run in parallel, four on `windows-latest` and one on `ubuntu
 | `linux` (Linux AppImage + tests) | On `ubuntu-22.04`: typecheck, the vitest suite and the Playwright suite under xvfb, all with the FFmpeg that gets bundled; builds the x86-64 AppImage with that FFmpeg (`scripts/linux/get-ffmpeg.sh`), checks the OCR packaging budget and the bundled FFmpeg files, and smoke-tests the AppImage twice, mounted with FUSE and with `--appimage-extract-and-run` (media protocol, encode + probe with the FFmpeg inside the AppImage, licence files, OCR worker, UI mounted). Uploads the `ReCut-linux` artifact. |
 
 Two more jobs run on every build but are **advisory** while macOS is in bring-up (docs/ROADMAP.md §19): `macos`
-(on `macos-14`: unit tests, the Apple Silicon dmg, code-signature checks and a smoke test of the app inside the
-mounted dmg; artifact `ReCut-macos`) and `macos-e2e` (the Playwright suite on macOS). They are not gates: `publish`
+(a matrix over arm64 and x64, both on `macos-14`, the x64 leg under Rosetta 2: unit tests, the Apple Silicon and
+Intel dmgs, code-signature checks and a smoke test of each app inside its mounted dmg; artifacts `ReCut-macos-arm64`
+and `ReCut-macos-x64`) and `macos-e2e` (the Playwright suite on macOS, arm64 only). They are not gates: `publish`
 does not need them and does not attach the dmg, so a red macOS job does not stop a release, and "green" in this
 document and in the run summaries means the five required gates (installer, tests, e2e, launcher, linux). The dmg is signed and notarized when the signing secrets are set
 ([MACOS-SIGNING.md](MACOS-SIGNING.md)). When macOS becomes official, follow the TODO above the `publish` job.
@@ -147,7 +148,8 @@ of these, in the installed app, in the portable exe and in the AppImage:
   and commit the updated `THIRD_PARTY_NOTICES.md`; the unit suite fails while it is out of date.
 - Do not remove any of these files from the packaging config. If FFmpeg is ever bundled for macOS, the same files
   must go next to those binaries (see `docs/INSTALL.md`, "Bundling FFmpeg").
-- **macOS (advisory until 0.7.0):** the `macos` job bundles an arm64 FFmpeg with the same three files
+- **macOS (advisory until 0.7.0):** the `macos` job bundles an arm64 FFmpeg (Apple Silicon dmg) or an x86-64
+  FFmpeg (Intel dmg), both from the same jellyfin-ffmpeg release, with the same three files
   (`scripts/mac/get-ffmpeg.sh`; `FFMPEG-LICENSE.txt` is the build's `COPYING.GPLv3`, there is no readme) plus
   `LICENSE.electron.txt` and `LICENSES.chromium.html` in `ReCut.app/Contents/Resources`. Signing and notarization
   of the dmg: [MACOS-SIGNING.md](MACOS-SIGNING.md).

@@ -125,7 +125,8 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 ## Subtitles and transcripts
 
 - **Speech-to-text (Whisper) runs on the CPU only** (Metal on Apple Silicon), never on an NVIDIA / AMD GPU, and it
-  is slow with the big models. Measured on the development machine (4 shared cores of a 2.1 GHz Xeon, AVX-512,
+  is slow with the big models. **Intel Macs** get no Metal acceleration either: the Intel (x64) dmg's engine is
+  CPU-only, so transcription there is noticeably slower than on an Apple Silicon Mac (it does not need Rosetta). Measured on the development machine (4 shared cores of a 2.1 GHz Xeon, AVX-512,
   3 threads), the engine's encoder needs 0.5 s (Tiny), 1.5 s (Base) and 4.3 s (Small) per 30 s of audio; decoding
   the text adds about as much again. As a rough guide an hour of dialogue takes a few minutes with Tiny or Base and
   about a quarter to half an hour with Small; Medium and Large v3 Turbo can take longer than the media plays. These
@@ -201,10 +202,14 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   Linux x86-64 AppImage (built on Ubuntu 22.04 in CI, launched and smoke-tested; the unit and end-to-end suites run on
   Linux on every build and must pass before anything is published). Nothing is signed for Windows, so SmartScreen
   warns on first launch.
-- **macOS: Apple Silicon test builds only, not released.** CI builds an arm64 dmg on every build, with FFmpeg
-  bundled, and smoke-tests the app from the mounted dmg, but the macOS jobs are advisory: they do not gate releases
-  and the dmg is not attached to them (planned for 0.7.0, [ROADMAP](ROADMAP.md) §19). No Intel or universal build.
-  Needs macOS 12 or newer (the bundled FFmpeg's minimum); tested in CI on macOS 14 only. Until the Developer ID
+- **macOS: test builds only, not released.** CI builds two dmgs on every build, arm64 (Apple Silicon) and x64
+  (Intel), each with its own architecture's FFmpeg and speech-to-text engine bundled, and smoke-tests each app from
+  its mounted dmg, but the macOS jobs are advisory: they do not gate releases and the dmgs are not attached to them
+  (planned for 0.7.0, [ROADMAP](ROADMAP.md) §19). No universal build: pick the dmg for your Mac
+  ([INSTALL](INSTALL.md#macos-test-builds)). Needs macOS 12 or newer (the bundled FFmpeg's minimum); tested in CI on
+  macOS 14 on Apple Silicon only. **The Intel build has never run on an Intel Mac:** CI runs it under Rosetta 2 on
+  the Apple Silicon runner (Rosetta there reports no AVX, so the AVX / AVX2 / AVX-512 speech-to-text kernels an Intel
+  Mac would use are built but not exercised). Intel Macs do not need Rosetta. Intel support may be retired after 1.0. Until the Developer ID
   signing secrets are set up ([MACOS-SIGNING](MACOS-SIGNING.md)) the dmg is ad-hoc signed and not notarized, so macOS
   blocks the first launch until it is allowed under System Settings › Privacy & Security. The end-to-end suite on
   macOS (advisory `macos-e2e` job) has not passed on a Mac yet.
@@ -213,7 +218,7 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   the application menu or register `.recut` files (an AppImage integration tool can). The bundled FFmpeg needs glibc
   2.28 or newer, so very old distributions (before Debian 10 / Ubuntu 18.10 / RHEL 8) cannot run it. Tested on Ubuntu
   22.04 only.
-- **FFmpeg is bundled only in the Windows release builds, the Linux AppImage and the macOS test dmg** (and fetched
+- **FFmpeg is bundled only in the Windows release builds, the Linux AppImage and the macOS test dmgs** (and fetched
   by `Start ReCut.cmd`).
   Elsewhere, install it yourself or drop static binaries into `resources/ffmpeg/` before `npm run package` /
   `npm run dist` (see

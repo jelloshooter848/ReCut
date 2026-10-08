@@ -135,16 +135,19 @@ the list of people with write access short.
 ## Checking a signed build
 
 1. Run the workflow (Actions › **Windows build** › **Run workflow**), or wait for the next push to `main`.
-2. Open the run › job **macOS dmg + smoke test (advisory)**:
+2. Both dmgs are signed with the same five secrets: the Apple Silicon one (`ReCut-<version>-macos-arm64.dmg`) and the
+   Intel one (`ReCut-<version>-macos-x64.dmg`). Open the run › jobs **macOS arm64 dmg + smoke test (advisory)** and
+   **macOS x64 dmg + smoke test (advisory)**, and in each:
    - "Code signing setup" says *All five macOS signing secrets are set*.
    - "Package the dmg" logs `signing` with your identity and, a few minutes later, `notarization successful`.
    - "Code signature" passes: every Mach-O file in ReCut.app (Electron, its helpers, the bundled `ffmpeg` and
-     `ffprobe`) is signed with your Developer ID, the hardened runtime and a secure timestamp; `spctl` reports
-     `source=Notarized Developer ID`; `xcrun stapler validate` finds the stapled ticket.
+     `ffprobe`, and the speech-to-text engine: `whisper-cli`, plus on x64 its `.dylib` libraries and
+     `libggml-cpu-*.so` kernels) is signed with your Developer ID, the hardened runtime and a secure timestamp; `spctl`
+     reports `source=Notarized Developer ID`; `xcrun stapler validate` finds the stapled ticket.
    - The job summary says the dmg is signed and notarized.
-3. On a Mac, download the **ReCut-macos** artifact of that run, unzip it, open the `.dmg`, drag ReCut to Applications
-   and open it. It must open after the usual "downloaded from the Internet" question, with no "could not verify"
-   warning. In Terminal you can also check:
+3. On a Mac, download the **ReCut-macos-arm64** (Apple Silicon) or **ReCut-macos-x64** (Intel) artifact of that run,
+   unzip it, open the `.dmg`, drag ReCut to Applications and open it. It must open after the usual "downloaded from
+   the Internet" question, with no "could not verify" warning. In Terminal you can also check:
 
    ```bash
    codesign --verify --deep --strict --verbose=2 /Applications/ReCut.app
@@ -174,12 +177,16 @@ Development" or "Mac App Distribution"), or an API key that is an individual key
 
 ## How it works (for maintainers)
 
-- Packaging: `package.json` → `build.mac` (dmg, arm64, `hardenedRuntime: true`, entitlements in
-  `build/entitlements.mac.plist` and `build/entitlements.mac.inherit.plist`, both only `allow-jit`).
-- CI: the `macos` job in `.github/workflows/windows.yml`. With all five secrets it writes the `.p8` to a private temp
-  file, runs `electron-builder --mac dmg --arm64` with `CSC_LINK` / `CSC_KEY_PASSWORD` (electron-builder imports the
-  certificate into a temporary keychain and signs every Mach-O with the hardened runtime and a timestamp, including
-  `Contents/Resources/ffmpeg/ffmpeg` and `ffprobe`) and `APPLE_API_KEY` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER`
+- Packaging: `package.json` → `build.mac` (dmg named `ReCut-${version}-macos-${arch}.dmg`, arm64 by default,
+  `hardenedRuntime: true`, entitlements in `build/entitlements.mac.plist` and `build/entitlements.mac.inherit.plist`,
+  both only `allow-jit`).
+- CI: the `macos` job in `.github/workflows/windows.yml`, a matrix with one leg per dmg (arm64, x64), each signed the
+  same way with the same secrets. With all five secrets each leg writes the `.p8` to a private temp
+  file, runs `electron-builder --mac dmg --arm64` (or `--x64`) with `CSC_LINK` / `CSC_KEY_PASSWORD` (electron-builder
+  imports the certificate into a temporary keychain and signs every Mach-O with the hardened runtime and a timestamp,
+  including `Contents/Resources/ffmpeg/ffmpeg` and `ffprobe` and everything in `Contents/Resources/whisper`; the x64
+  engine's libraries load only because they carry the same Team ID as `whisper-cli`) and `APPLE_API_KEY` /
+  `APPLE_API_KEY_ID` / `APPLE_API_ISSUER`
   (electron-builder notarizes the app with `notarytool` and staples the ticket), then deletes the key file. Without
   the secrets it sets `CSC_IDENTITY_AUTO_DISCOVERY=false` and makes an ad-hoc signed build without the hardened
   runtime.
