@@ -545,6 +545,41 @@ and renames it at the end; a per-track export renders every file before renaming
 finished render is kept as `<name>.recut-unsaved-<time>.mp4` and the error says so, so you do not have to render
 again.
 
+### Finishing in DaVinci Resolve
+
+ReCut is for assembling the edit; for grading, sound mixing and delivery you can carry on in DaVinci Resolve (or
+another editor) with an editable timeline that points at your original media, so nothing is re-encoded on the way.
+
+1. Open the sequence and choose **File › Export Timeline…**.
+2. Pick the **Sequence** (the open one is selected) and a **Format**:
+   - **FCPXML** for DaVinci Resolve or Final Cut Pro: the most complete (every track, speed, levels, position,
+     scale, opacity, dissolves and markers).
+   - **OpenTimelineIO** for Resolve 18.5 or later and other OTIO tools.
+   - **CMX3600 EDL** for any editor: cuts and dissolves only, one file per video track.
+3. Read the **report**: the number of clips, tracks, the duration and the media files, then what does not transfer
+   exactly. **Lost or approximated** lists what the format cannot hold (for example keyframes reduced to a static
+   value); **Transferred in another form** lists what changes shape on the way (for example nested sequences
+   flattened). Each line says how many clips it affects.
+4. **Export…** (or Enter) and choose where to save. For an EDL with several video tracks, the name you type is the base
+   name: ReCut writes `<name>_V1.edl`, `<name>_V2.edl`, … in that folder. A toast confirms how many files were written;
+   **Show in folder** opens the folder.
+
+In Resolve:
+
+1. **File › Import › Timeline…** and pick the `.fcpxml`, `.otio` or `.edl` file.
+2. Leave **Automatically import source clips into media pool** on, so Resolve finds the media by its paths. Set the
+   timeline's frame rate to the sequence's if Resolve asks.
+3. If clips come in offline (the media moved, or the project is opened on another computer), select them in the Media
+   Pool and use **Relink Selected Clips…** (or **Relink Media**) on the folder that holds them. Collect Project first
+   makes this easy: everything is in one folder.
+
+What transfers: the cuts on every track, source in and out points, speed, clip levels, position, scale and opacity,
+dissolves and markers (EDL: cuts and dissolves only). What does not: effects ReCut renders itself (keyframes beyond the
+static value where the format has none, crop, rotation, audio channel selections and the centre-channel extraction,
+subtitles, burned-in text), and anything the report lists. Nothing in your ReCut project changes. See
+[FORMATS](FORMATS.md#interchange-export) and [LIMITATIONS](LIMITATIONS.md#export).
+<!-- TODO(core): check "What transfers" against the writers (keyframes, crop, rotation, speed, nested sequences). -->
+
 ## Saving
 
 - **Ctrl+S** saves a `.recut` project. It is JSON that references your media by path and never copies it.
