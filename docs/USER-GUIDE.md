@@ -566,20 +566,47 @@ another editor) with an editable timeline that points at your original media, so
    name: ReCut writes `<name>_V1.edl`, `<name>_V2.edl`, … in that folder. A toast confirms how many files were written;
    **Show in folder** opens the folder.
 
-In Resolve:
+In Resolve, an **FCPXML** or **OpenTimelineIO** file:
 
-1. **File › Import › Timeline…** and pick the `.fcpxml`, `.otio` or `.edl` file.
+1. **File › Import › Timeline…** and pick the `.fcpxml` or `.otio` file.
 2. Leave **Automatically import source clips into media pool** on, so Resolve finds the media by its paths. Set the
    timeline's frame rate to the sequence's if Resolve asks.
 3. If clips come in offline (the media moved, or the project is opened on another computer), select them in the Media
    Pool and use **Relink Selected Clips…** (or **Relink Media**) on the folder that holds them. Collect Project first
    makes this easy: everything is in one folder.
-4. What to expect in Resolve 21: from **FCPXML**, linked audio sits under its picture on audio tracks Resolve numbers
-   itself, and a video-only clip brings its sound muted (an audio-only one its picture, transparent): delete those
-   extra items if they are in the way. From **OpenTimelineIO**, a 29.97 drop-frame sequence comes in as
-   non-drop-frame timecode (every frame in place). From an **EDL**, the timeline starts at its first clip's
-   timecode, a Dip to Black becomes a dissolve between the clips, a speed change on a clip that starts with a
-   dissolve lands on the clip before it, and markers are not imported: check those spots, or prefer FCPXML.
+
+An **EDL** has no file paths Resolve links by: Resolve conforms each event to a clip already in the Media Pool with
+the same **reel name** and source timecode. ReCut gives every file its own reel name, the file name without its
+extension (`A_Red.mp4` is reel `A_Red`), and Resolve can take the same reel names from the file names:
+
+1. Before importing anything, open **File › Project Settings… › General Options**. Under **Conform Options**, tick
+   **Assist using reel names from the** and choose **Source clip filename**; leave **Use timecode** on **Embedded in
+   the source clip**. **Save**.
+2. **File › Import › Media…** (or drag them into the Media Pool) the files the EDL uses. Collect Project first puts
+   them in one folder.
+3. **File › Import › Timeline…** (or right-click in the Media Pool › **Timelines › Import › AAF, EDL, XML…**), pick
+   the `_V1.edl` and, in the dialog that follows, **untick Automatically import source clips into media pool** (the
+   clips are there already). Set the frame rate to the sequence's. Repeat for `_V2.edl` and the others.
+4. If events still come in offline ("timecode extents do not match any clip in the Media Pool"), check the clips'
+   **Reel Name** in the Media Pool's list view: it must match the reel in the EDL. Right-click the clips › **Clip
+   Attributes… › Name** (or turn on the conform option and import the media again), then right-click the timeline ›
+   **Timelines › Reconform from Bins…**.
+
+A reel name keeps only letters, digits, `_` and `-` (up to 32 characters): a file whose name has spaces, accents,
+dots or other characters, or that shares its name with another file, gets a different reel (the report says how many),
+and Resolve will not match it from the file name. Rename those files before you export the EDL, or use FCPXML or
+OpenTimelineIO.
+
+What to expect in Resolve 21:
+- From **FCPXML**, linked audio sits under its picture on audio tracks Resolve numbers itself, and a video-only clip
+  brings its sound muted (an audio-only one its picture, transparent): delete those extra items if they are in the
+  way. A dissolve's audio crossfade comes in as a cut on the audio (Resolve keeps only the picture half of an FCPXML
+  transition): add the crossfade in Resolve, or use OpenTimelineIO, which carries it.
+- From **OpenTimelineIO**, a 29.97 drop-frame sequence comes in as non-drop-frame timecode (every frame in place).
+- From an **EDL**, Resolve imports only the picture: the audio channels on the events are not brought in (use FCPXML
+  or OpenTimelineIO for the sound). The timeline starts at its first clip's timecode, a Dip to Black or a fade to
+  black between two clips becomes a dissolve between the clips (the outgoing clip continues instead of black), and
+  markers are not imported.
 
 What transfers with **FCPXML** (the most complete): the cuts on every track, source in and out points, speed, levels
 and audio fades, position, scale, rotation, crop, opacity, keyframes, dissolves, dips (as opacity keyframes) and

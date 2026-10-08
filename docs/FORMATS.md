@@ -325,8 +325,11 @@ these formats yet (planned for 1.4.0).
   half is also written muted (−96 dB) or transparent (opacity 0). A retimed clip's `timeMap` starts at the file's
   start (`0s` → `0s`), the form Final Cut Pro writes and Resolve reads.
 - EDL names: one file per video track, `<name>_V1.edl`, `<name>_V2.edl` … (track numbers after flattening, so a
-  compound clip's inner tracks get their own numbers). Every event uses reel `AX` with `* FROM CLIP NAME:` (the file
-  name) and `* SOURCE FILE:` (the full path), which Resolve uses to relink.
+  compound clip's inner tracks get their own numbers). Each file has its own reel name: the file name without its
+  extension, with characters other than letters, digits, `_` and `-` replaced by `_`, at most 32 characters, and
+  `_2`, `_3`… for a name another file already has (in path order). Every event also carries `* FROM CLIP NAME:` (the
+  file name) and `* SOURCE FILE:` (the full path). Both lines of a dissolve or fade carry the event's channels, black
+  included (`BL`).
 - Not carried by any format: subtitle tracks, channel selections and centre-channel extraction (the clip plays its
   normal mix in the other editor), the choice of a file's second or later audio stream. Offline media is written
   with its saved path.
@@ -336,16 +339,18 @@ these formats yet (planned for 1.4.0).
 - What DaVinci Resolve 21.1 does with the files (tested on macOS with the Resolve test kit; see LIMITATIONS):
   - FCPXML: audio track numbers are Resolve's own (FCPXML has no audio track numbers; linked audio goes under its
     picture), and Resolve adds the muted sound of video-only clips and the transparent picture of audio-only clips
-    as extra items. Markers sit on clips (FCPXML has no timeline markers).
+    as extra items. An audio crossfade on a dissolve (the transition's Audio Crossfade, as Final Cut Pro writes it)
+    comes in as a cut on the audio. Markers sit on clips (FCPXML has no timeline markers).
   - OpenTimelineIO: tracks, cuts, speed, dissolves, fades from black, the disabled state and marker names, colours and
     durations come in exactly. A 29.97 drop-frame timeline comes in as non-drop-frame (the frames are right, only the
     timecode display differs): OTIO has no drop-frame flag. Marker notes are also written where Resolve's own OTIO
     files keep them (`metadata.Resolve_OTIO.Note`).
   - EDL: a timeline starts at the timecode of its first event (a `_V2.edl` whose first clip is at 00:00:01:00 starts
     there). A fade from black at the start of a track works, but a dissolve to black (`BL`) between two clips, as in
-    a Dip to Black, comes in as dissolves between the clips; an `M2` speed in a dissolve event goes to the outgoing
-    clip when both use reel `AX`; `* LOC:` comments do not become markers. Media without embedded timecode may not
-    link ("timecode extents do not match"): relink, or import the media first and then the EDL.
+    a Dip to Black, comes in as dissolves between the clips; only the picture is imported (the audio channels are
+    not); `* LOC:` comments do not become markers. Events link only to clips already in the Media Pool with the same
+    reel name and timecode ("timecode extents do not match" otherwise): import the media first, with the conform
+    option that takes reel names from the file names, then the EDL (USER-GUIDE › Finishing in DaVinci Resolve).
 - EDL: the name chosen in the save dialog is the base name; the files are `<base>_V1.edl`, `<base>_V2.edl`, … (the
   part that tells them apart comes from the writer).
 - Files are written atomically (a temporary file in the same folder, then renamed). A name that is a project source

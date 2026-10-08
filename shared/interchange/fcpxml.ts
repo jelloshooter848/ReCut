@@ -23,6 +23,12 @@
  *   Final Cut Pro's own form, and the only one DaVinci Resolve 21 maps to one video and one audio item (it ignores
  *   `srcEnable`). An audio crossfade on such a pair rides on the video dissolve at the same cut (one transition with
  *   both filters, the video length); an audio track whose crossfades have no video dissolve under them stays apart.
+ * - Audio crossfades of linked pairs, option `split` (FcpxmlAudioCrossfades): instead of the transition's Audio
+ *   Crossfade, each side's audio is extended across the cut by half the crossfade (split edits: `audioStart` /
+ *   `audioDuration` on the clip, in its local time) and faded over the overlap (`fadeOut` / `fadeIn` on its
+ *   `adjust-volume`, linear), and the transition carries only the picture. Final Cut Pro plays both forms the same;
+ *   DaVinci Resolve 21 drops the transition's audio half (a cut), and `split` tests whether it keeps split edits and
+ *   fade handles instead. The crossfade keeps its own length (not the video dissolve's).
  * - Other clips of files with both picture and sound are written with `srcEnable="video"` / `srcEnable="audio"`
  *   (Final Cut Pro honours it) and the unused half neutralised for editors that ignore it: video-only clips get
  *   `adjust-volume -96dB`, audio-only clips `adjust-blend 0` (transparent).
@@ -36,6 +42,7 @@
  * left = crop.left * fittedWidth / H * 100 (top / bottom with fittedHeight).
  */
 import type { ID, Keyframe, Rational } from '../model';
+import type { FcpxmlAudioCrossfades } from './index';
 import { Q } from './rational';
 import { el, serialize, type XNode } from './xml';
 import { clipProps, count, fileUrl, isAre, num, type Issues, type PClip, type Prepared, type PTrack, type PTransition } from './common';
@@ -235,7 +242,7 @@ function sample(lists: { keys?: Keyframe[]; value: number }[], env: Envelope[], 
   return { points, approx, ease: anyEase };
 }
 
-export function writeFcpxml(p: Prepared, issues: Issues): string {
+export function writeFcpxml(p: Prepared, issues: Issues, audioCrossfades: FcpxmlAudioCrossfades = 'transition'): string {
   const fd = Q.frameDuration(p.fps);
   const T = (f: number) => fd.mul(Q.int(f));
   const R = new Resources(p);
@@ -269,6 +276,8 @@ export function writeFcpxml(p: Prepared, issues: Issues): string {
     if (tr.kind === 'fadeIn') f.fadeIn = Math.max(f.fadeIn, tr.frames); else f.fadeOut = Math.max(f.fadeOut, tr.frames);
     fadeOf.set(pc, f);
   }
+  /** Audio of linked pairs extended across a crossfade (option `split`): frames before its start, after its end. */
+  const splitOf = new Map<PClip, { before: number; after: number }>();
 
   /** A clip as an asset-clip; `audio` is the linked audio clip it also carries (see mergedPairs). */
   const clipNode = (pc: PClip, lane: number | undefined, offset: Q, audio?: PClip): XNode => {
@@ -281,6 +290,7 @@ export function writeFcpxml(p: Prepared, issues: Issues): string {
     const node = el('asset-clip', [
       ['ref', a.id], ['lane', lane === undefined ? undefined : String(lane)], ['offset', offset.toTime()], ['name', pc.name],
       ['start', S.toTime()], ['duration', D.toTime()],
+      ...splitEdit(audio, S, D),
       ['srcEnable', both ? undefined : video ? (a.hasAudio ? 'video' : undefined) : (a.hasVideo ? 'audio' : undefined)],
       ['enabled', pc.enabled ? undefined : '0'],
     ]);
@@ -309,6 +319,13 @@ export function writeFcpxml(p: Prepared, issues: Issues): string {
     }
     if (!both && pc.clip.linkId) issues.add('linked', 'other', 'info', (n) => `Linked video and audio are exported as separate clips (${count(n)}).`, item);
     return node;
+  };
+
+  /** `audioStart` / `audioDuration` of a clip carrying the linked audio `audio`, when that is extended (`split`). */
+  const splitEdit = (audio: PClip | undefined, S: Q, D: Q): [string, string | undefined][] => {
+    const x = audio && splitOf.get(audio);
+    if (!x) return [];
+    return [['audioStart', x.before ? S.sub(T(x.before)).toTime() : undefined], ['audioDuration', D.add(T(x.before + x.after)).toTime()]];
   };
 
   /** Keyframe helpers of clip `pc` whose local in point is `S`. */
@@ -371,8 +388,10 @@ export function writeFcpxml(p: Prepared, issues: Issues): string {
     const dbs = (lin: number) => `${num(db(lin), 3)}dB`;
     const vs = sample([{ keys: a0.keyframes?.volume, value: a0.volume ?? 1 }], pc.env, c.start, relLo, relHi, true);
     const f = fadeOf.get(pc);
-    const fadeIn = Math.min(pc.duration, Math.max(a0.fadeIn || 0, f?.fadeIn ?? 0));
-    const fadeOut = Math.min(pc.duration, Math.max(a0.fadeOut || 0, f?.fadeOut ?? 0));
+    const x = splitOf.get(pc);
+    const len = pc.duration + (x ? x.before + x.after : 0);
+    const fadeIn = Math.min(len, Math.max(a0.fadeIn || 0, f?.fadeIn ?? 0));
+    const fadeOut = Math.min(len, Math.max(a0.fadeOut || 0, f?.fadeOut ?? 0));
     if (f && ((f.fadeIn && a0.fadeIn > 0) || (f.fadeOut && a0.fadeOut > 0))) issues.add('fade-merge', 'level', 'info', (n) => `${count(n)} with both a fade and a fade transition on one edge use the longer one.`, item);
     if (vs) issues.add('level-approx', 'level', 'info', (n) => `Level keyframes and nested fades on ${count(n)} are written in dB and may differ slightly between keyframes.`, item);
     if (props.level || fadeIn || fadeOut || vs) {
@@ -397,6 +416,17 @@ export function writeFcpxml(p: Prepared, issues: Issues): string {
       const vo = tr.out && videoOf.get(tr.out), vi = tr.in && videoOf.get(tr.in);
       const v = tr.kind === 'dissolve' && vo && vi ? vDiss.get(`${vo.id}|${vi.id}`) : undefined;
       if (!v) continue;
+      if (audioCrossfades === 'split') {
+        const o = tr.out!, i = tr.in!;
+        const xo = splitOf.get(o) ?? { before: 0, after: 0 }, xi = splitOf.get(i) ?? { before: 0, after: 0 };
+        xo.after = tr.half; xi.before = tr.half;
+        splitOf.set(o, xo); splitOf.set(i, xi);
+        const fo = fadeOf.get(o) ?? { fadeIn: 0, fadeOut: 0 }, fi = fadeOf.get(i) ?? { fadeIn: 0, fadeOut: 0 };
+        fo.fadeOut = Math.max(fo.fadeOut, tr.frames); fi.fadeIn = Math.max(fi.fadeIn, tr.frames);
+        fadeOf.set(o, fo); fadeOf.set(i, fi);
+        issues.add('xfade-split', 'transition', 'info', (n) => `${count(n, 'audio crossfade')} of linked clips ${isAre(n)} written as overlapping audio with fades.`, { id: tr.id, outerId: vo!.outerId });
+        continue;
+      }
       withAudio.add(v.id);
       if (v.frames !== tr.frames) issues.add('xfade-len', 'transition', 'info', (n) => `${count(n, 'audio crossfade')} of linked clips ${n === 1 ? 'takes' : 'take'} the length of the video dissolve on the same cut.`, { id: tr.id, outerId: vo!.outerId });
     }
