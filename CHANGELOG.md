@@ -5,7 +5,7 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
-## [0.8.0] - 2026-10-07
+## [0.8.0] - 2026-10-08
 
 Every feature planned for 1.0 ([Road to 1.0](docs/ROADMAP.md#road-to-10)), in one release: local speech-to-text,
 intermediate and audio-only export, MKV with several audio tracks and soft subtitles, a centre-channel utility for
@@ -40,7 +40,6 @@ earlier releases open unchanged.
 - **Keyframes** for position, scale, opacity and volume (Inspector), with Linear or Ease, shown as diamonds on the
   timeline. They stay with the picture when you trim, split, roll or slide, work inside and on compound clips, and
   the export matches the preview (within a quarter of a pixel, 1.5 luma levels and 0.5 dB).
-
 - **macOS downloads:** `ReCut-<version>-macos-arm64.dmg` for Apple Silicon Macs and `ReCut-<version>-macos-x64.dmg`
   for Intel Macs, macOS 12 or newer, signed with a Developer ID and notarized by Apple, so they open normally. Each
   bundles FFmpeg and the speech-to-text engine for its processor (on Intel Macs transcription runs on the CPU only and
@@ -73,11 +72,24 @@ earlier releases open unchanged.
   like FFmpeg; the release workflow checks its size and that it starts. On macOS it is built without Accelerate's
   BLAS, whose interface needs macOS 13.3, so transcription works from macOS 12; the build fails if such an import
   returns.
-- Releases need the macOS jobs (both dmgs, signed and notarized) as well as Windows and Linux, and attach both dmgs.
+- The macOS jobs (both dmgs and the macOS end-to-end tests) are now release gates next to Windows and Linux, and
+  both dmgs are attached to the release. A release run fails unless both dmgs are signed with the Developer ID,
+  notarized and stapled; test builds without the signing secrets stay ad-hoc signed.
 - A thumbnail-cancel unit test waits for the real event instead of a timing assumption.
 - A saved-project fixture for 0.8.0 (`tests/fixtures/projects/recut-0.8.0.recut`) with keyframes and nested sequences;
   older fixtures must open without either.
+- The README has a Highlights section with six short demos and refreshed screenshots covering the 0.8.0 features,
+  made from the Blender open movies Tears of Steel and Sintel (CC BY 3.0) by `scripts/readme-media.mjs` and the
+  README media workflow ([docs/screenshots](docs/screenshots/README.md)). INSTALL, the README and LIMITATIONS
+  describe the signed macOS downloads.
 - No new npm dependencies.
+
+### Known issues
+
+- The Intel dmg is tested in CI only under Rosetta 2 on an Apple Silicon Mac; it has not run on an Intel Mac yet. See
+  [LIMITATIONS](docs/LIMITATIONS.md#platform-and-packaging).
+- Unchanged: unsigned Windows builds (SmartScreen warns on first start), NSIS 3.0.4 (CVE-2025-43715, only when an
+  installer runs as SYSTEM).
 
 ## [0.7.0] - 2026-10-07
 
