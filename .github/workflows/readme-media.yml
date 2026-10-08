@@ -22,10 +22,9 @@ env:
   TOS_URL: https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov
   TOS_SUBS_DIR: https://download.blender.org/demo/movies/ToS/subtitles/
   TOS_SUBS_NAMES: TOS-en.srt tos-en.srt TOS-EN.srt en.srt
-  SINTEL_DIR: https://download.blender.org/durian/movies/
-  SINTEL_NAMES: Sintel.2010.720p.mkv sintel-2048-stereo_720p.mkv
-  SINTEL_SUBS_DIR: https://download.blender.org/durian/subs/
-  SINTEL_SUBS_NAMES: sintel_en.srt Sintel_en.srt sintel-en.srt
+  # Sintel 720p is only published zipped. durian/subs/ has translations only (the film is in English), so the English
+  # subtitles are made here with the bundled speech-to-text engine and the base.en model.
+  SINTEL_ZIP_URL: https://download.blender.org/durian/movies/Sintel.2010.720p.mkv.zip
   FOOTAGE: ${{ github.workspace }}/../readme-footage
 
 jobs:
@@ -81,7 +80,7 @@ jobs:
       - name: Footage cache key
         id: fkey
         run: |
-          k="$(printf '%s\n' "$TOS_URL" "$TOS_SUBS_DIR" "$TOS_SUBS_NAMES" "$SINTEL_DIR" "$SINTEL_NAMES" "$SINTEL_SUBS_DIR" "$SINTEL_SUBS_NAMES" | sha256sum | cut -c1-16)"
+          k="$(printf '%s\n' "$TOS_URL" "$TOS_SUBS_DIR" "$TOS_SUBS_NAMES" "$SINTEL_ZIP_URL" whisper-srt-v1 | sha256sum | cut -c1-16)"
           echo "key=readme-footage-$k-${{ hashFiles('shared/whisper.ts') }}" >> "$GITHUB_OUTPUT"
           mkdir -p "$FOOTAGE"
       - name: Footage cache
@@ -111,8 +110,13 @@ jobs:
           ok=0
           get tos.mov "$TOS_URL" || ok=1
           get tos-en.srt $(urls "$TOS_SUBS_DIR" $TOS_SUBS_NAMES) || ok=1
-          get sintel.mkv $(urls "$SINTEL_DIR" $SINTEL_NAMES) || ok=1
-          get sintel-en.srt $(urls "$SINTEL_SUBS_DIR" $SINTEL_SUBS_NAMES) || ok=1
+          if [ ! -s sintel.mkv ]; then
+            if get sintel.zip "$SINTEL_ZIP_URL"; then
+              unzip -Z1 sintel.zip
+              m="$(unzip -Z1 sintel.zip | grep -i '\.mkv$' | head -n 1)"
+              if [ -n "$m" ] && unzip -p sintel.zip "$m" > sintel.mkv.part; then mv sintel.mkv.part sintel.mkv; rm -f sintel.zip; else echo '::error::no .mkv in the Sintel zip'; ok=1; fi
+            else ok=1; fi
+          fi
           # Whisper base.en from the pinned Hugging Face revision ReCut itself downloads from (shared/whisper.ts).
           rev="$(sed -n "s/^export const WHISPER_MODELS_REVISION = '\([0-9a-f]\{40\}\)';$/\1/p" "$GITHUB_WORKSPACE/shared/whisper.ts")"
           sha="$(grep "id: 'base.en'," "$GITHUB_WORKSPACE/shared/whisper.ts" | sed -n "s/.*sha256: '\([0-9a-f]\{64\}\)'.*/\1/p")"
@@ -123,6 +127,13 @@ jobs:
               get ggml-base.en.bin "https://huggingface.co/ggerganov/whisper.cpp/resolve/$rev/ggml-base.en.bin" || ok=1
               echo "$sha  ggml-base.en.bin" | sha256sum -c || ok=1
             fi
+          fi
+          # English subtitles for Sintel: a transcript by the bundled whisper.cpp engine with base.en (the same engine and
+          # model ReCut uses), as SRT.
+          if [ ! -s sintel-en.srt ] && [ -s sintel.mkv ] && [ -s ggml-base.en.bin ]; then
+            ffmpeg -hide_banner -loglevel error -y -i sintel.mkv -map 0:a:0 -ac 1 -ar 16000 -c:a pcm_s16le sintel-16k.wav &&
+              "$GITHUB_WORKSPACE/resources/whisper/whisper-cli" -m ggml-base.en.bin -f sintel-16k.wav -t "$(nproc)" -l en -osrt -of sintel-en -np &&
+              rm -f sintel-16k.wav || { echo '::error::could not transcribe Sintel'; ok=1; }
           fi
           ls -la
           for f in tos.mov sintel.mkv; do [ -s "$f" ] && ffprobe -v error -show_entries format=duration:stream=codec_name,width,height,channels -of compact "$f"; done
