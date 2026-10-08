@@ -15,6 +15,21 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Licence texts and stems
+        run: |
+          set -u
+          for u in https://download.blender.org/demo/movies/ToS/copyright.txt https://download.blender.org/demo/movies/ToS/surround/ https://download.blender.org/demo/movies/ToS/Tears-Of-Steel-OST/; do
+            echo "=== $u"; curl -fsSL "$u" | sed 's/<[^>]*>/ /g' | grep -v '^\s*$' | head -n 60 || true
+          done
+          for u in https://mango.blender.org/sharing/ https://peach.blender.org/about/ https://orange.blender.org/blog/creative-commons-license-2/ https://orange.blender.org/background/ https://durian.blender.org/sharing/; do
+            echo "=== $u"
+            curl -fsSL "$u" | sed 's/<[^>]*>/ /g' | grep -v '^\s*$' | grep -i -A8 'attribution is\|copyright\|licen' | head -n 60 || true
+          done
+          for u in https://download.blender.org/durian/subs/sintel_fr.srt https://download.blender.org/durian/subs/sintel_nl.srt https://download.blender.org/demo/movies/ToS/subtitles/TOS-de.srt https://download.blender.org/demo/movies/ToS/subtitles/TOS-es.srt https://download.blender.org/demo/movies/ToS/subtitles/TOS-fr-orig.srt; do
+            echo "=== $u"; curl -fsSL "$u" -o s.srt && { file s.srt; head -c 400 s.srt | od -c | head -n 8; head -n 12 s.srt | iconv -f latin1 -t utf-8; }
+          done
+          curl -sIL https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_720p_h264.mov.zip | grep -i 'content-length\|HTTP/'
+          curl -fsSL https://download.blender.org/demo/movies/ToS/TOS_DVDSTEREOMIX.aif -r 0-511 -o h.aif && od -c h.aif | head -n 12
       - name: List download folders
         run: |
           set -u
