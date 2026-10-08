@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -50,15 +52,16 @@ describe('Windows workflow: no dev prereleases', () => {
     expect(publish).not.toMatch(/always\(\)|failure\(\)|cancelled\(\)/);
   });
 
-  it('the publish job can only publish a full release, never a prerelease or a -dev. tag', () => {
+  it('the publish job publishes a full release or a release candidate, never a -dev. tag', () => {
     expect(publish).toContain('softprops/action-gh-release');
-    expect(publish).toMatch(/^\s+prerelease: false$/m);
-    expect(publish).toMatch(/^\s+make_latest: true$/m);
-    expect(publish).not.toMatch(/prerelease:\s*(true|\$\{\{)/);
+    // Pre-release and Latest come only from the final check, which derives them from the tag (see "Release candidates").
+    expect(publish).toMatch(/^\s+prerelease: \$\{\{ steps\.pub\.outputs\.prerelease \}\}$/m);
+    expect(publish).toMatch(/^\s+make_latest: \$\{\{ steps\.pub\.outputs\.make_latest \}\}$/m);
+    expect(publish).not.toMatch(/prerelease:\s*true/);
     expect(publish).not.toContain('-dev.');
     expect(publish).not.toMatch(/DEV_|dev_(tag|name|notes)|dev-notes/);
-    // The final check refuses anything but a plain semver tag.
-    expect(publish).toContain("-notmatch '^v\\d+\\.\\d+\\.\\d+$'");
+    // The final check refuses anything but a semver tag (with at most a pre-release part).
+    expect(publish).toContain("-cnotmatch '^v\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$'");
   });
 
   it('a tag that appeared during the build publishes nothing (warning, success)', () => {
@@ -369,6 +372,133 @@ describe('Windows workflow: the macOS dmg job (advisory during bring-up)', () =>
       expect(e[2]).toBe(e[5]);
       expect(e[2]).toBe(e[7]);
       expect(e[1]).toMatch(/_portable_macarm64-gpl\.tar\.xz$/);
+    }
+  });
+});
+
+// Release candidates (docs/RELEASING.md, Release candidates): a package.json version with a SemVer pre-release part
+// (1.0.0-rc.1) and a "## [1.0.0-rc.1]" CHANGELOG.md section is published like a release, with the same gates and
+// files, but marked pre-release and never Latest. Stable versions are unchanged. The PowerShell regexes below are
+// taken from the workflow text and run with JavaScript's engine (they use only syntax both engines read the same way).
+describe('Windows workflow: release candidates', () => {
+  const installer = code(job('installer'));
+  const publish = code(job('publish'));
+
+  /** The single-quoted PowerShell string assigned to `$name` in `block`. */
+  const psString = (block: string, name: string): string => {
+    const m = new RegExp(`\\$${name} = '([^']*)'`).exec(block);
+    expect(m, `$${name}`).not.toBeNull();
+    return m![1];
+  };
+  /** .NET [regex]::Escape for a version string (only '.', '+' and the like can occur). */
+  const escape = (s: string) => s.replace(/[\\*+?|{}[\]()^$.#\s]/g, '\\$&');
+
+  it('accepts MAJOR.MINOR.PATCH and SemVer pre-release versions, and nothing else', () => {
+    const semver = new RegExp(psString(installer, 'semver'));
+    expect(installer).toContain('if ($v -cnotmatch $semver) {');
+    for (const ok of ['0.7.0', '1.0.0', '10.20.30', '1.0.0-rc.1', '1.0.0-rc.10', '2.0.0-beta.2', '1.0.0-0.3.7', '1.0.0-x-y']) {
+      expect(semver.test(ok), ok).toBe(true);
+    }
+    for (const bad of ['1.0', '1.0.0.0', '01.0.0', '1.00.0', 'v1.0.0', '1.0.0-', '1.0.0-rc.01', '1.0.0-rc..1', '1.0.0+build.1', '1.0.0-rc.1+b', ' 1.0.0', '1.0.0 ']) {
+      expect(semver.test(bad), bad).toBe(false);
+    }
+  });
+
+  it('a version with a pre-release part makes the release a pre-release; the outputs carry it to publish', () => {
+    expect(installer).toContain("$prerelease = if ($v.Contains('-')) { 'true' } else { 'false' }");
+    expect(installer).toContain("$core = ($v -split '-', 2)[0]");
+    expect(installer).toContain('prerelease: ${{ steps.rel.outputs.prerelease }}');
+    expect(installer).toMatch(/"prerelease=\$prerelease"/);
+    // The release itself is decided exactly as before: the tag-push fallback and the automatic release on main.
+    expect(installer.match(/\$release = 'true'/g)).toHaveLength(2);
+    // A pre-release's notes start with a note saying what it is.
+    expect(installer).toMatch(/\$preNote = "\*\*Pre-release: a release candidate of ReCut \$core, for testing\.\*\*/);
+    expect(installer).toContain("if ($prerelease -eq 'true') { $section = \"$preNote`n`n$section\" }");
+  });
+
+  /** A JavaScript port of the step's Get-ChangelogSection, built from the regexes in the workflow text. */
+  function changelogSection(changelog: string, ver: string): string | null {
+    const headMatch = /\$head = '([^']*)' \+ \[regex\]::Escape\(\$ver\) \+ '([^']*)'/.exec(installer);
+    expect(headMatch).not.toBeNull();
+    const head = new RegExp(headMatch![1] + escape(ver) + headMatch![2]);
+    expect(installer).toContain("elseif ($lines[$i] -match '^## \\[' -or $lines[$i] -match '^\\[[^\\]]+\\]:\\s') { $end = $i; break }");
+    const next = [/^## \[/, /^\[[^\]]+\]:\s/];
+    const lines = changelog.split('\n');
+    let start = -1, end = lines.length;
+    for (let i = 0; i < lines.length; i++) {
+      if (start < 0) { if (head.test(lines[i])) start = i; }
+      else if (next.some((r) => r.test(lines[i]))) { end = i; break; }
+    }
+    if (start < 0) return null;
+    if (end - start < 2) return '';
+    return lines.slice(start + 1, end).join('\n').trim();
+  }
+
+  it('finds the "## [1.0.0-rc.N] - date" section and only that one', () => {
+    const changelog = [
+      '# Changelog', '',
+      '## [1.0.0] - 2026-12-01', '', 'Final.', '',
+      '## [1.0.0-rc.10] - 2026-11-20', '', 'Tenth candidate.', '',
+      '## [1.0.0-rc.2] - 2026-11-10', '', '### Fixed', '', '- Second candidate fix.', '',
+      '## [1.0.0-rc.1] - 2026-11-01', '', 'First candidate.', '',
+      '## [0.13.0] - 2026-10-20', '', 'Keyframes.', '',
+      '[1.0.0-rc.1]: https://example.invalid/',
+    ].join('\n');
+    expect(changelogSection(changelog, '1.0.0-rc.1')).toBe('First candidate.');
+    expect(changelogSection(changelog, '1.0.0-rc.2')).toBe('### Fixed\n\n- Second candidate fix.');
+    expect(changelogSection(changelog, '1.0.0-rc.10')).toBe('Tenth candidate.');
+    expect(changelogSection(changelog, '1.0.0')).toBe('Final.');
+    expect(changelogSection(changelog, '0.13.0')).toBe('Keyframes.');
+    expect(changelogSection(changelog, '1.0.0-rc.3')).toBeNull();
+    expect(changelogSection(changelog, '1.0.0-rc')).toBeNull();
+    expect(changelogSection('## [1.0.0-rc.1] - 2026-11-01\n## [0.13.0]\nx', '1.0.0-rc.1')).toBe('');
+    // The real changelog: the section of the version in package.json is found (a release PR's section).
+    const real = fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+    const pkg = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8')) as { version: string };
+    expect(changelogSection(real, pkg.version)).toBeTruthy();
+  });
+
+  it('publish: pre-release and Latest come from the tag, and a mismatch with the installer job publishes nothing', () => {
+    const tagRe = /-cnotmatch '(\^v[^']*)'/.exec(publish);
+    expect(tagRe).not.toBeNull();
+    const tag = new RegExp(tagRe![1]);
+    for (const ok of ['v0.7.0', 'v1.0.0', 'v1.0.0-rc.1', 'v1.0.0-rc.10']) expect(tag.test(ok), ok).toBe(true);
+    for (const bad of ['1.0.0', 'v1.0', 'v1.0.0-', 'v1.0.0-rc..1', 'v1.0.0+b', 'latest']) expect(tag.test(bad), bad).toBe(false);
+    expect(publish).toContain('PRERELEASE: ${{ needs.installer.outputs.prerelease }}');
+    expect(publish).toContain("$prerelease = if ($env:TAG.Contains('-')) { 'true' } else { 'false' }");
+    expect(publish).toContain("$latest = if ($prerelease -eq 'true') { 'false' } else { 'true' }");
+    expect(publish).toMatch(/if \(\$env:PRERELEASE -cne \$prerelease\) \{ Write-Host "::error::[^"]*Publishing nothing\."; exit 1 \}/);
+    expect(publish).toMatch(/"prerelease=\$prerelease", "make_latest=\$latest"/);
+    // A candidate never becomes Latest: make_latest is only ever 'true' for a tag without a pre-release part.
+    expect(publish.match(/\$latest = /g)).toHaveLength(1);
+    // The same files as a stable release.
+    expect(publish).toMatch(/files: \|\n\s+release\/ReCut-Setup-\*\.exe\n\s+release\/ReCut-Portable-\*\.exe\n\s+release\/ReCut-\*-linux-x86_64\.AppImage\n/);
+  });
+
+  it('the tag-push fallback also runs for v<version>-rc.<N>, and never for the old -dev. / -win. tags', () => {
+    const triggers = /^on:\n {2}push:\n(?: {4}.*\n)*? {4}tags: \[(.*)\]$/m.exec(workflow);
+    expect(triggers).not.toBeNull();
+    const patterns = [...triggers![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    expect(patterns).toEqual(['v[0-9]+.[0-9]+.[0-9]+', 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+']);
+    // GitHub's filter syntax here: '[0-9]+' is one or more digits, '.' and '-' are literal, the whole ref must match.
+    const toRe = (p: string) => new RegExp('^' + p.replace(/\./g, '\\.') + '$');
+    const matches = (ref: string) => patterns.some((p) => toRe(p).test(ref));
+    for (const ok of ['v0.7.0', 'v1.0.0', 'v1.0.0-rc.1', 'v1.0.0-rc.12']) expect(matches(ok), ok).toBe(true);
+    for (const bad of ['v0.7.0-dev.12', 'v0.1.0-win.3', 'v1.0.0-beta.1', 'v1.0.0-rc', '1.0.0-rc.1']) expect(matches(bad), bad).toBe(false);
+  });
+
+  it('release candidates have no saved-project fixture, and the fixture script refuses to make one', () => {
+    const dir = path.join(repo, 'tests/fixtures/projects');
+    for (const f of fs.readdirSync(dir).filter((x) => x.startsWith('recut-'))) expect(f, f).toMatch(/^recut-\d+\.\d+\.\d+\.recut$/);
+    const fake = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-rc-fixture-'));
+    try {
+      fs.writeFileSync(path.join(fake, 'package.json'), JSON.stringify({ name: 'recut', version: '1.0.0-rc.1' }));
+      const r = spawnSync(process.execPath, [path.join(repo, 'scripts/make-project-fixture.mjs'), '--root', fake], { encoding: 'utf8' });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('1.0.0-rc.1 is a pre-release: release candidates have no saved-project fixture');
+      expect(fs.existsSync(path.join(dir, 'recut-1.0.0-rc.1.recut'))).toBe(false);
+    } finally {
+      fs.rmSync(fake, { recursive: true, force: true });
     }
   });
 });

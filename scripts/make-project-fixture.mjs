@@ -17,7 +17,9 @@
  * from it first and then from this repository's node_modules. Time and randomness are fixed, so running the script
  * twice on the same checkout writes the same bytes.
  *
- * Release PRs run it on the new version (docs/RELEASING.md). Old fixtures are never regenerated or edited.
+ * Release PRs run it on the new version (docs/RELEASING.md). Old fixtures are never regenerated or edited. A
+ * pre-release version (a release candidate such as 1.0.0-rc.1) is refused unless `--out` is given: candidates have
+ * no fixture of their own.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -44,6 +46,12 @@ const args = parseArgs(process.argv.slice(2));
 const pkg = JSON.parse(fs.readFileSync(path.join(args.root, 'package.json'), 'utf8'));
 const version = pkg.version;
 if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error(`unexpected version ${version} in ${args.root}/package.json`);
+// The compatibility promise covers stable releases: a release candidate (1.0.0-rc.1) gets no fixture of its own, and
+// the final release's PR (1.0.0) makes one (docs/RELEASING.md, Release candidates). `--out` still allows a scratch copy.
+if (version.includes('-') && !args.out) {
+  console.error(`${version} is a pre-release: release candidates have no saved-project fixture (docs/RELEASING.md, Release candidates). Pass --out <file> for a scratch copy.`);
+  process.exit(1);
+}
 const outPath = args.out ?? path.join(repo, 'tests', 'fixtures', 'projects', `recut-${version}.recut`);
 
 // What the checkout's project model has, read from its source (features are only used where that version had them).

@@ -194,7 +194,9 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - One window and one open project at a time.
 - **No automatic updates.** ReCut can only tell you that a newer release exists (opt-in daily check, or Help › Check
   for Updates…) and open its release page; you download and install it yourself. The check needs access to
-  `api.github.com` (through the system proxy, if any) and does not offer pre-releases.
+  `api.github.com` (through the system proxy, if any). It never offers a pre-release (release candidate) to someone
+  running a stable version; someone running a release candidate is told about a later candidate of the same version
+  or a newer stable release.
 
 ## Projects
 
