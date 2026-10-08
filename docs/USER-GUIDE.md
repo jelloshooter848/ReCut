@@ -238,8 +238,10 @@ Scenes in the library are reusable, tagged source ranges.
 - **Ctrl+D** adds a Cross Dissolve and **Ctrl+Shift+D** an Audio Crossfade, at the selected cut or the nearest edit
   point. The length comes from **Preferences › Default transition** (24 frames).
 - Or right-click a cut › **Add Transition › Cross Dissolve / Dip to Black / Audio Crossfade**.
-- Transitions are centred on the cut and use media beyond the clip edges (handles). If there is not enough media,
-  the transition is shortened. Drag a transition's edge to change its length, or edit it in the Inspector.
+- Transitions are centred on the cut. A Cross Dissolve or Audio Crossfade uses media beyond the clip edges
+  (handles); if there is not enough media, the export shortens it. An odd length plays one frame shorter. A Dip to
+  Black needs no handles: each clip fades to or from black over its own half of the transition. Drag a transition's
+  edge to change its length, or edit it in the Inspector.
 
 ### Keyframes: Ken Burns moves, ducking, fades that are not straight
 

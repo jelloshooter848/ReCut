@@ -20,7 +20,7 @@ import { secondsToFramesFloor, framesToSeconds, fpsValue } from '../../shared/ti
 import { sequenceDuration, resolveSubtitleCues, type ResolvedCue } from '../../shared/timeline';
 import { PlaybackClock } from './clock';
 import { MediaElementPool, poolKey } from './elementPool';
-import { planFrame, type FramePlan, type LayerPlan, type AudioPlan, type MissingMedia } from './planner';
+import { mixesWith, planFrame, type FramePlan, type LayerPlan, type AudioPlan, type MissingMedia } from './planner';
 import { clampElementTime, toElementTime } from './mediaSource';
 import { selectAudioTrack } from './audioTracks';
 import { pathToMediaUrl } from '../../shared/ipc';
@@ -94,6 +94,30 @@ export const DRIFT_TOLERANCE = 0.08;
 export const SCRUB_REST_MS = 150;
 /** Look-ahead of the gain ramp of a clip with level keyframes (seconds of wall time; re-anchored every tick). */
 export const KEYFRAME_RAMP_SEC = 0.05;
+/**
+ * Longest a paused draw is held (ms) because a layer's element still holds a frame other than the one at its
+ * currentTime (see framesShown). Past it the draw goes ahead, so media whose frames never match (an odd timestamp
+ * layout) still updates.
+ */
+export const PRESENT_HOLD_MS = 250;
+
+/**
+ * Media time (seconds) of the frame a drawImage of `el` would paint right now, or null when it cannot be told
+ * (no WebCodecs, no frame yet). `new VideoFrame(el)` takes the frame the element's compositor holds, as drawImage
+ * does, and only references it.
+ */
+export function shownFrameTime(el: HTMLVideoElement): number | null {
+  if (typeof VideoFrame !== 'function') return null;
+  let f: VideoFrame | null = null;
+  try {
+    f = new VideoFrame(el);
+    return f.timestamp / 1e6;
+  } catch {
+    return null;
+  } finally {
+    f?.close();
+  }
+}
 
 const RESOLUTION_FACTOR: Record<SequencePlayerSettings['playbackResolution'], number> = { full: 1, '1/2': 0.5, '1/4': 0.25 };
 
@@ -143,6 +167,8 @@ interface ScrubRound {
 }
 
 /** Layers the canvas paints for a plan, bottom to top, from index `first` (everything below it is covered). */
+type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
 interface Composite {
   drawable: { layer: LayerPlan; el: HTMLVideoElement | HTMLImageElement; vw: number; vh: number }[];
   first: number;
@@ -185,6 +211,9 @@ export class SequencePlayer {
   /** performance.now() of the last paused playhead move (seek); scrubbing while less than SCRUB_REST_MS ago. */
   private lastMoveAt = -Infinity;
   private restTimer: ReturnType<typeof setTimeout> | null = null;
+  /** performance.now() when the current paused draw was first held (framesShown false); -1 when none is held. */
+  private heldSince = -1;
+  private holdTimer: ReturnType<typeof setTimeout> | null = null;
   /** The playhead came to rest: run one full (non-scrub) update. */
   private restPending = false;
   /** An element event (seeked / loadeddata) arrived while paused: re-check the elements on the next tick. */
@@ -219,6 +248,8 @@ export class SequencePlayer {
   private destroyed = false;
   private offPoolRelease: (() => void) | null = null;
   private ctx: CanvasRenderingContext2D | null;
+  /** Scratch canvas of a Cross Dissolve pair (paintMix): undefined until first used, null when none can be made. */
+  private mixCtx: Ctx2D | null | undefined;
   /** Redraw when a still image finishes loading (paused display would otherwise stay black). */
   private readonly imageRedraw = () => { if (!this.destroyed) { this.invalidate(); this.requestTick(); } };
 
@@ -324,6 +355,7 @@ export class SequencePlayer {
     if (this.rate > 0 && f >= (this.loop ? this.loop.outF : this.durationFrames)) this.seekTo(this.loop ? this.loop.inF : 0, false);
     if (this.rate < 0 && f <= (this.loop ? this.loop.inF : 0)) this.seekTo(this.loop ? this.loop.outF - 1 : this.durationFrames - 1, false);
     this.playing = true;
+    this.heldSince = -1;
     this.clock.setRate(this.rate);
     if (!this.clock.isRunning) this.clock.start(this.clock.now());
     if (this.audioContext && this.audioContext.state === 'suspended') void this.audioContext.resume().catch(() => {});
@@ -473,6 +505,7 @@ export class SequencePlayer {
     this.clock.stop();
     if (this.rafId !== null) { cancelAnimationFrame(this.rafId); this.rafId = null; }
     if (this.restTimer !== null) { clearTimeout(this.restTimer); this.restTimer = null; }
+    if (this.holdTimer !== null) { clearTimeout(this.holdTimer); this.holdTimer = null; }
     this.round = null;
     this.pauseAllElements();
     for (const [clipId, slot] of this.activeVideo) this.releaseSlot(this.activeVideo, clipId, slot);
@@ -651,14 +684,56 @@ export class SequencePlayer {
     return { ready, els };
   }
 
-  /** Paused draw: only when the picture differs from what the canvas shows, or a data change requires it. */
+  /**
+   * Paused draw: only when the picture differs from what the canvas shows, or a data change requires it. Held (the
+   * canvas keeps its picture) while a painted element has not yet presented the frame it landed on: the
+   * video-frame callback (ensureListeners) or, at the latest, the hold timer draws it then.
+   */
   private paintIfChanged(plan: FramePlan, frame: number): void {
     const comp = this.composite(plan);
     const key = this.compositeKey(frame, comp);
     if (!this.drawPending && key === this.pausedKey) return;
+    if (!this.framesShown(comp)) {
+      const now = performance.now();
+      if (this.heldSince < 0) this.heldSince = now;
+      const left = this.heldSince + PRESENT_HOLD_MS - now;
+      if (left > 0) {
+        if (this.holdTimer === null) {
+          this.holdTimer = setTimeout(() => {
+            this.holdTimer = null;
+            if (this.destroyed || this.playing) return;
+            this.mediaDirty = true;
+            this.requestTick();
+          }, left + 1);
+        }
+        return;
+      }
+    }
+    this.heldSince = -1;
     this.paint(comp, frame);
     this.pausedKey = key;
     this.drawPending = false;
+  }
+
+  /**
+   * Every painted video layer's element holds the frame at its currentTime. Chromium can report a paused seek as
+   * landed ('seeked', readyState 4, not seeking) before the landed frame reaches the element's compositor; a draw
+   * then paints the previous frame (another clip's, on a cut back to a reused element). Variable-frame-rate media is
+   * not checked: a frame there can last longer than 1 / fps. Paused draws only: playback never calls this.
+   */
+  private framesShown(comp: Composite): boolean {
+    for (let i = comp.first; i < comp.drawable.length; i++) {
+      const { layer, el } = comp.drawable[i];
+      if (layer.isImage) continue;
+      const m = Object.hasOwn(this.media, layer.mediaId) ? this.media[layer.mediaId] : undefined;
+      if (m?.probe?.video?.isVfr) continue;
+      const shown = shownFrameTime(el as HTMLVideoElement);
+      if (shown === null) continue;
+      // The frame containing currentTime starts at most one frame before it (targets are frame-centred).
+      const d = (el as HTMLVideoElement).currentTime - shown;
+      if (d < -1e-3 || d >= 1 / fpsValue(layer.mediaFps) + 1e-3) return false;
+    }
+    return true;
   }
 
   /** What a paused draw of `comp` at `frame` shows: the timeline frame plus each painted layer's media frame. */
@@ -984,28 +1059,75 @@ export class SequencePlayer {
     ctx.scale(sx, sy);
 
     for (let i = first; i < drawable.length; i++) {
-      const { layer, el, vw, vh } = drawable[i];
-      const fit = Math.min(seq.width / vw, seq.height / vh);
-      const tr = layer.transform;
-      const c = tr.crop;
-      const cx = Math.max(0, Math.min(1, c.left)) * vw;
-      const cy = Math.max(0, Math.min(1, c.top)) * vh;
-      const cw = Math.max(0, 1 - c.left - c.right) * vw;
-      const ch = Math.max(0, 1 - c.top - c.bottom) * vh;
-      if (cw <= 0 || ch <= 0) continue;
-      ctx.save();
-      ctx.globalAlpha = Math.max(0, Math.min(1, layer.alpha));
-      ctx.translate(seq.width / 2 + tr.x, seq.height / 2 + tr.y);
-      if (tr.rotation) ctx.rotate((tr.rotation * Math.PI) / 180);
-      if (tr.scale !== 1) ctx.scale(tr.scale, tr.scale);
-      try {
-        ctx.drawImage(el, cx, cy, cw, ch, (cx - vw / 2) * fit, (cy - vh / 2) * fit, cw * fit, ch * fit);
-      } catch { /* element not decodable yet */ }
-      ctx.restore();
+      const next = drawable[i + 1];
+      // A Cross Dissolve's two layers are added, not drawn one over the other (LayerPlan.mixWith).
+      if (next && mixesWith(drawable[i].layer, next.layer) && this.paintMix(drawable[i], next, seq, W, H)) { i++; continue; }
+      this.drawLayer(ctx, drawable[i], seq);
     }
 
     if (this.drawSubtitles) this.drawSubtitleOverlay(ctx, seq, frame);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /** Draw one layer at its alpha with the context's composite operation (the context is in sequence units). */
+  private drawLayer(ctx: Ctx2D, { layer, el, vw, vh }: Composite['drawable'][number], seq: Sequence): void {
+    const fit = Math.min(seq.width / vw, seq.height / vh);
+    const tr = layer.transform;
+    const c = tr.crop;
+    const cx = Math.max(0, Math.min(1, c.left)) * vw;
+    const cy = Math.max(0, Math.min(1, c.top)) * vh;
+    const cw = Math.max(0, 1 - c.left - c.right) * vw;
+    const ch = Math.max(0, 1 - c.top - c.bottom) * vh;
+    if (cw <= 0 || ch <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, layer.alpha));
+    ctx.translate(seq.width / 2 + tr.x, seq.height / 2 + tr.y);
+    if (tr.rotation) ctx.rotate((tr.rotation * Math.PI) / 180);
+    if (tr.scale !== 1) ctx.scale(tr.scale, tr.scale);
+    try {
+      ctx.drawImage(el, cx, cy, cw, ch, (cx - vw / 2) * fit, (cy - vh / 2) * fit, cw * fit, ch * fit);
+    } catch { /* element not decodable yet */ }
+    ctx.restore();
+  }
+
+  /**
+   * A Cross Dissolve pair (LayerPlan.mixWith), only while a dissolve is on screen: the outgoing layer is drawn at its
+   * alpha (1 - t) * a into a cleared scratch canvas, the incoming one at t * b with `lighter` (a premultiplied add), and
+   * the sum over the canvas: (1 - t) * (out over below) + t * (in over below), whatever the layers' opacity and
+   * coverage. False when no scratch canvas can be made; the pair is then drawn one over the other.
+   */
+  private paintMix(out: Composite['drawable'][number], inc: Composite['drawable'][number], seq: Sequence, W: number, H: number): boolean {
+    const ctx = this.ctx;
+    const mix = this.mixContext(W, H);
+    if (!ctx || !mix) return false;
+    mix.setTransform(1, 0, 0, 1, 0, 0);
+    mix.globalCompositeOperation = 'source-over';
+    mix.globalAlpha = 1;
+    mix.clearRect(0, 0, W, H);
+    mix.scale(W / seq.width, H / seq.height);
+    this.drawLayer(mix, out, seq);
+    mix.globalCompositeOperation = 'lighter';
+    this.drawLayer(mix, inc, seq);
+    mix.globalCompositeOperation = 'source-over';
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.drawImage(mix.canvas, 0, 0);
+    ctx.restore();
+    return true;
+  }
+
+  /** The scratch canvas of paintMix at the canvas size, made on first use (null when it cannot be). */
+  private mixContext(W: number, H: number): Ctx2D | null {
+    if (this.mixCtx === undefined) {
+      try {
+        const c = typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(W, H) : document.createElement('canvas');
+        this.mixCtx = (c.getContext('2d') as Ctx2D | null) ?? null;
+      } catch { this.mixCtx = null; }
+    }
+    const m = this.mixCtx;
+    if (m && (m.canvas.width !== W || m.canvas.height !== H)) { m.canvas.width = W; m.canvas.height = H; }
+    return m;
   }
 
   /**

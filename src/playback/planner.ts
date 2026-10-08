@@ -6,11 +6,14 @@
  * No DOM, no side effects: it is unit tested in node and drives SequencePlayer every frame.
  *
  * Transition model (matches the editor's "centered on the cut" convention):
- *  - crossDissolve between two clips: D frames centered on the cut; t goes 0 -> 1 across D.
- *    Outgoing drawn at alpha (1 - t) and extended past its out point by D/2 (handle frames);
- *    incoming drawn at alpha t and extended before its in point by D/2.
+ *  - crossDissolve between two clips: 2h = 2 * floor(D / 2) frames centered on the cut (an odd length renders one
+ *    frame less, as the export does); t = k / 2h on frame k of the window. The outgoing clip has weight (1 - t) and is
+ *    extended past its out point by h (handle frames); the incoming has weight t, is extended before its in point by
+ *    h and carries `mixWith` (the outgoing clip): the compositor adds the pair, so the picture is the linear mix
+ *    (1 - t) * out + t * in over what is below (see LayerPlan.mixWith), like the export's dissolve.
  *  - dipToBlack between two clips: outgoing fades to black over the first half (before the cut),
- *    incoming fades from black over the second half (after the cut). No handles needed.
+ *    incoming fades from black over the second half (after the cut), D / 2 frames each, weights
+ *    (end - frame) / (D / 2) and (frame - start) / (D / 2). No handles needed.
  *  - Single-sided transitions (outClipId or inClipId null) fade from/to black over D frames that lie
  *    entirely inside the clip (there is nothing to extend into on the other side).
  *  - audioCrossfade follows the crossDissolve geometry with gains instead of alphas.
@@ -34,6 +37,14 @@ export interface LayerPlan {
   transform: ClipTransform;
   /** Position, scale or opacity is keyframed: the picture can change from frame to frame with the same media frame. */
   animated?: boolean;
+  /**
+   * Cross Dissolve: set on the incoming clip's layer while the outgoing clip (this id, on the same track) is in the
+   * window too. The two layers are composited as a pair: their pictures, weighted by their alphas, are added (in
+   * premultiplied terms, `lighter`) and the sum is drawn over what is below. With alphas (1 - t) * a and t * b that
+   * is the linear mix (1 - t) * (out over below) + t * (in over below), with no dip in brightness mid-dissolve; the
+   * export mixes the same way (premultiply, xfade, unpremultiply). See `mixesWith`.
+   */
+  mixWith?: ID;
   /** Index into seq.videoTracks (0 = bottom). */
   trackIndex: number;
   /** Seconds added to sourceTime to get the element's currentTime (container start of an original; 0 for proxies). */
@@ -134,7 +145,15 @@ function gainCurve(clip: Clip, weight: number, extra: number): { gainAt?: (frame
   return { gainAt: (f: number) => clipGain(clip, f, weight, extra) };
 }
 
-interface Contribution { clip: Clip; weight: number; handle: boolean }
+interface Contribution { clip: Clip; weight: number; handle: boolean; mixWith?: ID }
+
+/**
+ * Whether `next` is the incoming layer of a Cross Dissolve whose outgoing layer is `prev` (drawn just before it): the
+ * compositor then adds the two (LayerPlan.mixWith) instead of drawing `next` over `prev`.
+ */
+export function mixesWith(prev: LayerPlan, next: LayerPlan): boolean {
+  return next.mixWith !== undefined && next.mixWith === prev.clipId && next.trackIndex === prev.trackIndex;
+}
 
 interface TrackIndex {
   /** Clips are sorted by start (the normal case); otherwise fall back to a linear scan. */
@@ -215,6 +234,7 @@ function contribute(idx: TrackIndex, clip: Clip, frame: number, out: Contributio
   let weight = 1;
   let inside = frame >= start && frame < end;
   let handle = false;
+  let mixWith: ID | undefined;
 
   // Transition at the clip's start (this clip is the incoming side).
   if (trIn) {
@@ -226,11 +246,12 @@ function contribute(idx: TrackIndex, clip: Clip, frame: number, out: Contributio
       const half = D / 2;
       if (inside && frame < start + half) weight *= (frame - start) / half;
     } else {
-      // crossDissolve / audioCrossfade: centered, t = 0 at start - D/2, 1 at start + D/2
-      const half = D / 2;
-      if (frame >= start - half && frame < start + half) {
-        const t = (frame - (start - half)) / D;
+      // crossDissolve / audioCrossfade: centered, 2h frames (h = floor(D / 2), as the export), t = 0 at start - h
+      const h = Math.floor(D / 2);
+      if (h >= 1 && frame >= start - h && frame < start + h) {
+        const t = (frame - (start - h)) / (2 * h);
         weight *= t;
+        mixWith = trIn.outClipId;
         if (!inside) { inside = true; handle = true; }
       }
     }
@@ -244,9 +265,9 @@ function contribute(idx: TrackIndex, clip: Clip, frame: number, out: Contributio
       const half = D / 2;
       if (inside && frame >= end - half) weight *= (end - frame) / half;
     } else {
-      const half = D / 2;
-      if (frame >= end - half && frame < end + half) {
-        const t = (frame - (end - half)) / D;
+      const h = Math.floor(D / 2);
+      if (h >= 1 && frame >= end - h && frame < end + h) {
+        const t = (frame - (end - h)) / (2 * h);
         weight *= 1 - t;
         if (!inside) { inside = true; handle = true; }
       }
@@ -255,7 +276,7 @@ function contribute(idx: TrackIndex, clip: Clip, frame: number, out: Contributio
   if (!inside) return;
   // Ramps of a flattened nested sequence (shared/nest.ts): transitions at a nested clip's edges, moved fades.
   weight *= envelopeAt(clip, frame);
-  out.push({ clip, weight: clamp01(weight), handle });
+  out.push(mixWith === undefined ? { clip, weight: clamp01(weight), handle } : { clip, weight: clamp01(weight), handle, mixWith });
 }
 
 /** Build the composition plan for one timeline frame. */
@@ -272,7 +293,7 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
   };
 
   for (const { track, index } of activeTracks(seq.videoTracks)) {
-    for (const { clip, weight, handle } of contributionsAt(track, frame)) {
+    for (const { clip, weight, handle, mixWith } of contributionsAt(track, frame)) {
       const m = media[clip.mediaId];
       if (!m) { report(clip, 'media not in project'); continue; }
       const res = resolvePlaybackPath(m, useProxies);
@@ -292,6 +313,7 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
         alpha,
         transform,
         ...(animated ? { animated } : null),
+        ...(mixWith !== undefined ? { mixWith } : null),
         trackIndex: index,
         mediaFps: mediaFps(m),
         mediaSize: mediaSize(m),

@@ -4,7 +4,7 @@ import { createSequence } from '../../shared/project';
 import { defaultAudio, defaultTransform } from '../../shared/timeline';
 import { resolvePlaybackPath, mediaFps, mediaTimeOffset, toElementTime, fromElementTime, clampElementTime, isDisplayableImage, mediaNeedsProxyForPreview } from '../../src/playback/mediaSource';
 import { PlaybackClock } from '../../src/playback/clock';
-import { planFrame, fadeEnvelope, contributionsAt } from '../../src/playback/planner';
+import { planFrame, fadeEnvelope, contributionsAt, mixesWith } from '../../src/playback/planner';
 import { peaksForRange, ThumbnailCache, WaveformCache } from '../../src/playback/thumbnails';
 
 // ------------------------------------------------------------------ fixtures
@@ -323,6 +323,53 @@ describe('planFrame', () => {
     expect(alpha(54, 'in')).toBeCloseTo(1, 9);
   });
 
+  it('crossDissolve marks the incoming layer to be added to the outgoing one (mixWith), only inside the window', () => {
+    const s = seq();
+    s.videoTracks[0].clips.push(clip('out', 'A', 0, 48), clip('in', 'B', 48, 48, { sourceIn: 100 }));
+    s.videoTracks[0].transitions.push(tr('t1', 'crossDissolve', 12, 'out', 'in'));
+    const layers = (f: number) => planFrame(s, MEDIA, f, false).layers;
+    const [o, i] = layers(48);
+    expect(i.mixWith).toBe('out');
+    expect(o.mixWith).toBeUndefined();
+    expect(mixesWith(o, i)).toBe(true);
+    expect(mixesWith(i, o)).toBe(false);
+    expect(mixesWith(o, { ...i, trackIndex: 1 })).toBe(false);
+    // The alphas are the linear mix's weights: they sum to 1 on every frame of the window.
+    for (let f = 42; f < 54; f++) expect(layers(f).reduce((t, l) => t + l.alpha, 0)).toBeCloseTo(1, 9);
+    expect(layers(54).map((l) => l.mixWith)).toEqual([undefined]);
+    // A Dip to Black never mixes (a new track: the planner caches its lookups per track object).
+    s.videoTracks[0] = { ...s.videoTracks[0], transitions: [tr('t1', 'dipToBlack', 12, 'out', 'in')] };
+    for (let f = 40; f < 56; f++) for (const l of layers(f)) expect(l.mixWith).toBeUndefined();
+  });
+
+  it('an odd-length crossDissolve spans one frame less (2 * floor(D / 2)), as the export renders it', () => {
+    const s = seq();
+    s.videoTracks[0].clips.push(clip('out', 'A', 0, 48), clip('in', 'B', 48, 48, { sourceIn: 100 }));
+    s.videoTracks[0].transitions.push(tr('t1', 'crossDissolve', 7, 'out', 'in'));
+    const alpha = (f: number, id: string) => planFrame(s, MEDIA, f, false).layers.find((l) => l.clipId === id)?.alpha;
+    expect(alpha(44, 'in')).toBeUndefined();
+    expect(alpha(44, 'out')).toBe(1);
+    for (let k = 0; k < 6; k++) {
+      expect(alpha(45 + k, 'in')).toBeCloseTo(k / 6, 9);
+      expect(alpha(45 + k, 'out')).toBeCloseTo(1 - k / 6, 9);
+    }
+    expect(alpha(51, 'in')).toBe(1);
+    expect(alpha(51, 'out')).toBeUndefined();
+    // One frame: no dissolve (a hard cut, as the export drops it).
+    s.videoTracks[0] = { ...s.videoTracks[0], transitions: [tr('t1', 'crossDissolve', 1, 'out', 'in')] };
+    expect(planFrame(s, MEDIA, 47, false).layers.map((l) => [l.clipId, l.alpha])).toEqual([['out', 1]]);
+    expect(planFrame(s, MEDIA, 48, false).layers.map((l) => [l.clipId, l.alpha])).toEqual([['in', 1]]);
+  });
+
+  it('an odd-length dipToBlack ramps over D / 2 frames on each side (half frames included)', () => {
+    const s = seq();
+    s.videoTracks[0].clips.push(clip('out', 'A', 0, 48), clip('in', 'B', 48, 48));
+    s.videoTracks[0].transitions.push(tr('t1', 'dipToBlack', 5, 'out', 'in'));
+    const alpha = (f: number, id: string) => planFrame(s, MEDIA, f, false).layers.find((l) => l.clipId === id)?.alpha;
+    expect([45, 46, 47].map((f) => alpha(f, 'out'))).toEqual([1, 0.8, 0.4]);
+    expect([48, 49, 50, 51].map((f) => alpha(f, 'in'))).toEqual([0, 0.4, 0.8, 1]);
+  });
+
   it('transition at a clip start (from black) ramps over D frames inside the clip', () => {
     const s = seq();
     s.videoTracks[0].clips.push(clip('c1', 'A', 24, 96));
@@ -531,7 +578,7 @@ describe('element time mapping (container start_time)', () => {
 });
 
 describe('contributionsAt index (P-08)', () => {
-  /** Reference: the old linear scan semantics (every clip checked, transitions looked up by find). */
+  /** Reference: the old linear scan semantics (every clip checked, transitions looked up by find); a dissolve spans 2 * floor(D / 2) frames. */
   function linear(track: Track, frame: number): string[] {
     const ids: string[] = [];
     for (const c of track.clips) {
@@ -540,8 +587,8 @@ describe('contributionsAt index (P-08)', () => {
       const tin = track.transitions.find((t) => t.inClipId === c.id);
       const tout = track.transitions.find((t) => t.outClipId === c.id);
       let inside = frame >= c.start && frame < end;
-      if (tin && tin.outClipId !== null && tin.type !== 'dipToBlack') { const h = Math.max(1, tin.duration) / 2; if (frame >= c.start - h && frame < c.start + h) inside = true; }
-      if (tout && tout.inClipId !== null && tout.type !== 'dipToBlack') { const h = Math.max(1, tout.duration) / 2; if (frame >= end - h && frame < end + h) inside = true; }
+      if (tin && tin.outClipId !== null && tin.type !== 'dipToBlack') { const h = Math.floor(Math.max(1, tin.duration) / 2); if (frame >= c.start - h && frame < c.start + h) inside = true; }
+      if (tout && tout.inClipId !== null && tout.type !== 'dipToBlack') { const h = Math.floor(Math.max(1, tout.duration) / 2); if (frame >= end - h && frame < end + h) inside = true; }
       if (inside) ids.push(c.id);
     }
     return ids;
