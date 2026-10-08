@@ -178,6 +178,58 @@ test('Save As of an untitled project names it after the file', async () => {
   expect(await app.page.evaluate(() => (window as unknown as W).__recut.store.getState().dirty)).toBe(false);
 });
 
+test('a clean save + quit while an autosave is still being written offers no recovery on relaunch', async () => {
+  // bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md (gauntlet TEST 1 on Windows CI): the first
+  // autosave of an untitled project was still serializing (in idle slices) when the project was saved; it landed
+  // after the save had dropped the untitled autosave, and the next launch offered it for recovery.
+  type Rw = Window & { requestIdleCallback: (cb: (d: unknown) => void, o?: unknown) => number; __held?: ((d: unknown) => void)[]; __holding?: boolean; __auto?: Promise<void>; __recut: { actions: { autosaveProject(): Promise<void> } } };
+  const page = app.page;
+  await page.evaluate(() => (window as unknown as W).__recut.store.setState({ dirty: false }));
+  // Autosaves earlier tests left (the planted one of the recovery test) are not what this test is about.
+  for (const dir of [tmp, path.join(tmp, 'userData', 'autosave')]) {
+    for (const f of fs.existsSync(dir) ? fs.readdirSync(dir) : []) if (f.endsWith('.autosave')) fs.rmSync(path.join(dir, f), { force: true });
+  }
+  // An untitled project big enough that its autosave takes several slices, with an unsaved edit.
+  await page.evaluate(() => {
+    const st = (window as unknown as W).__recut.store.getState();
+    st.newProject('Race');
+    const p = (window as unknown as W).__recut.store.getState().project;
+    const seq = p.sequences[p.activeSequenceId];
+    const markers = Array.from({ length: 40_000 }, (_, i) => ({ id: `race-m${i}`, time: i, duration: 0, name: `marker ${i}`, note: 'x'.repeat(40), color: '#fff', kind: 'marker' }));
+    st.loadProjectData({ ...p, sequences: { ...p.sequences, [seq.id]: { ...seq, markers } } }, null);
+    (window as unknown as W).__recut.store.getState().renameProject('Race Cut');
+  });
+  expect(await page.evaluate(() => (window as unknown as W).__recut.store.getState().dirty)).toBe(true);
+  // Hold idle callbacks: the autosave serializes its first slice, then waits for idle time (its slicer keeps this
+  // requestIdleCallback, so after the release it runs each callback in the next task).
+  await page.evaluate(() => {
+    const w = window as unknown as Rw;
+    w.__held = [];
+    w.__holding = true;
+    const idle = { didTimeout: true, timeRemaining: () => 0 };
+    w.requestIdleCallback = (cb) => { if (w.__holding) w.__held!.push(cb); else setTimeout(() => cb(idle), 0); return 0; };
+    w.__auto = w.__recut.actions.autosaveProject();
+  });
+  await expect.poll(() => page.evaluate(() => ((window as unknown as Rw).__held ?? []).length)).toBeGreaterThan(0);
+  const racePath = path.join(tmp, 'Race.recut');
+  const res = await page.evaluate((p) => (window as unknown as W).__recut.actions.saveProject(p), racePath);
+  expect(res.ok, JSON.stringify(res)).toBe(true);
+  expect(await page.evaluate(() => (window as unknown as W).__recut.store.getState().dirty)).toBe(false);
+  // The autosave goes on and finishes after the save.
+  await page.evaluate(async () => {
+    const w = window as unknown as Rw;
+    w.__holding = false;
+    for (const cb of w.__held!.splice(0)) cb({ didTimeout: true, timeRemaining: () => 0 });
+    await w.__auto;
+  });
+
+  await app.app.close();
+  app = await launchApp({ tmp });
+  const offered = await app.page.evaluate(() => (window as unknown as { recut: { checkRecovery(): Promise<unknown> } }).recut.checkRecovery());
+  expect(offered, 'no spurious recovery prompt after a clean save+quit').toBeNull();
+  expect(await app.page.getByTestId('recovery-dialog').count()).toBe(0);
+});
+
 test('quit prompt: Cancel keeps the app open past the 3 s fallback; the next quit prompts again', async () => {
   const alive = () => app.app.process().exitCode === null && !app.page.isClosed();
   await app.page.evaluate(() => {
