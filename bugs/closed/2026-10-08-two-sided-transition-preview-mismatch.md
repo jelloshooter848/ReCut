@@ -135,15 +135,23 @@ disagreed on odd lengths, and the export's straight-alpha `xfade` is not a mix o
   with a dissolve on screen use the scratch canvas; every other draw is unchanged (`drawLayer` is the old loop body).
   Without a scratch canvas the pair is drawn as before. The paused-draw logic is not touched.
 - **Export, dip** (`exportPlan.ts`, `renderGraph.ts`): `planTrackSegments` no longer gives a dip handles; it sets the
-  outgoing segment's `fadeOut` and the incoming one's `fadeIn` to `D/2`, so `fadeWeights` (the planner's formula)
-  multiplies them into the per-frame alpha `lut` set by `sendcmd`, the fade fix's path. A dip always renders in full
-  (`TransitionOutcome.to = D`, no "shortened / dropped" warning for handles).
-- **Export, dissolve** (`renderGraph.ts` `videoTrack`, `dissolveWindow`): no more `xfade` chained over whole
-  segments. A segment with a dissolve at an edge is `split` and `trim`med into its head window, body and tail window;
-  each pair of windows is mixed premultiplied (`format=yuva444p,premultiply=inplace=1` → `xfade=fade:offset=0` →
-  `unpremultiply=inplace=1,format=yuva420p`) and the track is one `concat` of bodies, mixes and gaps. The 4:4:4
-  conversion and premultiply run on the `2h` window frames only; a track without dissolves builds exactly the graph
-  it built before (no `split`, `premultiply` or `xfade`).
+  outgoing segment's `dipOut` and the incoming one's `dipIn` to `D/2`, and the planner's weights go on the alpha: a
+  half of a whole number of frames `H` is `fade=t=in|out:start_frame:nb_frames=H:alpha=1` (`dipFilters`; counting
+  frames it gives exactly `k/H`, touches only the ramp's frames and is two short filters); a half-frame half (odd
+  `D`) goes through `fadeWeights` into the fade fix's per-frame alpha `lut` + `sendcmd` (`fade`'s time options
+  mishandle half frames: a ramp starting at a half frame was not applied at all on FFmpeg 6.1). A dip always renders
+  in full (`TransitionOutcome.to = D`, no "shortened / dropped" warning for handles). Its segments still open their
+  inputs over the handles a centred transition would take (`readBefore` / `readAfter`, not shown), so a clip and its
+  linked audio crossfading on the same cut keep sharing one input: without that, the perf bench's 2,500-clip export
+  opened 1,376 inputs instead of 1,258.
+- **Export, dissolve** (`renderGraph.ts` `videoTrack`, `dissolveWindow`, `windowAlpha`): no more `xfade` chained over
+  whole segments. A segment with a dissolve at an edge is `split` and `trim`med into its head window, body and tail
+  window; each pair of windows is mixed and the track is one `concat` of bodies, mixes and gaps. The mix is
+  premultiplied (`format=yuva444p,premultiply=inplace=1` → `xfade=fade:offset=0` →
+  `unpremultiply=inplace=1,format=yuva420p`) unless both windows provably have the same alpha (`windowAlpha`: no
+  alpha in the source, no motion, the same static opacity, no ramp over the window, the same coverage; the usual
+  full-frame clips at opacity 1), where a plain `xfade` is already the same mix. A track without dissolves builds the
+  graph it built before (no `split`, `premultiply` or `xfade`).
 
 ### Before / after
 Largest |export − preview| mean luma (levels of 219), per case of `tests/unit/export-fade.test.ts` (FFmpeg 6.1.1,
@@ -152,10 +160,10 @@ one below).
 
 | Case | Before | After |
 |---|---|---|
-| the reported case: Dip to Black, Cross Dissolve, 6 frames | 146.0 | 1.00 |
+| the reported case: Dip to Black, Cross Dissolve, 6 frames | 146.0 | 0.83 |
 | Cross Dissolve of 1–8 frames | 54.3 | 0.88 |
 | Dip to Black of 1–8 and 12 frames | 146.0 | 1.20 |
-| Dip to Black where the media has no handles | dropped (hard cut) | 1.20 |
+| Dip to Black where the media has no handles | dropped (hard cut) | 0.40 |
 | on V2 over V1: opacity 0.6 → a pillarboxed 4:3 clip, then a dip; centre / pillar | 81.3 / 113.0 | 1.25 / 1.35 |
 | keyframed and static opacity, dissolve and dip | 52.6 | 1.20 |
 | nested: dissolve and dip inside, dissolve and dip at the nested clip's edges | 70.4 | 1.20 |
@@ -194,8 +202,24 @@ Tests  10 failed | 7 passed (17)
 ```
 After: `✓ tests/unit/export-fade.test.ts (17 tests)`.
 
+### Performance
+Same-host A/B against 94bb18e (Linux container shared with other agents, so wall times are noisy):
+- 1080p export, 20 clips of 3 s, a 24-frame transition at every cut (libx264 veryfast), interleaved runs: no
+  transitions 19.85 / 19.85 s (old / new); Cross Dissolve, full-frame clips (plain `xfade`) 31.61 / 31.65 s; Dip to
+  Black 36.10 / 24.83 s (no `xfade`, no 4:4:4). A dissolve whose windows' alphas differ takes the premultiplied
+  path; with it on every cut the export took about 40 % longer (36.9 / 50.3 s, measured before `windowAlpha` sent
+  equal alphas to the plain `xfade`).
+- Perf bench export rows (graph build and FFmpeg init of the 2,500-clip project), measured before the last two
+  commits: FFmpeg inputs 1,258 / 1,258, peak RSS and init time within run-to-run noise; `buildRenderGraph` @ 1,000
+  clips 6.4–7.5 / 7.5–9.9 ms (more chains per dissolve: split, three trims). Not re-run after `windowAlpha`, which
+  removes chains. The full `npm run perf:check` was not run (about 1.5 h with the A/B, on a shared machine).
+- Frames outside transitions get no new work: a track without dissolves has the old graph, and the preview uses the
+  scratch canvas only while a dissolve is on screen.
+
 ### Tests run
-TESTS_RUN_PLACEHOLDER
+Linux, FFmpeg 6.1.1, at b164c79: `npm run typecheck` clean; `npm test` 111 files, 1929 passed, 2 skipped; e2e under
+xvfb (`export`, `export-intermediates`, `export-mkv`, `keyframes`, `nest`, `program`, `program-transitions` (new),
+`timeline`): 24/24 passed. Windows and macOS were not run.
 
 ### Changed existing assertions
 - `tests/unit/export.test.ts` "(c) a cross dissolve mixes both clips at the cut": asserted the old graph string
