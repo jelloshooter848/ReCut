@@ -143,7 +143,7 @@ The fake `VideoFrame` counts constructions and closes, and every gated test asse
 removed from `shownFrameTime`, 4 tests fail.
 
 ### Tests run
-- `npm run typecheck`: clean. `npm test`: see below.
+- `npm run typecheck`: clean. `npm test`: 109 files, 1909 passed, 2 skipped.
 - e2e (heavy lock, after merging main d30bf58 with #73): program, program-present, source, timeline, nest and compare
   specs, 17/17 passed. `program.spec.ts:327` (the test #68 de-flaked) `--repeat-each 40 --workers=4`: 40/40 passed.
 - `program-present.spec.ts` repeats: as in Before / after.
