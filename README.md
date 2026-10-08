@@ -207,6 +207,11 @@ The [User Guide](docs/USER-GUIDE.md) walks through a complete fan edit.
 | [project-format](docs/project-format.md) | The `.recut` JSON format |
 | [export-pipeline](docs/export-pipeline.md) | How the FFmpeg render graph is built |
 
+## Contributing
+
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md), and ask questions or share ideas in
+[GitHub Discussions](https://github.com/jelloshooter848/ReCut/discussions).
+
 ## Legal
 
 ReCut edits **media files you supply**. It does not download, rip or stream content, and it does not decrypt or

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas → GitHub Discussions
+    url: https://github.com/jelloshooter848/ReCut/discussions
+    about: Ask how to do something in ReCut, suggest an idea, or share what you made with it.
