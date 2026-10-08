@@ -9,7 +9,7 @@ import type { Clip, MediaItem, Sequence } from '../../shared/model';
 import { createSequence } from '../../shared/project';
 import { defaultAudio, defaultTransform } from '../../shared/timeline';
 import { MediaElementPool } from '../../src/playback/elementPool';
-import { SCRUB_REST_MS, SequencePlayer } from '../../src/playback/sequencePlayer';
+import { PRESENT_HOLD_MS, SCRUB_REST_MS, SequencePlayer } from '../../src/playback/sequencePlayer';
 
 // ------------------------------------------------------------------ fake DOM
 
@@ -325,5 +325,121 @@ describe("SequencePlayer: the landed frame reaches the compositor after 'seeked'
     expect(videos().every((v) => v.vfcs.length === 1)).toBe(true);
     player.destroy();
     expect(videos().every((v) => v.vfcs.length === 0)).toBe(true);
+  });
+});
+
+describe('SequencePlayer: a paused draw waits until the landed frame is presented', () => {
+  // bugs/closed/2026-10-07-program-transient-stale-frame-before-present.md: the repaint above fixed the picture at
+  // rest, but the draw at 'seeked' still put the previous frame (the other clip's, on a cut back) on screen for one
+  // display frame. With WebCodecs the player sees the frame the element holds (new VideoFrame(el)) and holds the
+  // last picture until it is the landed one.
+
+  /**
+   * WebCodecs' VideoFrame over a FakeMedia: the timestamp of the frame its compositor holds (`shown`). The fake files
+   * are 24 fps with a frame every 1/24 s from 0, so that is the start of the frame containing `shown`.
+   */
+  class FakeVideoFrame {
+    static made = 0;
+    static closed = 0;
+    /** Reading `timestamp` throws (models an unexpected failure after the frame was taken). */
+    static broken = false;
+    private readonly ts: number;
+    constructor(el: FakeMedia) {
+      if (el.readyState < 2) throw new Error('InvalidStateError');
+      FakeVideoFrame.made++;
+      this.ts = Math.round((Math.floor(el.shown * 24 + 1e-6) / 24) * 1e6);
+    }
+    get timestamp(): number { if (FakeVideoFrame.broken) throw new Error('InvalidStateError'); return this.ts; }
+    close(): void { FakeVideoFrame.closed++; }
+  }
+  beforeEach(() => { withVfc = true; FakeVideoFrame.made = 0; FakeVideoFrame.closed = 0; FakeVideoFrame.broken = false; vi.stubGlobal('VideoFrame', FakeVideoFrame); });
+  /** Every frame the player took from an element was closed (an open VideoFrame pins decoder / GPU memory). */
+  const allClosed = () => { expect(FakeVideoFrame.made).toBeGreaterThan(0); expect(FakeVideoFrame.closed).toBe(FakeVideoFrame.made); };
+
+  function cutSequence(): Sequence {
+    const s = createSequence('cut', FPS, 1920, 1080);
+    s.videoTracks[0].clips.push(clip('c0', 'A', 0, 48, 1, 'video'), clip('c1', 'A', 48, 48, 5, 'video'));
+    return s;
+  }
+  const cutTarget = (f: number) => (f < 48 ? 1 + f / 24 : 5 + (f - 48) / 24) + 0.5 / 24;
+  /** Every draw painted the frame at the element's currentTime (the frame the player asked for). */
+  const allCurrent = () => drawn.every((d) => Math.abs(d.shown - d.t) < 1e-9);
+
+  it('a cut back to a reused element draws nothing until the landed frame is presented, then that frame', () => {
+    const { player } = setup(cutSequence());
+    const el = videos()[0];
+    player.seek(70); frame(); el.land(); frame(); rest();
+    drawn = [];
+    player.seek(10); frame();
+    el.land(false); // 'seeked' fires; the compositor still holds the 5.9 s frame
+    frame();
+    expect(drawn).toHaveLength(0); // the canvas keeps the frame-70 picture: no frame of the other clip
+    el.present(); frame(); frame();
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0].shown).toBeCloseTo(cutTarget(10), 9);
+    rest(); frame();
+    expect(drawn).toHaveLength(1);
+    allClosed();
+    player.destroy();
+  });
+
+  it('a scrub whose seeks land before their frames are presented never draws a frame other than the one sought', () => {
+    const seq = createSequence('cuts', FPS, 1920, 1080);
+    for (let i = 0; i < 12; i++) seq.videoTracks[0].clips.push(clip(`c${i}`, 'ABD'[i % 3], i * 100, 100, 3 + i * 7, 'video'));
+    const { player } = setup(seq);
+    let seed = 11;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    let f = 0;
+    for (let step = 0; step < 200; step++) {
+      f = Math.floor(rnd() * 1200);
+      player.seek(f); frame();
+      for (const v of videos()) {
+        if (rnd() < 0.3) v.land(false);
+        if (rnd() < 0.3) v.present();
+      }
+    }
+    for (let i = 0; i < 5; i++) { landAll(); frame(); }
+    rest(); landAll(); frame(); frame();
+    expect(drawn.length).toBeGreaterThan(10);
+    expect(allCurrent()).toBe(true);
+    const c = seq.videoTracks[0].clips[Math.floor(f / 100)];
+    expect(drawn[drawn.length - 1].t).toBeCloseTo(c.sourceIn + (f - c.start) / 24 + 0.5 / 24, 9);
+    allClosed();
+    player.destroy();
+  });
+
+  it(`draws anyway after ${PRESENT_HOLD_MS} ms when the element never shows a matching frame`, () => {
+    const { player } = setup(cutSequence());
+    const el = videos()[0];
+    player.seek(70); frame();
+    el.land(false); frame();
+    expect(drawn).toHaveLength(0);
+    now += PRESENT_HOLD_MS + 5; vi.advanceTimersByTime(PRESENT_HOLD_MS + 5); frame();
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0].t).toBeCloseTo(cutTarget(70), 9);
+    allClosed();
+    player.destroy();
+  });
+
+  it('a frame whose timestamp cannot be read is still closed, and the draw is not held', () => {
+    const { player } = setup(cutSequence());
+    const el = videos()[0];
+    FakeVideoFrame.broken = true;
+    player.seek(70); frame();
+    el.land(false); frame();
+    expect(drawn).toHaveLength(1); // unknown: drawn as before the check existed (the video-frame callback repaints)
+    allClosed();
+    player.destroy();
+  });
+
+  it('playback never asks which frame an element holds (no extra work per frame)', () => {
+    const { player } = setup();
+    FakeVideoFrame.made = 0;
+    player.play();
+    for (let i = 0; i < 30; i++) { for (const m of media) m.present(); frame(); }
+    expect(drawn.length).toBeGreaterThan(0);
+    expect(FakeVideoFrame.made).toBe(0);
+    player.pause();
+    player.destroy();
   });
 });

@@ -389,8 +389,10 @@ describe('parity with the render graph', () => {
       expect([g.startF, g.endF], `seed ${seed}`).toEqual([range.startF, range.endF]);
       const checks = exportTimelineChecks(seq, media, range.startF, range.endF);
       const fd = seq.fps.den / seq.fps.num;
-      // Transition lengths: what the dialog predicts is what the graph renders (dropped ones render nothing).
-      const predicted = checks.transitions.filter((t) => t.to > 0).map((t) => sec(t.to * fd)).sort();
+      // Transition lengths: what the dialog predicts is what the graph renders (dropped ones render nothing). A Dip to
+      // Black is a ramp inside each clip (no xfade, no handles): it always renders in full.
+      const predicted = checks.transitions.filter((t) => t.to > 0 && t.transition.type !== 'dipToBlack').map((t) => sec(t.to * fd)).sort();
+      for (const t of checks.transitions) if (t.transition.type === 'dipToBlack' && t.to > 0) expect([t.to, t.reason], `seed ${seed}`).toEqual([t.from, null]);
       expect(renderedTransitionDurations(g.filterGraph), `seed ${seed}`).toEqual(predicted);
       // The dialog reports exactly the transitions the graph warns about, with the same lengths.
       const graphShort = g.warnings.flatMap((w) => /shortened from (\d+) to (\d+) frames/.exec(w)?.slice(1, 3).join('>') ?? []);

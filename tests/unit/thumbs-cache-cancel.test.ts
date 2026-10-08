@@ -7,7 +7,8 @@
  *   requester still wants keeps running; a request arriving right behind the kill takes the frames over in one batch.
  *
  * The kill tests use a fake ffmpeg (a Node script, POSIX only) that writes the batch's `.part` outputs and then hangs
- * like a slow decode, so they are deterministic and fast.
+ * like a slow decode, so they are deterministic and fast. They cancel only after the fake has logged that its frames
+ * are written (`spawned`), never on its spawn line alone: a kill landing between the two would leave no finished frame.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -116,9 +117,16 @@ describe('recut-media:// cache headers for thumbnail files', () => {
 describe.skipIf(process.platform === 'win32')('killing canceled filmstrip batches', () => {
   const fake = path.join(tmp, 'fake-ffmpeg.js');
   const log = path.join(tmp, 'fake-ffmpeg.log');
-  type Entry = { pid: number; outs?: number; finished?: boolean };
+  type Entry = { pid: number; outs?: number; wrote?: boolean; finished?: boolean };
   const entries = (): Entry[] => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as Entry) : []);
   const spawns = () => entries().filter((e) => e.outs !== undefined);
+  /** Pid of the `n`th fake ffmpeg (1-based), once it has written its frames and hangs: only then is a kill deterministic. */
+  const spawned = async (n: number): Promise<number> => {
+    await waitFor(() => spawns().length === n);
+    const { pid } = spawns()[n - 1];
+    await waitFor(() => entries().some((e) => e.pid === pid && e.wrote));
+    return pid;
+  };
   const mode = (m: 'ok' | 'hang', opts: { firstComplete?: boolean; hangMs?: number } = {}) => {
     process.env.FAKE_FF_MODE = m;
     process.env.FAKE_FF_FIRST_COMPLETE = opts.firstComplete === false ? '0' : '1';
@@ -139,6 +147,7 @@ const all = () => { for (const o of outs) fs.writeFileSync(o, jpg); };
 if (process.env.FAKE_FF_MODE === 'ok') { all(); process.exit(0); }
 // hang: like a slow decode, the first frame is written (complete) and the next one cut short, then nothing for a while
 outs.forEach((o, i) => { if (i === 0 && process.env.FAKE_FF_FIRST_COMPLETE !== '0') fs.writeFileSync(o, jpg); else if (i <= 1) fs.writeFileSync(o, jpg.subarray(0, jpg.length >> 1)); });
+log({ pid: process.pid, wrote: true });
 setTimeout(() => { all(); log({ pid: process.pid, finished: true }); process.exit(0); }, Number(process.env.FAKE_FF_HANG_MS || 20000));
 `, { mode: 0o755 });
     setFfmpegPaths({ ffmpeg: fake });
@@ -151,8 +160,7 @@ setTimeout(() => { all(); log({ pid: process.pid, finished: true }); process.exi
     const rid = id();
     const t0 = Date.now();
     const p = getFilmstrip({ path: src, times, width: 64, requestId: rid });
-    await waitFor(() => spawns().length === 1);
-    const { pid } = spawns()[0];
+    const pid = await spawned(1);
     expect(alive(pid)).toBe(true);
     cancelThumbRequests([rid]);
     const out = await p;
@@ -183,8 +191,7 @@ setTimeout(() => { all(); log({ pid: process.pid, finished: true }); process.exi
     const n0 = spawns().length;
     const rid = id();
     const p = getFilmstrip({ path: src, times: [5], width: 66, requestId: rid });
-    await waitFor(() => spawns().length === n0 + 1);
-    const { pid } = spawns().at(-1)!;
+    const pid = await spawned(n0 + 1);
     cancelThumbRequests([rid]);
     expect(await p).toEqual(['']);
     await waitFor(() => !alive(pid), 2000);
@@ -198,8 +205,7 @@ setTimeout(() => { all(); log({ pid: process.pid, finished: true }); process.exi
     const n0 = spawns().length;
     const a = id(), b = id();
     const pa = getFilmstrip({ path: src, times: [6, 6.5], width: 68, requestId: a });
-    await waitFor(() => spawns().length === n0 + 1);
-    const { pid } = spawns().at(-1)!;
+    const pid = await spawned(n0 + 1);
     const pb = getFilmstrip({ path: src, times: [6, 6.5], width: 68, requestId: b }); // joins the running batch
     await sleep(100);
     expect(spawns().length).toBe(n0 + 1);
@@ -218,8 +224,7 @@ setTimeout(() => { all(); log({ pid: process.pid, finished: true }); process.exi
     const n0 = spawns().length;
     const a = id();
     const pa = getFilmstrip({ path: src, times: [7, 7.25], width: 70, requestId: a });
-    await waitFor(() => spawns().length === n0 + 1);
-    const { pid } = spawns().at(-1)!;
+    const pid = await spawned(n0 + 1);
     const pb = getFilmstrip({ path: src, times: [7, 7.25], width: 70 }); // no requestId: cannot be canceled
     await sleep(50);
     cancelThumbRequests([a]);
@@ -237,8 +242,7 @@ setTimeout(() => { all(); log({ pid: process.pid, finished: true }); process.exi
     const a = id();
     const times = [1, 1.5, 2.5];
     const pa = getFilmstrip({ path: src, times, width: 72, requestId: a });
-    await waitFor(() => spawns().length === n0 + 1);
-    const { pid } = spawns().at(-1)!;
+    const pid = await spawned(n0 + 1);
     cancelThumbRequests([a]);
     mode('ok');
     const pb = getFilmstrip({ path: src, times, width: 72 }); // same tick as the cancel: the killed batch is still in flight

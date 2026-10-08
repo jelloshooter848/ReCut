@@ -4,13 +4,14 @@ This guide is for the person who signs ReCut for macOS: someone with a paid **Ap
 (the project owner's brother). You do not need access to the ReCut repository, a Mac build setup or any knowledge of
 the code. You create two credentials in your Apple account, turn them into five text values, and hand them to the
 project owner, who stores them as encrypted GitHub secrets. From then on GitHub's macOS runner signs and notarizes
-every macOS build by itself.
+every macOS build by itself. **Releases need them:** macOS is an official release platform, and a release build
+fails without all five secrets (see [Releases require signing](#releases-require-signing)).
 
 It takes about 30 minutes, once. Allow a little longer if you have never used Keychain Access.
 
 ## What signing changes
 
-| | Unsigned test build (today) | Signed and notarized build |
+| | Unsigned test build (no secrets) | Signed and notarized build (every release) |
 |---|---|---|
 | First launch | macOS refuses: "Apple could not verify "ReCut" is free of malware". Users must go to **System Settings › Privacy & Security** and click **Open Anyway** (on macOS 14 and earlier also: right-click the app › **Open**). | The normal one-time question "ReCut is an app downloaded from the Internet. Are you sure you want to open it?" › **Open**. No "unidentified developer" or "could not verify" warning. |
 | Who vouches for it | Nobody. | Your Developer ID: Apple scanned the build for malware (notarization) and the result is stapled to the app, so it also checks out offline. |
@@ -37,6 +38,17 @@ Five values. The owner stores each as a GitHub **repository secret** with exactl
 
 CI uses all five or none. If only some are set, the macOS job fails on purpose rather than producing a half-signed
 build.
+
+### Releases require signing
+
+Both dmgs (Apple Silicon and Intel) are attached to every ReCut release, and a release is never published with an
+unsigned dmg. On a release run (the merge of a release PR, see [RELEASING.md](RELEASING.md)) each leg of the `macos`
+job checks, in its first step, that all five secrets are set and fails at once if any is missing; later it fails
+unless electron-builder signed the app with the Developer ID, Apple notarized it, Gatekeeper accepts it as
+"Notarized Developer ID" and the ticket is stapled. A failed `macos` leg stops the whole release: nothing is
+published and no tag is created. Fix the secrets (or the cause Apple reports) and click **Re-run failed jobs** on the
+run; the version is still unreleased, so the re-run publishes it. Test builds (every run that is not a release) still
+work without the secrets: they are then ad-hoc signed.
 
 ## Step 1: create a "Developer ID Application" certificate
 
@@ -135,16 +147,19 @@ the list of people with write access short.
 ## Checking a signed build
 
 1. Run the workflow (Actions › **Windows build** › **Run workflow**), or wait for the next push to `main`.
-2. Open the run › job **macOS dmg + smoke test (advisory)**:
+2. Both dmgs are signed with the same five secrets: the Apple Silicon one (`ReCut-<version>-macos-arm64.dmg`) and the
+   Intel one (`ReCut-<version>-macos-x64.dmg`). Open the run › jobs **macOS arm64 dmg + smoke test** and
+   **macOS x64 dmg + smoke test**, and in each:
    - "Code signing setup" says *All five macOS signing secrets are set*.
    - "Package the dmg" logs `signing` with your identity and, a few minutes later, `notarization successful`.
    - "Code signature" passes: every Mach-O file in ReCut.app (Electron, its helpers, the bundled `ffmpeg` and
-     `ffprobe`) is signed with your Developer ID, the hardened runtime and a secure timestamp; `spctl` reports
-     `source=Notarized Developer ID`; `xcrun stapler validate` finds the stapled ticket.
+     `ffprobe`, and the speech-to-text engine: `whisper-cli`, plus on x64 its `.dylib` libraries and
+     `libggml-cpu-*.so` kernels) is signed with your Developer ID, the hardened runtime and a secure timestamp; `spctl`
+     reports `source=Notarized Developer ID`; `xcrun stapler validate` finds the stapled ticket.
    - The job summary says the dmg is signed and notarized.
-3. On a Mac, download the **ReCut-macos** artifact of that run, unzip it, open the `.dmg`, drag ReCut to Applications
-   and open it. It must open after the usual "downloaded from the Internet" question, with no "could not verify"
-   warning. In Terminal you can also check:
+3. On a Mac, download the **ReCut-macos-arm64** (Apple Silicon) or **ReCut-macos-x64** (Intel) artifact of that run,
+   unzip it, open the `.dmg`, drag ReCut to Applications and open it. It must open after the usual "downloaded from
+   the Internet" question, with no "could not verify" warning. In Terminal you can also check:
 
    ```bash
    codesign --verify --deep --strict --verbose=2 /Applications/ReCut.app
@@ -160,9 +175,11 @@ Development" or "Mac App Distribution"), or an API key that is an individual key
 
 - **Expiry.** A Developer ID Application certificate is valid for five years; builds signed while it was valid keep
   working afterwards because each signature is timestamped. Before it expires, repeat steps 1 and 2 and give the owner
-  the new `CSC_LINK` and `CSC_KEY_PASSWORD`. API keys do not expire.
+  the new `CSC_LINK` and `CSC_KEY_PASSWORD`: with an expired certificate, signing fails and so does every release.
+  API keys do not expire.
 - **To stop CI signing**, the owner deletes the five secrets (Settings › Secrets and variables › Actions). The next
-  builds are unsigned test builds again. Nothing already published changes.
+  test builds are ad-hoc signed again, but **no release can be published** until all five are set again (the `macos`
+  job fails every release run without them). Nothing already published changes.
 - **If a value leaked:**
   - API key: revoke it in App Store Connect › Users and Access › Integrations › App Store Connect API (**Revoke**
     next to the key). Harmless to builds already notarized. Create a new key (step 3) and update `APPLE_API_KEY`,
@@ -174,16 +191,22 @@ Development" or "Mac App Distribution"), or an API key that is an individual key
 
 ## How it works (for maintainers)
 
-- Packaging: `package.json` → `build.mac` (dmg, arm64, `hardenedRuntime: true`, entitlements in
-  `build/entitlements.mac.plist` and `build/entitlements.mac.inherit.plist`, both only `allow-jit`).
-- CI: the `macos` job in `.github/workflows/windows.yml`. With all five secrets it writes the `.p8` to a private temp
-  file, runs `electron-builder --mac dmg --arm64` with `CSC_LINK` / `CSC_KEY_PASSWORD` (electron-builder imports the
-  certificate into a temporary keychain and signs every Mach-O with the hardened runtime and a timestamp, including
-  `Contents/Resources/ffmpeg/ffmpeg` and `ffprobe`) and `APPLE_API_KEY` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER`
+- Packaging: `package.json` → `build.mac` (dmg named `ReCut-${version}-macos-${arch}.dmg`, arm64 by default,
+  `hardenedRuntime: true`, entitlements in `build/entitlements.mac.plist` and `build/entitlements.mac.inherit.plist`,
+  both only `allow-jit`).
+- CI: the `macos` job in `.github/workflows/windows.yml`, a matrix with one leg per dmg (arm64, x64), each signed the
+  same way with the same secrets. With all five secrets each leg writes the `.p8` to a private temp
+  file, runs `electron-builder --mac dmg --arm64` (or `--x64`) with `CSC_LINK` / `CSC_KEY_PASSWORD` (electron-builder
+  imports the certificate into a temporary keychain and signs every Mach-O with the hardened runtime and a timestamp,
+  including `Contents/Resources/ffmpeg/ffmpeg` and `ffprobe` and everything in `Contents/Resources/whisper`; the x64
+  engine's libraries load only because they carry the same Team ID as `whisper-cli`) and `APPLE_API_KEY` /
+  `APPLE_API_KEY_ID` / `APPLE_API_ISSUER`
   (electron-builder notarizes the app with `notarytool` and staples the ticket), then deletes the key file. Without
   the secrets it sets `CSC_IDENTITY_AUTO_DISCOVERY=false` and makes an ad-hoc signed build without the hardened
   runtime.
 - The dmg itself is not signed or notarized separately: the app inside it is, with the ticket stapled, which is what
   Gatekeeper checks.
-- The macOS job is advisory until macOS is an official platform (docs/ROADMAP.md §19); see the TODO above the
-  `publish` job for what changes then.
+- The `macos` job (both legs) and `macos-e2e` are release gates: the `publish` job needs them and attaches both dmgs.
+  The `macos` job's first step, "Release run? (a release must be signed)", decides release or test build by the same
+  rules as the installer job's release metadata step and fails a release run that lacks any of the five secrets; the
+  "Code signing setup" and "Code signature" steps refuse an unsigned release build again.
