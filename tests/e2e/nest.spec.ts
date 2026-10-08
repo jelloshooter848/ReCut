@@ -92,14 +92,21 @@ test('Make Compound Clip, Open in Timeline, edit inside: the outer timeline and 
   // Double-click the nested clip: its sequence opens in the timeline.
   const nestedClipId = await st<string>(`(s, id) => s.project.sequences[id].videoTracks[0].clips[0].id`, outerId);
   await st(`(s, id) => s.setView(s.project.activeSequenceId, { playhead: 60 })`);
+  // Double-click inside the part of the clip the tracks viewport shows (a clip's box can reach past the timeline's
+  // visible area on a small window), and check that nothing covers that point.
   const nb = (await page.locator(`.tl-clip[data-clip-id="${nestedClipId}"]`).boundingBox())!;
-  const px = nb.x + Math.min(nb.width / 2, 40), py = nb.y + nb.height / 2;
-  // The point must hit the nested clip itself (not an overlay), so a failure below is about the double-click.
+  const vb = (await page.locator('.tl-tracks-scroll').boundingBox())!;
+  const left = Math.max(nb.x, vb.x), right = Math.min(nb.x + nb.width, vb.x + vb.width);
+  const top = Math.max(nb.y, vb.y), bottom = Math.min(nb.y + nb.height, vb.y + vb.height);
+  const layout = `clip ${JSON.stringify(nb)}, tracks viewport ${JSON.stringify(vb)}`;
+  expect(right - left > 20 && bottom - top > 10, `the nested clip is visible in the timeline (${layout})`).toBe(true);
+  const px = left + Math.min((right - left) / 2, 40), py = (top + bottom) / 2;
   const hit = await page.evaluate(([x, y]) => {
     const el = document.elementFromPoint(x, y) as HTMLElement | null;
-    return { clipId: el?.closest('[data-clip-id]')?.getAttribute('data-clip-id') ?? null, what: el ? `${el.tagName}.${el.className}` : 'nothing' };
+    const panel = el?.closest('[data-panel]')?.getAttribute('data-panel') ?? null;
+    return { clipId: el?.closest('[data-clip-id]')?.getAttribute('data-clip-id') ?? null, what: el ? `${el.tagName}.${el.className} in panel ${panel}` : 'nothing' };
   }, [px, py]);
-  expect(hit.clipId, `the double-click point hits ${hit.what}`).toBe(nestedClipId);
+  expect(hit.clipId, `the double-click point (${px}, ${py}) hits ${hit.what}; ${layout}`).toBe(nestedClipId);
   await page.mouse.dblclick(px, py);
   await expect.poll(() => st<string>(`(s) => s.project.activeSequenceId`), {
     message: `after the double-click: selection ${JSON.stringify(await st<string[]>(`(s) => s.ui.selectedClipIds`))}`,
