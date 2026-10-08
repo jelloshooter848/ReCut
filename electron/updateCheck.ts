@@ -1,10 +1,12 @@
 /**
- * The update check (main process): asks GitHub for the latest release and remembers the answer in prefs.json.
+ * The update check (main process): asks GitHub for the latest release (from a release candidate, for the newest
+ * releases including pre-releases) and remembers the answer in prefs.json.
  *
  * - Automatic: only when Preferences › Check for updates is `on` (the user opted in; the default `ask` makes the
  *   renderer show a one-time prompt), at most once per UPDATE_CHECK_INTERVAL_MS, UPDATE_CHECK_DELAY_MS after startup.
  * - Manual (Help › Check for Updates…): whatever the setting.
- * - One GET to UPDATE_API_URL with only a `User-Agent: ReCut/<version>` header, no cookies, a short timeout. Nothing
+ * - One GET to UPDATE_API_URL (UPDATE_LIST_API_URL when the running version is a pre-release) with only a
+ *   `User-Agent: ReCut/<version>` header, no cookies, a short timeout. Nothing
  *   else is sent. Every failure is logged and reported as `failed`, never thrown, never blocking anything.
  * - Nothing is downloaded or installed.
  *
@@ -13,8 +15,8 @@
 import * as io from './project/io';
 import type { AppPreferences } from '../shared/model';
 import {
-  UPDATE_API_URL, UPDATE_CHECK_DELAY_MS, UPDATE_CHECK_TIMEOUT_MS, UPDATE_REPLY_MAX_BYTES,
-  autoCheckDue, availableUpdate, isNewerRelease, parseLatestReleaseText, parseSemver,
+  UPDATE_CHECK_DELAY_MS, UPDATE_CHECK_TIMEOUT_MS, UPDATE_REPLY_MAX_BYTES,
+  autoCheckDue, availableUpdate, isNewerRelease, parseSemver, parseUpdateReplyText, updateApiUrlFor,
   type UpdateCheckResult, type UpdateCheckSetting, type UpdateStatus,
 } from '../shared/update';
 
@@ -25,7 +27,7 @@ export interface UpdateCheckerDeps {
   currentVersion: string;
   userData: string;
   fetch: UpdateFetch;
-  /** Default UPDATE_API_URL; the RECUT_UPDATE_URL test override (loopback only) replaces it. */
+  /** Default updateApiUrlFor(currentVersion); the RECUT_UPDATE_URL test override (loopback only) replaces it. */
   apiUrl?: string;
   /** RECUT_UPDATE_CHECK=0: no prompt and no automatic check for this installation. */
   managed?: boolean;
@@ -151,7 +153,7 @@ export class UpdateChecker {
     try {
       let res: Response;
       try {
-        res = await this.deps.fetch(this.deps.apiUrl ?? UPDATE_API_URL, {
+        res = await this.deps.fetch(this.deps.apiUrl ?? updateApiUrlFor(this.deps.currentVersion), {
           method: 'GET',
           headers: { 'User-Agent': `ReCut/${this.deps.currentVersion}` },
           credentials: 'omit',
@@ -169,7 +171,7 @@ export class UpdateChecker {
         throw new Error(ctl.signal.aborted ? `GitHub did not answer within ${Math.max(1, Math.round(timeoutMs / 1000))} s` : `could not read the reply (${errMsg(e)})`);
       }
       if (text.length > UPDATE_REPLY_MAX_BYTES) throw new Error('the reply from GitHub is too large');
-      const parsed = parseLatestReleaseText(text);
+      const parsed = parseUpdateReplyText(text, this.deps.currentVersion);
       if (!parsed.ok) throw new Error(parsed.error);
       return parsed.release;
     } finally {

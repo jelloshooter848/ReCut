@@ -580,5 +580,7 @@ ReCut works offline and never updates itself. It can tell you when a newer relea
 **Privacy:** the check is one request to `api.github.com` for the latest ReCut release. It sends nothing about you,
 your projects or your media: no identifier, no cookies, no telemetry. The only header ReCut adds is
 `User-Agent: ReCut/<version>`; your network stack adds its usual ones (for example the accepted languages), and GitHub
-sees your IP address as for any web request. Pre-releases are never offered. Administrators can turn the prompt and
+sees your IP address as for any web request. Pre-releases (release candidates such as 1.0.0-rc.1) are never offered
+to a stable version. If you run a release candidate, the check asks GitHub for the list of recent releases instead
+(still one request) and tells you about a later candidate of the same version or the final release. Administrators can turn the prompt and
 the daily check off for an installation with the environment variable `RECUT_UPDATE_CHECK=0`.
