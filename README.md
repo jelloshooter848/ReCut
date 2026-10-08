@@ -6,10 +6,46 @@ timeline, and three-point editing. On top of that it adds tools for working acro
 of dialogue in any episode, keep a library of tagged scenes, compare two alternate cuts structurally, and always know
 the original source timecode of every frame.
 
-Electron + React + TypeScript. FFmpeg does all media work. See [CHANGELOG.md](CHANGELOG.md) for releases and
+Free and open source (MIT), for Windows, Linux and macOS. Everything runs on your computer: no account, no cloud, no
+upload. Electron + React + TypeScript; FFmpeg does all media work. See [CHANGELOG.md](CHANGELOG.md) for releases and
 [docs/RELEASING.md](docs/RELEASING.md) for how versions are numbered.
 
 ![ReCut editing workspace](docs/screenshots/project.png)
+
+## Highlights
+
+**Find any line, in any film or episode.** Search the dialogue of a whole franchise at once (regex and whole-word too),
+click a hit, and the Source monitor opens at that line, ready to mark In and Out.
+
+![Searching a line of dialogue across two films](docs/screenshots/demo-transcript-search.gif)
+
+**No subtitles? Transcribe it.** Whisper, built in, turns the speech in any file into a searchable transcript, entirely
+on your computer.
+
+![Transcribing a film with Whisper](docs/screenshots/demo-whisper.gif)
+
+**Blu-ray and DVD subtitles become text.** Picture subtitles (PGS, VobSub, DVB) are read by built-in OCR, so disc rips
+are searchable too.
+
+![Reading picture subtitles with OCR](docs/screenshots/demo-ocr.gif)
+
+**"What if this subplot were gone?"** Tag clips by character or plotline, switch a plotline off, see the new runtime at
+once, and turn the experiment into the real cut in one step.
+
+![Removing a plotline with What if](docs/screenshots/demo-what-if.gif)
+
+**Compare alternate cuts.** Play two versions side by side on one clock and read what moved, what was trimmed, and
+what exists in only one of them.
+
+![Comparing two alternate cuts](docs/screenshots/demo-compare.gif)
+
+**Compound clips and keyframes.** Fold a scene into one clip and edit it everywhere it is used; animate position,
+scale, opacity and volume.
+
+![A compound clip with keyframed scale and position](docs/screenshots/demo-nest-keyframes.gif)
+
+Footage: *Tears of Steel* and *Sintel* © Blender Foundation, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)
+(see [docs/screenshots](docs/screenshots/README.md)).
 
 ## Features
 
@@ -23,6 +59,10 @@ Electron + React + TypeScript. FFmpeg does all media work. See [CHANGELOG.md](CH
 - Out-of-sync badges on linked clips, a stereo peak meter on the Program monitor, and a History panel (200 undo steps).
 - Transitions: Cross Dissolve, Dip to Black, Audio Crossfade (centred on the cut, using source handles).
 - Clip speed (1 %–10 000 %), position / scale / rotation / opacity / crop, clip gain, level and fades, and track volume.
+- **Keyframes** for position, scale, opacity and volume, Linear or Ease, shown as diamonds on the timeline. They stay
+  with the picture through trims, splits, rolls and slides, and the export matches the preview.
+- **Nested sequences and compound clips.** Make Compound Clip folds the selection into its own sequence; edits to it
+  show everywhere it is used. Drag a sequence onto the timeline to nest it; Break Apart reverses it.
 
 ### Fan-edit tools
 - **Series / season / franchise organisation.** On import, ReCut reads `S01E03`, `1x03` or `Season 1 Episode 3` and
@@ -32,6 +72,9 @@ Electron + React + TypeScript. FFmpeg does all media work. See [CHANGELOG.md](CH
 - **Transcript search across a franchise.** Import SRT / WebVTT (sidecars next to a video are picked up
   automatically) or extract embedded text subtitles. Search by project, series, season, franchise, collection, source
   or sequence, with regex and whole-word options. Click a hit to load it in the Source monitor at that line.
+- **Speech-to-text (Whisper).** Media without subtitles gets a searchable transcript from the built-in whisper.cpp
+  engine, entirely offline. Models (tiny to large-v3-turbo) are downloaded once, when you choose one, and checked
+  against a fixed checksum.
 - **OCR for Blu-ray and DVD subtitles.** Picture subtitles (PGS, VobSub, DVB, XSUB) are read into searchable text
   tracks by a built-in OCR engine (Tesseract). Languages are installed from inside ReCut; OCR then runs offline.
 - **Scene library.** Reusable source ranges with characters, location, arc, tags, rating and colour. Filter, sort
@@ -58,24 +101,34 @@ Electron + React + TypeScript. FFmpeg does all media work. See [CHANGELOG.md](CH
   are drawn directly; every other still FFmpeg decodes (TIFF, TGA, EXR, PSD, JPEG XL, AVIF, HEIC, ...) is previewed
   from a PNG made on import.
 - **Relink.** Offline detection, a folder search that matches by name + size, and per-file Locate.
-- **5.1.** 5.1 sources can be exported as 5.1 AC-3, or as a stereo downmix.
-- **Export presets.** 1080p High Quality, 1080p Smaller File, 4K High Quality, 720p Preview, 1080p 5.1 Surround,
-  and Match Sequence. H.264 / H.265, CRF or target bitrate, In→Out range, an FFmpeg command preview, and chunked
-  rendering for very long timelines.
-- Autosave, crash recovery, atomic saves with a `.bak` copy, and a JSON project format (`.recut`).
+- **5.1.** 5.1 sources can be exported as 5.1 AC-3, or as a stereo downmix. Per clip you can play one source channel
+  as mono or a downmix with your own centre and surround levels, and **Extract Centre Channel (Dialogue)** puts the
+  centre channel on its own linked clip.
+- **Export.** MP4 (H.264 / H.265), **MKV** with any number of audio tracks (for example 5.1 plus a stereo downmix, or
+  a commentary track), soft subtitle tracks and chapters, **MOV** with ProRes or DNxHR for grading and finishing
+  elsewhere, and **WAV / FLAC** audio only, as the mix or one file per track. Presets for each, CRF or target bitrate,
+  In→Out range, an FFmpeg command preview, a Checks list that warns before you export, and chunked rendering for very
+  long timelines. Exports are frame-exact.
+- **Collect Project.** Copies the project and the media it uses into one folder, verified, so it moves to another
+  drive or machine intact. Moved or renamed media keep their thumbnails, proxies, waveforms and OCR results.
+- Autosave, crash recovery, atomic saves with a `.bak` copy, and a JSON project format (`.recut`). Every release opens
+  projects saved by earlier releases from 0.3.0 on (they are kept as test fixtures and opened on every build).
+- An optional update notice (off until you agree; it never downloads or installs anything by itself).
 
 ## Screenshots
 
 | | |
 |---|---|
-| ![Shell](docs/screenshots/shell.png) Empty shell, Editing workspace | ![Project panel](docs/screenshots/project-panel.png) Project panel: bins, series, scenes |
-| ![Source](docs/screenshots/source.png) Source monitor | ![Program](docs/screenshots/program.png) Program monitor |
-| ![Timeline](docs/screenshots/timeline.png) Timeline | ![Inspector](docs/screenshots/inspector.png) Inspector with original source timecode |
-| ![Transcript](docs/screenshots/transcript.png) Transcript search | ![Scenes](docs/screenshots/scenes.png) Scene library |
+| ![Project panel](docs/screenshots/project-panel.png) Project panel: bins, series, scenes | ![Source](docs/screenshots/source.png) Source monitor with subtitles |
+| ![Program](docs/screenshots/program.png) Program monitor | ![Timeline](docs/screenshots/timeline.png) Timeline |
+| ![Inspector](docs/screenshots/inspector.png) Inspector with original source timecode | ![Keyframes](docs/screenshots/keyframes.png) Keyframes in the Inspector and on the timeline |
+| ![Nested sequence](docs/screenshots/nested.png) A compound clip (nested sequence) | ![Channels](docs/screenshots/channels.png) Centre channel extracted from a 5.1 source |
+| ![Transcript](docs/screenshots/transcript.png) Transcript search across a franchise | ![Scenes](docs/screenshots/scenes.png) Scene library |
 | ![Storyline](docs/screenshots/storyline.png) Storyline blocks and tag filters | ![Compare](docs/screenshots/compare.png) Compare cuts with structural diff |
 | ![Continuity](docs/screenshots/continuity.png) Continuity notes | ![Jobs](docs/screenshots/jobs.png) Jobs and proxies |
-| ![Export](docs/screenshots/export.png) Export dialog | ![Program maximized](docs/screenshots/program-maximized.png) Program monitor maximized |
-| ![Still image](docs/screenshots/program-still.png) A PNG on V2 over video in the Program monitor | |
+| ![Export](docs/screenshots/export.png) Export dialog | ![Export formats](docs/screenshots/export-formats.png) ProRes, DNxHR, MKV and audio-only formats |
+| ![Collect Project](docs/screenshots/collect.png) Collect Project | ![Program maximized](docs/screenshots/program-maximized.png) Program monitor maximized |
+| ![Still image](docs/screenshots/program-still.png) A still image on V2 over video | ![Shell](docs/screenshots/shell.png) Empty shell, Editing workspace |
 
 ## Windows: install and run
 
@@ -101,19 +154,20 @@ on every push.
 
 The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow on every push.
 
-## macOS (Apple Silicon and Intel): test builds
+## macOS (Apple Silicon and Intel): download and run
 
-- **Not released yet** (planned for 0.7.0). CI builds two dmgs on every push, both for macOS 12 or newer:
-  `ReCut-<version>-macos-arm64.dmg` for Apple Silicon Macs (M1 or newer) and `ReCut-<version>-macos-x64.dmg` for
-  Intel Macs. Each is launched from the mounted dmg on an Apple Silicon runner (the Intel one under Rosetta 2).
-  Download them from the **ReCut-macos-arm64** and **ReCut-macos-x64** artifacts of a run whose macos jobs are green
-  (Actions › Windows build › the run › Artifacts). FFmpeg and the speech-to-text engine are bundled in both.
-- **Which one:** Apple menu › **About This Mac**. "Chip: Apple M…" means arm64; "Processor: Intel" means x64. On Intel
-  Macs speech-to-text runs on the CPU only (no Metal), so it is slower. Intel support may be retired after 1.0.
-- Open the dmg and drag ReCut to Applications. Until the build is signed with a Developer ID, macOS refuses the first
-  launch: open **System Settings › Privacy & Security** and click **Open Anyway** (on macOS 14 and earlier you can
-  also right-click ReCut › **Open**). See [docs/INSTALL.md](docs/INSTALL.md#macos-test-builds); signing
-  is set up as described in [docs/MACOS-SIGNING.md](docs/MACOS-SIGNING.md).
+- **dmg (macOS 12 or newer):** download the dmg for your Mac from the release marked **Latest** on the
+  [Releases](https://github.com/jelloshooter848/ReCut/releases) page: `ReCut-<version>-macos-arm64.dmg` for Apple
+  Silicon (M1 or newer) or `ReCut-<version>-macos-x64.dmg` for Intel. Not sure which? Apple menu › **About This Mac**:
+  "Chip: Apple M…" means arm64; "Processor: Intel" means x64. Open the dmg and drag ReCut to Applications. The dmgs are
+  signed and notarized, so ReCut opens normally. FFmpeg and the speech-to-text engine are bundled, so nothing else is
+  needed. On Intel Macs speech-to-text runs on the CPU only (no Metal), so it is slower; Intel support may be retired
+  after 1.0. See [docs/INSTALL.md](docs/INSTALL.md#macos).
+
+Both dmgs are built, signed, notarized and launched from the mounted dmg by the same workflow on every push, on an
+Apple Silicon runner (the Intel one under Rosetta 2). Builds of unreleased commits are the **ReCut-macos-arm64** and
+**ReCut-macos-x64** artifacts of a CI run (Actions › Windows build › the run › Artifacts); see
+[macOS test builds](docs/INSTALL.md#macos-test-builds).
 
 ## Quick start (from source, any OS)
 
@@ -163,7 +217,7 @@ are responsible for having the rights to the material you edit and for how you s
 
 ReCut is licensed under the [MIT License](LICENSE).
 
-The Windows releases and the Linux AppImage bundle FFmpeg (`ffmpeg` and `ffprobe`), which ReCut runs as a separate program. The bundled
+The Windows releases, the Linux AppImage and the macOS dmgs bundle FFmpeg (`ffmpeg` and `ffprobe`), which ReCut runs as a separate program. The bundled
 builds include libx264 and are licensed under the GPL version 3 or later, not under ReCut's licence; each release
 ships the FFmpeg licence and a record of the exact build with where to get its source. ReCut also ships Electron,
 Chromium and a few npm packages under their own licences. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), or

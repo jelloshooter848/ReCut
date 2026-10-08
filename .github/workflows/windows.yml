@@ -3,8 +3,9 @@ name: Windows build
 # Builds the Windows installer + portable exe on a real Windows machine, smoke-tests them, runs the unit and
 # end-to-end suites on Windows, checks that "Start ReCut.cmd" works from a fresh clone, keeps the installers as the
 # run's ReCut-windows artifact, and publishes a GitHub Release when the run is a real release. The same workflow
-# builds and gates the Linux x86-64 AppImage (job linux, artifact ReCut-linux): the file name stays windows.yml and the
-# display name "Windows build" because docs and bookmarks point to them.
+# builds and gates the Linux x86-64 AppImage (job linux, artifact ReCut-linux) and the two macOS dmgs (jobs macos and
+# macos-e2e, artifacts ReCut-macos-arm64 and ReCut-macos-x64): the file name stays windows.yml and the display name
+# "Windows build" because docs and bookmarks point to them.
 #
 # Job graph (the required gates run in parallel on every run; publishing is a separate final job):
 #   installer  build, smoke test, install check, upload the ReCut-windows artifact (every run) and, on a release run,
@@ -16,17 +17,18 @@ name: Windows build
 #              engine, the x86-64 AppImage (scripts/linux/get-ffmpeg.sh bundles FFmpeg and its licence files,
 #              scripts/linux/get-whisper.sh builds whisper.cpp), an AppImage smoke test (FUSE-mounted and
 #              --appimage-extract-and-run), and the ReCut-linux artifact (every run)
-#   macos      ADVISORY (not a gate yet, docs/ROADMAP.md §19): a matrix over arch [arm64, x64], both on macos-14
-#              (Apple Silicon; the x64 leg runs its binaries under Rosetta 2): typecheck, unit tests with the bundled
-#              FFmpeg of that arch (scripts/mac/get-ffmpeg.sh --arch) and speech-to-text engine
-#              (scripts/mac/get-whisper.sh --arch), the dmg of that arch (Developer ID signed and notarized
-#              when the signing secrets are set, ad-hoc signed otherwise), code-signature checks, a smoke test of the
-#              app inside the mounted dmg, and the ReCut-macos-arm64 / ReCut-macos-x64 artifacts (every run)
-#   macos-e2e  ADVISORY: the end-to-end suite on macos-14 (arm64 only)
-#   publish    needs installer, tests, e2e, launcher and linux. Runs only on a real release run (installer output
-#              release == 'true') and only when all five succeeded (default success() semantics: a failed, cancelled
-#              or skipped gate skips it), then re-checks the tag and publishes the release from the installer job's
-#              outputs and the ReCut-windows, ReCut-linux and release-notes artifacts.
+#   macos      a matrix over arch [arm64, x64], both on macos-14 (Apple Silicon; the x64 leg runs its binaries under
+#              Rosetta 2): typecheck, unit tests with the bundled FFmpeg of that arch (scripts/mac/get-ffmpeg.sh --arch)
+#              and speech-to-text engine (scripts/mac/get-whisper.sh --arch), the dmg of that arch (Developer ID signed
+#              and notarized when the signing secrets are set, ad-hoc signed otherwise; a release run fails unless it
+#              is signed and notarized), code-signature checks, a smoke test of the app inside the mounted dmg, and the
+#              ReCut-macos-arm64 / ReCut-macos-x64 artifacts (every run)
+#   macos-e2e  the end-to-end suite on macos-14 (arm64 only)
+#   publish    needs installer, tests, e2e, launcher, linux, macos (both legs) and macos-e2e. Runs only on a real
+#              release run (installer output release == 'true') and only when all of them succeeded (default
+#              success() semantics: a failed, cancelled or skipped gate skips it), then checks the release files,
+#              re-checks the tag and publishes the release from the installer job's outputs and the ReCut-windows,
+#              ReCut-linux, ReCut-macos-arm64, ReCut-macos-x64 and release-notes artifacts.
 #   installer-stress  manual only, not a gate (see below).
 # The speech-to-text engine (whisper.cpp, docs/ROADMAP.md §5) is compiled from its pinned, hash-checked source by
 # scripts/windows/get-whisper.ps1, scripts/linux/get-whisper.sh and scripts/mac/get-whisper.sh in every job that bundles or tests it, cached per
@@ -36,8 +38,8 @@ name: Windows build
 #
 # Only real versions (vX.Y.Z) ever appear on the Releases page (owner's decision, 7 October 2026): there are no dev
 # prereleases. Every other run is a test build: it runs every gate the same way and keeps the installer and portable
-# exe as the run's ReCut-windows artifact and the AppImage as its ReCut-linux artifact (Actions -> the run ->
-# Artifacts), but creates no tag and no release.
+# exe as the run's ReCut-windows artifact, the AppImage as its ReCut-linux artifact and the dmgs as its
+# ReCut-macos-arm64 / ReCut-macos-x64 artifacts (Actions -> the run -> Artifacts), but creates no tag and no release.
 #
 # Releases are automatic (docs/RELEASING.md). The normal flow is: a release PR bumps package.json
 # (npm version X.Y.Z --no-git-tag-version) and adds a "## [X.Y.Z]" section to CHANGELOG.md -> the PR is merged ->
@@ -130,11 +132,12 @@ jobs:
             "**ReCut-Setup-$v.exe** — installer. Adds Start-menu and desktop shortcuts, opens ``.recut`` projects, and can be removed from *Settings › Apps*.",
             "**ReCut-Portable-$v.exe** — no install; double-click to run (starts a little slower).",
             "**ReCut-$v-linux-x86_64.AppImage** — Linux, x86-64 only; no install. Make it executable and run it: ``chmod +x ReCut-$v-linux-x86_64.AppImage``, then ``./ReCut-$v-linux-x86_64.AppImage``. If it reports that FUSE is missing, install ``libfuse2`` (``libfuse2t64`` on Ubuntu 24.04 and later) or run it with ``--appimage-extract-and-run``.",
+            "**ReCut-$v-macos-arm64.dmg** (Apple Silicon: *About This Mac* says ""Chip: Apple M…"") or **ReCut-$v-macos-x64.dmg** (Intel: ""Processor: … Intel"") — macOS 12 or later. Signed and notarized: open the dmg and drag ReCut to Applications.",
             '',
-            'FFmpeg is bundled in all three, so nothing else needs to be installed. The app is not code-signed: if Windows shows',
-            '"Windows protected your PC", click **More info › Run anyway**.',
+            'FFmpeg is bundled in every download, so nothing else needs to be installed. The Windows app is not code-signed: if',
+            'Windows shows "Windows protected your PC", click **More info › Run anyway**.',
             '',
-            "Built from $env:SHA. This build launched, encoded and probed a test clip on a Windows runner and a Linux runner before publishing."
+            "Built from $env:SHA. This build launched, encoded and probed a test clip on Windows, Linux and macOS runners before publishing."
           ) -join "`n"
 
           # The "## [<ver>]" section of CHANGELOG.md, from its heading to the next "## [" heading (or a link-reference
@@ -332,7 +335,7 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Value @(
             "**Test build: download the installers from this run's Artifacts (ReCut-windows).**",
             '',
-            "$env:NAME is not a release: nothing is published to GitHub Releases and no tag is created. Use it only if the required jobs of this run (installer, tests, e2e, launcher, linux) are green; the macOS jobs are advisory. The artifact is kept for 14 days.")
+            "$env:NAME is not a release: nothing is published to GitHub Releases and no tag is created. Use it only if the required jobs of this run (installer, tests, e2e, launcher, linux, macos, macos-e2e) are green. The artifact is kept for 14 days.")
 
       # Five silent install / smoke / uninstall cycles plus one portable launch, because the installer crash in
       # bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md was intermittent. Prints the CPU first and, on a
@@ -673,16 +676,14 @@ jobs:
           {
             echo "**Linux AppImage: \`$f\` is in this run's Artifacts (ReCut-linux).**"
             echo ''
-            echo 'It passed the unit tests, the end-to-end tests and the AppImage smoke test on ubuntu-22.04. On a release run the publish job also attaches it to the release; otherwise it is a test build, kept for 14 days: use it only if the required jobs of this run (installer, tests, e2e, launcher, linux) are green (the macOS jobs are advisory). Run it with `chmod +x` and `./'"$f"'` (needs libfuse2, or add `--appimage-extract-and-run`).'
+            echo 'It passed the unit tests, the end-to-end tests and the AppImage smoke test on ubuntu-22.04. On a release run the publish job also attaches it to the release; otherwise it is a test build, kept for 14 days: use it only if the required jobs of this run (installer, tests, e2e, launcher, linux, macos, macos-e2e) are green. Run it with `chmod +x` and `./'"$f"'` (needs libfuse2, or add `--appimage-extract-and-run`).'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # The macOS bring-up job (docs/ROADMAP.md §19, release 0.7.0): unit tests on macOS, the dmg with a bundled FFmpeg
+  # The macOS release gate (docs/ROADMAP.md §19): unit tests on macOS, the dmg with a bundled FFmpeg
   # (scripts/mac/get-ffmpeg.sh) and speech-to-text engine (scripts/mac/get-whisper.sh), the code-signature checks, and
-  # a smoke test of the app inside the mounted dmg. ADVISORY during bring-up: it runs on every run, but the publish job
-  # does not need it and does not attach the dmgs, so a red macOS job never blocks or changes a Windows / Linux release.
-  # When macOS becomes official (0.7.0) it joins publish.needs (see the TODO above the publish job) and becomes
-  # blocking like the others. macos-14 is an Apple Silicon runner; the bundled FFmpeg needs macOS 12 or newer
-  # (build.mac.minimumSystemVersion).
+  # a smoke test of the app inside the mounted dmg. Required like the Windows and Linux gates: the publish job needs
+  # both legs and attaches both dmgs, so a red macOS leg stops the release. macos-14 is an Apple Silicon runner; the
+  # bundled FFmpeg needs macOS 12 or newer (build.mac.minimumSystemVersion).
   #
   # Two downloads, one matrix leg each (owner's decision): ReCut-<version>-macos-arm64.dmg (Apple Silicon) and
   # ReCut-<version>-macos-x64.dmg (Intel), both macOS 12+, each bundling only its own arch's FFmpeg and speech-to-text
@@ -699,10 +700,15 @@ jobs:
   #     certificate, the hardened runtime and a secure timestamp, notarizes the app with the App Store Connect API key
   #     and staples the ticket; the job then checks codesign, spctl and the stapled ticket.
   #   - only some set: the job fails (a half-configured signing setup is a mistake, not a test build).
+  # A release is always signed. On a release run (decided by the "Release run?" step exactly as the installer job's
+  # "Release metadata" step decides it; this job runs in parallel with that one, so it decides again) the job fails
+  # in its first steps unless all five secrets are set, and later unless the app was Developer ID signed, notarized
+  # and stapled. Only test builds may be ad-hoc signed. If the two decisions ever differ because v<version> was tagged
+  # between them, the publish job's final tag re-check publishes nothing (the tag then exists).
   # Secrets are only ever passed through env and never printed. GitHub does not give secrets to pull requests from
   # forks, and this workflow does not run on pull requests at all. The same five secrets sign both dmgs.
   macos:
-    name: macOS ${{ matrix.arch }} dmg + smoke test (advisory)
+    name: macOS ${{ matrix.arch }} dmg + smoke test
     runs-on: macos-14
     timeout-minutes: 75
     strategy:
@@ -728,6 +734,71 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      # Whether this run publishes a release, decided as the installer job's "Release metadata" step decides it: a push
+      # of a vX.Y.Z tag (the installer job fails a tag that does not match package.json), or a push to main whose
+      # package.json version has a non-empty "## [<version>]" CHANGELOG.md section and no v<version> tag on origin.
+      # A release must be signed, so a release run without all five signing secrets fails here, before anything is
+      # built. The HAVE_* values are 'true' or 'false' (whether the secret is set), never the secrets themselves.
+      - name: Release run? (a release must be signed)
+        id: rel
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_TYPE: ${{ github.ref_type }}
+          HAVE_CSC_LINK: ${{ secrets.CSC_LINK != '' }}
+          HAVE_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD != '' }}
+          HAVE_APPLE_API_KEY: ${{ secrets.APPLE_API_KEY != '' }}
+          HAVE_APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID != '' }}
+          HAVE_APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER != '' }}
+        run: |
+          set -euo pipefail
+          # "<version> <true|false>": whether CHANGELOG.md has a non-empty "## [<version>]" section (up to the next
+          # "## [" heading or link-reference line), as Get-ChangelogSection in the installer job reads it.
+          read -r v section < <(node -e '
+            const fs = require("fs");
+            const v = require("./package.json").version;
+            const lines = fs.readFileSync("CHANGELOG.md", "utf8").split(/\r?\n/);
+            const head = new RegExp("^## \\[" + v.split(".").join("\\.") + "\\](\\s|$)");
+            const start = lines.findIndex((l) => head.test(l));
+            let found = false;
+            if (start >= 0) {
+              for (const l of lines.slice(start + 1)) {
+                if (/^## \[/.test(l) || /^\[[^\]]+\]:\s/.test(l)) break;
+                if (l.trim()) { found = true; break; }
+              }
+            }
+            console.log(v + " " + found);
+          ') || { echo '::error::could not read the version from package.json or CHANGELOG.md'; exit 1; }
+          release=false
+          if [ "$REF_TYPE" = tag ]; then
+            release=true
+          elif [ "$EVENT_NAME" = push ] && [ "$REF" = refs/heads/main ] && [ "$section" = true ]; then
+            rc=0
+            git ls-remote --exit-code --tags origin "refs/tags/v$v" || rc=$?
+            if [ "$rc" -eq 2 ]; then
+              release=true
+            elif [ "$rc" -ne 0 ]; then
+              echo "::error::git ls-remote failed (exit $rc) while checking whether tag v$v exists."
+              exit 1
+            fi
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          if [ "$release" != true ]; then
+            echo "Test build of $v: the dmg is signed and notarized if the signing secrets are set, ad-hoc signed otherwise."
+            exit 0
+          fi
+          missing=''
+          for s in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            h="HAVE_$s"
+            if [ "${!h}" != true ]; then missing="$missing $s"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::This run releases v$v, and a release must be signed and notarized, but these macOS signing secrets are not set:$missing. Set all five (docs/MACOS-SIGNING.md), then re-run the failed jobs."
+            exit 1
+          fi
+          echo "Release run (v$v): the dmg must be Developer ID signed, notarized and stapled, or this job fails."
+
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
 
@@ -773,9 +844,11 @@ jobs:
       - run: npm run build
 
       # Decides signed or unsigned and writes the notarization key to a private temp file. Prints only which mode.
+      # A release run never gets here unsigned ("Release run?" fails first); checked again here all the same.
       - name: Code signing setup
         id: sign
         env:
+          RELEASE: ${{ steps.rel.outputs.release }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_API_KEY_B64: ${{ secrets.APPLE_API_KEY }}
@@ -787,6 +860,10 @@ jobs:
           for v in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_B64 APPLE_API_KEY_ID APPLE_API_ISSUER; do
             if [ -n "${!v:-}" ]; then have=$((have + 1)); fi
           done
+          if [ "$have" -eq 0 ] && [ "$RELEASE" = true ]; then
+            echo '::error::This run is a release, and a release must be signed and notarized, but no macOS signing secrets are set (docs/MACOS-SIGNING.md).'
+            exit 1
+          fi
           if [ "$have" -eq 0 ]; then
             echo 'No macOS signing secrets: building an ad-hoc signed test build (not notarized).'
             echo 'signed=false' >> "$GITHUB_OUTPUT"
@@ -931,13 +1008,18 @@ jobs:
 
       # Every Mach-O file in the app must carry a valid signature: ad-hoc for a test build; for a signed build the
       # Developer ID, the hardened runtime and a secure timestamp (notarization rejects anything else), plus
-      # Gatekeeper's verdict and the stapled notarization ticket.
+      # Gatekeeper's verdict and the stapled notarization ticket. A release run must be a signed build.
       - name: Code signature
         env:
           APP: ${{ steps.dmg.outputs.app }}
           SIGNED: ${{ steps.sign.outputs.signed }}
+          RELEASE: ${{ steps.rel.outputs.release }}
         run: |
           set -euo pipefail
+          if [ "$RELEASE" = true ] && [ "$SIGNED" != true ]; then
+            echo '::error::This run is a release, and a release must be Developer ID signed and notarized, but this dmg is not.'
+            exit 1
+          fi
           codesign --verify --deep --strict --verbose=2 "$APP"
           n=0; bad=0
           while IFS= read -r -d '' f; do
@@ -1013,8 +1095,9 @@ jobs:
         if: always() && steps.dmg.outputs.app != ''
         run: hdiutil detach "$RUNNER_TEMP/recut-dmg" -force || true
 
-      # Kept 14 days like ReCut-windows and ReCut-linux. Not attached to releases during bring-up. One artifact per
-      # arch: ReCut-macos-arm64 and ReCut-macos-x64.
+      # Kept 14 days like ReCut-windows and ReCut-linux. One artifact per arch, ReCut-macos-arm64 and ReCut-macos-x64;
+      # the artifact root is release/, so downloading both into release/ restores release/ReCut-<version>-macos-arm64.dmg
+      # and release/ReCut-<version>-macos-x64.dmg for the publish job.
       - uses: actions/upload-artifact@v4
         with:
           name: ReCut-macos-${{ matrix.arch }}
@@ -1035,17 +1118,17 @@ jobs:
           fi
           if [ "$MAC_ARCH" = x64 ]; then where='on macos-14 (Apple Silicon) under Rosetta 2; it has not run on an Intel Mac'; else where='on macos-14'; fi
           {
-            echo "**macOS dmg ($LABEL, advisory): \`$f\` is in this run's Artifacts (ReCut-macos-$MAC_ARCH).**"
+            echo "**macOS dmg ($LABEL): \`$f\` is in this run's Artifacts (ReCut-macos-$MAC_ARCH).**"
             echo ''
-            echo "It passed the unit tests, the code-signature checks and the smoke test of the app inside the mounted dmg $where. $how macOS is not an official platform yet: the dmg is not attached to releases, and this job does not gate them. Kept for 14 days."
+            echo "It passed the unit tests, the code-signature checks and the smoke test of the app inside the mounted dmg $where. $how On a release run the publish job also attaches it to the release; otherwise it is a test build, kept for 14 days: use it only if the required jobs of this run (installer, tests, e2e, launcher, linux, macos, macos-e2e) are green."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # The end-to-end suite on macOS, ADVISORY during bring-up like the macos job (not in publish.needs). A separate job
-  # so that a test that still assumes Windows / Linux behaviour (for example a Control+ shortcut that is Cmd+ on macOS)
-  # shows up here without hiding the packaging and smoke results of the macos job. GitHub's macOS runners have a
+  # The end-to-end suite on macOS, a release gate like the macos job (publish needs it). A separate job so that a test
+  # that assumes Windows / Linux behaviour (for example a Control+ shortcut that is Cmd+ on macOS) shows up here
+  # without hiding the packaging and smoke results of the macos job. GitHub's macOS runners have a
   # logged-in desktop session, so Electron opens real windows; no xvfb is needed.
   macos-e2e:
-    name: End-to-end tests on macOS (advisory)
+    name: End-to-end tests on macOS
     runs-on: macos-14
     timeout-minutes: 60
     steps:
@@ -1086,35 +1169,14 @@ jobs:
 
   # The only job that publishes, and it only ever publishes a real release (vX.Y.Z, never a prerelease). It runs
   # only when the installer job decided this run is a release (automatic on main, or the tag-push fallback); a test
-  # build skips it. It needs every required gate and has no always()/failure()/cancelled() in its if:, so the
-  # implicit success() applies: if installer, tests, e2e, launcher or linux failed, was cancelled or was skipped, this
-  # job is skipped and nothing is published (no release, no tag).
-  #
-  # macOS is advisory during bring-up: macos and macos-e2e are NOT in needs, and the dmgs are not attached.
-  # TODO(0.7.0, when macOS becomes official, docs/ROADMAP.md §19): make it a gate and ship both dmgs
-  # (ReCut-<version>-macos-arm64.dmg for Apple Silicon and ReCut-<version>-macos-x64.dmg for Intel, from the two legs
-  # of the macos matrix; `needs: macos` waits for both legs). Change two places:
-  #   1. needs: [installer, tests, e2e, launcher, linux, macos, macos-e2e]
-  #   2. add a download step next to ReCut-linux that fetches both arch artifacts (ReCut-macos-arm64, ReCut-macos-x64):
-  #        - uses: actions/download-artifact@v4
-  #          with:
-  #            pattern: ReCut-macos-*
-  #            merge-multiple: true
-  #            path: release
-  #      and the lines   release/ReCut-*-macos-arm64.dmg   and   release/ReCut-*-macos-x64.dmg   to the files: list
-  #      of "Publish GitHub Release".
-  #   Also add both dmgs to the install note in the installer job's "Release metadata" step (which one to pick: Apple
-  #   menu > About This Mac, "Chip: Apple M..." = arm64, "Processor: Intel" = x64; signed: "open the dmg and drag ReCut
-  #   to Applications"; unsigned: the Privacy & Security first-launch steps from docs/INSTALL.md), and update
-  #   tests/unit/release-workflow.test.ts and docs/RELEASING.md (What gates a release).
-  # This is a plain edit rather than a repository variable (e.g. vars.MACOS_OFFICIAL) on purpose: `needs` cannot be
-  # conditional, so a variable gate would need macos in needs on every run plus an if: that tolerates its failure,
-  # i.e. replacing the implicit success() above with explicit result checks for every gate. That weakens the one rule
-  # this job relies on ("any gate not green -> nothing is published"), and it would make every release wait for the
-  # slower macOS jobs while they are still advisory.
+  # build skips it. It needs every required gate (macos means both matrix legs, arm64 and x64) and has no
+  # always()/failure()/cancelled() in its if:, so the implicit success() applies: if installer, tests, e2e, launcher,
+  # linux, either macos leg or macos-e2e failed, was cancelled or was skipped, this job is skipped and nothing is
+  # published (no release, no tag). On a release run a macos leg succeeds only with a Developer ID signed, notarized
+  # and stapled app, so both dmgs attached here are signed.
   publish:
     name: Publish GitHub Release
-    needs: [installer, tests, e2e, launcher, linux]
+    needs: [installer, tests, e2e, launcher, linux, macos, macos-e2e]
     if: needs.installer.outputs.release == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
@@ -1133,8 +1195,45 @@ jobs:
           path: release
       - uses: actions/download-artifact@v4
         with:
+          name: ReCut-macos-arm64
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: ReCut-macos-x64
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
           name: release-notes
           path: ${{ runner.temp }}/release-notes
+
+      # Exactly the five files the release attaches, each named for the version being released (the tag without its
+      # "v"): a missing or empty file, a second match or a file of another version fails the run before anything is
+      # published.
+      - name: Release files
+        shell: pwsh
+        env:
+          TAG: ${{ needs.installer.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:TAG -cmatch '^v(\d+\.\d+\.\d+)$') { $v = $Matches[1] }
+          else { Write-Host "::error::Refusing to publish '$env:TAG': only vMAJOR.MINOR.PATCH releases are published."; exit 1 }
+          $bad = 0
+          foreach ($want in @(
+              @{ glob = 'ReCut-Setup-*.exe'; name = "ReCut-Setup-$v.exe" },
+              @{ glob = 'ReCut-Portable-*.exe'; name = "ReCut-Portable-$v.exe" },
+              @{ glob = 'ReCut-*-linux-x86_64.AppImage'; name = "ReCut-$v-linux-x86_64.AppImage" },
+              @{ glob = 'ReCut-*-macos-arm64.dmg'; name = "ReCut-$v-macos-arm64.dmg" },
+              @{ glob = 'ReCut-*-macos-x64.dmg'; name = "ReCut-$v-macos-x64.dmg" })) {
+            $found = @(Get-ChildItem -File -Path release | Where-Object { $_.Name -like $want.glob })
+            if ($found.Count -ne 1 -or $found[0].Name -cne $want.name -or $found[0].Length -eq 0) {
+              $list = ($found | ForEach-Object { "$($_.Name) ($($_.Length) bytes)" }) -join ', '
+              Write-Host "::error::Expected exactly one non-empty release/$($want.name); found: $(if ($list) { $list } else { 'none' })"
+              $bad = 1
+            } else {
+              Write-Host ('{0,14:N0}  {1}' -f $found[0].Length, $found[0].Name)
+            }
+          }
+          exit $bad
 
       # An automatic release re-checks its tag right before publishing. If v<version> appeared while this run was
       # building (someone pushed the tag or made the release by hand), the version is already released: the job
@@ -1184,3 +1283,5 @@ jobs:
             release/ReCut-Setup-*.exe
             release/ReCut-Portable-*.exe
             release/ReCut-*-linux-x86_64.AppImage
+            release/ReCut-*-macos-arm64.dmg
+            release/ReCut-*-macos-x64.dmg
