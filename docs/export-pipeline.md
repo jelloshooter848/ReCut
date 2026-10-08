@@ -108,7 +108,8 @@ clips whose media lacks the needed stream are skipped with a warning (black / si
         fps=FPS:start_time=0, format=yuva420p, [lut=a=0:enable='lt(t,T)',]
         scale=<un-squeeze by sar>, setsar=1, scale=W:H:force_original_aspect_ratio=decrease:force_divisible_by=2, setsar=1,
         <transform>, [lut=a=val*opacity,]
-        tpad=stop=N:stop_mode=clone, trim=end_frame=N, setpts=PTS-STARTPTS, [fade=in/out]
+        tpad=stop=N:stop_mode=clone, trim=end_frame=N, setpts=PTS-STARTPTS,
+        [sendcmd=c='<t0>-<t1> lut@kfoN a val*<o>;…', lut@kfoN=a='val*<o0>']          (fade in / out, see below)
 ```
 
 - **Frame choice matches the editor.** The Program Monitor seeks to `sourceTime + 0.5/mediaFps` and shows the
@@ -153,8 +154,7 @@ pad=w=iw+4*ceil((W+8-iw)/4):h=…:x=2*ceil((W+8-iw)/4):y=…:color=black@0,     
 tpad=stop=N:stop_mode=clone, trim=end_frame=N, setpts=PTS-STARTPTS,
 perspective=x0..y3='<corner expressions of in>':interpolation=linear:sense=destination:eval=frame,
 crop=W:H:x=2*floor((iw-W)/4):y=…, setsar=1,
-[sendcmd=c='<t0>-<t1> lut@kfoN a val*<o>;…', lut@kfoN=a='val*<o0>',]                              (opacity keyed)
-[fade=in/out]
+[sendcmd=c='<t0>-<t1> lut@kfoN a val*<o>;…', lut@kfoN=a='val*<o0>',]             (opacity keyed, or a fade in / out)
 ```
 
 - **Position / scale:** the picture is centred on a transparent canvas a little larger than the frame (offsets are
@@ -205,7 +205,13 @@ unchanged. To render it:
   clamped or dropped transition produces a warning that names the limit ("source handles" only when the handles
   are what shortened it). The export range does not clamp it: the render range is widened to cover it (see "Time
   model"). A transition whose clips are not adjacent is ignored with a warning.
-- `outClipId: null` → `fade=t=in` over the first `D` frames of the clip; `inClipId: null` → `fade=t=out`.
+- `outClipId: null` → a fade from black over the first `D` frames of the clip; `inClipId: null` → a fade to black
+  over its last `D` frames (any transition type). Like the preview (planner `contribute`), frame `k` of the clip has
+  weight `k / D` in a fade-in and `(end − k) / D` in a fade-out; the weight multiplies the clip's alpha with its
+  opacity (static or keyed) in the per-frame `lut` + `sendcmd` above, so a fade shows the track below, black on V1.
+  (FFmpeg's `fade` was used before: it darkened the colour instead of the alpha, and towards luma 0, not 16, since
+  it treats `yuva420p` as full range: up to 16 levels darker than the preview, see
+  `bugs/closed/2026-10-07-export-fade-to-black-ends-early.md`.) Measured in `tests/unit/export-fade.test.ts`.
 
 Audio uses the same model with `acrossfade=d=D:c1=tri:c2=tri` (which overlaps the last `D` of A' with the
 first `D` of B', i.e. the same `A + B` length), `afade` for the one-sided cases.
