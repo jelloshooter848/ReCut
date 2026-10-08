@@ -200,6 +200,85 @@ and playhead-geometry steps of `tests/e2e/timeline.spec.ts`. The only tolerance 
 the playhead's x. No test compares timeline pixels, so no test had to tolerate anti-aliasing differences. There is
 no "high-quality waveform" preference and no debug flag: the optimized path is the only one.
 
+## Gate re-run on 0.8.0 (8 October 2026)
+
+Release-candidate item "the performance gate on the reference machine", re-run because `tests/perf/baseline.json`
+(4bb1655, 7 October) predates the 0.8.0 features (nested sequences, keyframes, MKV, delivery formats, channel
+selection, Whisper).
+
+- **Code:** `main` 3b9ffdf (0.8.0 plus PR #92). Same-host A/B against 0.7.0 (2aaf2c0; `tests/perf` is identical in
+  both).
+- **Machine:** the 4-core cloud container of the reference class (Xeon 2.10 GHz, 16 GB, Node 22.22.0, FFmpeg
+  6.1.1-3ubuntu5, xvfb with software GL). Calibration js ×0.88–0.93, ffmpeg ×1.00–1.01, render ×0.93–0.98, so
+  every verdict was raw (within ±10 %).
+- **Isolation:** each run held the shared heavy and perf locks and started at a 1-minute load of 0.17–1.0. Exceptions:
+  in full run 2 something outside the locks pushed the load to about 22 during the node suite (the Electron part
+  started at 1.9), and verification run V1 overlapped a 10-second unlocked node test of mine.
+
+**Runs:**
+
+| Run | What | Verdict |
+|---|---|---|
+| R1 | Full `npm run perf:check` | 97/98 gates; guardrails failed: filmstrip cold, autosave while playing |
+| R2 | Full `npm run perf:check` | 96/98 gates; guardrail failed: autosave while playing |
+| A/B | `perf-check.mjs --ab <0.7.0> <main> --electron-only`, 3 runs each | B WORSE in 0 gates and 0 guardrails, B better in 1 |
+| V1, V2 | Electron only, with the bench fix below | V1 92/96 gates (wheel rows were the overlap above); V2 96/96 gates and 39/39 guardrails |
+
+`--from` over R1 and R2 gives 96/98 gates and 126/130 guardrails.
+
+**Every row that missed in any run.** B1–B3 are main and A1–A3 are 0.7.0 in the A/B. The table shows raw values,
+with the budget in brackets.
+
+| Row (tier) | R1 | R2 | B1–B3 | A1–A3 (0.7.0) | V1 | V2 | Verdict |
+|---|---|---|---|---|---|---|---|
+| long tasks during scrub multi-hour @ 1 px/frame, no selection (gate, == 0) | 2 | 3 | 0, 0, 0 | 5, 4, 3 | 4 | 0 | Flaky and pre-existing: no change against 0.7.0, which fails 3/3; see `bugs/open/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md` |
+| long tasks during scrub @ 1 px/frame, within the visible page, no selection (gate, == 0) | 0 | 1 (56 ms) | 0, 0, 0 | 0, 0, 0 | 0 | 0 | Noise: one task 6 ms over the 50 ms limit in the run with outside load |
+| wheel ×100 @ 1 px/frame: median / fps / real mouse.wheel long tasks (gates) | 7.1 ms / 55.6 / 0 | 6.1 / 57.0 / 0 | pass | pass | 9.7 / 48.7 / 1 | 6.4 / 58.6 / 0 | Noise: V1 overlapped my unlocked test |
+| main filmstrip 48 frames cold (guardrail, ≤ 3,000 ms) | 3,036 | 2,859 | (node) | (node) | — | — | Pre-existing: the baseline median is 2,984 ms, over budget in 1 of its 2 seed runs; `electron/media/thumbs.ts` is unchanged since 0.7.0 |
+| autosave round trip while playing (guardrail, ≤ 500 ms) | 574 | 658 | 764, 611, 617 | 618, 657, 569 | 274 | 231 | Bench artifact; fixed below |
+| store insertFromSource overwrite (p95) (guardrail, regression) | 1.65 ms | 6.58 ms | (node) | (node) | — | — | Noise: R2's node suite ran at load 22; two more store-only runs gave 1.90 and 1.45 ms (baseline 1.45) |
+| pool: media elements created during 10 s playback (guardrail, count, baseline 0) | 1 | 2 | 2, 2, 2 | 1, 2, 1 | 2 | 0 | Not a 0.8.0 change: the row reads 0–2 on every build since the seed (1 and 2 on 7 October code equal to the baseline's playback code); the seed's 0 / 0 was the low end. The A/B calls it `same`. |
+
+**The four rows that missed on a loaded run earlier today** (load 4.1) all pass on quiet runs:
+
+| Row | Earlier today (load 4.1) | R1 | R2 | Budget |
+|---|---|---|---|---|
+| openProject round trip | about 1,080 ms | 798 ms | 798 ms | ≤ 1,000 ms |
+| sequenceDuration | 0.22 ms | 0.11 ms | 0.10 ms | ≤ 0.2 ms |
+| planFrame multi-hour (max) | 8 ms | 1.36 ms | 1.16 ms | ≤ 4 ms |
+| filmstrip cold | 3,007 ms | 3,036 ms | 2,859 ms | ≤ 3,000 ms |
+
+filmstrip cold is the pre-existing borderline row in the table above. The multi-hour open handler (diagnostic) was
+1.35× its baseline on the loaded run; on the quiet runs it is 1.02×, 1.08× in the A/B, and equal to 0.7.0
+(B/A ×1.10, within the band).
+
+**Changes:**
+
+- **Bench fix (`electron-perf.mjs`, autosave while playing).** Since 0.7.0 the media caches are keyed on content
+  (`electron/media/identity.ts`). The "proxy of a 60 s file while export encodes" step copies `S01E03.mp4`, which
+  the 20-proxy step had already proxied. The copy therefore hit the cache and finished in 0.6 s instead of encoding
+  (22 s on 7 October). That moved the autosave into the busiest part of the background export: 570–760 ms on both
+  0.7.0 and 0.8.0, against 200 ms in the baseline. The copy now gets a per-run MP4 `free` box, so it is new content
+  again: the proxy encodes (3.2 s), and the autosave reads 274 and 231 ms. No budget or baseline changed.
+- **New 0.8.0 coverage (`store.perf.test.ts`, section `nest`, guardrails).** The scenario uses a duplicate of the
+  2,500-clip sequence with 20 compound clips (480 clips nested one level deep) and 638 keyframed clips (scale and
+  opacity, or level, with 3 keys each). Four runs measured:
+  - `flattenSequence` after an edit in the host: 3.5–4.6 ms.
+  - `flattenSequence` after an edit inside a nested sequence: 2.7–3.4 ms.
+  - `planFrame` on the flattened, keyframed sequence: median 0.03–0.05 ms, max 2.1–3.4 ms.
+
+  Budgets are 16 ms for the flatten rows (Program re-flattens on every edit, so they take the store-commit
+  budget of one frame) and 2 / 4 ms for the planFrame rows (the per-frame budgets of the other planFrame rows). The
+  rows have no baseline until the next re-seed. The pathological fan-out case is a separate bug
+  (`bugs/open/2026-10-08-nested-fan-out-flatten-blowup.md`).
+- **Baseline unchanged.** No row regressed because of a 0.8.0 cost, nothing improved enough to lock in, and the
+  machine is the reference class. None of the conditions for a re-seed applies.
+
+**Verdict: no 0.8.0 performance regression.** The A/B shows no gate or guardrail worse than 0.7.0. The gate is still
+not reproducibly green on this container: the multi-hour scrub long-task gate is flaky on both 0.7.0 and 0.8.0, and
+filmstrip cold sits on its budget. That is filed in the bug above for the owner, as a 1.0 item ("The performance gate
+passes").
+
 ## How to run
 
 All scripts write JSON to `$RECUT_PERF_OUT` (default `test-results/perf/`) and print a table.
