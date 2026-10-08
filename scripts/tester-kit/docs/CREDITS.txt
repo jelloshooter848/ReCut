@@ -1,0 +1,66 @@
+CREDITS AND LICENCES
+====================
+
+The films
+---------
+
+The four films in this kit are "open movies" made by the Blender Foundation and
+released under Creative Commons Attribution (CC BY) licences, which allow anyone
+to share and adapt them, also commercially, as long as the work is credited.
+
+Every file in this kit that comes from a film is a MODIFIED copy: re-encoded (to
+720p H.264 / AAC, or to the formats in formats/), cut into excerpts, rescaled,
+cropped, given other frame rates, remixed (audio tracks and channels), or turned
+into stills. The complete films in franchise/ keep their full credits. None of
+this is endorsed by the Blender Foundation.
+
+  Tears of Steel (2012)
+    (CC) Blender Foundation | mango.blender.org
+    Licence: Creative Commons Attribution 3.0 (CC BY 3.0)
+             https://creativecommons.org/licenses/by/3.0/
+    Film:    https://mango.blender.org  (download.blender.org/demo/movies/ToS/)
+
+  Sintel (2010)
+    (c) copyright Blender Foundation | durian.blender.org  (www.sintel.org)
+    Licence: Creative Commons Attribution 3.0 (CC BY 3.0)
+             https://creativecommons.org/licenses/by/3.0/
+    Film:    https://durian.blender.org  (download.blender.org/durian/)
+
+  Big Buck Bunny (2008)
+    (c) copyright 2008, Blender Foundation / www.bigbuckbunny.org
+    Licence: Creative Commons Attribution 3.0 (CC BY 3.0)
+             https://creativecommons.org/licenses/by/3.0/
+    Film:    https://peach.blender.org  (download.blender.org/peach/)
+
+  Elephants Dream (2006)
+    (c) copyright 2006, Blender Foundation / Netherlands Media Art Institute /
+    www.elephantsdream.org
+    Licence: Creative Commons Attribution 2.5 (CC BY 2.5)
+             https://creativecommons.org/licenses/by/2.5/
+    Film:    https://orange.blender.org  (download.blender.org/ED/)
+
+The subtitles
+-------------
+
+  The .srt files in franchise/ (Tears of Steel: English and German; Sintel:
+  French) are the subtitles published with the films on download.blender.org,
+  re-saved as UTF-8 text. They are shared with the films under the films'
+  licences. Subtitles inside clips in formats/ are excerpts of the same files.
+  Sintel has no official English subtitles; Big Buck Bunny has no dialogue;
+  no official subtitles were found for Elephants Dream.
+
+Everything else
+---------------
+
+Everything else in the kit was made for it, by a script, with FFmpeg: the
+excerpts and their extra audio mixes, the picture subtitles of the "DVD rip"
+(drawn from the official subtitle text), the tone, the noise and the silence,
+the long timecode video, the title card, the deliberately broken files and the
+messy subtitle file, the trailer captions and the two ReCut projects. Text in
+pictures is drawn with the DejaVu Sans font. No third-party music or footage
+is included.
+
+ReCut itself is free software under the MIT License; see the app's
+Help > About ReCut > Licences for it and the programs it includes.
+
+(Kit for ReCut {{VERSION}}.)

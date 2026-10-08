@@ -1,76 +1,199 @@
 name: Tester kit
-# (Discovery pass: lists the Blender open-movie download folders and the FFmpeg encoders. Replaced by the real build.)
+
+# Builds the ReCut tester kit (scripts/tester-kit.mjs): the Blender open movies Tears of Steel, Sintel, Big Buck Bunny
+# and Elephants Dream (CC BY; see scripts/tester-kit/docs/CREDITS.txt) re-encoded and cut into test files, plus
+# generated awkward files, two ReCut projects and plain-language docs, as one zip for friends who test a release.
+#
+# The download and cache steps follow .github/workflows/readme-media.yml (same URLs for Tears of Steel and Sintel, the
+# same get() helper, sources cached by their URLs). That workflow's cache cannot be shared: GitHub only restores
+# caches made on the same branch or the default branch, and readme-media runs on its own branch.
+#
+# The result is uploaded as the artifact "recut-tester-kit". GitHub wraps every artifact in a zip of its own, so the
+# download (recut-tester-kit.zip) contains ReCut-Tester-Kit-<version>.zip: that inner zip is the kit to share.
+# This workflow never creates a release or a tag (a release would trigger ReCut's update notice).
 on:
   push:
     branches: [claude/tester-kit]
-    paths: [.github/workflows/tester-kit.yml]
+    paths:
+      - scripts/tester-kit.mjs
+      - scripts/tester-kit/**
+      - tests/unit/tester-kit.test.ts
+      - .github/workflows/tester-kit.yml
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: tester-kit-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KIT_VERSION: 0.9.0
+  # As in readme-media.yml.
+  TOS_URL: https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov
+  TOS_SUBS_DIR: https://download.blender.org/demo/movies/ToS/subtitles/
+  SINTEL_ZIP_URL: https://download.blender.org/durian/movies/Sintel.2010.720p.mkv.zip
+  # Published next to the zip: the MD5 of the .mkv inside it.
+  SINTEL_MD5_URL: https://download.blender.org/durian/movies/Sintel.2010.720p.mkv.md5
+  SINTEL_SUBS_DIR: https://download.blender.org/durian/subs/
+  # Sintel's music-and-effects track (no dialogue), published with the film.
+  SINTEL_ME_URL: https://download.blender.org/durian/movies/sintel-m%2Be-st.flac
+  BBB_ZIP_URL: https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_720p_h264.mov.zip
+  ED_URL: https://download.blender.org/ED/elephantsdream-720-h264-st-aac.mov
+  # Outside the checkout (actions/cache does not accept '..' in a path).
+  SOURCES: /home/runner/kit-sources
+  WORK: /home/runner/kit-work
+
 jobs:
-  discover:
+  kit:
+    name: Build the tester kit
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
-      - name: Licence texts and stems
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # DejaVu Sans draws the text in the pictures (title card, DVD subtitles, frame counters). Time-limited apt calls,
+      # as in readme-media.yml.
+      - name: System packages (fonts-dejavu-core, zip)
+        timeout-minutes: 12
         run: |
           set -u
-          for u in https://download.blender.org/demo/movies/ToS/copyright.txt https://download.blender.org/demo/movies/ToS/surround/ https://download.blender.org/demo/movies/ToS/Tears-Of-Steel-OST/; do
-            echo "=== $u"; curl -fsSL "$u" | sed 's/<[^>]*>/ /g' | grep -v '^\s*$' | head -n 60 || true
-          done
-          for u in https://mango.blender.org/sharing/ https://peach.blender.org/about/ https://orange.blender.org/blog/creative-commons-license-2/ https://orange.blender.org/background/ https://durian.blender.org/sharing/; do
-            echo "=== $u"
-            curl -fsSL "$u" | sed 's/<[^>]*>/ /g' | grep -v '^\s*$' | grep -i -A8 'attribution is\|copyright\|licen' | head -n 60 || true
-          done
-          for u in https://download.blender.org/durian/subs/sintel_fr.srt https://download.blender.org/durian/subs/sintel_nl.srt https://download.blender.org/demo/movies/ToS/subtitles/TOS-de.srt https://download.blender.org/demo/movies/ToS/subtitles/TOS-es.srt https://download.blender.org/demo/movies/ToS/subtitles/TOS-fr-orig.srt; do
-            echo "=== $u"; curl -fsSL "$u" -o s.srt && { file s.srt; head -c 400 s.srt | od -c | head -n 8; head -n 12 s.srt | iconv -f latin1 -t utf-8; }
-          done
-          curl -sIL https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_720p_h264.mov.zip | grep -i 'content-length\|HTTP/'
-          curl -fsSL https://download.blender.org/demo/movies/ToS/TOS_DVDSTEREOMIX.aif -r 0-511 -o h.aif && od -c h.aif | head -n 12
-      - name: List download folders
+          apt_opts='-o Acquire::Retries=2 -o Acquire::http::Timeout=20'
+          apt_install() {
+            timeout 150 sudo apt-get $apt_opts install -y --no-install-recommends "$@" ||
+              { timeout 150 sudo apt-get $apt_opts update && timeout 150 sudo apt-get $apt_opts install -y --no-install-recommends "$@"; }
+          }
+          need='fonts-dejavu-core zip unzip'
+          dpkg -s $need > /dev/null 2>&1 || apt_install $need || { echo "::error::could not install $need"; exit 1; }
+          test -f /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf || { echo '::error::DejaVu Sans is missing'; exit 1; }
+      - run: npm ci --no-audit --no-fund
+      # The runner image has no system FFmpeg; the repo's bundled build (BtbN, GPL) has libx264, libx265, prores_ks,
+      # dnxhd, dvdsub and drawtext. The kit script checks the encoders it needs before it starts.
+      - name: Download FFmpeg (and put it on PATH)
         run: |
-          set -u
-          for d in https://download.blender.org/demo/movies/ https://download.blender.org/demo/movies/ToS/ https://download.blender.org/demo/movies/ToS/subtitles/ \
-                   https://download.blender.org/demo/movies/BBB/ https://download.blender.org/demo/movies/ED/ https://download.blender.org/peach/ \
-                   https://download.blender.org/peach/bigbuckbunny_movies/ https://download.blender.org/ED/ https://download.blender.org/durian/ \
-                   https://download.blender.org/durian/movies/ https://download.blender.org/durian/subs/ https://download.blender.org/mango/ \
-                   https://download.blender.org/orange/ https://download.blender.org/ED/subtitles/ https://download.blender.org/demo/movies/Sintel/; do
-            echo "=== $d"
-            curl -fsSL "$d" | grep -o 'href="[^"]*"[^<]*</a> *[^<]*' | sed 's/href="//; s/"[^>]*>/ | /; s/<\/a>//' | head -n 120 || echo "(no listing)"
-          done
-      - name: Checksums and licence pages
+          ./scripts/linux/get-ffmpeg.sh --dest resources/ffmpeg
+          echo "$GITHUB_WORKSPACE/resources/ffmpeg" >> "$GITHUB_PATH"
+      - name: Unit tests of the kit helpers
+        run: npx vitest run tests/unit/tester-kit.test.ts
+
+      # The films, subtitles and the Sintel M&E track, cached by their URLs.
+      - name: Sources cache key
+        id: skey
         run: |
-          set -u
-          for u in https://download.blender.org/durian/movies/Sintel.2010.720p.mkv.md5 https://download.blender.org/durian/movies/Sintel.2010.1080p.mkv.md5; do
-            echo "=== $u"; curl -fsSL "$u" || true; echo
-          done
-          for u in https://mango.blender.org/about/ https://durian.blender.org/about/ https://peach.blender.org/about/ https://orange.blender.org/ \
-                   https://mango.blender.org/sharing/ https://durian.blender.org/sharing/ https://peach.blender.org/download/ https://orange.blender.org/download/; do
-            echo "=== $u"
-            curl -fsSL "$u" | sed 's/<[^>]*>/ /g' | grep -i -o '.\{0,160\}\(creative commons\|licen[cs]e\|CC[- ]BY\|attribution\|copyright\).\{0,160\}' | head -n 12 || echo "(nothing)"
-          done
-      - name: Heads of candidate files
+          k="$(printf '%s\n' "$TOS_URL" "$TOS_SUBS_DIR" "$SINTEL_ZIP_URL" "$SINTEL_SUBS_DIR" "$SINTEL_ME_URL" "$BBB_ZIP_URL" "$ED_URL" sources-v1 | sha256sum | cut -c1-16)"
+          echo "key=tester-kit-sources-$k" >> "$GITHUB_OUTPUT"
+          mkdir -p "$SOURCES" "$WORK"
+      - name: Sources cache
+        id: scache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.SOURCES }}
+          key: ${{ steps.skey.outputs.key }}
+      - name: Download the films and subtitles
+        id: download
         run: |
-          set -u
-          for u in https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov \
-                   https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_720p_h264.mov \
-                   https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_720p_stereo.avi \
-                   https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_1080p_h264.mov \
-                   https://download.blender.org/ED/ED_1024.avi https://download.blender.org/ED/ED_HD.avi \
-                   https://download.blender.org/ED/elephantsdream-720-h264-st-aac.mov https://download.blender.org/ED/elephants_dream_720p.mov; do
-            printf '%s ' "$u"; curl -sIL -o /dev/null -w '%{http_code} %{size_download} %{content_type}\n' "$u"; curl -sIL "$u" | grep -i '^content-length' | tail -n1
+          set -uo pipefail
+          cd "$SOURCES"
+          # get <dest> <url>...: the first URL that downloads; on failure print the listing of the first one's folder.
+          get() {
+            local dest="$1"; shift
+            if [ -s "$dest" ]; then echo "cached: $dest ($(stat -c %s "$dest") bytes)"; return 0; fi
+            for u in "$@"; do
+              echo "trying $u"
+              if curl -fSL --retry 3 --retry-delay 5 -o "$dest.part" "$u"; then mv "$dest.part" "$dest"; echo "got $dest ($(stat -c %s "$dest") bytes)"; return 0; fi
+            done
+            rm -f "$dest.part"
+            local parent="${1%/*}/"
+            echo "::error::could not download $dest; listing of $parent:"
+            curl -fsSL "$parent" | grep -o 'href="[^"]*"' | sed 's/href="//; s/"$//' | head -n 80 || echo "(no listing)"
+            return 1
+          }
+          # unzip_one <zip> <dest> <pattern>: extract the one file matching <pattern> from <zip> to <dest>, then drop the zip.
+          unzip_one() {
+            unzip -Z1 "$1"
+            local m; m="$(unzip -Z1 "$1" | grep -i "$3" | head -n 1)"
+            if [ -n "$m" ] && unzip -p "$1" "$m" > "$2.part"; then mv "$2.part" "$2"; rm -f "$1"; else echo "::error::no $3 in $1"; return 1; fi
+          }
+          ok=0
+          get tos.mov "$TOS_URL" || ok=1
+          get tos-en.srt "${TOS_SUBS_DIR}TOS-en.srt" || ok=1
+          get tos-de.srt "${TOS_SUBS_DIR}TOS-de.srt" || ok=1
+          if [ ! -s sintel.mkv ]; then
+            get sintel.zip "$SINTEL_ZIP_URL" && unzip_one sintel.zip sintel.mkv '\.mkv$' || ok=1
+          fi
+          # The published MD5 of Sintel.2010.720p.mkv.
+          want="$(curl -fsSL "$SINTEL_MD5_URL" | cut -d' ' -f1)"
+          have="$(md5sum sintel.mkv | cut -d' ' -f1)"
+          if [ -n "$want" ] && [ "$want" = "$have" ]; then echo "sintel.mkv: MD5 $have matches $SINTEL_MD5_URL"; else echo "::error::sintel.mkv MD5 $have, published $want"; rm -f sintel.mkv; ok=1; fi
+          get sintel-fr.srt "${SINTEL_SUBS_DIR}sintel_fr.srt" || ok=1
+          get sintel-me.flac "$SINTEL_ME_URL" || ok=1
+          if [ ! -s bbb.mov ]; then
+            get bbb.zip "$BBB_ZIP_URL" && unzip_one bbb.zip bbb.mov '\.mov$' || ok=1
+          fi
+          get ed.mov "$ED_URL" || ok=1
+          ls -la
+          sha256sum -- *.mov *.mkv *.flac *.srt 2> /dev/null
+          for f in tos.mov sintel.mkv bbb.mov ed.mov sintel-me.flac; do
+            [ -s "$f" ] && { echo "== $f"; ffprobe -v error -show_entries format=duration,bit_rate:stream=index,codec_name,width,height,r_frame_rate,channels,channel_layout:stream_tags=language,title -of compact "$f"; }
           done
-      - name: FFmpeg encoders (system and bundled)
+          exit $ok
+
+      - name: Save the sources
+        if: steps.scache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.SOURCES }}
+          key: ${{ steps.skey.outputs.key }}
+
+      # Encodes of the four films and their frame analysis: the script names them by their source and settings and
+      # reuses what matches, so the latest cache is always restored and the script decides what is still valid. Saved
+      # even when a later step fails, so a fix to the rest of the kit does not encode the films again.
+      - name: Encodes cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.WORK }}/films
+          key: tester-kit-films-${{ github.run_id }}
+          restore-keys: tester-kit-films-
+
+      - name: Build the kit
+        id: build
+        run: node scripts/tester-kit.mjs --sources "$SOURCES" --work "$WORK" --out build/tester-kit --version "$KIT_VERSION" --zip
+
+      - name: Save the encodes
+        if: always() && steps.download.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.WORK }}/films
+          key: tester-kit-films-${{ github.run_id }}
+
+      - name: Summary
+        if: always()
         run: |
-          set -u
-          ./scripts/linux/get-ffmpeg.sh --dest "$RUNNER_TEMP/ff" > /dev/null
-          for f in ffmpeg "$RUNNER_TEMP/ff/ffmpeg"; do
-            echo "=== $f"; command -v "$f" || true
-            "$f" -hide_banner -version | head -n 2 || true
-            "$f" -hide_banner -encoders 2>/dev/null | grep -E ' (libx264|libx265|prores_ks|prores|dnxhd|dvdsub|ac3|flac|aac|libmp3lame|png|mjpeg|pcm_s24le|srt|subrip)( |$)' || true
-            "$f" -hide_banner -filters 2>/dev/null | grep -E ' (drawtext|subtitles|ass|zscale) ' || true
-          done
-          fc-list | head -n 20
+          z="build/tester-kit/ReCut-Tester-Kit-$KIT_VERSION.zip"
+          {
+            echo "## ReCut tester kit $KIT_VERSION"
+            if [ -s "$z" ]; then
+              echo
+              echo "Download the artifact **recut-tester-kit** below. GitHub wraps it in a zip of its own (recut-tester-kit.zip):"
+              echo "unzip that once, and share the **ReCut-Tester-Kit-$KIT_VERSION.zip** inside it as it is ($(du -m "$z" | cut -f1) MB)."
+              echo
+              echo '```'
+              sed 's/\r$//' "build/tester-kit/ReCut-Tester-Kit-$KIT_VERSION/MANIFEST.txt"
+              echo '```'
+            else
+              echo "The kit was not built; see the log of the Build the kit step."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recut-tester-kit
+          path: build/tester-kit/ReCut-Tester-Kit-${{ env.KIT_VERSION }}.zip
+          if-no-files-found: error
+          retention-days: 30
+          # Already a zip of compressed media: do not compress it again.
+          compression-level: 0

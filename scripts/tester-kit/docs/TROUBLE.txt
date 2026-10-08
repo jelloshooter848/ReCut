@@ -1,0 +1,56 @@
+TROUBLE FILES: what each one is for
+===================================
+
+These files are awkward on purpose: real downloads and rips are often like
+this. ReCut should handle every one of them without crashing, freezing or
+damaging your project, and say clearly what is wrong. If it does not, please
+tell us (see REPORTING.md).
+
+
+Truncated download.mp4
+  What:  a 30-second video cut off after less than half of its data, like a
+         download that stopped early.
+  Good:  it imports. Playback and export stop or go black where the data ends,
+         with no crash. A warning about the damaged file is a bonus.
+
+Broken file (no index).mp4
+  What:  an MP4 whose index is missing. No program can read it.
+  Good:  import refuses it with a clear message that names the file, and the
+         rest of the import goes on.
+
+Video only (no audio).mp4
+  What:  picture with no sound track at all.
+  Good:  it imports and plays; only a video clip goes on the timeline (no empty
+         audio clip); export works and the sound is silence.
+
+Audio only (no video).mp4
+  What:  an .mp4 that holds sound but no picture.
+  Good:  ReCut treats it as audio (it goes into the Audio bin and onto an audio
+         track), with a waveform.
+
+One frame.mp4
+  What:  a video exactly one frame (1/24 s) long.
+  Good:  it imports, shows its picture, and can be put on the timeline and
+         stretched like a still. Nothing divides by zero.
+
+Café Ünïcödé – fan édit 🎬.mp4
+  What:  a normal clip with spaces, accents, a long dash and an emoji in its
+         name.
+  Good:  the name shows correctly everywhere; import, play, save, reopen,
+         Collect Project and export all work.
+
+Two hours (long timeline).mp4
+  What:  two hours of a running timecode on a plain background, with a short
+         beep at every minute.
+  Good:  a two-hour timeline stays responsive: zooming, scrolling, cutting,
+         undo and saving are quick. The timecode shown in the picture matches
+         ReCut's timecode.
+
+Messy subtitles.srt (with Messy subtitles.mp4)
+  What:  a subtitle file with every common mistake: blocks out of order,
+         lines that overlap, a block with no number, dots instead of commas in
+         the times, a line that ends before it starts, an empty line, and a
+         line that runs past the end of the video.
+  Good:  importing Messy subtitles.mp4 picks the file up. ReCut keeps 9 lines,
+         sorted by time, and warns about the 2 it could not use properly (the
+         empty one and the one that ends before it starts). Nothing crashes.
