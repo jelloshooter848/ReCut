@@ -36,9 +36,9 @@ name: Windows build
 # Only real versions (vX.Y.Z) ever appear on the Releases page (owner's decision, 7 October 2026): there are no dev
 # prereleases. The one kind of pre-release is a release candidate such as v1.0.0-rc.1: a real version, with its own
 # package.json version and CHANGELOG.md section, published like any release but marked pre-release and never
-# Latest (docs/RELEASING.md, Release candidates). Every other run is a test build: it runs every gate the same way and keeps the installer and portable
-# exe as the run's ReCut-windows artifact and the AppImage as its ReCut-linux artifact (Actions -> the run ->
-# Artifacts), but creates no tag and no release.
+# Latest (docs/RELEASING.md, Release candidates). Every other run is a test build: it runs every gate the same way
+# and keeps the installer and portable exe as the run's ReCut-windows artifact and the AppImage as its ReCut-linux
+# artifact (Actions -> the run -> Artifacts), but creates no tag and no release.
 #
 # Releases are automatic (docs/RELEASING.md). The normal flow is: a release PR bumps package.json
 # (npm version X.Y.Z --no-git-tag-version) and adds a "## [X.Y.Z]" section to CHANGELOG.md -> the PR is merged ->
@@ -51,8 +51,8 @@ name: Windows build
 #                                  release v<v>  "ReCut <v>", marked Latest, notes from CHANGELOG.md   (auto == 'true')
 #     When v has a SemVer pre-release part (1.0.0-rc.1, section "## [1.0.0-rc.1]"), the release is marked
 #     pre-release and NOT Latest (prerelease == 'true'); the files and the gates are the same.
-#   - push of a tag v<MAJOR.MINOR.PATCH> or v<MAJOR.MINOR.PATCH>-rc.<N> (optional manual fallback): the same release. The tag must equal
-#     "v" + package.json version, and CHANGELOG.md must have a "## [<version>]" section, or the run fails in seconds.
+#   - push of a tag v<MAJOR.MINOR.PATCH> or v<MAJOR.MINOR.PATCH>-rc.<N> (optional manual fallback): the same
+#     release. The tag must equal "v" + package.json version, and CHANGELOG.md must have a "## [<version>]" section, or the run fails in seconds.
 #   - anything else (push to main when v<v> is already tagged or has no changelog section, other branches,
 #     workflow_dispatch): test build. The publish job is skipped; the installers are only the run's ReCut-windows
 #     artifact, and the installer job's summary says where to download them.
@@ -102,8 +102,9 @@ jobs:
     timeout-minutes: 60
     # What the publish job needs. release is 'true' only for a real release (automatic on main, or the tag-push
     # fallback); the publish job runs only then. prerelease is 'true' when the version has a SemVer pre-release part
-    # (a release candidate such as 1.0.0-rc.1): published as a pre-release, never marked Latest. notes is the file name inside the release-notes artifact (a file
-    # does not cross jobs, so the notes travel as an artifact and stay byte-identical).
+    # (a release candidate such as 1.0.0-rc.1): published as a pre-release, never marked Latest. notes is the file
+    # name inside the release-notes artifact (a file does not cross jobs, so the notes travel as an artifact and stay
+    # byte-identical).
     outputs:
       release: ${{ steps.rel.outputs.release }}
       auto: ${{ steps.rel.outputs.auto }}
