@@ -1,6 +1,6 @@
 /**
- * Update notice: the pure rules (version comparison, the GitHub "latest release" reply, the release-page URL check,
- * the daily throttle). The check itself runs in the main process (electron/updateCheck.ts); the renderer shows the
+ * Update notice: the pure rules (version comparison and which releases may be offered, GitHub's "latest release" and
+ * release-list replies, the release-page URL check, the daily throttle). The check itself runs in the main process (electron/updateCheck.ts); the renderer shows the
  * notice and the opt-in prompt (src/app/updates.ts).
  *
  * ReCut never downloads or installs anything: it only says that a newer release exists and links to its page.
@@ -8,8 +8,17 @@
  * Pure: no DOM, no Node.
  */
 
-/** The one request the check makes (GitHub's REST API; no token, no cookies, only a User-Agent header). */
+/**
+ * The one request the check makes (GitHub's REST API; no token, no cookies, only a User-Agent header), from a stable
+ * version. GitHub's "latest" release is the newest one that is neither a draft nor a pre-release.
+ */
 export const UPDATE_API_URL = 'https://api.github.com/repos/jelloshooter848/ReCut/releases/latest';
+/**
+ * The one request the check makes from a pre-release (a release candidate such as 1.0.0-rc.1): the newest releases,
+ * pre-releases included, because `releases/latest` never returns a pre-release (docs/RELEASING.md, Release
+ * candidates). A few releases are enough: the list is newest first, and the release to offer is among the newest.
+ */
+export const UPDATE_LIST_API_URL = 'https://api.github.com/repos/jelloshooter848/ReCut/releases?per_page=10';
 /** The releases page. Only this page and its `/tag/<tag>` pages are ever opened from the notice. */
 export const RELEASES_PAGE_URL = 'https://github.com/jelloshooter848/ReCut/releases';
 const RELEASES_PATH = '/jelloshooter848/ReCut/releases';
@@ -95,13 +104,33 @@ export function compareSemver(a: Semver, b: Semver): number {
   return 0;
 }
 
+/** `1.0.0` or `1.0.0-rc.2` (no leading `v`, no build metadata). */
+export function formatSemver(v: Semver): string {
+  return `${v.major}.${v.minor}.${v.patch}${v.prerelease.length ? `-${v.prerelease.join('.')}` : ''}`;
+}
+
 /**
- * True when `latest` is a stable release (no pre-release part) newer than the running `current` version.
- * `current` may be a pre-release: 1.0.0 is newer than 1.0.0-rc.3. Anything unparsable is never newer.
+ * Whether release `version` may be offered to someone running `current`, newer or not. A stable release always may.
+ * A pre-release only to someone already running a pre-release of the same MAJOR.MINOR.PATCH (1.0.0-rc.1 is told
+ * about 1.0.0-rc.2; 0.13.0 and 1.0.0 are never told about any release candidate; 1.0.0-rc.2 is not told about
+ * 1.1.0-rc.1, only about 1.0.0 and later stable releases). Anything unparsable may not.
+ */
+export function isOfferableRelease(version: string, current: string): boolean {
+  const l = parseSemver(version), c = parseSemver(current);
+  if (!l || !c) return false;
+  if (!l.prerelease.length) return true;
+  return c.prerelease.length > 0 && l.major === c.major && l.minor === c.minor && l.patch === c.patch;
+}
+
+/**
+ * True when `latest` is newer than the running `current` version (semver precedence) and may be offered to it
+ * (isOfferableRelease): a stable release newer than `current`, or, when `current` is a release candidate, a later
+ * candidate of the same version. 1.0.0 is newer than 1.0.0-rc.9, and 1.0.0-rc.10 than 1.0.0-rc.9. Anything
+ * unparsable is never newer.
  */
 export function isNewerRelease(latest: string, current: string): boolean {
   const l = parseSemver(latest), c = parseSemver(current);
-  if (!l || !c || l.prerelease.length) return false;
+  if (!l || !c || !isOfferableRelease(latest, current)) return false;
   return compareSemver(l, c) > 0;
 }
 
@@ -170,6 +199,52 @@ export function parseLatestReleaseText(text: string): ParsedRelease {
   let json: unknown;
   try { json = JSON.parse(text); } catch { return { ok: false, error: 'the reply is not valid JSON' }; }
   return parseLatestRelease(json);
+}
+
+/**
+ * Read GitHub's release list (UPDATE_LIST_API_URL, already parsed JSON) for someone running `current`: the release
+ * with the highest semver precedence among those that may be offered to `current` (isOfferableRelease), newer or not
+ * (the caller compares). Drafts, entries without a version tag, and entries whose `prerelease` flag disagrees with
+ * their tag (flagged pre-release with a stable tag, or the reverse) are ignored. The release page is as in
+ * parseLatestRelease.
+ */
+export function parseReleaseList(json: unknown, current: string): ParsedRelease {
+  if (!Array.isArray(json)) return { ok: false, error: 'the reply is not a list of releases' };
+  let best: { v: Semver; release: UpdateRelease } | null = null;
+  for (const item of json) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const r = item as Record<string, unknown>;
+    if (r.draft === true || typeof r.tag_name !== 'string') continue;
+    const v = parseSemver(r.tag_name);
+    if (!v || (r.prerelease === true) !== v.prerelease.length > 0) continue;
+    const version = formatSemver(v);
+    if (!isOfferableRelease(version, current)) continue;
+    if (best && compareSemver(v, best.v) <= 0) continue;
+    const url = isReleasePageUrl(r.html_url) ? r.html_url : releasePageForTag(r.tag_name.trim());
+    best = { v, release: { version, url } };
+  }
+  return best ? { ok: true, release: best.release } : { ok: false, error: 'GitHub lists no published release' };
+}
+
+/** Whether the check for `current` asks for the release list (a pre-release) rather than the latest release. */
+export function checksReleaseList(current: string): boolean {
+  return Boolean(parseSemver(current)?.prerelease.length);
+}
+
+/** The URL of the one request the check makes for `current` (UPDATE_LIST_API_URL from a pre-release). */
+export function updateApiUrlFor(current: string): string {
+  return checksReleaseList(current) ? UPDATE_LIST_API_URL : UPDATE_API_URL;
+}
+
+/**
+ * The reply text of the check for `current`: a list (from a pre-release, parseReleaseList) or one release
+ * (parseLatestRelease, which never offers a pre-release). A list reply to a stable version is read with the stable
+ * rules too, so only stable releases can come of it.
+ */
+export function parseUpdateReplyText(text: string, current: string): ParsedRelease {
+  let json: unknown;
+  try { json = JSON.parse(text); } catch { return { ok: false, error: 'the reply is not valid JSON' }; }
+  return Array.isArray(json) ? parseReleaseList(json, current) : parseLatestRelease(json);
 }
 
 // ------------------------------------------------------------------
