@@ -192,19 +192,39 @@ Muted video tracks are skipped; if any track is soloed, only soloed tracks are r
 
 ### Transitions: the centered-handle model
 
-A transition of `D` frames between A (outgoing) and B (incoming) is **centered on the cut**: the region
-`[cut - D/2, cut + D/2)` is the mix. Timeline positions of A and B do not move and the total duration is
-unchanged. To render it:
+A transition of `D` frames between A (outgoing) and B (incoming) is **centered on the cut**. Timeline positions of A
+and B do not move and the total duration is unchanged. Each type renders the picture the Program monitor shows
+(`src/playback/planner.ts` `contribute`, composited by `SequencePlayer.paint`); `tests/unit/export-fade.test.ts`
+measures every frame against it (bugs/closed/2026-10-08-two-sided-transition-preview-mismatch.md).
 
-- A's segment is extended by `h = D/2` frames past its end using the *source* frames after `sourceOut`
+**Cross Dissolve** is the linear mix `(1 − t)·A + t·B` over `[cut − h, cut + h)`, `t = k / 2h` on frame `k`:
+
+- A's segment is extended by `h = ⌊D/2⌋` frames past its end using the *source* frames after `sourceOut`
   (the out-handle); B's segment starts `h` frames earlier using the source before `sourceIn` (the in-handle).
-- `xfade=transition=fade|fadeblack:duration=D:offset=len(A') - D` consumes `A' = A + h` and `B' = B + h`
-  and yields `A + B` frames. Chained transitions fold left: `xfade(xfade(A', B'), C')`, offset computed
-  from the running length.
-- `D` is rounded down to an even number and clamped to the available handles and to each clip's length; a
-  clamped or dropped transition produces a warning that names the limit ("source handles" only when the handles
-  are what shortened it). The export range does not clamp it: the render range is widened to cover it (see "Time
-  model"). A transition whose clips are not adjacent is ignored with a warning.
+- Each segment with a dissolve at an edge is cut with `split` + `trim=start_frame:end_frame` into its windows (the
+  `2h` frames of a dissolve at its head and at its tail) and its body. A's tail window and B's head window are
+  mixed: `format=yuva444p,premultiply=inplace=1` on each, `xfade=transition=fade:duration=2h:offset=0`,
+  `unpremultiply=inplace=1,format=yuva420p`. Mixing premultiplied pictures makes the result, laid over the tracks
+  below, `(1 − t)·(A over below) + t·(B over below)` also where the clips' alphas differ (opacity, a letterboxed or
+  scaled picture, fades): a plain `xfade` of straight-alpha frames darkened those places. Only the window's frames
+  are converted to 4:4:4 (premultiply needs the alpha at every chroma sample). The bodies and the mixed windows are
+  joined by the track's one `concat`. A track without dissolves has no `split`, `premultiply` or `xfade`.
+- `D` is rounded down to an even number (an odd length renders one frame less, in the preview too) and clamped to
+  the available handles and to each clip's length; a clamped or dropped transition produces a warning that names
+  the limit ("source handles" only when the handles are what shortened it). The export range does not clamp it:
+  the render range is widened to cover it (see "Time model"). A transition whose clips are not adjacent is ignored
+  with a warning.
+
+**Dip to Black** fades A to black over its last `D/2` frames and B up from black over its first `D/2` (frame `k` of
+the clip: weight `(end − k) / (D/2)` and `k / (D/2)`; `D/2` can be a half frame). Each clip only shows frames it
+shows anyway, so a dip needs no handles and is never shortened or dropped for lack of them. `planTrackSegments`
+records the halves as the segments' `fadeOut` / `fadeIn`, and the weight goes into the per-frame alpha `lut` with the
+single-sided fades below (on V1 the track shows black; on an upper track, the track below). The former
+`xfade=transition=fadeblack` reached black early on a smoothstep, used the handle frames past the cut and dipped to
+luma 0: up to 146 levels from the preview.
+
+**Fade from / to black** (a transition with one side empty):
+
 - `outClipId: null` → a fade from black over the first `D` frames of the clip; `inClipId: null` → a fade to black
   over its last `D` frames (any transition type). Like the preview (planner `contribute`), frame `k` of the clip has
   weight `k / D` in a fade-in and `(end − k) / D` in a fade-out; the weight multiplies the clip's alpha with its
@@ -213,8 +233,12 @@ unchanged. To render it:
   it treats `yuva420p` as full range: up to 16 levels darker than the preview, see
   `bugs/closed/2026-10-07-export-fade-to-black-ends-early.md`.) Measured in `tests/unit/export-fade.test.ts`.
 
-Audio uses the same model with `acrossfade=d=D:c1=tri:c2=tri` (which overlaps the last `D` of A' with the
-first `D` of B', i.e. the same `A + B` length), `afade` for the one-sided cases.
+Audio uses the Cross Dissolve geometry with `acrossfade=d=2h:c1=tri:c2=tri` (which overlaps the last `2h` of A'
+with the first `2h` of B', i.e. the same `A + B` length), `afade` for the one-sided cases. Its law is the preview's:
+linear gains `1 − t` and `t` that add up to 1. At the first sample of every frame the export's gain is the gain the
+preview sets for that frame (measured within 0.005 in `tests/unit/export-fade.test.ts`); within a frame the export
+ramps on per sample while the preview holds the frame's gain (smoothed over 10 ms), at most one frame's step
+(`1 / 2h`) apart.
 
 ### Audio
 
