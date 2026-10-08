@@ -39,10 +39,11 @@ export async function launchApp(opts: { tmp?: string; env?: Record<string, strin
 /**
  * Make the next quit discard unsaved changes without a prompt: the project is marked clean, and the quit prompt
  * (Save / Don't Save / Cancel) is answered "Don't Save" in the main process should it come anyway. Marking the
- * project clean alone is not enough: a background job mirror (a proxy finishing: store.setProxy marks the project
- * dirty) can land after it and before the renderer reads `dirty` for the quit request, and the native box then
- * waits for an answer nobody gives, so close() never returns
- * (bugs/closed/2026-10-08-e2e-close-hangs-on-quit-prompt.md). Call it right before ElectronApplication.close().
+ * project clean alone is not enough: a change that marks it dirty (an edit, a probe result; before
+ * bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md also a proxy finishing) can land after it and before
+ * the renderer reads `dirty` for the quit request, and the native box then waits for an answer nobody gives, so
+ * close() never returns (bugs/closed/2026-10-08-e2e-close-hangs-on-quit-prompt.md). Call it right before
+ * ElectronApplication.close().
  */
 export async function discardChangesOnQuit(app: ElectronApplication): Promise<void> {
   try {

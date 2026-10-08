@@ -123,7 +123,10 @@ and `history`. Project changes go through immer:
   sharing keeps this cheap: undo is about 0.4 ms on a 2,500-clip project, and history is capped at 200 entries.
   `carryViewState` keeps the current playhead, zoom and In/Out when undoing.
 - `quiet(recipe)` changes the project without a history entry. It is used for async mirrors: probe results, proxy
-  and scene-detect status, offline flags, the active sequence.
+  and scene-detect status, offline flags, the active sequence. Job mirrors (proxy, channel-proxy and scene-detect
+  state) do not mark the project dirty: the next save / autosave writes them, but they are not unsaved work (the jobs
+  make them again from the content-keyed cache), so a job finishing after a save never asks "Save changes?". The
+  probe of an import / relink does mark it dirty (it completes that edit and is not re-read on open).
 - `beginTransaction` / `updateTransient` / `endTransaction` turn a drag or a multi-step command into one undo step.
 - Timeline logic is **pure** in `shared/timeline.ts` (insert/overwrite placement, trims, ripple, roll, slip, slide,
   razor, transitions reconciliation, story-block shifting, `resolveSubtitleCues`). Store actions call it on drafts.
