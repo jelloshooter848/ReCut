@@ -57,7 +57,15 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **Show source timecode on clips** is off by default. Turn it on in Preferences.
 - **Timecode display** follows the frame rate only: at 29.97 and 59.94 fps every timecode (sequence and source) is
   SMPTE drop-frame (`HH:MM:SS;FF`), at every other rate non-drop. There is no setting to show non-drop timecode at
-  29.97 / 59.94.
+  29.97 / 59.94. The one exception is the source timecode of a file with an embedded start timecode, which keeps
+  the file's own mode (a non-drop 29.97 camera file reads non-drop, as the camera shows it).
+- **Embedded start timecode** is read when media is probed: a QuickTime / MP4 timecode (`tmcd`) track and the
+  container timecode of MXF and other files that FFmpeg reports. Source timecode displays and the interchange exports
+  count from it. Media imported with an earlier version has none until it is probed again (relink it, or remove and
+  re-import it); projects are not migrated. Not read: timecode carried only in the video bitstream (MPEG-2 GOP or
+  H.264 / HEVC SEI timecode), a BWF WAV's `time_reference`, and timecode that changes mid-file (a file has one start
+  timecode; source timecode counts on from it). The Source monitor's current-time, In and Out fields still count from
+  the start of the file; its **TC** readout shows the file's timecode.
 
 ## Audio
 
@@ -186,8 +194,9 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   An EDL holds one video track per file and only cuts and dissolves. Per format:
   - **All formats:** nested sequences and compound clips are flattened into their media clips (no nested timelines
     in the other editor); sequence subtitle tracks are not exported; the timeline starts at 00:00:00:00; source
-    timecode counts from 00:00:00:00 at the start of each file, because ReCut does not read timecode embedded in
-    the media, so the source points of camera files with their own start timecode come in offset; channel
+    points count from each file's embedded start timecode (see **Embedded start timecode** under Editing and effects for what is read;
+    a file without one, or not probed since that was added, counts from 00:00:00:00, and its source points come in
+    offset in an editor that reads a timecode ReCut did not); channel
     selections (centre channel, mono channel, custom downmix) and the choice of a file's second or later audio stream
     are not carried; offline media is written with its saved path.
   - **FCPXML:** linked video and audio arrive as separate clips (the link is not kept). Dip to Black and fades

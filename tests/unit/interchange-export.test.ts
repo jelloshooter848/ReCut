@@ -12,12 +12,12 @@ import * as path from 'node:path';
 import type { ID, Project } from '../../shared/model';
 import { exportTimeline, INTERCHANGE_FORMATS, type InterchangeFormat, type InterchangeResult } from '../../shared/interchange';
 import { fileUrl, Issues, prepare, safeFileStem } from '../../shared/interchange/common';
-import { clip, dropFrame, media, mkProject, mkSeq, put, R23, representative, tr } from '../fixtures/interchange/fixture';
+import { clip, dropFrame, media, mkProject, mkSeq, put, R23, representative, sourceTimecode, tr } from '../fixtures/interchange/fixture';
 
 const DIR = path.resolve(__dirname, '../fixtures/interchange');
 const UPDATE = process.env.UPDATE_INTERCHANGE_GOLDENS === '1';
 const FORMATS: InterchangeFormat[] = ['fcpxml', 'otio', 'edl'];
-const FIXTURES: Record<string, () => { project: Project; seqId: ID }> = { representative, 'ntsc-df': dropFrame };
+const FIXTURES: Record<string, () => { project: Project; seqId: ID }> = { representative, 'ntsc-df': dropFrame, 'source-tc': sourceTimecode };
 
 function golden(name: string, contents: string): void {
   const file = path.join(DIR, name);
@@ -37,6 +37,8 @@ function expected(key: string, project: Project, seqId: ID, files: Record<Interc
   const clipOf = (c: ReturnType<typeof prepare>['videoTracks'][number]['clips'][number]) => ({
     name: c.name, start: c.start, duration: c.duration, srcIn: c.srcIn, srcRate: [c.srcRate.num, c.srcRate.den], speed: c.speed,
     path: c.media.path, url: fileUrl(c.media.path), enabled: c.enabled, still: c.still,
+    // The file's embedded start timecode (frames at srcRate): source times in the exports are tcStart + srcIn.
+    ...(c.tc ? { tcStart: c.tc.frames } : {}),
   });
   return {
     fixture: key, name: p.name, fps: [p.fps.num, p.fps.den], durationFrames: p.durationFrames, files,
@@ -247,5 +249,42 @@ describe('issues of single lossy cases', () => {
       s.subtitleTracks.push({ id: 'st', name: 'English', language: 'en', enabled: true, cues: [{ id: 'q', start: 0, duration: 24, offset: 0, text: 'Hi' }] });
     });
     for (const f of FORMATS) expect(issue(exportTimeline(p, 's', f), 'subtitles', 'warning')).toEqual([expect.objectContaining({ count: 1 })]);
+  });
+});
+
+describe('embedded source start timecode', () => {
+  const R25 = { num: 25, den: 1 };
+  /** A 25 fps camera file whose timecode starts at `tc`, cut into a sequence at `fps`. */
+  const cam = (tc: string, fps = R25) => {
+    const m = media('m', '/cam/C0001.MXF', {}, { fps: R25, dur: 60, tc });
+    const s = mkSeq('s', 'S', fps);
+    put(s.videoTracks[0], clip('c', 'm', 0, 50, 4));
+    return mkProject('P', [m], [s]);
+  };
+
+  it('FCPXML: the asset starts at the file timecode and clip starts are media time from there', () => {
+    const x = exportTimeline(cam('10:00:00:00'), 's', 'fcpxml').files[0].contents;
+    expect(x).toMatch(/<asset id="r\d+" name="C0001.MXF" start="36000s" duration="60s"/);
+    expect(x).toMatch(/<asset-clip ref="r\d+" offset="0s" name="c" start="36004s" duration="2s" srcEnable="video" tcFormat="NDF"\/>/);
+  });
+
+  it('OTIO: available_range starts at the file timecode, source_range on the same base', () => {
+    const o = JSON.parse(exportTimeline(cam('10:00:00:00'), 's', 'otio').files[0].contents);
+    const c = o.tracks.children[0].children[0];
+    expect(c.media_reference.available_range.start_time).toEqual({ OTIO_SCHEMA: 'RationalTime.1', rate: 25, value: 900000 });
+    expect(c.media_reference.available_range.duration.value).toBe(1500);
+    expect(c.source_range.start_time).toEqual({ OTIO_SCHEMA: 'RationalTime.1', rate: 25, value: 900100 });
+  });
+
+  it('EDL: source timecode from the file timecode, wrapping at 24 hours', () => {
+    expect(exportTimeline(cam('10:00:00:00'), 's', 'edl').files[0].contents).toContain('001  AX       V     C        10:00:04:00 10:00:06:00 00:00:00:00 00:00:02:00');
+    expect(exportTimeline(cam('23:59:58:00'), 's', 'edl').files[0].contents).toContain('001  AX       V     C        00:00:02:00 00:00:04:00 00:00:00:00 00:00:02:00');
+  });
+
+  it('a file at another rate than the sequence keeps its own timecode base', () => {
+    const p = cam('01:00:00:00', R23);
+    const o = JSON.parse(exportTimeline(p, 's', 'otio').files[0].contents);
+    expect(o.tracks.children[0].children[0].source_range.start_time).toEqual({ OTIO_SCHEMA: 'RationalTime.1', rate: 25, value: 90100 });
+    expect(exportTimeline(p, 's', 'edl').files[0].contents).toMatch(/^001 {2}AX {7}V {5}C {8}01:00:04:00 01:00:06:02 /m);
   });
 });

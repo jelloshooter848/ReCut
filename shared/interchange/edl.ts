@@ -4,8 +4,9 @@
  * - Record timecode starts at 00:00:00:00 at the sequence rate; `FCM: DROP FRAME` (and `;` before the frames) at
  *   29.97 / 59.94, `NON-DROP FRAME` otherwise (23.976 counts at a nominal 24).
  * - Every event uses reel `AX` with `* FROM CLIP NAME:` (the file name) and `* SOURCE FILE:` (the full path),
- *   which DaVinci Resolve uses to relink. Source timecode is the source position at the media's own rate from
- *   00:00:00:00 (ReCut does not read embedded start timecode).
+ *   which DaVinci Resolve uses to relink. Source timecode is the source position at the media's own rate, counted
+ *   from the file's embedded start timecode in its own mode (drop-frame or not) when it has one
+ *   (MediaProbe.startTimecode), else from 00:00:00:00 (drop-frame at 29.97 / 59.94).
  * - Dissolves are `D` events centred on the cut; fades from / to black and Dip to Black are dissolves from / to the
  *   `BL` reel (a dip is a dissolve to black over the outgoing clip's last half and one from black over the incoming
  *   clip's first half, as ReCut renders it). Constant speed is an `M2` line.
@@ -13,19 +14,24 @@
  *   event as channel A (A1), A2 (`B`, `A2/V`, `AA/V`), or channel 3 / 4 (`AUD` line). Other audio is not in the EDL.
  * - Markers are `* LOC:` lines on the event under them.
  */
-import type { ID, Rational } from '../model';
+import type { ID } from '../model';
 import { baseName, clipProps, count, isAre, markerColorName, type Issues, type PClip, type Prepared, type PTrack, type PTransition } from './common';
 import type { InterchangeFile } from './index';
-import { fpsEquals, fpsValue, formatTimecode, usesDropFrameDisplay } from '../time';
+import { fpsEquals, fpsValue, formatTimecode, usesDropFrameDisplay, wrapTimecodeFrames } from '../time';
 
 export function writeEdl(p: Prepared, issues: Issues, stem: string, selected?: number[]): InterchangeFile[] {
   const fps = p.fps;
   const df = usesDropFrameDisplay(fps);
   const rec = (f: number) => formatTimecode(f, fps, { dropIndicator: df });
-  const srcTc = (f: number, r: Rational) => formatTimecode(Math.max(0, f), r, { dropIndicator: usesDropFrameDisplay(r) });
   const fdSeq = fps.den / fps.num;
   /** Source frame (at the clip's media rate) shown at record frame `f`. */
   const srcAt = (c: PClip, f: number) => c.srcIn + Math.round((f - c.start) * fdSeq * c.speed * c.srcRate.num / c.srcRate.den);
+  /** Source timecode of clip `c` at record frame `f`: from the file's start timecode, wrapping at 24 h. */
+  const srcTc = (c: PClip, f: number) => {
+    const s = Math.max(0, srcAt(c, f)), r = c.srcRate;
+    if (!c.tc) return formatTimecode(s, r, { dropIndicator: usesDropFrameDisplay(r) });
+    return formatTimecode(wrapTimecodeFrames(c.tc.frames + s, r, c.tc.dropFrame), r, { dropIndicator: c.tc.dropFrame });
+  };
 
   // Linked audio that can ride on its video event: same record range, source in (within half a frame), speed, media.
   const channelsOf = new Map<ID, Set<number>>();
@@ -110,22 +116,22 @@ export function writeEdl(p: Prepared, issues: Issues, stem: string, selected?: n
       if (inT?.kind === 'dissolve' && inT.out) {
         const P = inT.out;
         a = inT.at - inT.half;
-        lines.push(line(n, 'AX', chanCode(P).code, 'C', null, srcTc(srcAt(P, a), P.srcRate), srcTc(srcAt(P, a), P.srcRate), a, a));
-        lines.push(line(n, 'AX', ch.code, 'D', inT.frames, srcTc(srcAt(c, a), c.srcRate), srcTc(srcAt(c, b), c.srcRate), a, b));
+        lines.push(line(n, 'AX', chanCode(P).code, 'C', null, srcTc(P, a), srcTc(P, a), a, a));
+        lines.push(line(n, 'AX', ch.code, 'D', inT.frames, srcTc(c, a), srcTc(c, b), a, b));
         comments.push(`* FROM CLIP NAME: ${baseName(P.media.path)}`, `* TO CLIP NAME: ${baseName(c.media.path)}`);
       } else if (inT && (inT.kind === 'dip' || inT.kind === 'fadeIn')) {
         const d = inT.kind === 'dip' ? inT.frames - Math.floor(inT.frames / 2) : inT.frames;
         lines.push(line(n, 'BL', 'V', 'C', null, black(0), black(0), a, a));
-        lines.push(line(n, 'AX', ch.code, 'D', d, srcTc(srcAt(c, a), c.srcRate), srcTc(srcAt(c, b), c.srcRate), a, b));
+        lines.push(line(n, 'AX', ch.code, 'D', d, srcTc(c, a), srcTc(c, b), a, b));
         comments.push(`* TO CLIP NAME: ${baseName(c.media.path)}`);
       } else {
-        lines.push(line(n, 'AX', ch.code, 'C', null, srcTc(srcAt(c, a), c.srcRate), srcTc(srcAt(c, b), c.srcRate), a, b));
+        lines.push(line(n, 'AX', ch.code, 'C', null, srcTc(c, a), srcTc(c, b), a, b));
         comments.push(`* FROM CLIP NAME: ${baseName(c.media.path)}`);
       }
       if (inT && ch.code !== 'V') issues.add('edl-av-tr', 'transition', 'info', (k) => `Audio on ${count(k, 'event')} with a dissolve or fade dissolves with the picture in the EDL.`, item);
       if (c.speed !== 1 && !c.still) {
         const sp = (c.speed * fpsValue(fps)).toFixed(1).padStart(5, '0');
-        lines.push(`M2   ${'AX'.padEnd(8)} ${sp}                ${srcTc(srcAt(c, a), c.srcRate).replace(/;/g, ':')}`);
+        lines.push(`M2   ${'AX'.padEnd(8)} ${sp}                ${srcTc(c, a).replace(/;/g, ':')}`);
         issues.add('edl-speed', 'speed', 'info', (k) => `Speed changes on ${count(k)} are M2 motion effects; check their timing after import.`, item);
       }
       if (ch.aud) lines.push(ch.aud);
@@ -138,7 +144,7 @@ export function writeEdl(p: Prepared, issues: Issues, stem: string, selected?: n
       if (outT && (outT.kind === 'fadeOut' || outT.kind === 'dip')) {
         const d = outT.kind === 'dip' ? Math.floor(outT.frames / 2) : outT.frames;
         const m2 = evn();
-        lines.push(line(m2, 'AX', ch.code, 'C', null, srcTc(srcAt(c, b), c.srcRate), srcTc(srcAt(c, b), c.srcRate), b, b));
+        lines.push(line(m2, 'AX', ch.code, 'C', null, srcTc(c, b), srcTc(c, b), b, b));
         lines.push(line(m2, 'BL', 'V', 'D', d, black(0), black(d), b, b + d));
         lines.push(`* FROM CLIP NAME: ${baseName(c.media.path)}`);
       }

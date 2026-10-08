@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+
+<fcpxml version="1.9">
+  <resources>
+    <format id="r1" frameDuration="1001/30000s" width="1920" height="1080"/>
+    <asset id="r2" name="A001_C002.mov" start="8999991/2500s" duration="2999997/5000s" hasVideo="1" format="r1" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000">
+      <media-rep kind="original-media" src="file:///media/Camera/A001_C002.mov"/>
+    </asset>
+    <effect id="r3" name="Cross Dissolve" uid="FxPlug:4731E73A-8DAC-4113-9A30-AE85B1761265"/>
+    <asset id="r4" name="B001 NDF.mp4" start="18018/5s" duration="2999997/5000s" hasVideo="1" format="r1" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000">
+      <media-rep kind="original-media" src="file:///media/Camera/B001%20NDF.mp4"/>
+    </asset>
+    <asset id="r5" name="screen.mkv" start="0s" duration="2999997/5000s" hasVideo="1" format="r1" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000">
+      <media-rep kind="original-media" src="file:///media/Plain/screen.mkv"/>
+    </asset>
+  </resources>
+  <library>
+    <event name="Camera Project">
+      <project name="Camera Cut">
+        <sequence format="r1" duration="13013/1000s" tcStart="0s" tcFormat="DF" audioLayout="stereo" audioRate="48k">
+          <spine>
+            <asset-clip ref="r2" offset="0s" name="Camera A" start="2251249/625s" duration="1001/250s" srcEnable="video" tcFormat="DF">
+              <asset-clip ref="r2" lane="-1" offset="2251249/625s" name="ka1" start="2251249/625s" duration="1001/250s" srcEnable="audio" tcFormat="DF"/>
+            </asset-clip>
+            <transition name="Cross Dissolve" offset="11011/3000s" duration="1001/1500s">
+              <filter-video ref="r3" name="Cross Dissolve"/>
+            </transition>
+            <asset-clip ref="r4" offset="1001/250s" name="Camera B" start="361361/100s" duration="1001/200s" srcEnable="video" tcFormat="NDF">
+              <asset-clip ref="r4" lane="-1" offset="361361/100s" name="ka2" start="361361/100s" duration="1001/200s" srcEnable="audio" tcFormat="NDF"/>
+              <marker start="5424419/1500s" duration="1001/30000s" value="B roll"/>
+            </asset-clip>
+            <asset-clip ref="r5" offset="9009/1000s" name="k3" start="1001/1000s" duration="1001/500s" srcEnable="video"/>
+            <asset-clip ref="r4" offset="11011/1000s" name="Camera B fast" start="109007899/30000s" duration="1001/500s" srcEnable="video" tcFormat="NDF">
+              <timeMap>
+                <timept time="109007899/30000s" value="109007899/30000s" interp="linear"/>
+                <timept time="109067959/30000s" value="109128019/30000s" interp="linear"/>
+              </timeMap>
+            </asset-clip>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>

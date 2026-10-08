@@ -10,8 +10,10 @@
  *   connected storyline (`<spine lane=...>`), the only way FCPXML puts transitions on a track other than V1.
  * - Times are exact rationals (`N/Ds`). An item's `offset` is in its parent's local time: for a gap
  *   `start + (t - offset)` with start 0; for a clip `start` is the source in point (media time), and local time runs
- *   with the timeline from there. A storyline's children are in the same local time as the storyline's own offset
- *   (the anchor clip's), as the primary spine's children are in the sequence's time.
+ *   with the timeline from there. Media time starts at the asset's `start`: the file's embedded start timecode
+ *   (MediaProbe.startTimecode; its clips then carry `tcFormat`), else 0s. A storyline's children are in the same
+ *   local time as the storyline's own offset (the anchor clip's), as the primary spine's children are in the
+ *   sequence's time.
  * - Speed: `<timeMap>` with two linear points, (start -> start) and (start + duration -> start + duration * speed),
  *   so `start` stays the media time of the in point.
  * - Video clips are written with `srcEnable="video"` and audio clips with `srcEnable="audio"`: ReCut's linked A/V
@@ -76,9 +78,10 @@ class Resources {
     }
     const id = this.id();
     const rate = pc.srcRate;
+    const start = pc.tc ? Q.frames(pc.tc.frames, rate).toTime() : '0s';
     const duration = pc.still ? '0s' : pr && pr.duration > 0 ? Q.frames(Math.round(pr.duration * rate.num / rate.den), rate).toTime() : undefined;
     this.nodes.push(el('asset', [
-      ['id', id], ['name', m.name], ['start', '0s'], ['duration', duration],
+      ['id', id], ['name', m.name], ['start', start], ['duration', duration],
       ['hasVideo', hasVideo ? '1' : undefined], ['format', format],
       ['hasAudio', hasAudio ? '1' : undefined],
       ['audioSources', audio.length ? String(audio.length) : undefined],
@@ -97,6 +100,11 @@ class Resources {
     this.nodes.push(el('effect', [['id', id], ['name', name], ['uid', uid]]));
     return id;
   }
+}
+
+/** Media time of a clip's in point: its source frame from the file's start timecode (0 for stills). */
+function mediaTime(pc: PClip): Q {
+  return pc.still ? new Q(0n) : Q.frames(pc.srcIn + (pc.tc?.frames ?? 0), pc.srcRate);
 }
 
 type Item = { kind: 'gap'; start: number; dur: number } | { kind: 'clip'; pc: PClip } | { kind: 'tr'; tr: PTransition };
@@ -205,7 +213,7 @@ export function writeFcpxml(p: Prepared, issues: Issues): string {
 
   const clipNode = (pc: PClip, lane: number | undefined, offset: Q): XNode => {
     const a = R.asset(pc);
-    const S = pc.still ? new Q(0n) : Q.frames(pc.srcIn, pc.srcRate);
+    const S = mediaTime(pc);
     const D = T(pc.duration);
     const video = pc.kind === 'video';
     const props = clipProps(pc);
@@ -215,6 +223,7 @@ export function writeFcpxml(p: Prepared, issues: Issues): string {
       ['start', S.toTime()], ['duration', D.toTime()],
       ['srcEnable', video ? (a.hasAudio ? 'video' : undefined) : (a.hasVideo ? 'audio' : undefined)],
       ['enabled', pc.enabled ? undefined : '0'],
+      ['tcFormat', pc.tc ? (pc.tc.dropFrame ? 'DF' : 'NDF') : undefined],
     ]);
     const relLo = pc.keyShift, relHi = pc.keyShift + pc.duration;
     const keyTime = (rel: number) => S.add(Q.dec(rel - pc.keyShift).mul(fd)).toTime();
@@ -303,7 +312,7 @@ export function writeFcpxml(p: Prepared, issues: Issues): string {
     }
     if (it.kind === 'clip') {
       const node = clipNode(it.pc, undefined, off(it.pc.start));
-      onEl?.({ offset: it.pc.start, dur: it.pc.duration, start: it.pc.still ? new Q(0n) : Q.frames(it.pc.srcIn, it.pc.srcRate), node });
+      onEl?.({ offset: it.pc.start, dur: it.pc.duration, start: mediaTime(it.pc), node });
       return node;
     }
     return trNode(it.tr, kind, off(it.tr.at - it.tr.half));

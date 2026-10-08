@@ -1,9 +1,9 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import type { Clip, Marker, MarkerKind, MediaItem, Rational, Track } from '@shared/model';
-import { formatSequenceSecondsTimecode, formatSequenceTimecode, validFpsOr } from '@shared/time';
+import { formatSequenceTimecode } from '@shared/time';
 import { clipSourceOut } from '@shared/timeline';
-import { useStore, originalTimecode } from '@/state';
+import { useStore, mediaSourceTimecode, originalTimecode } from '@/state';
 import { Button } from '@/components/ui/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { NumberField } from '@/components/ui/NumberField';
@@ -118,7 +118,6 @@ export function TagsDialog({ seqId, clip, onClose }: { seqId: string; clip: Clip
 
 // ------------------------------------------------------------------ properties
 export function PropertiesPopover({ clip, track, media, fps, playhead, x, y, onClose }: { clip: Clip; track: Track; media: MediaItem | undefined; fps: Rational; playhead: number; x: number; y: number; onClose: () => void }) {
-  const mediaFps = validFpsOr(media?.probe?.video?.fps, fps);
   const atPlayhead = originalTimecode(clip, playhead, fps, media);
   const inside = playhead >= clip.start && playhead < clip.start + clip.duration;
   return (
@@ -127,7 +126,7 @@ export function PropertiesPopover({ clip, track, media, fps, playhead, x, y, onC
         <span>Track</span><span>{track.name}</span>
         <span>Timeline</span><span>{formatSequenceTimecode(clip.start, fps)} – {formatSequenceTimecode(clip.start + clip.duration, fps)}</span>
         <span>Duration</span><span>{formatSequenceTimecode(clip.duration, fps)} ({clip.duration} f)</span>
-        <span>Source</span><span>{formatSequenceSecondsTimecode(clip.sourceIn, mediaFps)} – {formatSequenceSecondsTimecode(clipSourceOut(clip, fps), mediaFps)}</span>
+        <span>Source</span><span>{mediaSourceTimecode(clip.sourceIn, media, fps)} – {mediaSourceTimecode(clipSourceOut(clip, fps), media, fps)}</span>
         {inside ? <><span>At playhead</span><span>{atPlayhead.sourceTimecode}</span></> : null}
         <span>Speed</span><span>{Math.round(clip.speed * 100)}%</span>
         <span>File</span><span title={media?.path}>{atPlayhead.fileName || '—'}</span>

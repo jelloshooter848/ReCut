@@ -9,7 +9,7 @@ import { flatOrigin, flattenSequence, flattenWarnings, isNestedClip, outerClipId
 import { activeTracks, isImageMedia, mediaDurationSec } from '../exportPlan';
 import { clipAudioStream } from '../audioChannels';
 import { sequenceDuration } from '../timeline';
-import { fpsValue, parseFps, validFpsOr } from '../time';
+import { fpsValue, parseFps, timecodeOriginAt, validFpsOr } from '../time';
 import { hasKeyframes } from '../keyframes';
 
 // ---------------------------------------------------------------------------------------------------
@@ -74,6 +74,11 @@ export interface PClip {
   srcIn: number;
   /** Source in point in seconds (what ReCut plays, after overlap trimming). */
   sourceIn: number;
+  /**
+   * The media's embedded start timecode (MediaProbe.startTimecode) as frames at srcRate and its counting mode: source
+   * times in the files are `tc.frames + srcIn`. Null without one (and for stills): source times count from 0.
+   */
+  tc: { frames: number; dropFrame: boolean } | null;
   speed: number;
   still: boolean;
   /** ReCut plays it (clip enabled and, for audio, not muted). */
@@ -134,6 +139,12 @@ export interface Prepared {
   /** Subtitle tracks that have cues (never exported). */
   subtitleTracks: number;
   mediaIds: Set<ID>;
+}
+
+/** A media file's embedded start timecode at `rate` (see PClip.tc); null when it has none. */
+export function mediaStartTc(m: MediaItem, rate: Rational): { frames: number; dropFrame: boolean } | null {
+  const tc = m.probe?.startTimecode;
+  return tc ? timecodeOriginAt(tc, rate) : null;
 }
 
 /** Frame rate of a media file's frame numbers (see PClip.srcRate). */
@@ -221,7 +232,7 @@ function prepTrack(project: Project, seq: Sequence, t: Track, pt: PTrack, issues
     mediaIds.add(m.id);
     pt.clips.push({
       id: c.id, outerId: item.outerId, name: c.name || m.name, kind: pt.kind, clip: c, media: m,
-      start, duration, end: start + duration, srcRate, srcIn, sourceIn, speed, still, renders, enabled,
+      start, duration, end: start + duration, srcRate, srcIn, sourceIn, tc: still ? null : mediaStartTc(m, srcRate), speed, still, renders, enabled,
       keyShift: start - c.start, env: flatOrigin(c)?.env ?? [], track: pt,
     });
   }

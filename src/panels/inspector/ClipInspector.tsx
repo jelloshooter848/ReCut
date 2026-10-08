@@ -12,8 +12,8 @@ import {
   DOWNMIX_DB_MAX, DOWNMIX_DB_MIN, isMultichannel, streamChannelIds,
 } from '@shared/audioChannels';
 import { clampSpeedPercent, clipEnd, clipSourceOut, defaultAudio, defaultTransform, findClip, linkedClips, sequenceDuration, SPEED_PERCENT_MAX, SPEED_PERCENT_MIN, transitionsForClip } from '@shared/timeline';
-import { formatSequenceSecondsTimecode, formatSequenceTimecode, fpsEquals, fpsLabel, validFpsOr } from '@shared/time';
-import { activeSequence, identityLabel, originalTimecode, selectedAudioTargets, selectedClips, selectedClipTracks, selectedLinkedCount, setClipsAudioStream, useStore } from '@/state';
+import { formatSequenceTimecode, fpsEquals, fpsLabel, validFpsOr } from '@shared/time';
+import { activeSequence, identityLabel, mediaSourceTimecode, originalTimecode, selectedAudioTargets, selectedClips, selectedClipTracks, selectedLinkedCount, setClipsAudioStream, useStore } from '@/state';
 import { clipChannelProxy, resolveAudioStream } from '@/playback/mediaSource';
 import { channelProxyJobId, rebuildChannelProxy } from '@/app/channelProxies';
 import { useJobsStore } from '@/app/jobsStore';
@@ -195,8 +195,8 @@ function SourceSection({ seqId: _seqId, fps, clips, media }: { seqId: ID; fps: R
   }
   const srcIn = single.sourceIn;
   const srcOut = clipSourceOut(single, fps);
-  const tcIn = formatSequenceSecondsTimecode(srcIn, mediaFps);
-  const tcOut = formatSequenceSecondsTimecode(srcOut, mediaFps);
+  const tcIn = mediaSourceTimecode(srcIn, media, fps);
+  const tcOut = mediaSourceTimecode(srcOut, media, fps);
   const tcStart = originalTimecode(single, single.start, fps, media).sourceTimecode;
   const idn = identityLabel(media);
   return (

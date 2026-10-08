@@ -10,7 +10,7 @@ import { exportTimeline } from '../../shared/interchange';
 import { fileUrl, Issues, prepare, type PClip, type Prepared } from '../../shared/interchange/common';
 import { Q } from '../../shared/interchange/rational';
 import { parseTimecode } from '../../shared/time';
-import { clip, dropFrame, media, mkProject, mkSeq, put, R23, R29, representative, tr } from '../fixtures/interchange/fixture';
+import { clip, dropFrame, media, mkProject, mkSeq, put, R23, R29, representative, sourceTimecode, tr } from '../fixtures/interchange/fixture';
 
 // ------------------------------------------------------------------------------------------------ tiny XML reader
 
@@ -77,7 +77,7 @@ const q = (t: string): Q => {
 };
 const walk = (e: XEl, f: (x: XEl) => void) => { f(e); e.kids.forEach((k) => walk(k, f)); };
 
-interface Read { lane: number; start: number; duration: number; srcIn: number; speed: number; enabled: boolean; url: string; name: string }
+interface Read { lane: number; start: number; duration: number; srcIn: number; fileStart: number; speed: number; enabled: boolean; url: string; name: string }
 
 /** Asset-clips of an FCPXML with their record frames (sequence rate) and source frames (media rate). */
 function readFcpxml(doc: XEl, p: Prepared): Read[] {
@@ -107,7 +107,7 @@ function readFcpxml(doc: XEl, p: Prepared): Read[] {
         }
         const fr = (x: Q, d: Q) => { const v = x.div(d); expect(v.d, `${k.attrs.name}: not on a frame`).toBe(1n); return Number(v.n); };
         out.push({
-          lane: kLane, start: fr(absStart, fd), duration: fr(q(k.attrs.duration), fd), srcIn: fr(start, mfd), speed,
+          lane: kLane, start: fr(absStart, fd), duration: fr(q(k.attrs.duration), fd), srcIn: fr(start, mfd), fileStart: fr(q(a.attrs.start ?? '0s'), mfd), speed,
           enabled: k.attrs.enabled !== '0', url: a.kids.find((x) => x.name === 'media-rep')!.attrs.src, name: k.attrs.name,
         });
       }
@@ -121,10 +121,12 @@ function readFcpxml(doc: XEl, p: Prepared): Read[] {
 
 const laneOf = (c: PClip) => (c.kind === 'video' ? c.track.index : -(c.track.index + 1));
 const intended = (p: Prepared) => [...p.videoTracks, ...p.audioTracks].flatMap((t) => t.clips);
+/** A clip's source in point as the files write it: frames from the file's embedded start timecode, if any. */
+const fileIn = (c: PClip) => c.srcIn + (c.tc?.frames ?? 0);
 
 function prep(project: Project, seqId: ID): Prepared { return prepare(project, seqId, new Issues()); }
 
-const CASES: [string, () => { project: Project; seqId: ID }][] = [['representative 23.976', representative], ['29.97 drop-frame', dropFrame]];
+const CASES: [string, () => { project: Project; seqId: ID }][] = [['representative 23.976', representative], ['29.97 drop-frame', dropFrame], ['camera start timecode', sourceTimecode]];
 
 describe('the test XML reader', () => {
   it('rejects what is not well-formed', () => {
@@ -143,7 +145,7 @@ describe('FCPXML read back', () => {
       expect(doc.attrs.version).toBe('1.9');
       const got = readFcpxml(doc, p).sort((a, b) => b.lane - a.lane || a.start - b.start);
       const want = intended(p).map((c) => ({
-        lane: laneOf(c), start: c.start, duration: c.duration, srcIn: c.srcIn, speed: c.speed, enabled: c.enabled, url: fileUrl(c.media.path), name: c.name,
+        lane: laneOf(c), start: c.start, duration: c.duration, srcIn: fileIn(c), fileStart: c.tc?.frames ?? 0, speed: c.speed, enabled: c.enabled, url: fileUrl(c.media.path), name: c.name,
       })).sort((a, b) => b.lane - a.lane || a.start - b.start);
       expect(got).toEqual(want);
       // Spine items tile the sequence (no gaps, no overlaps).
@@ -188,12 +190,12 @@ describe('OTIO read back', () => {
           expect(d.rate).toBe(rate);
           if (it.OTIO_SCHEMA === 'Clip.1') {
             const s = it.source_range.start_time;
-            got.push({ start: pos, duration: d.value, srcIn: s.value, srcRate: s.rate, speed: it.effects[0]?.time_scalar ?? 1, enabled: it.enabled, url: it.media_reference.target_url });
+            got.push({ start: pos, duration: d.value, srcIn: s.value, srcRate: s.rate, fileStart: it.media_reference.available_range?.start_time.value ?? null, speed: it.effects[0]?.time_scalar ?? 1, enabled: it.enabled, url: it.media_reference.target_url });
           }
           pos += d.value;
         }
         expect(got).toEqual(tracks[ti].clips.map((c) => ({
-          start: c.start, duration: c.duration, srcIn: c.srcIn, srcRate: c.srcRate.num / c.srcRate.den, speed: c.speed, enabled: c.enabled, url: fileUrl(c.media.path),
+          start: c.start, duration: c.duration, srcIn: fileIn(c), srcRate: c.srcRate.num / c.srcRate.den, fileStart: c.still ? null : c.tc?.frames ?? 0, speed: c.speed, enabled: c.enabled, url: fileUrl(c.media.path),
         })));
       });
       expect(tl.tracks.markers.map((m: any) => m.marked_range.start_time.value)).toEqual(p.markers.map((m) => m.time));
@@ -244,8 +246,10 @@ describe('EDL read back', () => {
           const ratio = c.speed * (c.srcRate.num / c.srcRate.den) * (p.fps.den / p.fps.num);
           expect(ri).toBeGreaterThanOrEqual(c.start - 30);
           expect(ro).toBeLessThanOrEqual(c.end);
-          expect(si).toBe(c.srcIn + Math.round((ri - c.start) * ratio));
-          expect(so).toBe(c.srcIn + Math.round((ro - c.start) * ratio));
+          expect(si).toBe(fileIn(c) + Math.round((ri - c.start) * ratio));
+          expect(so).toBe(fileIn(c) + Math.round((ro - c.start) * ratio));
+          // Source timecode in the file's own counting mode (a non-drop camera file stays non-drop at 29.97).
+          if (c.tc) expect(l.si.includes(';')).toBe(c.tc.dropFrame);
           if (!p.videoTracks[ti].transitions.some((t) => t.in === c || t.out === c)) { expect(ri).toBe(c.start); expect(ro).toBe(c.end); }
           const all = lines.filter((x) => x.ev === l.ev).flatMap((x) => x.comments);
           expect(all).toContain(`* SOURCE FILE: ${c.media.path}`);

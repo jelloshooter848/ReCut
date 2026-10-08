@@ -3,8 +3,9 @@
  */
 import path from 'node:path';
 import fsp from 'node:fs/promises';
-import type { AudioStreamInfo, MediaKind, MediaProbe, Rational, SubtitleStreamInfo, VideoStreamInfo } from '@shared/model';
+import type { AudioStreamInfo, MediaKind, MediaProbe, Rational, StartTimecode, SubtitleStreamInfo, VideoStreamInfo } from '@shared/model';
 import { STILL_IMAGE_CODECS, STILL_IMAGE_EXTS } from '@shared/media';
+import { isValidFps, parseStartTimecode } from '@shared/time';
 import { assertAbsoluteMediaPath, ffmpegFileArg, runFfprobeJson } from './ffmpeg';
 
 // ------------------------------------------------------------------
@@ -14,6 +15,8 @@ export interface FfprobeStream {
   index: number;
   codec_name?: string;
   codec_type?: 'video' | 'audio' | 'subtitle' | 'data' | 'attachment';
+  /** FourCC as text ("avc1"; "tmcd" for a QuickTime / MP4 timecode track, which has no codec_name). */
+  codec_tag_string?: string;
   width?: number;
   height?: number;
   coded_width?: number;
@@ -186,6 +189,30 @@ function isStillSource(container: string, formatName: string | undefined, filePa
   return single && (IMAGE_EXT.has(ext) || (!(duration > 0) && IMAGE_CODECS.has(v?.codec_name ?? '')));
 }
 
+/** A QuickTime / MP4 timecode track (ffprobe: a data stream tagged `tmcd`, no codec_name). */
+function isTmcdStream(s: FfprobeStream): boolean {
+  return s.codec_type === 'data' && (s.codec_tag_string === 'tmcd' || s.codec_name === 'tmcd');
+}
+
+/**
+ * The embedded start timecode, from the first of: `format.tags.timecode` (MXF, and MOV / MP4 where the muxer put it
+ * there), the video stream's `tags.timecode` (ffprobe copies a MOV / MP4 `tmcd` track's label onto the video stream
+ * it references), a `tmcd` data stream's `tags.timecode`. The label counts at the video rate; without a usable video
+ * rate (audio-only files with a timecode track) at the tmcd stream's rate. Null when there is none, or the label or
+ * rate is unusable (a malformed label is ignored, not guessed at).
+ */
+export function probeStartTimecode(streams: FfprobeStream[], format: FfprobeFormat, video: VideoStreamInfo | undefined): StartTimecode | null {
+  const tmcd = streams.filter(isTmcdStream);
+  const v = video ? streams.find((s) => s.index === video.index) : undefined;
+  const text = [format.tags?.timecode, v?.tags?.timecode, ...tmcd.map((s) => s.tags?.timecode)].find((t) => typeof t === 'string' && t.trim() !== '');
+  if (!text) return null;
+  const rates: Rational[] = [];
+  if (video) rates.push(video.fps, video.avgFps);
+  for (const s of tmcd) rates.push(parseRational(s.avg_frame_rate), parseRational(s.r_frame_rate));
+  const rate = rates.find((r) => isValidFps(r));
+  return rate ? parseStartTimecode(text, rate) : null;
+}
+
 // ------------------------------------------------------------------
 // Playability
 // ------------------------------------------------------------------
@@ -329,6 +356,8 @@ export function probeFromFfprobe(raw: FfprobeOutput, filePath: string, fileSize?
   };
   if (isImage) probe.playabilityReason = 'still image';
   else if (!play.ok) probe.playabilityReason = play.reason;
+  const tc = isImage ? null : probeStartTimecode(streams, format, video);
+  if (tc) probe.startTimecode = tc;
   return probe;
 }
 

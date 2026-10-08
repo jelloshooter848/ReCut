@@ -127,6 +127,7 @@ function SingleMedia({ m }: { m: MediaItem }) {
             <Row label="Codecs"><Value dim>{[p.video?.codec, ...p.audio.map((a) => a.codec)].filter(Boolean).join(' · ') || '—'}</Value></Row>
             {p.audio.length ? <Row label="Audio" top><Value dim className="nowrap" title={p.audio.map((a) => `#${a.index} ${a.codec} ${a.layout} ${a.sampleRate} Hz ${a.language ?? ''}`).join('\n')}>{p.audio.map((a, i) => `${i + 1}: ${a.layout || `${a.channels}ch`}${a.language ? ` ${a.language}` : ''}`).join(' · ')}</Value></Row> : null}
             {p.subtitles.length ? <Row label="Embedded subs"><Value dim>{p.subtitles.map((s) => `${s.codec}${s.language ? ` ${s.language}` : ''}`).join(' · ')}</Value></Row> : null}
+            {p.startTimecode ? <Row label="Start timecode" title={`Embedded timecode of the first frame (${p.startTimecode.dropFrame ? 'drop-frame' : 'non-drop'}, ${fpsLabel(p.startTimecode.rate)} fps); source timecode counts from it`}><Value copy={p.startTimecode.text} testId="media-start-tc">{p.startTimecode.text}</Value></Row> : null}
             <Row label="Start time"><Value dim>{p.startTime.toFixed(3)}s</Value></Row>
             <Row label="Size"><Value dim>{formatBytes(m.fileSize ?? p.size)}{p.bitrate ? ` · ${Math.round(p.bitrate / 1000)} kb/s` : ''}</Value></Row>
             <Row label="Playback">{(() => { const pl = previewPlaybackLabel(m); return <Value dim={pl.direct} className={pl.direct ? '' : 'text-accent-2'}>{pl.text}</Value>; })()}</Row>

@@ -3,7 +3,7 @@
  * store-facing actions (load in Source, insert at playhead, drag payload) shared by rows, cards and menus.
  */
 import type { ID, MediaItem, Rational, SceneRecord } from '@shared/model';
-import { formatSequenceSecondsTimecode, formatClock, secondsToFrames, validFpsOr } from '@shared/time';
+import { formatClock, formatSourceTimecode, secondsToFrames, validFpsOr, type TimecodeOrigin } from '@shared/time';
 import { uid } from '@shared/ids';
 import { clipEnd, findClip } from '@shared/timeline';
 import { useStore, identityLabel } from '@/state';
@@ -51,8 +51,9 @@ export function sourceLabel(media: MediaItem | undefined): string {
   return identityLabel(media);
 }
 
-export function rangeLabel(scene: SceneRecord, fps: Rational): string {
-  return `${formatSequenceSecondsTimecode(scene.in, fps)} → ${formatSequenceSecondsTimecode(scene.out, fps)}`;
+/** A scene's source range as timecode at `fps`, counting from the media's embedded start timecode (`origin`) if any. */
+export function rangeLabel(scene: SceneRecord, fps: Rational, origin?: TimecodeOrigin | null): string {
+  return `${formatSourceTimecode(scene.in, fps, origin)} → ${formatSourceTimecode(scene.out, fps, origin)}`;
 }
 
 export function durationLabel(scene: SceneRecord): string {

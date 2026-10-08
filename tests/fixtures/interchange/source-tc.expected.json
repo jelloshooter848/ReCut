@@ -1,0 +1,174 @@
+{
+  "fixture": "source-tc",
+  "name": "Camera Cut",
+  "fps": [
+    30000,
+    1001
+  ],
+  "durationFrames": 390,
+  "files": {
+    "fcpxml": [
+      "source-tc.fcpxml"
+    ],
+    "otio": [
+      "source-tc.otio"
+    ],
+    "edl": [
+      "source-tc_V1.edl"
+    ]
+  },
+  "tracks": [
+    {
+      "kind": "video",
+      "index": 0,
+      "lane": 0,
+      "name": "V1",
+      "storyline": false,
+      "dissolves": 1,
+      "clips": [
+        {
+          "name": "Camera A",
+          "start": 0,
+          "duration": 120,
+          "srcIn": 60,
+          "srcRate": [
+            30000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/Camera/A001_C002.mov",
+          "url": "file:///media/Camera/A001_C002.mov",
+          "enabled": true,
+          "still": false,
+          "tcStart": 107892
+        },
+        {
+          "name": "Camera B",
+          "start": 120,
+          "duration": 150,
+          "srcIn": 300,
+          "srcRate": [
+            30000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/Camera/B001 NDF.mp4",
+          "url": "file:///media/Camera/B001%20NDF.mp4",
+          "enabled": true,
+          "still": false,
+          "tcStart": 108000
+        },
+        {
+          "name": "k3",
+          "start": 270,
+          "duration": 60,
+          "srcIn": 30,
+          "srcRate": [
+            30000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/Plain/screen.mkv",
+          "url": "file:///media/Plain/screen.mkv",
+          "enabled": true,
+          "still": false
+        },
+        {
+          "name": "Camera B fast",
+          "start": 330,
+          "duration": 60,
+          "srcIn": 899,
+          "srcRate": [
+            30000,
+            1001
+          ],
+          "speed": 2,
+          "path": "/media/Camera/B001 NDF.mp4",
+          "url": "file:///media/Camera/B001%20NDF.mp4",
+          "enabled": true,
+          "still": false,
+          "tcStart": 108000
+        }
+      ]
+    },
+    {
+      "kind": "video",
+      "index": 1,
+      "lane": 1,
+      "name": "V2",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": []
+    },
+    {
+      "kind": "video",
+      "index": 2,
+      "lane": 2,
+      "name": "V3",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": []
+    },
+    {
+      "kind": "audio",
+      "index": 0,
+      "lane": -1,
+      "name": "A1",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": [
+        {
+          "name": "ka1",
+          "start": 0,
+          "duration": 120,
+          "srcIn": 60,
+          "srcRate": [
+            30000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/Camera/A001_C002.mov",
+          "url": "file:///media/Camera/A001_C002.mov",
+          "enabled": true,
+          "still": false,
+          "tcStart": 107892
+        },
+        {
+          "name": "ka2",
+          "start": 120,
+          "duration": 150,
+          "srcIn": 300,
+          "srcRate": [
+            30000,
+            1001
+          ],
+          "speed": 1,
+          "path": "/media/Camera/B001 NDF.mp4",
+          "url": "file:///media/Camera/B001%20NDF.mp4",
+          "enabled": true,
+          "still": false,
+          "tcStart": 108000
+        }
+      ]
+    },
+    {
+      "kind": "audio",
+      "index": 1,
+      "lane": -2,
+      "name": "A2",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": []
+    },
+    {
+      "kind": "audio",
+      "index": 2,
+      "lane": -3,
+      "name": "A3",
+      "storyline": false,
+      "dissolves": 0,
+      "clips": []
+    }
+  ],
+  "markers": 1
+}

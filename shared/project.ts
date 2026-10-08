@@ -7,7 +7,7 @@ import type {
 } from './model';
 import { uid } from './ids';
 import { makeTrack, defaultTransform, defaultAudio, reconcileTransitions, SPEED_PERCENT_MIN, SPEED_PERCENT_MAX } from './timeline';
-import { isValidFps, parseFps } from './time';
+import { isValidFps, parseFps, parseStartTimecode } from './time';
 import { saneSar } from './media';
 import { CHANNEL_PROXY_KEY, normalizeChannelSelection } from './audioChannels';
 import { AUDIO_KEY_PROPS, normalizeKeyframeSet, shiftClipKeyframes, TRANSFORM_KEY_PROPS, type KeyProp } from './keyframes';
@@ -911,8 +911,16 @@ function repairProbe(pr: Obj): MediaProbe {
   pr.audio = objList(pr.audio, 'probed audio stream');
   pr.subtitles = objList(pr.subtitles, 'probed subtitle stream');
   optional(pr, 'bitrate', isFiniteNum); optional(pr, 'playabilityReason', isStr);
+  optional(pr, 'startTimecode', isStartTimecode);
   if ('video' in pr) { if (isObj(pr.video)) pr.video = repairVideoStream(pr.video); else { delete pr.video; note(FIELD_RESET); } }
   return pr as unknown as MediaProbe;
+}
+
+/** A stored start timecode is kept only when its label, rate, mode and frame count agree (parseStartTimecode). */
+function isStartTimecode(v: unknown): boolean {
+  if (!isObj(v) || !isStr(v.text) || typeof v.dropFrame !== 'boolean' || !isValidFps(v.rate)) return false;
+  const t = parseStartTimecode(v.text, v.rate);
+  return !!t && t.text === v.text && t.dropFrame === v.dropFrame && t.frames === v.frames;
 }
 
 /**
