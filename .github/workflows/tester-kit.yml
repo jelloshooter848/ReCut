@@ -1,0 +1,61 @@
+name: Tester kit
+# (Discovery pass: lists the Blender open-movie download folders and the FFmpeg encoders. Replaced by the real build.)
+on:
+  push:
+    branches: [claude/tester-kit]
+    paths: [.github/workflows/tester-kit.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: List download folders
+        run: |
+          set -u
+          for d in https://download.blender.org/demo/movies/ https://download.blender.org/demo/movies/ToS/ https://download.blender.org/demo/movies/ToS/subtitles/ \
+                   https://download.blender.org/demo/movies/BBB/ https://download.blender.org/demo/movies/ED/ https://download.blender.org/peach/ \
+                   https://download.blender.org/peach/bigbuckbunny_movies/ https://download.blender.org/ED/ https://download.blender.org/durian/ \
+                   https://download.blender.org/durian/movies/ https://download.blender.org/durian/subs/ https://download.blender.org/mango/ \
+                   https://download.blender.org/orange/ https://download.blender.org/ED/subtitles/ https://download.blender.org/demo/movies/Sintel/; do
+            echo "=== $d"
+            curl -fsSL "$d" | grep -o 'href="[^"]*"[^<]*</a> *[^<]*' | sed 's/href="//; s/"[^>]*>/ | /; s/<\/a>//' | head -n 120 || echo "(no listing)"
+          done
+      - name: Checksums and licence pages
+        run: |
+          set -u
+          for u in https://download.blender.org/durian/movies/Sintel.2010.720p.mkv.md5 https://download.blender.org/durian/movies/Sintel.2010.1080p.mkv.md5; do
+            echo "=== $u"; curl -fsSL "$u" || true; echo
+          done
+          for u in https://mango.blender.org/about/ https://durian.blender.org/about/ https://peach.blender.org/about/ https://orange.blender.org/ \
+                   https://mango.blender.org/sharing/ https://durian.blender.org/sharing/ https://peach.blender.org/download/ https://orange.blender.org/download/; do
+            echo "=== $u"
+            curl -fsSL "$u" | sed 's/<[^>]*>/ /g' | grep -i -o '.\{0,160\}\(creative commons\|licen[cs]e\|CC[- ]BY\|attribution\|copyright\).\{0,160\}' | head -n 12 || echo "(nothing)"
+          done
+      - name: Heads of candidate files
+        run: |
+          set -u
+          for u in https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov \
+                   https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_720p_h264.mov \
+                   https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_720p_stereo.avi \
+                   https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_1080p_h264.mov \
+                   https://download.blender.org/ED/ED_1024.avi https://download.blender.org/ED/ED_HD.avi \
+                   https://download.blender.org/ED/elephantsdream-720-h264-st-aac.mov https://download.blender.org/ED/elephants_dream_720p.mov; do
+            printf '%s ' "$u"; curl -sIL -o /dev/null -w '%{http_code} %{size_download} %{content_type}\n' "$u"; curl -sIL "$u" | grep -i '^content-length' | tail -n1
+          done
+      - name: FFmpeg encoders (system and bundled)
+        run: |
+          set -u
+          ./scripts/linux/get-ffmpeg.sh --dest "$RUNNER_TEMP/ff" > /dev/null
+          for f in ffmpeg "$RUNNER_TEMP/ff/ffmpeg"; do
+            echo "=== $f"; command -v "$f" || true
+            "$f" -hide_banner -version | head -n 2 || true
+            "$f" -hide_banner -encoders 2>/dev/null | grep -E ' (libx264|libx265|prores_ks|prores|dnxhd|dvdsub|ac3|flac|aac|libmp3lame|png|mjpeg|pcm_s24le|srt|subrip)( |$)' || true
+            "$f" -hide_banner -filters 2>/dev/null | grep -E ' (drawtext|subtitles|ass|zscale) ' || true
+          done
+          fc-list | head -n 20
