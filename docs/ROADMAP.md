@@ -19,21 +19,23 @@ in every release PR (docs/RELEASING.md).
 | 2 | Fix the remaining preview gaps | Done | 0.4.0 |
 | 3 | Pre-export warnings | Done | 0.5.0 |
 | 4 | Bitmap subtitle OCR (PGS / VobSub / DVB) | Done | 0.6.0 |
-| 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS dmg built as a CI test build, waiting for signing | 0.6.1 (Linux), macOS once signed |
+| 19 | Official Linux and macOS releases | In progress: Linux done (0.6.1); macOS dmgs (Apple Silicon and Intel) built and tested in CI, waiting for signing | 0.6.1 (Linux), 0.8.0 (macOS) |
 | 16 | Collect / Consolidate Project (with the moved-media cache fix) | Done | 0.7.0 |
-| 6 | Intermediate and audio-only export | Done | next release |
-| 7 | MKV packaging export | Done | next release |
-| 9 | Surround: centre-channel and channel-selection utility (the mixer comes after 1.0) | Quick utility done | next release |
-| 11 | Keyframes, first version (position, scale, opacity, volume; linear and ease) | Done | next release |
-| 8 | Nested sequences and compound clips | Done | next release |
-| 5, 10, 12–15, 17, 18 | Everything else | Not started | — |
+| 5 | Local speech-to-text (Whisper) | Implemented, on main | 0.8.0 (pending) |
+| 6 | Intermediate and audio-only export | Implemented, on main | 0.8.0 (pending) |
+| 7 | MKV packaging export | Implemented, on main | 0.8.0 (pending) |
+| 9 | Surround: centre-channel and channel-selection utility (the mixer comes after 1.0) | Quick utility implemented, on main | 0.8.0 (pending) |
+| 11 | Keyframes, first version (position, scale, opacity, volume; linear and ease) | Implemented, on main | 0.8.0 (pending) |
+| 8 | Nested sequences and compound clips | Implemented, on main | 0.8.0 (pending) |
+| 10, 12–15, 17, 18 | Everything else | Not started; planned after 1.0 ([After 1.0](#after-10)) | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
 the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
 
-**Scheduled next after §4:** official Linux and macOS releases (§19) follow Bitmap subtitle OCR (§4, release 0.6.0):
-**Linux in 0.6.1, macOS in 0.7.0** (project owner's decision, 7 October 2026). §19 keeps its number, out of list
-order, so existing references stay valid.
+**Where things stand (8 October 2026):** every feature planned for 1.0 is implemented and on `main`. They ship
+together in **0.8.0**, with the official macOS downloads, which is waiting only for macOS signing (§19). After 0.8.0
+come the 1.0 release candidates ([Road to 1.0](#road-to-10)). §19 keeps its number, out of list order, so existing
+references stay valid.
 
 ## Road to 1.0
 
@@ -50,24 +52,21 @@ at franchise scale), on Windows, Linux and macOS. It is not feature parity with 
 | 0.6.0 | Bitmap subtitle OCR | §4 (done) |
 | 0.6.1 | Official Linux release (AppImage) | §19, Linux part (done) |
 | 0.7.0 | Collect Project, the moved-media cache fix, the project compatibility promise and the update notice (all of 0.10.0, shipped early) | §16 (done), 0.10.0 (done) |
-| next | Official macOS release (dmg, signed and notarised) | §19, macOS part (built; waits for signing) |
-| 0.8.0 | Delivery 1: intermediates and audio | §6 (ProRes, DNxHR, WAV / audio-only, one file per audio track) and the centre-channel utility from §9 |
-| 0.9.0 | Delivery 2: MKV packaging | §7 (MKV, more than one audio track, soft subtitle tracks, chapters) |
+| 0.8.0 | Everything else for 1.0, in one release (owner's decision, 7 October 2026: "don't hold anything"): the official macOS release (Apple Silicon and Intel dmgs, signed and notarised), Delivery 1 (intermediates and audio), Delivery 2 (MKV packaging), local transcription (Whisper), nested sequences and compound clips, keyframes (first version) | §19 macOS part, §6 and the centre-channel utility from §9, §7, §5, §8, §11 (all implemented; the release waits for macOS signing) |
 | 0.10.0 | Portability and trust (done early, in 0.7.0) | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/closed/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
-| 0.11.0 | Local transcription (Whisper) | §5 |
-| 0.12.0 | Nested sequences and compound clips | §8 |
-| 0.13.0 | Keyframes, first version | §11 (position, scale, opacity, volume) |
 | 1.0.0-rc.N | Feature freeze, release candidates | see below |
 | 1.0.0 | Stable release | |
 
 Version numbers after 0.6.1 are the plan, not a promise: a bug-fix release in between takes the next PATCH number,
-and a milestone that ships early or late moves its number with it.
+and a milestone that ships early or late moves its number with it. The milestones first planned as 0.8.0, 0.9.0,
+0.11.0, 0.12.0 and 0.13.0, and the macOS release, were combined into 0.8.0 once all of them were built.
 
 **Required for 1.0:** cross-platform releases, both delivery milestones, portability and trust, nested sequences.
 **Strongly preferred:** local transcription. **First to move to 1.1 if 1.0 needs cutting:** keyframes; then local
 transcription, if it threatens stability or platform support. No optional milestone holds 1.0 back indefinitely.
+All of them are built; what remains before 1.0 is the macOS signing, the 0.8.0 release and the release candidates.
 
-**Portability and trust (0.10.0) includes:**
+**Portability and trust (planned as 0.10.0, shipped in 0.7.0) includes:**
 - **Project compatibility promise:** every 1.x release opens projects saved by earlier stable releases, or refuses
   them with a clear message, never silently damaging them. Projects saved by each stable release (0.3.0 onwards) are
   kept as test fixtures and opened by CI on every build; `normalizeProject()` gets real migrations when
@@ -79,7 +78,7 @@ transcription, if it threatens stability or platform support. No optional milest
 
 Feature freeze: only fixes for release-blocking defects. Each candidate is a real release on the Releases page,
 marked as a pre-release. Work for the candidates:
-- macOS signing and notarisation (with the Developer ID of the owner's brother, set up in 0.7.0).
+- macOS signing and notarisation (with the Developer ID of the owner's brother; set up for 0.8.0).
 - Package checks on Windows, Linux and macOS; the full unit and end-to-end suites on each.
 - Opening every saved-project fixture; save, autosave and recovery tests; Collect round trips.
 - A real-media test pass by the owner: real Blu-ray and DVD rips (OCR on real disc subtitles, 5.1 sources,
@@ -239,8 +238,8 @@ PGS stream reads in about 28 s on 4 cores (99.96 %). Teletext and ARIB captions 
 Many sources have none, or only bitmap subtitles (see §4).
 **Why deferred:** a good model is large (hundreds of MB to GB), GPU support varies by platform, and ReCut must stay
 offline and cloud-free.
-**Scheduled:** release 0.11.0, before nested sequences (§8) (project owner's decision, 7 October 2026; see
-[Road to 1.0](#road-to-10)). Strongly preferred for 1.0, second to move to 1.1 if 1.0 needs cutting.
+**Scheduled:** before nested sequences (§8) (project owner's decision, 7 October 2026; see
+[Road to 1.0](#road-to-10)); planned as 0.11.0, ships in 0.8.0 with the rest of the 1.0 features. Strongly preferred for 1.0, second to move to 1.1 if 1.0 needs cutting.
 **Plan:** the same model as OCR (§4): **engine built in, models downloaded on request.**
 - **Engine:** a CPU build of `whisper.cpp` (a few MB) ships inside the app for each platform (Metal on Apple Silicon
   where it helps), so it is signed with the app on macOS and nothing executable is ever downloaded. No GPU-vendor
@@ -257,7 +256,7 @@ offline and cloud-free.
   source, model (with its hash) and settings; reading the same media again is instant. Transcription never uses the
   network.
 - The disabled **Local Whisper** entry under Transcribe… is the placeholder.
-**Status: implemented, pending release 0.11.0** (not done until 0.11.0 is published). The engine is whisper.cpp
+**Status: implemented, pending release 0.8.0** (not done until 0.8.0 is published). The engine is whisper.cpp
 1.9.5 (`whisper-cli`, CPU, about 10 MB with five CPU-variant kernels picked at run time; Metal on Apple Silicon),
 compiled in CI from the pinned, SHA-256-checked source (`scripts/whisper-source.mjs`, `scripts/{linux,windows,mac}/
 get-whisper.*`) and bundled like FFmpeg. Seven models (tiny, base, base.en, small, small.en, medium, large-v3-turbo;
@@ -282,7 +281,7 @@ frame-exact and safe first.
 **Plan:** ProRes (`prores_ks`) and DNxHR (`dnxhd`) in MOV, PCM audio in MOV, audio-only WAV (PCM) and other audio
 containers, and per-track or per-stem export (one WAV per audio track, or per stem once §12 exists). The render graph
 already builds video and audio separately; this adds containers, codecs and a "no video" mode.
-**Status: done (7 October 2026; ships in the next release).** Export › Format offers MP4, MOV (ProRes Proxy / LT / 422 / HQ /
+**Status: implemented, pending release 0.8.0** (7 October 2026). Export › Format offers MP4, MOV (ProRes Proxy / LT / 422 / HQ /
 4444 with `prores_ks`, DNxHR LB / SQ / HQ / HQX / 444 with `dnxhd`, PCM 16- or 24-bit audio), WAV and FLAC (audio
 only, the mix or one file per audio track, sample-aligned and the length of the range); the file extension follows
 the format, and settings saved before load as MP4. Formats and encoder arguments live in `shared/exportFormat.ts`.
@@ -308,7 +307,7 @@ commentary), each with its own language and title. Subtitle tracks are muxed as 
 in or written as a sidecar. Use FFmpeg's Matroska muxer, not `mkvmerge`, so there is no new dependency. It must work
 with a user-installed FFmpeg: FFmpeg is bundled only in the Windows builds (see
 [LIMITATIONS](LIMITATIONS.md#platform-and-packaging)).
-**Status: done (7 October 2026, release 0.9.0).** Export › Format › **MKV** (FFmpeg's Matroska muxer) writes H.264 /
+**Status: implemented, pending release 0.8.0** (7 October 2026). Export › Format › **MKV** (FFmpeg's Matroska muxer) writes H.264 /
 H.265 with any number of audio tracks, each a mix definition (which sequence audio tracks, stereo / 5.1 / mono, AAC /
 AC-3 / FLAC / PCM, language, title; the first is the default; presets "Main mix only", "5.1 + stereo downmix", "Main
 + commentary"), all sample-exact and the same length; the sequence's subtitle tracks as soft SubRip streams with
@@ -466,8 +465,8 @@ server.
   matches, open Compare).
 - Transcript hits flagged "on timeline" in every scope, not only Sequence scope.
 - Code signing (Windows). The Windows installer and portable exe are already built, installed and smoke-tested in CI
-  with FFmpeg bundled, but unsigned. The Linux AppImage is built and tested in CI with FFmpeg bundled (§19); a tested
-  dmg build with bundled FFmpeg, and macOS signing and notarisation, are planned in §19.
+  with FFmpeg bundled, but unsigned. Planned for the 1.0 release day: apply to a free open-source signing programme
+  (SignPath Foundation; see [After 1.0](#after-10)). macOS signing and notarisation are part of §19.
 - Snapshots stored as diffs, to keep project files small.
 - Titles / text generator.
 - **More than one audio track and soft subtitles in MP4** (project owner's request, 7 October 2026; after 1.0). MKV
@@ -558,9 +557,14 @@ Recorded so they are not re-proposed without new information.
   reuses the OCR downloader, jobs and cache and does not depend on nesting.
 - **Windows code signing after 1.0.** The owner will not pay for a certificate for a free project (7 October 2026).
   Windows builds stay unsigned through 1.0; after 1.0, apply to a free open-source signing programme or accept a
-  sponsor. macOS builds are signed from 0.7.0.
+  sponsor. macOS releases are signed and notarised from 0.8.0 (§19). Confirmed by the owner on 8 October 2026:
+  apply on the 1.0 release day, not earlier.
 - **Interchange stays after nesting**, including export-only CMX3600 EDL (proposed for the delivery milestone in the
   1.0 review): it would have to be reworked for nested sequences.
+- **One release for the rest of 1.0 (7–8 October 2026).** Once everything planned for 1.0 was built, the project
+  owner combined the remaining milestones (0.8.0 to 0.13.0) and the macOS release into one release, 0.8.0, instead
+  of releasing them one by one ("don't hold anything"). macOS ships as two downloads, Apple Silicon and Intel (owner's
+  decision, 8 October 2026; Intel support may be retired after 1.0).
 - **After 1.0 (7 October 2026).** The project owner adopted the [After 1.0](#after-10) plan: polish first (1.1),
   then subtitle authoring (1.2) ahead of the mixer, because OCR and Whisper output needs fixing tools; the mixer
   before stems, as decided before; interchange once nesting has shipped; one WebGL compositor for colour, titles and
