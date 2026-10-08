@@ -79,7 +79,11 @@ const walk = (e: XEl, f: (x: XEl) => void) => { f(e); e.kids.forEach((k) => walk
 
 interface Read { lane: number; start: number; duration: number; srcIn: number; speed: number; enabled: boolean; url: string; name: string }
 
-/** Asset-clips of an FCPXML with their record frames (sequence rate) and source frames (media rate). */
+/**
+ * Asset-clips of an FCPXML with their record frames (sequence rate) and source frames (media rate). An asset-clip of
+ * a file with picture and sound and no srcEnable is linked video and audio: it reads as both, the audio with lane NaN
+ * (FCPXML does not say which audio track it was on; see withAudioLanes).
+ */
 function readFcpxml(doc: XEl, p: Prepared): Read[] {
   const assets = new Map<string, XEl>(), formats = new Map<string, XEl>();
   walk(doc, (e) => { if (e.name === 'asset') assets.set(e.attrs.id, e); if (e.name === 'format') formats.set(e.attrs.id, e); });
@@ -98,18 +102,22 @@ function readFcpxml(doc: XEl, p: Prepared): Read[] {
         const f = a.attrs.format ? formats.get(a.attrs.format) : undefined;
         const mfd = f?.attrs.frameDuration ? q(f.attrs.frameDuration) : fd;
         const tm = k.kids.find((x) => x.name === 'timeMap');
-        let speed = 1;
+        let speed = 1, media = start;
         if (tm) {
+          // Local time -> media time, anchored at the asset's start (0s -> 0s), as Final Cut Pro writes it.
           const [t0, t1] = tm.kids;
-          speed = q(t1.attrs.value).sub(q(t0.attrs.value)).div(q(t1.attrs.time).sub(q(t0.attrs.time))).toNumber();
-          expect(q(t0.attrs.time).cmp(start)).toBe(0);
-          expect(q(t0.attrs.value).cmp(start)).toBe(0);
+          expect([t0.attrs.time, t0.attrs.value]).toEqual(['0s', '0s']);
+          const sp = q(t1.attrs.value).sub(q(t0.attrs.value)).div(q(t1.attrs.time).sub(q(t0.attrs.time)));
+          speed = sp.toNumber();
+          media = q(t0.attrs.value).add(start.sub(q(t0.attrs.time)).mul(sp));
         }
         const fr = (x: Q, d: Q) => { const v = x.div(d); expect(v.d, `${k.attrs.name}: not on a frame`).toBe(1n); return Number(v.n); };
-        out.push({
-          lane: kLane, start: fr(absStart, fd), duration: fr(q(k.attrs.duration), fd), srcIn: fr(start, mfd), speed,
+        const r: Read = {
+          lane: kLane, start: fr(absStart, fd), duration: fr(q(k.attrs.duration), fd), srcIn: fr(media, mfd), speed,
           enabled: k.attrs.enabled !== '0', url: a.kids.find((x) => x.name === 'media-rep')!.attrs.src, name: k.attrs.name,
-        });
+        };
+        out.push(r);
+        if (!k.attrs.srcEnable && a.attrs.hasVideo === '1' && a.attrs.hasAudio === '1' && a.attrs.duration !== '0s') out.push({ ...r, lane: NaN });
       }
       visit(k, (local) => absStart.add(local.sub(start)), kLane);
     }
@@ -120,6 +128,17 @@ function readFcpxml(doc: XEl, p: Prepared): Read[] {
 }
 
 const laneOf = (c: PClip) => (c.kind === 'video' ? c.track.index : -(c.track.index + 1));
+
+/** Gives the audio half of each linked asset-clip (lane NaN) the lane of the intended audio clip it matches. */
+function withAudioLanes<T extends { lane: number }>(got: T[], want: T[]): T[] {
+  const free = want.filter((w) => w.lane < 0);
+  return got.map((g) => {
+    if (!Number.isNaN(g.lane)) return g;
+    const i = free.findIndex((w) => JSON.stringify({ ...w, lane: 0, name: '' }) === JSON.stringify({ ...g, lane: 0, name: '' }));
+    expect(i, `linked audio of ${JSON.stringify(g)} matches an intended audio clip`).toBeGreaterThanOrEqual(0);
+    return { ...g, lane: free.splice(i, 1)[0].lane };
+  });
+}
 const intended = (p: Prepared) => [...p.videoTracks, ...p.audioTracks].flatMap((t) => t.clips);
 
 function prep(project: Project, seqId: ID): Prepared { return prepare(project, seqId, new Issues()); }
@@ -141,11 +160,13 @@ describe('FCPXML read back', () => {
       const doc = parseXml(exportTimeline(project, seqId, 'fcpxml').files[0].contents);
       expect(doc.name).toBe('fcpxml');
       expect(doc.attrs.version).toBe('1.9');
-      const got = readFcpxml(doc, p).sort((a, b) => b.lane - a.lane || a.start - b.start);
       const want = intended(p).map((c) => ({
         lane: laneOf(c), start: c.start, duration: c.duration, srcIn: c.srcIn, speed: c.speed, enabled: c.enabled, url: fileUrl(c.media.path), name: c.name,
       })).sort((a, b) => b.lane - a.lane || a.start - b.start);
-      expect(got).toEqual(want);
+      // Names: a linked asset-clip carries its video clip's name.
+      const named = (r: Read[]) => r.map((x) => ({ ...x, name: x.lane < 0 ? '' : x.name }));
+      const got = withAudioLanes(readFcpxml(doc, p), want).sort((a, b) => b.lane - a.lane || a.start - b.start);
+      expect(named(got)).toEqual(named(want));
       // Spine items tile the sequence (no gaps, no overlaps).
       const spine = doc.kids[1].kids[0].kids[0].kids[0].kids[0];
       let pos = new Q(0n);
@@ -160,12 +181,63 @@ describe('FCPXML read back', () => {
     const trs: XEl[] = [];
     walk(doc, (e) => { if (e.name === 'transition') trs.push(e); });
     const fd = Q.frameDuration(R23);
-    // V1: dissolve c2 -> c3 at frame 168 (24 frames). A1: crossfade a2 -> a3 at 168 (12), in its storyline's local time.
-    const v = trs.find((t) => t.kids[0].name === 'filter-video')!;
+    // V1: dissolve c2 -> c3 at frame 168 (24 frames). A1's crossfade a2 -> a3 (12 frames) is on the same cut between
+    // the linked clips: it rides on the video dissolve (one transition, both filters, the video length).
+    expect(trs).toHaveLength(1);
+    const v = trs[0];
+    expect(v.kids.map((k) => k.name)).toEqual(['filter-video', 'filter-audio']);
     expect(q(v.attrs.offset).cmp(Q.frames(156, R23))).toBe(0);
     expect(q(v.attrs.duration).cmp(fd.mul(Q.int(24)))).toBe(0);
-    const a = trs.find((t) => t.kids[0].name === 'filter-audio')!;
-    expect(q(a.attrs.duration).cmp(fd.mul(Q.int(12)))).toBe(0);
+  });
+
+  it('linked video and audio are one asset-clip unless an audio crossfade has no video dissolve under it', () => {
+    const m = media('m', '/m.mp4');
+    const s = mkSeq('s', 'S', R23);
+    // v1|v2 cut with an audio crossfade (a1 -> a2): kept apart. v3|v4 dissolve, audio cut: merged.
+    put(s.videoTracks[0], clip('v1', 'm', 0, 24, 10, { linkId: 'L1' }), clip('v2', 'm', 24, 24, 100, { linkId: 'L2' }),
+      clip('v3', 'm', 48, 24, 200, { linkId: 'L3' }), clip('v4', 'm', 72, 24, 300, { linkId: 'L4' }), clip('v5', 'm', 96, 24, 400));
+    s.videoTracks[0].transitions.push(tr('tv', 'crossDissolve', 8, 'v3', 'v4'));
+    put(s.audioTracks[0], clip('a1', 'm', 0, 24, 10, { linkId: 'L1' }), clip('a2', 'm', 24, 24, 100, { linkId: 'L2' }),
+      clip('a3', 'm', 48, 24, 200, { linkId: 'L3' }), clip('a4', 'm', 72, 24, 300, { linkId: 'L4' }));
+    s.audioTracks[0].transitions.push(tr('ta', 'audioCrossfade', 8, 'a1', 'a2'));
+    // A muted linked audio clip (a6) is not merged with its enabled video (v6 on V2); unlinked music stays audio-only.
+    put(s.videoTracks[1], clip('v6', 'm', 0, 12, 500, { linkId: 'L6' }));
+    const a6 = clip('a6', 'm', 0, 12, 500, { linkId: 'L6' });
+    a6.audio = { ...a6.audio, muted: true };
+    put(s.audioTracks[1], a6);
+    const project = mkProject('P', [m], [s]);
+    const r = exportTimeline(project, 's', 'fcpxml');
+    const doc = parseXml(r.files[0].contents);
+    const clips: XEl[] = [];
+    walk(doc, (e) => { if (e.name === 'asset-clip') clips.push(e); });
+    const by = (n: string) => clips.filter((c) => c.attrs.name === n);
+    for (const n of ['v3', 'v4']) expect(by(n).map((c) => c.attrs.srcEnable)).toEqual([undefined]);
+    for (const n of ['a3', 'a4']) expect(by(n)).toEqual([]);
+    for (const n of ['v1', 'v2', 'v5', 'v6']) expect(by(n).map((c) => c.attrs.srcEnable), n).toEqual(['video']);
+    for (const n of ['a1', 'a2', 'a6']) expect(by(n).map((c) => c.attrs.srcEnable), n).toEqual(['audio']);
+    // The unused half of a one-sided clip is muted / transparent for editors that ignore srcEnable (Resolve 21).
+    expect(by('v1')[0].kids.filter((k) => k.name.startsWith('adjust')).map((k) => [k.name, k.attrs.amount])).toEqual([['adjust-volume', '-96dB']]);
+    expect(by('a1')[0].kids.filter((k) => k.name.startsWith('adjust')).map((k) => [k.name, k.attrs.amount])).toEqual([['adjust-blend', '0']]);
+    const story = by('a1')[0].parent!;
+    expect(story.name).toBe('spine');
+    expect(story.kids.filter((k) => k.name === 'transition').map((t) => t.kids.map((k) => k.name))).toEqual([['filter-audio']]);
+    expect(r.issues.find((i) => i.message.includes('separate clips'))).toMatchObject({ count: 6 }); // v1 v2 a1 a2 v6 a6
+    // Read back: every clip in place, linked pairs as one.
+    const p = prep(project, 's');
+    const want = intended(p).map((c) => ({ lane: laneOf(c), start: c.start, duration: c.duration, srcIn: c.srcIn, speed: c.speed, enabled: c.enabled, url: fileUrl(c.media.path), name: '' }));
+    const got = withAudioLanes(readFcpxml(doc, p), want).map((g) => ({ ...g, name: '' }));
+    const key = (a: { lane: number; start: number }, b: { lane: number; start: number }) => b.lane - a.lane || a.start - b.start;
+    expect(got.sort(key)).toEqual(want.sort(key));
+  });
+
+  it('a retimed clip: timeMap from the asset start, start is the in point over the speed', () => {
+    const m = media('m', '/m.mp4');
+    const s = mkSeq('s', 'S', R23);
+    put(s.videoTracks[0], clip('v', 'm', 0, 72, 240 * 1001 / 24000, { speed: 2 }));
+    const x = exportTimeline(mkProject('P', [m], [s]), 's', 'fcpxml').files[0].contents;
+    // In point: source frame 240 (10.01 s), local 5.005 s; end 5.005 + 3.003 = 8.008 s -> media 16.016 s.
+    expect(x).toContain('start="1001/200s" duration="3003/1000s" srcEnable="video">');
+    expect(x).toMatch(/<timept time="0s" value="0s" interp="linear"\/>\s+<timept time="1001\/125s" value="2002\/125s" interp="linear"\/>/);
   });
 });
 
@@ -197,6 +269,8 @@ describe('OTIO read back', () => {
         })));
       });
       expect(tl.tracks.markers.map((m: any) => m.marked_range.start_time.value)).toEqual(p.markers.map((m) => m.time));
+      // Notes: OTIO's `comment`, and where DaVinci Resolve's own OTIO keeps them.
+      expect(tl.tracks.markers.map((m: any) => [m.comment, m.metadata.Resolve_OTIO?.Note ?? ''])).toEqual(p.markers.map((m) => [m.note ?? '', m.note ?? '']));
     });
   }
 });

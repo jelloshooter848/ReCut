@@ -190,16 +190,25 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
     the media, so the source points of camera files with their own start timecode come in offset; channel
     selections (centre channel, mono channel, custom downmix) and the choice of a file's second or later audio stream
     are not carried; offline media is written with its saved path.
-  - **FCPXML:** linked video and audio arrive as separate clips (the link is not kept). Dip to Black and fades
-    to / from black become opacity keyframes; eased keyframes use the other editor's ease curve; level keyframes are
-    written in dB. Marker colours are lost.
+  - **FCPXML:** linked video and audio with the same in and out points arrive as one clip; other linked clips arrive
+    as separate clips (the link is not kept). An audio crossfade between linked clips takes the length of the video
+    dissolve on the same cut, and a crossfade with no video dissolve under it keeps its audio track apart. Dip to
+    Black and fades to / from black become opacity keyframes; eased keyframes use the other editor's ease curve; level
+    keyframes are written in dB. Marker colours are lost, and markers are clip markers. In DaVinci Resolve 21 (which
+    ignores FCPXML's video-only / audio-only mark) a video-only clip of a file with sound also brings its sound,
+    written muted, and an audio-only clip its picture, written transparent; Resolve chooses the audio track numbers.
   - **OpenTimelineIO:** only cuts, speed, dissolves, markers and enabled states are standard. Transforms, crop,
     opacity, levels, fades and keyframes are stored as ReCut metadata that other editors ignore. Dip to Black
-    becomes a cut, and chapter markers become plain markers.
+    becomes a cut, and chapter markers become plain markers. OTIO has no drop-frame flag: DaVinci Resolve 21 imports
+    a 29.97 drop-frame timeline as non-drop-frame (every frame in place, the timecode display differs).
   - **EDL:** every event uses the reel name `AX`, with `* FROM CLIP NAME` and `* SOURCE FILE` comment lines that
     Resolve relinks by. At most four audio channels, and only audio linked to the video event with the same in, out
     and speed: unlinked audio such as music, audio on A5 and up, J- and L-cuts, audio fades and crossfades are left
-    out. Transforms, opacity, keyframes, levels and disabled clips are left out; speed is an `M2` line.
+    out. Transforms, opacity, keyframes, levels and disabled clips are left out; speed is an `M2` line. In DaVinci
+    Resolve 21: the timeline starts at its first event's timecode; a Dip to Black or a fade to black between two
+    clips comes in as dissolves between the clips (no black); an `M2` speed on a clip that starts with a dissolve
+    is applied to the outgoing clip; `* LOC:` markers are not imported; media files without embedded timecode may
+    not link automatically (relink them, or import the media before the EDL).
 - **Frame-rate conversion** (an export frame rate other than the sequence's) repeats or drops whole frames. There is
   no frame blending or motion interpolation, so 23.976 → 30 shows a regular repeat cadence and 23.976 ↔ 24 repeats
   or drops one frame about every 42 s. Duration and audio sync are not affected.

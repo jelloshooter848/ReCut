@@ -135,7 +135,10 @@ describe('issues of the representative sequence', () => {
     expect(issue(fcp, 'transition')).toEqual([
       expect.objectContaining({ severity: 'info', count: 1, message: '1 fade from or to black is exported as an opacity fade.' }),
       expect.objectContaining({ severity: 'info', count: 1, message: '1 Dip to Black transition is exported as opacity fades on the two clips.' }),
+      expect.objectContaining({ severity: 'info', count: 1, message: '1 audio crossfade of linked clips takes the length of the video dissolve on the same cut.' }),
     ]);
+    // Linked pairs are one asset-clip; the disabled clip and the offline one use only the picture of a file with sound.
+    expect(issue(fcp, 'other').map((i) => [i.severity, i.count, [...i.clipIds!].sort()])).toEqual([['info', 2, ['c5', 'gone']]]);
     expect(total(fcp, 'markers', 'info')).toBe(3);
     expect(fcp.issues.filter((i) => i.severity === 'warning').map((i) => i.kind)).toEqual(['offline']);
   });

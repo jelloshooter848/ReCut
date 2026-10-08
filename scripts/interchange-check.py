@@ -12,7 +12,9 @@ enabled state. This script reads the goldens back and compares:
   clip (dissolves borrow handles), its source frames at its record frames, and the SOURCE FILE comment;
 - `.fcpxml` with the fcpx_xml adapter (lanes and clips per lane: the adapter truncates frame rates to integers, so
   it cannot check NTSC times) and with an exact reader written here on ElementTree + Fraction (record and source
-  frames of every clip, FCPXML 1.9 time semantics as documented in shared/interchange/fcpxml.ts).
+  frames of every clip, FCPXML 1.9 time semantics as documented in shared/interchange/fcpxml.ts). An asset-clip of a
+  file with picture and sound and no srcEnable is a linked video + audio pair: it reads as both, the audio on the
+  lane of the intended audio clip it matches (FCPXML does not say which audio track it was on).
 
 A format whose adapter is not installed is reported and skipped. Exit status 1 on any mismatch.
 
@@ -154,15 +156,22 @@ def read_fcpxml_exact(path):
                 a = assets[k.get('ref')]
                 f = formats.get(a.get('format'))
                 mfd = q(f.get('frameDuration')) if f is not None and f.get('frameDuration') else fd
-                speed = 1
+                speed, media = 1, start
                 tm = k.find('timeMap')
                 if tm is not None:
+                    # Local time -> media time, anchored at the asset's start (0s -> 0s).
                     t0, t1 = list(tm)
-                    speed = float((q(t1.get('value')) - q(t0.get('value'))) / (q(t1.get('time')) - q(t0.get('time'))))
-                out.append({
-                    'lane': k_lane, 'start': abs_start / fd, 'duration': q(k.get('duration')) / fd, 'srcIn': start / mfd,
+                    check((t0.get('time'), t0.get('value')) == ('0s', '0s'), f"fcpxml: timeMap of {k.get('name')} starts at 0s -> 0s")
+                    sp = (q(t1.get('value')) - q(t0.get('value'))) / (q(t1.get('time')) - q(t0.get('time')))
+                    speed = float(sp)
+                    media = q(t0.get('value')) + (start - q(t0.get('time'))) * sp
+                r = {
+                    'lane': k_lane, 'start': abs_start / fd, 'duration': q(k.get('duration')) / fd, 'srcIn': media / mfd,
                     'speed': speed, 'enabled': k.get('enabled') != '0', 'url': a.find('media-rep').get('src'),
-                })
+                }
+                out.append(r)
+                if k.get('srcEnable') is None and a.get('hasVideo') == '1' and a.get('hasAudio') == '1' and a.get('duration') != '0s':
+                    out.append(dict(r, lane=None))
             visit(k, (lambda s, st: lambda local: s + (local - st))(abs_start, start), k_lane)
 
     visit(seq.find('spine'), lambda local: local, 0)
@@ -179,10 +188,22 @@ def check_fcpxml(exp, path):
         for k in ('start', 'duration', 'srcIn'):
             check(g[k].denominator == 1, f'fcpxml: {k} {g[k]} is not on a frame')
             g[k] = int(g[k])
+    # Linked asset-clips: their audio half takes the lane of the intended audio clip it matches.
+    free = [w for w in want if w['lane'] < 0]
+    merged = 0
+    for g in got:
+        if g['lane'] is not None:
+            continue
+        match = [w for w in free if dict(w, lane=0) == dict(g, lane=0)]
+        if check(match, f'fcpxml: linked audio {g} matches an intended audio clip'):
+            free.remove(match[0])
+            g['lane'] = match[0]['lane']
+            g['merged'] = True
+            merged += 1
     key = lambda c: (-c['lane'], c['start'])
     got.sort(key=key)
     want.sort(key=key)
-    check(got == want, f'fcpxml (exact reader): clips\n    got  {got}\n    want {want}')
+    check([dict(g, merged=None) for g in got] == [dict(w, merged=None) for w in want], f'fcpxml (exact reader): clips\n    got  {got}\n    want {want}')
     for c in got:
         u = unquote(c['url'][len('file://'):])
         check(c['url'].startswith('file://') and ' ' not in c['url'], f'fcpxml: URL {c["url"]}')
@@ -200,10 +221,11 @@ def check_fcpxml(exp, path):
     lanes = {}
     for tr in tl.tracks:
         lanes[int(tr.name)] = len([c for c in tr if isinstance(c, otio.schema.Clip)])
+    # The adapter reads a linked asset-clip once, on its video lane.
     want_lanes = {}
-    for t in exp['tracks']:
-        if t['clips']:
-            want_lanes[t['lane']] = len(t['clips'])
+    for g in got:
+        if not g.get('merged'):
+            want_lanes[g['lane']] = want_lanes.get(g['lane'], 0) + 1
     check(lanes == want_lanes, f'fcpxml (fcpx_xml adapter): clips per lane {lanes}, want {want_lanes}')
 
 

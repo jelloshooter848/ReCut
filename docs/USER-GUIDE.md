@@ -572,6 +572,12 @@ In Resolve:
 3. If clips come in offline (the media moved, or the project is opened on another computer), select them in the Media
    Pool and use **Relink Selected Clips…** (or **Relink Media**) on the folder that holds them. Collect Project first
    makes this easy: everything is in one folder.
+4. What to expect in Resolve 21: from **FCPXML**, linked audio sits under its picture on audio tracks Resolve numbers
+   itself, and a video-only clip brings its sound muted (an audio-only one its picture, transparent): delete those
+   extra items if they are in the way. From **OpenTimelineIO**, a 29.97 drop-frame sequence comes in as
+   non-drop-frame timecode (every frame in place). From an **EDL**, the timeline starts at its first clip's
+   timecode, a Dip to Black becomes a dissolve between the clips, a speed change on a clip that starts with a
+   dissolve lands on the clip before it, and markers are not imported: check those spots, or prefer FCPXML.
 
 What transfers with **FCPXML** (the most complete): the cuts on every track, source in and out points, speed, levels
 and audio fades, position, scale, rotation, crop, opacity, keyframes, dissolves, dips (as opacity keyframes) and

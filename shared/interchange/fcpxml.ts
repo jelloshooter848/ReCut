@@ -6,16 +6,26 @@
  * - The primary `<spine>` is V1: its clips with `<gap>`s between them, filled to the sequence's end, so every
  *   other item has a parent at its start time.
  * - Every other track is attached to the spine element under its start: video track Vn on `lane="n-1"`, audio
- *   track An on `lane="-n"`. A track without dissolves is written as connected clips; a track with dissolves as one
- *   connected storyline (`<spine lane=...>`), the only way FCPXML puts transitions on a track other than V1.
+ *   track An on `lane="-n"` (less the audio clips that ride in their video clip, below). A track without dissolves is
+ *   written as connected clips; a track with dissolves as one connected storyline (`<spine lane=...>`), the only way
+ *   FCPXML puts transitions on a track other than V1.
  * - Times are exact rationals (`N/Ds`). An item's `offset` is in its parent's local time: for a gap
- *   `start + (t - offset)` with start 0; for a clip `start` is the source in point (media time), and local time runs
- *   with the timeline from there. A storyline's children are in the same local time as the storyline's own offset
- *   (the anchor clip's), as the primary spine's children are in the sequence's time.
- * - Speed: `<timeMap>` with two linear points, (start -> start) and (start + duration -> start + duration * speed),
- *   so `start` stays the media time of the in point.
- * - Video clips are written with `srcEnable="video"` and audio clips with `srcEnable="audio"`: ReCut's linked A/V
- *   pairs are separate clips on separate tracks, and keeping them separate keeps every track exactly where it is.
+ *   `start + (t - offset)` with start 0; for a clip `start` is the in point's local time (its media time; for a
+ *   retimed clip see Speed), and local time runs with the timeline from there. A storyline's children are in the same
+ *   local time as the storyline's own offset (the anchor clip's), as the primary spine's children are in the
+ *   sequence's time.
+ * - Speed: `<timeMap>` with two linear points from the asset's start, (0s -> 0s) and (end -> end * speed): a retimed
+ *   clip's local time runs at the timeline's pace and equals media time at the asset's start, so its `start` is the
+ *   in point's media time divided by the speed (as Final Cut Pro writes it; DaVinci Resolve 21 reads the in point
+ *   that way and ignores a map anchored at the in point).
+ * - Linked video and audio (one video clip and an audio clip with the same media, record range, source in, speed
+ *   and enabled state) are one asset-clip carrying both, where the video clip is, with the audio's level and fades:
+ *   Final Cut Pro's own form, and the only one DaVinci Resolve 21 maps to one video and one audio item (it ignores
+ *   `srcEnable`). An audio crossfade on such a pair rides on the video dissolve at the same cut (one transition with
+ *   both filters, the video length); an audio track whose crossfades have no video dissolve under them stays apart.
+ * - Other clips of files with both picture and sound are written with `srcEnable="video"` / `srcEnable="audio"`
+ *   (Final Cut Pro honours it) and the unused half neutralised for editors that ignore it: video-only clips get
+ *   `adjust-volume -96dB`, audio-only clips `adjust-blend 0` (transparent).
  *
  * Transform units (derivation): ReCut places a layer by fitting it into the frame, then scale, rotation (degrees,
  * clockwise on screen) and an offset (x, y) in sequence pixels with y down; crop is a fraction of the source,
@@ -101,6 +111,61 @@ class Resources {
 
 type Item = { kind: 'gap'; start: number; dur: number } | { kind: 'clip'; pc: PClip } | { kind: 'tr'; tr: PTransition };
 
+/** Media time of a clip's in point (the asset starts at 0s; stills at 0). */
+const mediaIn = (pc: PClip): Q => (pc.still ? new Q(0n) : Q.frames(pc.srcIn, pc.srcRate));
+/** The speed as written (6 decimals) for a retimed clip, else null. */
+const speedOf = (pc: PClip): Q | null => (pc.speed !== 1 && !pc.still ? Q.dec(pc.speed, 6) : null);
+/** Local time of a clip's in point (its `start`): the media time, over the speed for a retimed clip (see timeMap). */
+export function localIn(pc: PClip): Q {
+  const sp = speedOf(pc);
+  return sp ? mediaIn(pc).div(sp) : mediaIn(pc);
+}
+
+/** Audio clip `a` can ride on video clip `v` as one asset-clip (same file, range, in point, speed, enabled state). */
+function samePair(v: PClip, a: PClip): boolean {
+  return v.kind === 'video' && a.kind === 'audio' && !v.still && v.media.id === a.media.id && v.start === a.start && v.duration === a.duration
+    && v.srcIn === a.srcIn && Math.abs(v.speed - a.speed) < 1e-9 && v.enabled === a.enabled;
+}
+
+/**
+ * Linked pairs written as one asset-clip: video clip -> its audio clip. A clip of a pair whose audio has a crossfade
+ * with no video dissolve between the two video clips (same track, adjacent) is left apart, with its neighbour, until
+ * nothing changes.
+ */
+export function mergedPairs(p: Prepared): Map<PClip, PClip> {
+  const byLink = new Map<ID, { v: PClip[]; a: PClip[] }>();
+  const add = (pc: PClip) => {
+    const l = pc.clip.linkId;
+    if (!l) return;
+    const g = byLink.get(l) ?? { v: [], a: [] };
+    (pc.kind === 'video' ? g.v : g.a).push(pc);
+    byLink.set(l, g);
+  };
+  for (const t of [...p.videoTracks, ...p.audioTracks]) t.clips.forEach(add);
+  const pairOf = new Map<PClip, PClip>();
+  const videoOf = new Map<PClip, PClip>();
+  for (const g of byLink.values()) {
+    if (g.v.length !== 1) continue;
+    const v = g.v[0];
+    const hasAudio = (v.media.probe?.audio?.length ?? 0) > 0;
+    const a = hasAudio ? g.a.find((x) => samePair(v, x) && !clipProps(x).stream) : undefined;
+    if (a) { pairOf.set(v, a); videoOf.set(a, v); }
+  }
+  const videoDissolve = new Set<string>();
+  for (const t of p.videoTracks) for (const tr of t.transitions) if (tr.kind === 'dissolve' && tr.out && tr.in) videoDissolve.add(`${tr.out.id}|${tr.in.id}`);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const t of p.audioTracks) for (const tr of t.transitions) {
+      if (tr.kind !== 'dissolve' || !tr.out || !tr.in) continue;
+      const vo = videoOf.get(tr.out), vi = videoOf.get(tr.in);
+      if (!vo && !vi) continue;
+      if (vo && vi && vo.track === vi.track && videoDissolve.has(`${vo.id}|${vi.id}`)) continue;
+      for (const v of [vo, vi]) if (v) { videoOf.delete(pairOf.get(v)!); pairOf.delete(v); changed = true; }
+    }
+  }
+  return pairOf;
+}
+
 /** A track as spine items from `from` (gaps between clips, dissolves after their outgoing clip), filled to `to`. */
 function trackItems(t: PTrack | undefined, from: number, to?: number): Item[] {
   const out: Item[] = [];
@@ -176,6 +241,8 @@ export function writeFcpxml(p: Prepared, issues: Issues): string {
   const R = new Resources(p);
   const total = p.durationFrames;
   const W = p.width, H = p.height;
+  const pairOf = mergedPairs(p);
+  const merged = new Set(pairOf.values());
 
   // Opacity ramps of video clips: nested-edge ramps, fades from / to black and Dip to Black halves.
   const envOf = new Map<PClip, Envelope[]>();
@@ -203,96 +270,140 @@ export function writeFcpxml(p: Prepared, issues: Issues): string {
     fadeOf.set(pc, f);
   }
 
-  const clipNode = (pc: PClip, lane: number | undefined, offset: Q): XNode => {
+  /** A clip as an asset-clip; `audio` is the linked audio clip it also carries (see mergedPairs). */
+  const clipNode = (pc: PClip, lane: number | undefined, offset: Q, audio?: PClip): XNode => {
     const a = R.asset(pc);
-    const S = pc.still ? new Q(0n) : Q.frames(pc.srcIn, pc.srcRate);
+    const S = localIn(pc);
     const D = T(pc.duration);
     const video = pc.kind === 'video';
-    const props = clipProps(pc);
     const item = { id: pc.id, outerId: pc.outerId };
+    const both = !!audio;
     const node = el('asset-clip', [
       ['ref', a.id], ['lane', lane === undefined ? undefined : String(lane)], ['offset', offset.toTime()], ['name', pc.name],
       ['start', S.toTime()], ['duration', D.toTime()],
-      ['srcEnable', video ? (a.hasAudio ? 'video' : undefined) : (a.hasVideo ? 'audio' : undefined)],
+      ['srcEnable', both ? undefined : video ? (a.hasAudio ? 'video' : undefined) : (a.hasVideo ? 'audio' : undefined)],
       ['enabled', pc.enabled ? undefined : '0'],
     ]);
-    const relLo = pc.keyShift, relHi = pc.keyShift + pc.duration;
-    const keyTime = (rel: number) => S.add(Q.dec(rel - pc.keyShift).mul(fd)).toTime();
-    const keyframes = (pts: Point[], value: (pt: Point) => string) => el('keyframeAnimation', [], pts.map((pt) =>
-      el('keyframe', [['time', keyTime(pt.rel)], ['value', value(pt)], ['interp', pt.ease ? 'ease' : 'linear'], ['curve', 'linear']])));
-
-    if (pc.speed !== 1 && !pc.still) {
-      const sp = Q.dec(pc.speed, 6);
+    const sp = speedOf(pc);
+    if (sp) {
       if (Math.abs(sp.toNumber() - pc.speed) > 1e-9) issues.add('speed-approx', 'speed', 'warning', (n) => `The speed of ${count(n)} is rounded to 6 decimals.`, item);
+      const end = S.add(D);
       node.kids.push(el('timeMap', [], [
-        el('timept', [['time', S.toTime()], ['value', S.toTime()], ['interp', 'linear']]),
-        el('timept', [['time', S.add(D).toTime()], ['value', S.add(D.mul(sp)).toTime()], ['interp', 'linear']]),
+        el('timept', [['time', '0s'], ['value', '0s'], ['interp', 'linear']]),
+        el('timept', [['time', end.toTime()], ['value', end.mul(sp).toTime()], ['interp', 'linear']]),
       ]));
     }
-    const c = pc.clip;
     if (video) {
-      const t = c.transform, k = t.keyframes ?? {};
-      const crop = t.crop ?? { left: 0, top: 0, right: 0, bottom: 0 };
-      if (props.crop) {
-        const size = videoDisplaySize(pc.media.probe?.video, 'element');
-        const fit = size ? Math.min(W / size.width, H / size.height) : 1;
-        const fw = size ? size.width * fit : W, fh = size ? size.height * fit : H;
-        const u = (frac: number, len: number) => num(Math.min(1, Math.max(0, frac)) * len / H * 100);
-        node.kids.push(el('adjust-crop', [['mode', 'trim']], [el('trim-rect', [['left', u(crop.left, fw)], ['top', u(crop.top, fh)], ['right', u(crop.right, fw)], ['bottom', u(crop.bottom, fh)]])]));
-      }
-      if (props.move || props.rotation) {
-        const pos = (x: number, y: number) => `${num((x / H) * 100)} ${num((-y / H) * 100)}`;
-        const at0 = (keys: Keyframe[] | undefined, v: number) => (keys && keys.length ? evaluateKeyframes(keys, relLo) : v);
-        const params: XNode[] = [];
-        const ps = sample([{ keys: k.x, value: t.x || 0 }, { keys: k.y, value: t.y || 0 }], [], c.start, relLo, relHi, false);
-        if (ps) params.push(el('param', [['name', 'position']], [keyframes(ps.points, (pt) => pos(pt.values[0], pt.values[1]))]));
-        const ss = sample([{ keys: k.scale, value: t.scale ?? 1 }], [], c.start, relLo, relHi, false);
-        if (ss) params.push(el('param', [['name', 'scale']], [keyframes(ss.points, (pt) => `${num(pt.values[0])} ${num(pt.values[0])}`)]));
-        if (ps?.ease || ss?.ease) issues.add('ease', 'keyframes', 'info', (n) => `Eased keyframes on ${count(n)} use the other editor's ease curve, which differs slightly.`, item);
-        const s0 = at0(k.scale, t.scale ?? 1);
-        node.kids.push(el('adjust-transform', [
-          ['position', pos(at0(k.x, t.x || 0), at0(k.y, t.y || 0))], ['scale', `${num(s0)} ${num(s0)}`],
-          ['rotation', props.rotation ? num(-(t.rotation || 0)) : undefined],
-        ], params));
-      }
-      const env = envOf.get(pc) ?? [];
-      if (props.opacity || env.length) {
-        const os = sample([{ keys: k.opacity, value: t.opacity ?? 1 }], env, c.start, relLo, relHi, true);
-        const o0 = os ? os.points[0].values[0] : fixed(k.opacity, t.opacity ?? 1);
-        if (os?.ease) issues.add('ease', 'keyframes', 'info', (n) => `Eased keyframes on ${count(n)} use the other editor's ease curve, which differs slightly.`, item);
-        else if (os?.approx) issues.add('opacity-approx', 'opacity', 'info', (n) => `Opacity on ${count(n)} combines keyframes and fades; it is approximated with keyframes.`, item);
-        node.kids.push(el('adjust-blend', [['amount', num(o0)]], os ? [el('param', [['name', 'amount']], [keyframes(os.points, (pt) => num(pt.values[0]))])] : []));
+      videoAdjust(pc, node, S);
+      if (audio) audioAdjust(audio, node, S);
+      else if (a.hasAudio) {
+        node.kids.push(el('adjust-volume', [['amount', '-96dB']]));
+        issues.add('half-off', 'other', 'info', (n) => `${count(n)} using only the picture or the sound of a file ${isAre(n)} written with the other half muted or transparent.`, item);
       }
     } else {
-      const a0 = c.audio;
-      const trackVol = pc.track.volume;
-      const db = (lin: number) => Math.max(-96, (Number.isFinite(a0.gain) ? a0.gain : 0) + 20 * Math.log10(Math.max(1e-6, lin)));
-      const dbs = (lin: number) => `${num(db(lin), 3)}dB`;
-      const vs = sample([{ keys: a0.keyframes?.volume, value: a0.volume ?? 1 }], pc.env, c.start, relLo, relHi, true);
-      const f = fadeOf.get(pc);
-      const fadeIn = Math.min(pc.duration, Math.max(a0.fadeIn || 0, f?.fadeIn ?? 0));
-      const fadeOut = Math.min(pc.duration, Math.max(a0.fadeOut || 0, f?.fadeOut ?? 0));
-      if (f && ((f.fadeIn && a0.fadeIn > 0) || (f.fadeOut && a0.fadeOut > 0))) issues.add('fade-merge', 'level', 'info', (n) => `${count(n)} with both a fade and a fade transition on one edge use the longer one.`, item);
-      if (vs) issues.add('level-approx', 'level', 'info', (n) => `Level keyframes and nested fades on ${count(n)} are written in dB and may differ slightly between keyframes.`, item);
-      if (props.level || fadeIn || fadeOut || vs) {
-        const kids: XNode[] = [];
-        if (fadeIn) kids.push(el('fadeIn', [['type', 'linear'], ['duration', T(fadeIn).toTime()]]));
-        if (fadeOut) kids.push(el('fadeOut', [['type', 'linear'], ['duration', T(fadeOut).toTime()]]));
-        if (vs) kids.push(keyframes(vs.points, (pt) => dbs(pt.values[0] * trackVol)));
-        const amount = vs ? vs.points[0].values[0] : fixed(a0.keyframes?.volume, a0.volume ?? 1);
-        node.kids.push(el('adjust-volume', [['amount', dbs(amount * trackVol)]], kids.length ? [el('param', [['name', 'amount']], kids)] : []));
+      if (a.hasVideo) {
+        node.kids.push(el('adjust-blend', [['amount', '0']]));
+        issues.add('half-off', 'other', 'info', (n) => `${count(n)} using only the picture or the sound of a file ${isAre(n)} written with the other half muted or transparent.`, item);
       }
-      if (props.channels) issues.add('channels', 'audio-channels', 'warning', (n) => `Channel selection (one channel or a downmix) on ${count(n)} is not exported; the stream's normal mix plays.`, item);
-      if (props.stream) issues.add('stream', 'audio-stream', 'warning', (n) => `${count(n)} play${n === 1 ? 's' : ''} an audio stream other than the file's first; check the stream after import.`, item);
+      audioAdjust(pc, node, S);
     }
-    if (c.linkId) issues.add('linked', 'other', 'info', (n) => `Linked video and audio are exported as separate clips (${count(n)}).`, item);
+    if (!both && pc.clip.linkId) issues.add('linked', 'other', 'info', (n) => `Linked video and audio are exported as separate clips (${count(n)}).`, item);
     return node;
   };
 
+  /** Keyframe helpers of clip `pc` whose local in point is `S`. */
+  const keyHelpers = (pc: PClip, S: Q) => {
+    const keyTime = (rel: number) => S.add(Q.dec(rel - pc.keyShift).mul(fd)).toTime();
+    return {
+      relLo: pc.keyShift, relHi: pc.keyShift + pc.duration,
+      keyframes: (pts: Point[], value: (pt: Point) => string) => el('keyframeAnimation', [], pts.map((pt) =>
+        el('keyframe', [['time', keyTime(pt.rel)], ['value', value(pt)], ['interp', pt.ease ? 'ease' : 'linear'], ['curve', 'linear']]))),
+    };
+  };
+
+  const videoAdjust = (pc: PClip, node: XNode, S: Q): void => {
+    const props = clipProps(pc);
+    const item = { id: pc.id, outerId: pc.outerId };
+    const { relLo, relHi, keyframes } = keyHelpers(pc, S);
+    const c = pc.clip;
+    const t = c.transform, k = t.keyframes ?? {};
+    const crop = t.crop ?? { left: 0, top: 0, right: 0, bottom: 0 };
+    if (props.crop) {
+      const size = videoDisplaySize(pc.media.probe?.video, 'element');
+      const fit = size ? Math.min(W / size.width, H / size.height) : 1;
+      const fw = size ? size.width * fit : W, fh = size ? size.height * fit : H;
+      const u = (frac: number, len: number) => num(Math.min(1, Math.max(0, frac)) * len / H * 100);
+      node.kids.push(el('adjust-crop', [['mode', 'trim']], [el('trim-rect', [['left', u(crop.left, fw)], ['top', u(crop.top, fh)], ['right', u(crop.right, fw)], ['bottom', u(crop.bottom, fh)]])]));
+    }
+    if (props.move || props.rotation) {
+      const pos = (x: number, y: number) => `${num((x / H) * 100)} ${num((-y / H) * 100)}`;
+      const at0 = (keys: Keyframe[] | undefined, v: number) => (keys && keys.length ? evaluateKeyframes(keys, relLo) : v);
+      const params: XNode[] = [];
+      const ps = sample([{ keys: k.x, value: t.x || 0 }, { keys: k.y, value: t.y || 0 }], [], c.start, relLo, relHi, false);
+      if (ps) params.push(el('param', [['name', 'position']], [keyframes(ps.points, (pt) => pos(pt.values[0], pt.values[1]))]));
+      const ss = sample([{ keys: k.scale, value: t.scale ?? 1 }], [], c.start, relLo, relHi, false);
+      if (ss) params.push(el('param', [['name', 'scale']], [keyframes(ss.points, (pt) => `${num(pt.values[0])} ${num(pt.values[0])}`)]));
+      if (ps?.ease || ss?.ease) issues.add('ease', 'keyframes', 'info', (n) => `Eased keyframes on ${count(n)} use the other editor's ease curve, which differs slightly.`, item);
+      const s0 = at0(k.scale, t.scale ?? 1);
+      node.kids.push(el('adjust-transform', [
+        ['position', pos(at0(k.x, t.x || 0), at0(k.y, t.y || 0))], ['scale', `${num(s0)} ${num(s0)}`],
+        ['rotation', props.rotation ? num(-(t.rotation || 0)) : undefined],
+      ], params));
+    }
+    const env = envOf.get(pc) ?? [];
+    if (props.opacity || env.length) {
+      const os = sample([{ keys: k.opacity, value: t.opacity ?? 1 }], env, c.start, relLo, relHi, true);
+      const o0 = os ? os.points[0].values[0] : fixed(k.opacity, t.opacity ?? 1);
+      if (os?.ease) issues.add('ease', 'keyframes', 'info', (n) => `Eased keyframes on ${count(n)} use the other editor's ease curve, which differs slightly.`, item);
+      else if (os?.approx) issues.add('opacity-approx', 'opacity', 'info', (n) => `Opacity on ${count(n)} combines keyframes and fades; it is approximated with keyframes.`, item);
+      node.kids.push(el('adjust-blend', [['amount', num(o0)]], os ? [el('param', [['name', 'amount']], [keyframes(os.points, (pt) => num(pt.values[0]))])] : []));
+    }
+  };
+
+  const audioAdjust = (pc: PClip, node: XNode, S: Q): void => {
+    const props = clipProps(pc);
+    const item = { id: pc.id, outerId: pc.outerId };
+    const { relLo, relHi, keyframes } = keyHelpers(pc, S);
+    const c = pc.clip;
+    const a0 = c.audio;
+    const trackVol = pc.track.volume;
+    const db = (lin: number) => Math.max(-96, (Number.isFinite(a0.gain) ? a0.gain : 0) + 20 * Math.log10(Math.max(1e-6, lin)));
+    const dbs = (lin: number) => `${num(db(lin), 3)}dB`;
+    const vs = sample([{ keys: a0.keyframes?.volume, value: a0.volume ?? 1 }], pc.env, c.start, relLo, relHi, true);
+    const f = fadeOf.get(pc);
+    const fadeIn = Math.min(pc.duration, Math.max(a0.fadeIn || 0, f?.fadeIn ?? 0));
+    const fadeOut = Math.min(pc.duration, Math.max(a0.fadeOut || 0, f?.fadeOut ?? 0));
+    if (f && ((f.fadeIn && a0.fadeIn > 0) || (f.fadeOut && a0.fadeOut > 0))) issues.add('fade-merge', 'level', 'info', (n) => `${count(n)} with both a fade and a fade transition on one edge use the longer one.`, item);
+    if (vs) issues.add('level-approx', 'level', 'info', (n) => `Level keyframes and nested fades on ${count(n)} are written in dB and may differ slightly between keyframes.`, item);
+    if (props.level || fadeIn || fadeOut || vs) {
+      const kids: XNode[] = [];
+      if (fadeIn) kids.push(el('fadeIn', [['type', 'linear'], ['duration', T(fadeIn).toTime()]]));
+      if (fadeOut) kids.push(el('fadeOut', [['type', 'linear'], ['duration', T(fadeOut).toTime()]]));
+      if (vs) kids.push(keyframes(vs.points, (pt) => dbs(pt.values[0] * trackVol)));
+      const amount = vs ? vs.points[0].values[0] : fixed(a0.keyframes?.volume, a0.volume ?? 1);
+      node.kids.push(el('adjust-volume', [['amount', dbs(amount * trackVol)]], kids.length ? [el('param', [['name', 'amount']], kids)] : []));
+    }
+    if (props.channels) issues.add('channels', 'audio-channels', 'warning', (n) => `Channel selection (one channel or a downmix) on ${count(n)} is not exported; the stream's normal mix plays.`, item);
+    if (props.stream) issues.add('stream', 'audio-stream', 'warning', (n) => `${count(n)} play${n === 1 ? 's' : ''} an audio stream other than the file's first; check the stream after import.`, item);
+  };
+
+  // Audio crossfades of merged pairs: on the video dissolve at the same cut (mergedPairs guarantees there is one).
+  const withAudio = new Set<ID>();
+  {
+    const videoOf = new Map<PClip, PClip>([...pairOf].map(([v, a]) => [a, v]));
+    const vDiss = new Map<string, PTransition>();
+    for (const t of p.videoTracks) for (const tr of t.transitions) if (tr.kind === 'dissolve' && tr.out && tr.in) vDiss.set(`${tr.out.id}|${tr.in.id}`, tr);
+    for (const t of p.audioTracks) for (const tr of t.transitions) {
+      const vo = tr.out && videoOf.get(tr.out), vi = tr.in && videoOf.get(tr.in);
+      const v = tr.kind === 'dissolve' && vo && vi ? vDiss.get(`${vo.id}|${vi.id}`) : undefined;
+      if (!v) continue;
+      withAudio.add(v.id);
+      if (v.frames !== tr.frames) issues.add('xfade-len', 'transition', 'info', (n) => `${count(n, 'audio crossfade')} of linked clips ${n === 1 ? 'takes' : 'take'} the length of the video dissolve on the same cut.`, { id: tr.id, outerId: vo!.outerId });
+    }
+  }
   const trNode = (tr: PTransition, kind: 'video' | 'audio', offset: Q): XNode => el('transition', [['name', 'Cross Dissolve'], ['offset', offset.toTime()], ['duration', T(tr.frames).toTime()]], [
-    kind === 'video'
-      ? el('filter-video', [['ref', R.effect('Cross Dissolve', CROSS_DISSOLVE_UID)], ['name', 'Cross Dissolve']])
-      : el('filter-audio', [['ref', R.effect('Audio Crossfade', AUDIO_CROSSFADE_UID)], ['name', 'Audio Crossfade']]),
+    ...(kind === 'video' ? [el('filter-video', [['ref', R.effect('Cross Dissolve', CROSS_DISSOLVE_UID)], ['name', 'Cross Dissolve']])] : []),
+    ...(kind === 'audio' || withAudio.has(tr.id) ? [el('filter-audio', [['ref', R.effect('Audio Crossfade', AUDIO_CROSSFADE_UID)], ['name', 'Audio Crossfade']])] : []),
   ]);
 
   const itemNodes = (items: Item[], kind: 'video' | 'audio', off: (t: number) => Q, onEl?: (e: SpineEl) => void): XNode[] => items.map((it) => {
@@ -302,8 +413,8 @@ export function writeFcpxml(p: Prepared, issues: Issues): string {
       return node;
     }
     if (it.kind === 'clip') {
-      const node = clipNode(it.pc, undefined, off(it.pc.start));
-      onEl?.({ offset: it.pc.start, dur: it.pc.duration, start: it.pc.still ? new Q(0n) : Q.frames(it.pc.srcIn, it.pc.srcRate), node });
+      const node = clipNode(it.pc, undefined, off(it.pc.start), pairOf.get(it.pc));
+      onEl?.({ offset: it.pc.start, dur: it.pc.duration, start: localIn(it.pc), node });
       return node;
     }
     return trNode(it.tr, kind, off(it.tr.at - it.tr.half));
@@ -324,7 +435,12 @@ export function writeFcpxml(p: Prepared, issues: Issues): string {
   };
 
   // Every other track: connected clips, or one connected storyline when it has dissolves.
-  const attach = (t: PTrack, lane: number) => {
+  const attach = (all: PTrack, lane: number) => {
+    // Audio clips merged into their video clip are written there (see mergedPairs).
+    const t: PTrack = all.kind === 'video' ? all : {
+      ...all, clips: all.clips.filter((c) => !merged.has(c)),
+      transitions: all.transitions.filter((x) => !(x.out && merged.has(x.out)) && !(x.in && merged.has(x.in))),
+    };
     if (!t.clips.length) return;
     if (t.transitions.some((x) => x.kind === 'dissolve')) {
       const first = t.clips[0];
@@ -336,7 +452,7 @@ export function writeFcpxml(p: Prepared, issues: Issues): string {
     }
     for (const pc of t.clips) {
       const parent = parentAt(pc.start)!;
-      parent.node.anchors.push(clipNode(pc, lane, local(parent, pc.start)));
+      parent.node.anchors.push(clipNode(pc, lane, local(parent, pc.start), pairOf.get(pc)));
     }
   };
   p.videoTracks.slice(1).forEach((t) => attach(t, t.index));
