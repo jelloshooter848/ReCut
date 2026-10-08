@@ -183,10 +183,23 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   relinks them). What the receiving editor cannot represent is approximated or left out, and the dialog's report
   lists it before saving: keyframes, effects and transforms beyond what each format holds, nested sequences
   (flattened where the format has no nesting), disabled clips, subtitles and audio channel selections.
-  <!-- TODO(core): per-format specifics from the writers (which keyframes / transforms / speed changes / transitions
-  each format keeps, how nested sequences are written, EDL reel names and the four-audio-channel limit, timecode
-  start, still images, markers). -->
-  An EDL holds one video track per file and only cuts and dissolves.
+  An EDL holds one video track per file and only cuts and dissolves. Per format:
+  - **All formats:** nested sequences and compound clips are flattened into their media clips (no nested timelines
+    in the other editor); sequence subtitle tracks are not exported; the timeline starts at 00:00:00:00; source
+    timecode counts from 00:00:00:00 at the start of each file, because ReCut does not read timecode embedded in
+    the media, so the source points of camera files with their own start timecode come in offset; channel
+    selections (centre channel, mono channel, custom downmix) and the choice of a file's second or later audio stream
+    are not carried; offline media is written with its saved path.
+  - **FCPXML:** linked video and audio arrive as separate clips (the link is not kept). Dip to Black and fades
+    to / from black become opacity keyframes; eased keyframes use the other editor's ease curve; level keyframes are
+    written in dB. Marker colours are lost.
+  - **OpenTimelineIO:** only cuts, speed, dissolves, markers and enabled states are standard. Transforms, crop,
+    opacity, levels, fades and keyframes are stored as ReCut metadata that other editors ignore. Dip to Black
+    becomes a cut, and chapter markers become plain markers.
+  - **EDL:** every event uses the reel name `AX`, with `* FROM CLIP NAME` and `* SOURCE FILE` comment lines that
+    Resolve relinks by. At most four audio channels, and only audio linked to the video event with the same in, out
+    and speed: unlinked audio such as music, audio on A5 and up, J- and L-cuts, audio fades and crossfades are left
+    out. Transforms, opacity, keyframes, levels and disabled clips are left out; speed is an `M2` line.
 - **Frame-rate conversion** (an export frame rate other than the sequence's) repeats or drops whole frames. There is
   no frame blending or motion interpolation, so 23.976 → 30 shows a regular repeat cadence and 23.976 ↔ 24 repeats
   or drops one frame about every 42 s. Duration and audio sync are not affected.

@@ -573,12 +573,14 @@ In Resolve:
    Pool and use **Relink Selected Clips…** (or **Relink Media**) on the folder that holds them. Collect Project first
    makes this easy: everything is in one folder.
 
-What transfers: the cuts on every track, source in and out points, speed, clip levels, position, scale and opacity,
-dissolves and markers (EDL: cuts and dissolves only). What does not: effects ReCut renders itself (keyframes beyond the
-static value where the format has none, crop, rotation, audio channel selections and the centre-channel extraction,
-subtitles, burned-in text), and anything the report lists. Nothing in your ReCut project changes. See
-[FORMATS](FORMATS.md#interchange-export) and [LIMITATIONS](LIMITATIONS.md#export).
-<!-- TODO(core): check "What transfers" against the writers (keyframes, crop, rotation, speed, nested sequences). -->
+What transfers with **FCPXML** (the most complete): the cuts on every track, source in and out points, speed, levels
+and audio fades, position, scale, rotation, crop, opacity, keyframes, dissolves, dips (as opacity keyframes) and
+markers. Compound clips arrive flattened into their clips. **OpenTimelineIO** carries the cuts, speed, dissolves and
+markers; **EDL** only cuts and dissolves. Never carried: subtitle tracks, audio channel selections and the centre
+channel extraction, and timecode embedded in the source files (ReCut counts source time from the start of each file;
+the timeline starts at 00:00:00:00, so set Resolve's timeline start to match if it asks). The report lists everything
+else before you save. Nothing in your ReCut project changes. See [FORMATS](FORMATS.md#interchange-export) and
+[LIMITATIONS](LIMITATIONS.md#export).
 
 ## Saving
 

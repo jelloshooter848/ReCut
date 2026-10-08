@@ -24,7 +24,7 @@ export const INTERCHANGE_FORMATS: Readonly<Record<InterchangeFormat, Interchange
   fcpxml: {
     label: 'FCPXML (DaVinci Resolve, Final Cut Pro)',
     extension: 'fcpxml',
-    description: 'Every video and audio track, speed, levels, position, scale, opacity, dissolves and markers.',
+    description: 'Every video and audio track, speed, levels and fades, position, scale, rotation, crop, opacity, keyframes, dissolves and markers.',
   },
   otio: {
     label: 'OpenTimelineIO (DaVinci Resolve 18.5+, other OTIO tools)',

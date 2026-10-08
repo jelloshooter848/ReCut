@@ -3,26 +3,16 @@
  * every format of INTERCHANGE_FORMATS is listed with its description (EDL with its one-file-per-video-track note);
  * the report shows the summary and the issues before saving; Export… opens the (stubbed) native save dialog with the
  * sequence name and the format's extension, and the files land in the chosen folder with the right header.
- *
- * The export assertions need the real writers (shared/interchange, written on the core branch). Until they are
- * merged `exportTimeline` throws, which the dialog must show as an error without crashing; `realWriters` guards
- * the rest.
  */
 import { test, expect, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { exportTimeline, INTERCHANGE_FORMATS, type InterchangeFormat } from '../../shared/interchange';
-import { createProject } from '../../shared/project';
+import { INTERCHANGE_FORMATS, type InterchangeFormat } from '../../shared/interchange';
 import { importMedia, launchApp, type LaunchedApp } from './helpers';
 
 /** Optional: where to save screenshots of the dialog (for docs or review). */
 const SHOT_DIR = process.env.RECUT_INTERCHANGE_SHOT_DIR;
-
-/** The format writers are present: exportTimeline does not throw for an empty sequence. */
-const realWriters = (() => {
-  try { const p = createProject(); exportTimeline(p, p.sequenceOrder[0], 'fcpxml'); return true; } catch { return false; }
-})();
 
 test.describe.configure({ mode: 'serial' });
 
@@ -84,7 +74,7 @@ test.afterAll(async () => {
   fs.rmSync(launched.tmp, { recursive: true, force: true });
 });
 
-test('File › Export Timeline… lists the formats, shows the report (or the error) and closes with Escape', async () => {
+test('File › Export Timeline… lists the formats, shows the report and closes with Escape', async () => {
   await openFromMenu();
   await expect(page.getByTestId('interchange-sequence')).toHaveValue(await page.evaluate(() => (window as unknown as W).__recut.store.getState().project.activeSequenceId));
   for (const f of Object.keys(INTERCHANGE_FORMATS) as InterchangeFormat[]) {
@@ -93,15 +83,9 @@ test('File › Export Timeline… lists the formats, shows the report (or the er
     await expect(page.getByRole('radio', { name: INTERCHANGE_FORMATS[f].label })).toBeChecked();
     await expect(page.getByTestId('interchange-dialog')).toContainText(INTERCHANGE_FORMATS[f].description);
     await expect(page.getByTestId('interchange-edl-note')).toHaveCount(f === 'edl' ? 1 : 0);
-    if (realWriters) {
-      await expect(page.getByTestId('interchange-summary')).toContainText(/[1-9]\d* clips?/);
-      await expect(page.getByTestId('interchange-summary')).toContainText('1 media file');
-      await expect(page.getByTestId('interchange-export')).toBeEnabled();
-    } else {
-      // The stub throws: the dialog shows the error and does not offer Export…; the app keeps running.
-      await expect(page.getByTestId('interchange-error')).toContainText('not implemented');
-      await expect(page.getByTestId('interchange-export')).toBeDisabled();
-    }
+    await expect(page.getByTestId('interchange-summary')).toContainText(/[1-9]\d* clips?/);
+    await expect(page.getByTestId('interchange-summary')).toContainText('1 media file');
+    await expect(page.getByTestId('interchange-export')).toBeEnabled();
   }
   if (SHOT_DIR) { fs.mkdirSync(SHOT_DIR, { recursive: true }); await page.screenshot({ path: path.join(SHOT_DIR, 'export-timeline-dialog.png') }); }
   await page.keyboard.press('Escape');
@@ -110,7 +94,6 @@ test('File › Export Timeline… lists the formats, shows the report (or the er
 });
 
 test('Export… writes each format into the chosen folder', async () => {
-  test.skip(!realWriters, 'needs the interchange writers (shared/interchange from the core branch)');
   const headers: Record<InterchangeFormat, (text: string) => void> = {
     fcpxml: (t) => { expect(t.startsWith('<?xml')).toBe(true); expect(t).toContain('<fcpxml'); },
     otio: (t) => { expect(t.trimStart().startsWith('{')).toBe(true); expect(t).toMatch(/"OTIO_SCHEMA":\s*"Timeline\.1"/); },

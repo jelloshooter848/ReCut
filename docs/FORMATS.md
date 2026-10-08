@@ -297,9 +297,32 @@ these formats yet (planned for 1.4.0).
 
 - The sequence is written at its own frame rate and frame size. Nested sequences and compound clips are flattened
   into their media clips where the format has no nesting.
-  <!-- TODO(core): how each format writes nested sequences, timecode start, reel / clip names in the EDL, speed
-  changes, keyframes (static value or per-format support), stills, disabled and offline clips, audio channel
-  selections. -->
+- Times are exact: FCPXML uses rational times (version 1.9, which Resolve 18 and 19 import), OTIO frame counts at
+  the sequence rate (source ranges at the media's own rate), EDL timecode (drop-frame at 29.97 and 59.94). The
+  timeline starts at 00:00:00:00, and source timecode counts from 00:00:00:00 at the start of each file (embedded
+  source timecode is not read).
+- Transitions are exported as ReCut renders them: dissolves centred on the cut and limited by the clips' handles (a
+  dissolve with no handles is a cut, as in ReCut's own export).
+
+| | FCPXML | OpenTimelineIO | EDL |
+|---|---|---|---|
+| Tracks | Every track (V1 is the main storyline, the others connected clips) | Every track | One video track per file; up to four audio channels linked to the video events |
+| Speed (constant) | `timeMap` | `LinearTimeWarp` | `M2` line |
+| Position, scale, rotation, crop, opacity | Yes | ReCut metadata only | No |
+| Levels and audio fades | Yes (dB) | ReCut metadata only | No |
+| Keyframes (position, scale, opacity, volume) | Yes (eased ones use the other editor's curve) | ReCut metadata only | No |
+| Cross Dissolve, audio crossfade | Transitions | `SMPTE_Dissolve` | `D` (picture; the audio dissolves with it) |
+| Dip to Black, fades to / from black | Opacity keyframes | Fades: dissolves against the gap; dip: a cut | Dissolves to / from black (`BL`) |
+| Markers, chapters | Markers, chapter markers (to-dos for continuity markers) | Markers | `* LOC:` comments on the event under them |
+| Disabled clips, muted tracks | Disabled clips | `enabled: false` | Left out |
+| Stills | Yes | Yes | Listed from 00:00:00:00 |
+
+- EDL names: one file per video track, `<name>_V1.edl`, `<name>_V2.edl` … (track numbers after flattening, so a
+  compound clip's inner tracks get their own numbers). Every event uses reel `AX` with `* FROM CLIP NAME:` (the file
+  name) and `* SOURCE FILE:` (the full path), which Resolve uses to relink.
+- Not carried by any format: subtitle tracks, channel selections and centre-channel extraction (the clip plays its
+  normal mix in the other editor), the choice of a file's second or later audio stream. Offline media is written
+  with its saved path.
 - Before saving, the dialog shows a report from the writer: clips, tracks, duration and media files, and every issue
   with how many clips it affects, as **warnings** (lost or approximated in this format) or **info** (transferred in
   another form, for example flattened).

@@ -124,7 +124,7 @@ not a promise, as for the Road to 1.0.
 | 1.1.0 | Polish what shipped | §18 smaller items (Move / Slip into Sync, Build alternate cut without matching clips, transcript hits on timeline in every scope, MP4 with more than one audio track and soft subtitles); keyframes v2 (rotation and crop keyframes, dragging keyframe diamonds on the timeline); the nested-sequence follow-ups (inner chapters and subtitles on export as an option, opacity applied to the composite, speed on nested clips) |
 | 1.2.0 | Subtitle authoring | §15: the next need once OCR (§4) and Whisper (§5) produce subtitles is fixing their text and timing |
 | 1.3.0 | Audio mixer | §9 (mixer panel, per-track meters, stereo / 5.1 panning, multichannel proxies; track volume automation built on keyframes) |
-| 1.4.0 | Interchange import (OTIO, FCPXML, EDL) | §10 import part (export shipped in 0.9.0) |
+| 1.4.0 | Interchange import (OTIO, FCPXML, EDL) | §10 import part (export comes in 0.9.0) |
 | 1.5.0 | Dialogue / music / effects stems | §12 (after the mixer; starts with an engine and licence spike) |
 | 1.6.0 | GPU picture | §13 and the titles generator (§18) on one WebGL compositor; §14 (hardware encoders for proxies and export, WebCodecs decode) |
 | 2.0.0 | Cloud-free collaboration | §17. It needs the first change to the project format (`formatVersion` 2: relative media roots, sidecar files), which the compatibility promise ties to a MAJOR release |
