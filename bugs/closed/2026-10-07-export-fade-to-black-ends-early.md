@@ -129,8 +129,9 @@ After: `✓ tests/unit/export-fade.test.ts (8 tests | 1 skipped)`. The skipped o
 follow-up below (`RECUT_FADE_LOG=1`).
 
 ### Tests run
-`npm run typecheck`; full `npm test`; e2e `export*.spec.ts` and `keyframes.spec.ts`. Counts are in the branch's final
-report (claude/fix-fade-to-black).
+After merging main with #73 (nested sequences): `npm run typecheck` clean; `npm test` 110 files, 1911 passed,
+3 skipped (one is the opt-in repro above); e2e `export.spec.ts`, `export-intermediates.spec.ts`, `export-mkv.spec.ts`,
+`keyframes.spec.ts` and `nest.spec.ts`: 15/15 passed (Linux, xvfb). Windows and macOS were not run.
 
 ### Changed existing assertions
 None.
