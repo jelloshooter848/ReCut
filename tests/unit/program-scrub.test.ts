@@ -340,15 +340,21 @@ describe('SequencePlayer: a paused draw waits until the landed frame is presente
    */
   class FakeVideoFrame {
     static made = 0;
-    timestamp: number;
+    static closed = 0;
+    /** Reading `timestamp` throws (models an unexpected failure after the frame was taken). */
+    static broken = false;
+    private readonly ts: number;
     constructor(el: FakeMedia) {
-      FakeVideoFrame.made++;
       if (el.readyState < 2) throw new Error('InvalidStateError');
-      this.timestamp = Math.round((Math.floor(el.shown * 24 + 1e-6) / 24) * 1e6);
+      FakeVideoFrame.made++;
+      this.ts = Math.round((Math.floor(el.shown * 24 + 1e-6) / 24) * 1e6);
     }
-    close(): void { /* */ }
+    get timestamp(): number { if (FakeVideoFrame.broken) throw new Error('InvalidStateError'); return this.ts; }
+    close(): void { FakeVideoFrame.closed++; }
   }
-  beforeEach(() => { withVfc = true; FakeVideoFrame.made = 0; vi.stubGlobal('VideoFrame', FakeVideoFrame); });
+  beforeEach(() => { withVfc = true; FakeVideoFrame.made = 0; FakeVideoFrame.closed = 0; FakeVideoFrame.broken = false; vi.stubGlobal('VideoFrame', FakeVideoFrame); });
+  /** Every frame the player took from an element was closed (an open VideoFrame pins decoder / GPU memory). */
+  const allClosed = () => { expect(FakeVideoFrame.made).toBeGreaterThan(0); expect(FakeVideoFrame.closed).toBe(FakeVideoFrame.made); };
 
   function cutSequence(): Sequence {
     const s = createSequence('cut', FPS, 1920, 1080);
@@ -373,6 +379,7 @@ describe('SequencePlayer: a paused draw waits until the landed frame is presente
     expect(drawn[0].shown).toBeCloseTo(cutTarget(10), 9);
     rest(); frame();
     expect(drawn).toHaveLength(1);
+    allClosed();
     player.destroy();
   });
 
@@ -397,6 +404,7 @@ describe('SequencePlayer: a paused draw waits until the landed frame is presente
     expect(allCurrent()).toBe(true);
     const c = seq.videoTracks[0].clips[Math.floor(f / 100)];
     expect(drawn[drawn.length - 1].t).toBeCloseTo(c.sourceIn + (f - c.start) / 24 + 0.5 / 24, 9);
+    allClosed();
     player.destroy();
   });
 
@@ -409,6 +417,18 @@ describe('SequencePlayer: a paused draw waits until the landed frame is presente
     now += PRESENT_HOLD_MS + 5; vi.advanceTimersByTime(PRESENT_HOLD_MS + 5); frame();
     expect(drawn).toHaveLength(1);
     expect(drawn[0].t).toBeCloseTo(cutTarget(70), 9);
+    allClosed();
+    player.destroy();
+  });
+
+  it('a frame whose timestamp cannot be read is still closed, and the draw is not held', () => {
+    const { player } = setup(cutSequence());
+    const el = videos()[0];
+    FakeVideoFrame.broken = true;
+    player.seek(70); frame();
+    el.land(false); frame();
+    expect(drawn).toHaveLength(1); // unknown: drawn as before the check existed (the video-frame callback repaints)
+    allClosed();
     player.destroy();
   });
 
