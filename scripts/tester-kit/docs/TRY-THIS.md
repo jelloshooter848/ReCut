@@ -29,9 +29,10 @@ between the acts look right?
 **Files:** the trailer project (its films carry their subtitles)
 
 Open the **Transcript** panel (Shift+6) › **Search**. Set the scope to
-**Franchise: Blender Open Movies**. Type `{{SEARCH_TOS}}`: you get lines from
-Tears of Steel (English and German). Turn on **Regular expression** and type
-`{{SEARCH_TOS}}|{{SEARCH_SINTEL}}` to get lines from Sintel (French) as well.
+**Franchise: Blender Open Movies**. Type `{{SEARCH_WORD}}`: you get lines from both
+Tears of Steel and Sintel. Turn on **Regular expression** and try
+`{{SEARCH_TOS}}|{{SEARCH_SINTEL}}`. Every subtitle track is searched, so German
+(Tears of Steel) and French (Sintel) lines can show up too.
 Click a result: the Source monitor jumps to that line with In and Out set.
 Ctrl+Enter puts it in the timeline at the playhead.
 
@@ -51,7 +52,8 @@ Ctrl+Enter puts it in the timeline at the playhead.
    on an older computer.
 4. Search for a word you heard (task 2).
 
-Sintel has no official English subtitles either: try it on Sintel too.
+Try it on Sintel too, and compare Whisper's lines with the film's official
+English subtitles (both tracks show in the Transcript panel).
 
 ## 4. Read picture subtitles with OCR
 
@@ -148,7 +150,7 @@ and 60 ones. Step through frames; open **File › Export…** and read the
 **Files:** everything in `audio/`
 
 Import them all. The four "score and dialogue" files are the same sound in four
-formats: do they look and sound the same? `{{DIALOGUE_FILE}}` is voices only.
+formats: do they look and sound the same? `{{DIALOGUE_FILE}}` {{DIALOGUE_DESC}}.
 The 1 kHz tone is a steady level for checking meters. "Silence, then a sudden
 loud burst" tests waveforms and levels: turn your volume down first!
 

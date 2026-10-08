@@ -36,11 +36,11 @@ env:
   SINTEL_ZIP_URL: https://download.blender.org/durian/movies/Sintel.2010.720p.mkv.zip
   # Published next to the zip: the MD5 of the .mkv inside it.
   SINTEL_MD5_URL: https://download.blender.org/durian/movies/Sintel.2010.720p.mkv.md5
-  SINTEL_SUBS_DIR: https://download.blender.org/durian/subs/
   # Sintel's music-and-effects track (no dialogue), published with the film.
   SINTEL_ME_URL: https://download.blender.org/durian/movies/sintel-m%2Be-st.flac
   BBB_ZIP_URL: https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_720p_h264.mov.zip
-  ED_URL: https://download.blender.org/ED/elephantsdream-720-h264-st-aac.mov
+  # The largest Elephants Dream on download.blender.org (1024x576; the "720" file is 720x405).
+  ED_URL: https://download.blender.org/ED/elephantsdream-1024-h264-st-aac.mov
   # Outside the checkout (actions/cache does not accept '..' in a path).
   SOURCES: /home/runner/kit-sources
   WORK: /home/runner/kit-work
@@ -84,7 +84,7 @@ jobs:
       - name: Sources cache key
         id: skey
         run: |
-          k="$(printf '%s\n' "$TOS_URL" "$TOS_SUBS_DIR" "$SINTEL_ZIP_URL" "$SINTEL_SUBS_DIR" "$SINTEL_ME_URL" "$BBB_ZIP_URL" "$ED_URL" sources-v1 | sha256sum | cut -c1-16)"
+          k="$(printf '%s\n' "$TOS_URL" "$TOS_SUBS_DIR" "$SINTEL_ZIP_URL" "$SINTEL_ME_URL" "$BBB_ZIP_URL" "$ED_URL" sources-v2 | sha256sum | cut -c1-16)"
           echo "key=tester-kit-sources-$k" >> "$GITHUB_OUTPUT"
           mkdir -p "$SOURCES" "$WORK"
       - name: Sources cache
@@ -129,7 +129,6 @@ jobs:
           want="$(curl -fsSL "$SINTEL_MD5_URL" | cut -d' ' -f1)"
           have="$(md5sum sintel.mkv | cut -d' ' -f1)"
           if [ -n "$want" ] && [ "$want" = "$have" ]; then echo "sintel.mkv: MD5 $have matches $SINTEL_MD5_URL"; else echo "::error::sintel.mkv MD5 $have, published $want"; rm -f sintel.mkv; ok=1; fi
-          get sintel-fr.srt "${SINTEL_SUBS_DIR}sintel_fr.srt" || ok=1
           get sintel-me.flac "$SINTEL_ME_URL" || ok=1
           if [ ! -s bbb.mov ]; then
             get bbb.zip "$BBB_ZIP_URL" && unzip_one bbb.zip bbb.mov '\.mov$' || ok=1
@@ -137,6 +136,16 @@ jobs:
           get ed.mov "$ED_URL" || ok=1
           ls -la
           sha256sum -- *.mov *.mkv *.flac *.srt 2> /dev/null
+          # The files as first downloaded (8 October 2026): a changed source fails the build instead of quietly
+          # changing the kit. (Sintel is also checked against its published MD5 above.)
+          printf '%s\n' \
+            'efa9062d9cdb7a338e40ad530dfdf234806743f29ae6a1a136b97ece4e588e8f  tos.mov' \
+            'ce9578f6fe098a5821045a38884b229160f9e7ba27890448a92f5be330c6e6fe  tos-en.srt' \
+            '666685daa9064a5a59144e47bddd2d570bbdda199df6e4e39f3273e479ab1f4b  tos-de.srt' \
+            'f12c070e295b38cfc94ebd61ac3357c3bac82d1015985f1e8da93a4c6496c46d  sintel.mkv' \
+            '777f238aed789a0e3a25f8ba156fae182c11a61568c1aa87b7a8bc3b15807785  sintel-me.flac' \
+            '45c8bafeb9a53df7f491198d2e71529701bcf1cd51805782089fac1d32869f9b  bbb.mov' > ../kit-sources.sha256
+          sha256sum -c ../kit-sources.sha256 || { echo '::error::a source file differs from the pinned SHA-256'; ok=1; }
           for f in tos.mov sintel.mkv bbb.mov ed.mov sintel-me.flac; do
             [ -s "$f" ] && { echo "== $f"; ffprobe -v error -show_entries format=duration,bit_rate:stream=index,codec_name,width,height,r_frame_rate,channels,channel_layout:stream_tags=language,title -of compact "$f"; }
           done

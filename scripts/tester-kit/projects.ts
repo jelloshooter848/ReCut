@@ -271,6 +271,14 @@ async function buildTrailer(plan: ProjectsPlan): Promise<Record<string, number>>
   for (const t of alt().audioTracks) for (const c of t.clips) if (c.mediaId === filmIds.get('bbb') && t.id !== alt().audioTracks[1].id) S().setClipEnabled(altId, c.id, false);
   must(S().removeDisabledClips(altId) > 0, 'remove the bunny shots from the alternate cut');
 
+  // The subtitle cues are in the project; the paths of the .srt files they came from would point at this build's
+  // folder, which a tester does not have (Relink only moves media), and Collect Project would warn that they are
+  // missing. Drop them, as a project whose subtitles were typed in has none.
+  S().quiet((d) => {
+    for (const t of Object.values(d.subtitleTracks)) delete t.path;
+    for (const q of Object.values(d.sequences)) for (const t of q.subtitleTracks) delete t.sourcePaths;
+  });
+
   S().setView(seqId, { playhead: 0 });
   S().setSettings({ useProxies: true });
   S().setActiveSequence(seqId);
@@ -310,6 +318,10 @@ async function checkRelink(projectPath: string, kitRoot: string): Promise<number
   const loaded = await loadProjectFile(projectPath);
   if (!loaded.ok) throw new Error(loaded.error);
   const media = Object.values(loaded.project.media);
+  // The only paths into the build folder are the media paths (which Relink fixes): nothing else would be left behind.
+  const text = fs.readFileSync(projectPath, 'utf8');
+  const refs = text.split(JSON.stringify(kitRoot).slice(1, -1)).length - 1;
+  if (refs !== media.length) throw new Error(`${projectPath} names the build folder ${refs} times, but has ${media.length} media`);
   const missing = media.map((m) => ({ mediaId: m.id, fileName: fileNameOf(m.path), size: m.fileSize ?? m.probe?.size }));
   const found = await scanForRelink({ folder: kitRoot, missing });
   for (const m of missing) {

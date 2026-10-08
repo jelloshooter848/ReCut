@@ -5,9 +5,9 @@
 //   node scripts/tester-kit.mjs --sources <dir> [--out <dir>] [--work <dir>] [--zip]
 //   node scripts/tester-kit.mjs --synthetic [--out <dir>] [--zip]        (small generated stand-ins, for local runs)
 //
-// --sources holds the downloads (see the workflow): tos.mov, tos-en.srt, tos-de.srt (Tears of Steel), sintel.mkv,
-// sintel-fr.srt and, optionally, sintel-me.flac (Sintel and its music-and-effects track), bbb.mov (Big Buck Bunny)
-// and ed.mov (Elephants Dream). --out gets the kit folder (ReCut-Tester-Kit-<version>/) and, with --zip, the zip.
+// --sources holds the downloads (see the workflow): tos.mov, tos-en.srt, tos-de.srt (Tears of Steel), sintel.mkv (its
+// English and French subtitles are taken from its own tracks) and, optionally, sintel-me.flac (Sintel's music-and-
+// effects track), bbb.mov (Big Buck Bunny) and ed.mov (Elephants Dream). --out gets the kit folder (ReCut-Tester-Kit-<version>/) and, with --zip, the zip.
 // --work keeps encodes and analysis between runs (the four films are re-encoded only when their source or settings
 // change). Every FFmpeg failure, missing input, unexpected probe result or budget overrun stops the build.
 //
@@ -122,7 +122,9 @@ async function loadLib() {
 
 const FILMS = [
   { key: 'tos', title: 'Tears of Steel', year: 2012, src: 'tos.mov', subs: { en: 'tos-en.srt', de: 'tos-de.srt' }, maxrate: 1300, characters: ['Celia', 'Thom'], location: 'Amsterdam' },
-  { key: 'sintel', title: 'Sintel', year: 2010, src: 'sintel.mkv', subs: { fr: 'sintel-fr.srt' }, maxrate: 950, characters: ['Sintel', 'Scales'], location: 'The mountains' },
+  // Sintel's official subtitles are tracks inside the official 720p MKV (download.blender.org/durian/subs/ has
+  // translations only): `embedded` names the track language each file is extracted from.
+  { key: 'sintel', title: 'Sintel', year: 2010, src: 'sintel.mkv', subs: { en: 'sintel-en.srt', fr: 'sintel-fr.srt' }, embedded: { en: 'eng', fr: 'fre' }, maxrate: 950, characters: ['Sintel', 'Scales'], location: 'The mountains' },
   { key: 'bbb', title: 'Big Buck Bunny', year: 2008, src: 'bbb.mov', subs: {}, maxrate: 1000, characters: ['Big Buck Bunny'], location: 'The meadow' },
   { key: 'ed', title: 'Elephants Dream', year: 2006, src: 'ed.mov', subs: {}, maxrate: 900, characters: ['Proog', 'Emo'], location: 'The machine' },
 ];
@@ -135,6 +137,11 @@ function makeSyntheticSources(dir) {
   const freqs = { tos: 330, sintel: 440, bbb: 550, ed: 660 };
   for (const f of FILMS) {
     const out = path.join(dir, f.src);
+    for (const lang of Object.keys(f.subs)) {
+      const cues = [];
+      for (let t = 0, i = 1; t < 60; t += 5, i++) cues.push(`${i}\n00:00:${String(t).padStart(2, '0')},100 --> 00:00:${String(t).padStart(2, '0')},900\n[${lang}] ${f.title} line ${i}, about the dragon\n`);
+      fs.writeFileSync(path.join(dir, f.subs[lang]), cues.join('\n'));
+    }
     if (fs.existsSync(out)) continue;
     const inputs = scenes.flatMap((s) => ['-f', 'lavfi', '-i', `${s}=s=1280x720:r=24:d=10`]);
     const graph = `${scenes.map((_, i) => `[${i}:v]format=yuv420p,setsar=1[v${i}]`).join(';')};${scenes.map((_, i) => `[v${i}]`).join('')}concat=n=${scenes.length}:v=1:a=0[v]`;
@@ -142,11 +149,6 @@ function makeSyntheticSources(dir) {
     const audio = `aevalsrc='0.3*sin(2*PI*${freqs[f.key]}*t)*lt(mod(t\\,5)\\,1)|0.3*sin(2*PI*${freqs[f.key]}*t)*lt(mod(t\\,5)\\,1)':s=48000:d=60`;
     ff([...inputs, '-f', 'lavfi', '-i', audio, '-f', 'lavfi', '-i', 'sine=f=220:r=48000:d=60', '-filter_complex', `${graph};[6:a][7:a]amix=inputs=2:normalize=0,aformat=channel_layouts=stereo[a]`,
       '-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-c:a', 'aac', '-b:a', '128k', out], { what: `synthetic ${f.key}` });
-    for (const lang of Object.keys(f.subs)) {
-      const cues = [];
-      for (let t = 0, i = 1; t < 60; t += 5, i++) cues.push(`${i}\n00:00:${String(t).padStart(2, '0')},100 --> 00:00:${String(t).padStart(2, '0')},900\n[${lang}] ${f.title} line ${i}, about the dragon\n`);
-      fs.writeFileSync(path.join(dir, f.subs[lang]), cues.join('\n'));
-    }
   }
   // A music-and-effects track for Sintel: the "music" tone only, so mix minus it is the "speech".
   const me = path.join(dir, 'sintel-me.flac');
@@ -159,7 +161,16 @@ function prepareSubtitles(L, src) {
   for (const f of FILMS) {
     out[f.key] = {};
     for (const [lang, file] of Object.entries(f.subs)) {
-      const p = path.join(src, file);
+      let p = path.join(src, file);
+      if (!fs.existsSync(p) && f.embedded?.[lang]) {
+        // The film's own subtitle track in that language (exactly one), as SRT.
+        const input = path.join(src, f.src);
+        const tracks = probe(input).streams.filter((x) => x.codec_type === 'subtitle' && x.tags?.language === f.embedded[lang]);
+        if (tracks.length !== 1) throw new Error(`${f.src}: ${tracks.length} subtitle tracks in ${f.embedded[lang]}, want 1`);
+        p = path.join(mkdirp(path.join(work, 'subs')), file);
+        ff(['-i', input, '-map', `0:${tracks[0].index}`, '-c:s', 'srt', '-f', 'srt', p], { what: `extract ${file}` });
+        log(`${file}: extracted from ${f.src} (stream ${tracks[0].index}, ${f.embedded[lang]})`);
+      }
       if (!fs.existsSync(p)) throw new Error(`missing ${p}`);
       const text = L.normalizeSubtitleBytes(fs.readFileSync(p));
       const { cues, warnings } = L.readCues(text);
@@ -179,7 +190,8 @@ function encodeFilms(src) {
     const input = path.join(src, f.src);
     if (!fs.existsSync(input)) throw new Error(`missing source ${input}`);
     const v = probe(input).streams.find((s) => s.codec_type === 'video');
-    const scale = v.width > 1280 ? ['scale=w=1280:h=-2:flags=lanczos'] : [];
+    // 720p: 1280 wide (Elephants Dream is published at 1024x576 at most on download.blender.org, so it is upscaled).
+    const scale = v.width !== 1280 ? ['scale=w=1280:h=-2:flags=lanczos'] : [];
     const args = ['-i', input, '-map', '0:v:0', '-map', '0:a:0', '-vf', [...scale, 'format=yuv420p'].join(','),
       ...X264(23, ['-maxrate', `${f.maxrate}k`, '-bufsize', `${2 * f.maxrate}k`, '-profile:v', 'high', '-g', '48']),
       ...AAC(128), ...CLEAN, '-movflags', '+faststart'];
@@ -281,6 +293,27 @@ function alignSintelMe(L, sintelFile, meFile, cues) {
   return out;
 }
 
+/**
+ * Is the centre channel of Sintel's own 5.1 mix the dialogue alone? Its level between the lines (stretches of at
+ * least 3 s without an English subtitle, before the end credits) against its level during the lines: at most -20 dB
+ * means the centre carries little but the voices, and the film's 5.1 track is the test file as it is.
+ */
+function centreIsDialogue(L, f) {
+  const p = probe(f.source).streams.find((x) => x.codec_type === 'audio');
+  if (!p || p.channels !== 6) return { ok: false, why: `the film's sound is ${p?.channel_layout ?? 'missing'}, not 5.1` };
+  const rate = 8000;
+  const fc = pcm(f.source, { from: 0, len: f.dur, rate, channel: 2 });
+  const fl = pcm(f.source, { from: 0, len: f.dur, rate, channel: 0 });
+  const end = Math.max(...f.cues.map((c) => c.end)) + 2;
+  const level = (x, spans) => { let s = 0, n = 0; for (const [a, b] of spans) for (let i = Math.floor(a * rate); i < Math.min(x.length, b * rate); i++) { s += x[i] * x[i]; n++; } return 10 * Math.log10(s / Math.max(1, n) + 1e-12); };
+  const speech = f.cues.filter((c) => c.end <= end).map((c) => [c.start + 0.2, c.end - 0.2]).filter(([a, b]) => b > a);
+  const quiet = L.quietSpans(f.cues, 10, end, 3, 1);
+  const r = { speechDb: level(fc, speech), quietDb: level(fc, quiet), quietFlDb: level(fl, quiet), quietSeconds: quiet.reduce((n, [a, b]) => n + b - a, 0) };
+  r.ok = r.quietSeconds >= 60 && r.quietDb - r.speechDb <= -20;
+  log(`Sintel centre channel: ${r.speechDb.toFixed(1)} dB during the lines, ${r.quietDb.toFixed(1)} dB between them (front left ${r.quietFlDb.toFixed(1)} dB), over ${r.quietSeconds.toFixed(0)} s -> ${r.ok ? 'dialogue only' : 'not dialogue only'}`);
+  return r;
+}
+
 /** -filter_complex inputs for Sintel's dialogue stem (mix minus aligned M&E), stereo, starting at `start`. */
 function sintelDialogueArgs(sintelFile, meFile, al, start, len) {
   return {
@@ -312,13 +345,13 @@ async function build() {
   for (const f of FILMS) {
     const rel = `franchise/${filmName(f)}.mp4`;
     fs.copyFileSync(enc[f.key], K(rel));
-    film[f.key] = { ...f, file: K(rel), source: path.join(src, f.src), dur: duration(K(rel)), cues: subs[f.key].en?.cues ?? subs[f.key].fr?.cues ?? [], subtitles: [] };
-    note(rel, `${f.title}, the complete film (CC BY, see CREDITS.txt), 720p H.264 / AAC.`);
+    film[f.key] = { ...f, file: K(rel), source: path.join(src, f.src), dur: duration(K(rel)), cues: subs[f.key].en?.cues ?? [], subtitles: [] };
+    note(rel, `${f.title}, the complete film (CC BY, see CREDITS.txt), 720p H.264 / AAC${f.key === 'ed' ? ' (upscaled from the 1024x576 release)' : ''}.`);
     for (const [lang, s] of Object.entries(subs[f.key])) {
       const srel = `franchise/${filmName(f)}.${lang}.srt`;
       fs.writeFileSync(K(srel), s.text);
       film[f.key].subtitles.push(K(srel));
-      note(srel, `Official ${langName(lang)} subtitles of ${f.title} (re-saved as UTF-8; attached automatically on import).`);
+      note(srel, `Official ${langName(lang)} subtitles of ${f.title}${f.embedded?.[lang] ? ' (from the subtitle track of the official MKV)' : ''}, re-saved as UTF-8; attached automatically on import.`);
     }
   }
   const tos = film.tos, sintel = film.sintel, bbb = film.bbb, ed = film.ed;
@@ -384,12 +417,19 @@ async function build() {
 
   // 5.1 with dialogue alone on the centre channel.
   const meFile = fs.existsSync(path.join(src, 'sintel-me.flac')) ? path.join(src, 'sintel-me.flac') : null;
-  const al = alignSintelMe(L, sintel.source, meFile, sintel.cues);
+  const fcOk = centreIsDialogue(L, sintel);
+  const al = fcOk.ok ? { ok: false, why: 'not needed' } : alignSintelMe(L, sintel.source, meFile, sintel.cues);
   const centre = {};
   {
     const len = synthetic ? 30 : 40;
     let rel;
-    if (al.ok) {
+    if (fcOk.ok) {
+      const w = L.bestWindow(sintel.cues, sintel.dur, len, { from: 30, to: sintel.dur * 0.8 });
+      rel = 'formats/Sintel - 5.1 with dialogue on the centre channel.mkv';
+      ff(['-ss', String(w), '-t', String(len), '-i', sintel.source, '-map', '0:v:0', '-map', '0:a:0', '-vf', 'format=yuv420p', ...X264(21, ['-g', '48']),
+        '-c:a', 'ac3', '-b:a', '448k', '-metadata:s:a:0', 'language=eng', '-metadata:s:a:0', 'title=5.1 (the film\'s own mix)', ...CLEAN, K(rel)], { what: rel });
+      centre.desc = "Sintel's own 5.1 mix, whose centre (FC) carries the voices and little else; music and effects are on the other channels";
+    } else if (al.ok) {
       const w = L.bestWindow(sintel.cues, sintel.dur, len, { from: 30, to: sintel.dur * 0.8 });
       rel = 'formats/Sintel - 5.1 with dialogue on the centre channel.mkv';
       const d = sintelDialogueArgs(sintel.source, meFile, al, w, len);
@@ -399,7 +439,6 @@ async function build() {
       '-map', '0:v:0', '-map', '[a]', '-vf', 'format=yuv420p', ...X264(21, ['-g', '48']), '-c:a', 'ac3', '-b:a', '448k',
       '-metadata:s:a:0', 'language=eng', '-metadata:s:a:0', 'title=5.1 (dialogue on the centre)', '-t', String(len), ...CLEAN, K(rel)], { what: rel });
       centre.desc = "Sintel's own dialogue alone on the centre (FC); Sintel's published music-and-effects track on the other channels";
-      centre.source = 'sintel';
     } else {
       // Fallback: Tears of Steel's sound only while someone speaks (silent between lines) on FC, Big Buck Bunny's score
       // (a film with no dialogue) on the others.
@@ -413,7 +452,6 @@ async function build() {
         '-map', '0:v:0', '-map', '[a]', '-vf', 'format=yuv420p', ...X264(21, ['-g', '48']), '-c:a', 'ac3', '-b:a', '448k',
         '-metadata:s:a:0', 'language=eng', '-metadata:s:a:0', 'title=5.1 (dialogue on the centre)', '-t', String(len), ...CLEAN, K(rel)], { what: rel });
       centre.desc = "Tears of Steel's sound only while someone speaks (silent between lines) on the centre (FC); Big Buck Bunny's score on the other channels";
-      centre.source = 'tos';
     }
     centre.file = path.basename(rel);
     note(rel, `5.1 AC-3 (FL FR FC LFE SL SR): ${centre.desc}. Extract Centre Channel (Dialogue) should leave only the voices.`, { expect: { video: 1, audio: 1, channels: 6 } });
@@ -519,7 +557,12 @@ async function build() {
   let dialogueFile;
   {
     const len = synthetic ? 20 : 30;
-    if (al.ok) {
+    if (fcOk.ok) {
+      const w = L.bestWindow(sintel.cues, sintel.dur, len, { from: 30, to: sintel.dur * 0.8 });
+      dialogueFile = 'Sintel - dialogue only.wav';
+      ff(['-ss', String(w), '-t', String(len), '-i', sintel.source, '-map', '0:a:0', '-af', `pan=mono|c0=c2,afade=t=in:d=0.2,afade=t=out:st=${len - 0.5}:d=0.5`, '-c:a', 'pcm_s16le', '-ar', '48000', ...CLEAN, K('audio', dialogueFile)], { what: dialogueFile });
+      note(`audio/${dialogueFile}`, "Sintel's voices: the centre channel of the film's own 5.1 mix, as a mono file.", { expect: { audioCodec: 'pcm_s16le' } });
+    } else if (al.ok) {
       const w = L.bestWindow(sintel.cues, sintel.dur, len, { from: 30, to: sintel.dur * 0.8 });
       dialogueFile = 'Sintel - dialogue only.wav';
       const d = sintelDialogueArgs(sintel.source, meFile, al, w, len);
@@ -648,17 +691,21 @@ async function build() {
   // ---------------------------------------------------------------- docs
   const has = (cues, w) => cues.some((c) => c.text.toLowerCase().includes(w.toLowerCase()));
   const searchTos = ['robot', 'Celia', 'Thom', 'line'].find((w) => has(subs.tos.en.cues, w) && has(subs.tos.de.cues, w)) ?? ['robot', 'Celia', 'line'].find((w) => has(subs.tos.en.cues, w));
-  const searchSintel = ['dragon', 'Sintel', 'lame', 'line'].find((w) => has(subs.sintel.fr.cues, w));
-  if (!searchTos || !searchSintel) throw new Error('no search words for TRY-THIS (task 2)');
-  log(`search words: ${searchTos} (Tears of Steel), ${searchSintel} (Sintel)`);
+  const searchSintel = ['dragon', 'Scales', 'line'].find((w) => has(subs.sintel.en.cues, w));
+  const searchBoth = ['dragon', 'alone', 'remember', 'home', 'sorry', 'never', 'help', 'time', 'line'].find((w) => has(subs.tos.en.cues, w) && has(subs.sintel.en.cues, w));
+  if (!searchTos || !searchSintel || !searchBoth) throw new Error('no search words for TRY-THIS (task 2)');
+  log(`search words: ${searchBoth} (both), ${searchTos} (Tears of Steel), ${searchSintel} (Sintel)`);
   const docVals = {
     VERSION: KIT_VERSION,
+    SEARCH_WORD: searchBoth,
     SEARCH_TOS: searchTos,
     SEARCH_SINTEL: searchSintel,
     CENTRE_FILE: centre.file,
     DIALOGUE_FILE: dialogueFile,
+    DIALOGUE_DESC: fcOk.ok ? "is Sintel's voices alone (the centre channel of its 5.1 mix)" : al.ok ? "is Sintel's voices alone (the film's mix minus its music-and-effects track)" : 'has the sound only while someone speaks',
+    ME_CREDIT: al.ok ? "\nThe extra sound track\n---------------------\n\n  Sintel's music-and-effects track (sintel-m+e-st.flac, published with the film\n  at download.blender.org/durian/movies/, CC BY 3.0 like all Durian project\n  data) is used for the 5.1 file and the dialogue-only file.\n" : '',
   };
-  for (const [name, needs] of [['README-FIRST.txt', ['VERSION']], ['TRY-THIS.md', ['VERSION', 'CENTRE_FILE', 'DIALOGUE_FILE', 'SEARCH_TOS', 'SEARCH_SINTEL']], ['REPORTING.md', ['VERSION']], ['CREDITS.txt', ['VERSION']], ['TROUBLE.txt', []]]) {
+  for (const [name, needs] of [['README-FIRST.txt', ['VERSION']], ['TRY-THIS.md', ['VERSION', 'CENTRE_FILE', 'DIALOGUE_FILE', 'DIALOGUE_DESC', 'SEARCH_WORD', 'SEARCH_TOS', 'SEARCH_SINTEL']], ['REPORTING.md', ['VERSION']], ['CREDITS.txt', ['VERSION', 'ME_CREDIT']], ['TROUBLE.txt', []]]) {
     const tpl = fs.readFileSync(path.join(repo, 'scripts', 'tester-kit', 'docs', name), 'utf8');
     const vals = Object.fromEntries(needs.map((k) => [k, docVals[k]]));
     const target = name === 'TROUBLE.txt' ? K('trouble', name) : K(name);

@@ -64,10 +64,10 @@ FIRST START
 ---------------------
 
   franchise/   Four complete short films, 720p, with official subtitles where
-               they exist: Tears of Steel (English, German), Sintel (French;
-               there are no official English subtitles), Big Buck Bunny (no
-               dialogue, so no subtitles) and Elephants Dream (no official
-               subtitles: try the speech-to-text on it).
+               they exist: Tears of Steel (English, German), Sintel (English,
+               French), Big Buck Bunny (no dialogue, so no subtitles) and
+               Elephants Dream (no official subtitles: try the speech-to-text
+               on it).
   formats/     Short clips (20 to 60 seconds) in many formats: an MKV with 3
                audio tracks and 2 subtitle tracks, a "DVD rip" with picture
                subtitles, 5.1 surround, HEVC, ProRes, DNxHR, vertical video,

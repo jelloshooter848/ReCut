@@ -42,13 +42,14 @@ this is endorsed by the Blender Foundation.
 The subtitles
 -------------
 
-  The .srt files in franchise/ (Tears of Steel: English and German; Sintel:
-  French) are the subtitles published with the films on download.blender.org,
-  re-saved as UTF-8 text. They are shared with the films under the films'
-  licences. Subtitles inside clips in formats/ are excerpts of the same files.
-  Sintel has no official English subtitles; Big Buck Bunny has no dialogue;
-  no official subtitles were found for Elephants Dream.
-
+  The .srt files in franchise/ are the subtitles published with the films on
+  download.blender.org, re-saved as UTF-8 text: Tears of Steel in English and
+  German (demo/movies/ToS/subtitles/), Sintel in English and French (the
+  subtitle tracks of the official Sintel.2010.720p.mkv). They are shared with
+  the films under the films' licences. Subtitles inside clips in formats/ are
+  excerpts of the same files. Big Buck Bunny has no dialogue; no official
+  subtitles were found for Elephants Dream.
+{{ME_CREDIT}}
 Everything else
 ---------------
 
