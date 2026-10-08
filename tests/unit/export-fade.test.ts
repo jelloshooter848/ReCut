@@ -55,7 +55,7 @@ async function probe(file: string): Promise<MediaProbe> {
   const rat = (r: string) => { const [n, d] = r.split('/').map(Number); return { num: n, den: d || 1 }; };
   return {
     container: j.format.format_name, duration: Number(j.format.duration), size: Number(j.format.size),
-    video: v ? { index: v.index, codec: v.codec_name, width: v.width, height: v.height, fps: rat(v.r_frame_rate), avgFps: rat(v.avg_frame_rate), isVfr: false } : undefined,
+    video: v ? { index: v.index, codec: v.codec_name, width: v.width, height: v.height, fps: rat(v.r_frame_rate), avgFps: rat(v.avg_frame_rate), isVfr: false, pixFmt: v.pix_fmt } : undefined,
     audio: j.streams.filter((s: { codec_type: string }) => s.codec_type === 'audio').map((s: { index: number; codec_name: string; channels: number; channel_layout?: string; sample_rate: string }) => ({
       index: s.index, codec: s.codec_name, channels: s.channels, layout: s.channel_layout ?? '', sampleRate: Number(s.sample_rate),
     })),
@@ -373,16 +373,22 @@ describe('two-sided transitions: export matches the preview per frame', () => {
     await check(s, 'in/out transitions', { settings: { rangeMode: 'inOut' }, first: 14 });
   }, 180000);
 
-  it('the graph: a dissolve mixes premultiplied pictures over its window only; no fadeblack; nothing extra without one', () => {
+  it('the graph: a dissolve mixes over its window only, premultiplied where alphas can differ; no fadeblack', () => {
     const s = chain('graph', 'crossDissolve', [6, 4]);
     s.videoTracks[0].transitions[1].type = 'dipToBlack';
-    const g = buildRenderGraph(req(s)).filterGraph;
+    let g = buildRenderGraph(req(s)).filterGraph;
     expect(g).not.toMatch(/fadeblack/);
+    // The dissolve's windows: the first clip's last 6 frames (3 clip + 3 handle frames), the second clip's first 6.
+    expect(g).toMatch(/trim=start_frame=13:end_frame=19,setpts=PTS-STARTPTS\[/);
+    expect(g).toMatch(/trim=start_frame=0:end_frame=6,setpts=PTS-STARTPTS\[/);
+    // Both pictures fill the frame opaquely (equal alphas): a plain xfade is the mix, no 4:4:4 round trip.
+    expect(g.match(/xfade=transition=fade:duration=0\.25:offset=0\[/g)).toHaveLength(1);
+    expect(g).not.toMatch(/premultiply/);
+    // An opacity below 1 (or letterboxing, a transform, a fade) on either side: premultiplied.
+    s.videoTracks[0].clips[1].transform.opacity = 0.99;
+    g = buildRenderGraph(req(s)).filterGraph;
     expect(g.match(/xfade=transition=fade:duration=0\.25:offset=0,unpremultiply=inplace=1,format=yuva420p/g)).toHaveLength(1);
     expect(g.match(/format=yuva444p,premultiply=inplace=1/g)).toHaveLength(2);
-    // The dissolve's windows: the first clip's last 6 frames (3 clip + 3 handle frames), the second clip's first 6.
-    expect(g).toMatch(/trim=start_frame=13:end_frame=19,setpts=PTS-STARTPTS/);
-    expect(g).toMatch(/trim=start_frame=0:end_frame=6,setpts=PTS-STARTPTS/);
     // A track of cuts, fades and dips only: no split, no 4:4:4, no premultiply, no xfade.
     const plain = chain('plain', 'dipToBlack', [6, 4]);
     plain.videoTracks[0].transitions.push(fade('f', null, plain.videoTracks[0].clips[0].id, 4));
