@@ -1,6 +1,6 @@
 # Known limitations
 
-This page describes ReCut 0.7.0 as of 7 October 2026. Every item was checked against the code. Items marked **bug** are
+This page describes ReCut 0.8.0 as of 8 October 2026. Every item was checked against the code. Items marked **bug** are
 defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.md)).
 
 ## Editing and effects
@@ -216,7 +216,7 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   the application menu or register `.recut` files (an AppImage integration tool can). The bundled FFmpeg needs glibc
   2.28 or newer, so very old distributions (before Debian 10 / Ubuntu 18.10 / RHEL 8) cannot run it. Tested on Ubuntu
   22.04 only.
-- **FFmpeg is bundled only in the Windows release builds, the Linux AppImage and the macOS test dmgs** (and fetched
+- **FFmpeg is bundled only in the Windows release builds, the Linux AppImage and the macOS dmgs** (and fetched
   by `Start ReCut.cmd`).
   Elsewhere, install it yourself or drop static binaries into `resources/ffmpeg/` before `npm run package` /
   `npm run dist` (see
