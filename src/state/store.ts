@@ -19,8 +19,8 @@ import { uid } from '../../shared/ids';
 import { fpsEquals, isValidFps, secondsToFrames } from '../../shared/time';
 import { createProject, createSequence, LiveView } from '../../shared/project';
 import {
-  breakApartCompoundClip as nestBreakApart, innerFrameAt, isNestedClip, makeCompoundClip as nestMakeCompound, nestedClipsFor, nestProblem,
-  nestProblemText, sequenceSeconds,
+  breakApartCompoundClip as nestBreakApart, innerFrameAt, isNestedClip, makeCompoundClip as nestMakeCompound, nestedClipsFor, nestLimitProblem,
+  nestProblem, nestProblemText, sequenceSeconds,
 } from '../../shared/nest';
 import { STILL_IMAGE_CODECS, STILL_IMAGE_EXTS } from '../../shared/media';
 import {
@@ -184,6 +184,18 @@ function addToVocab(tags: TagVocabulary, kind: keyof TagVocabulary, values: stri
 }
 
 function plainClone<T>(v: T): T { return JSON.parse(JSON.stringify(v)) as T; }
+
+/**
+ * `sequences` with `seqId` replaced by a plain copy (without snapshots) that `edit` changed: a dry run, to check an
+ * edit against the nesting limits before committing it. Null when there is no such sequence.
+ */
+function dryRun(sequences: Record<ID, Sequence>, seqId: ID, edit: (s: Sequence) => void): Record<ID, Sequence> | null {
+  const src = Object.hasOwn(sequences, seqId) ? sequences[seqId] : undefined;
+  if (!src) return null;
+  const copy = plainClone<Sequence>({ ...src, snapshots: [] });
+  edit(copy);
+  return { ...sequences, [seqId]: copy };
+}
 
 /** Writable clips of `clipIds` a keyframe edit of `group` applies to: video clips for the picture, audio for the level. */
 function keyframeTargets(d: Project, seqId: ID, clipIds: ID[], group: KeyframeGroup): Clip[] {
@@ -930,10 +942,13 @@ export const useStore = create<RecutStore>()((set, get) => {
         const seq = d.sequences[seqId];
         const snap = seq?.snapshots.find((s) => s.id === snapshotId);
         if (!seq || !snap) return;
-        // A snapshot may nest a sequence that nests this one by now: restoring it would make a cycle.
+        // A snapshot may nest a sequence that nests this one by now: restoring it would make a cycle, or nest too
+        // deep, or expand past the flattened size limit (measured on the restored project as it would be).
         const restored = { ...get().project.sequences, [seqId]: { ...snap.data, id: seqId, snapshots: [] } as Sequence };
-        for (const t of [...snap.data.videoTracks, ...snap.data.audioTracks]) for (const c of t.clips) {
-          const problem = isNestedClip(c) ? nestProblem(restored, seqId, c.sequenceId) : null;
+        const children = new Set<ID>();
+        for (const t of [...snap.data.videoTracks, ...snap.data.audioTracks]) for (const c of t.clips) if (isNestedClip(c)) children.add(c.sequenceId);
+        for (const child of children) {
+          const problem = nestProblem(restored, seqId, child, []);
           if (problem && problem !== 'missing') { blocked = nestProblemText(problem); return; }
         }
         const live = current(seq);
@@ -1054,11 +1069,17 @@ export const useStore = create<RecutStore>()((set, get) => {
     },
     placeClipsAction(seqId, placements, mode) {
       let ok = false;
-      // Nested clips (a paste) may not make a sequence contain itself or nest too deep.
-      for (const p of placements) {
-        if (!isNestedClip(p.clip)) continue;
-        const problem = nestProblem(get().project.sequences, seqId, p.clip.sequenceId);
-        if (problem && problem !== 'missing') { get().toast('warning', `Cannot place "${p.clip.name}": ${nestProblemText(problem)}`); return false; }
+      // Nested clips (a paste) may not make a sequence contain itself, nest too deep or expand past the flattened
+      // size limit: checked on a dry run of the placement.
+      const nestedFirst = new Map<ID, Clip>();
+      for (const p of placements) if (isNestedClip(p.clip) && !nestedFirst.has(p.clip.sequenceId)) nestedFirst.set(p.clip.sequenceId, p.clip);
+      if (nestedFirst.size) {
+        const seqs = get().project.sequences;
+        const trial = dryRun(seqs, seqId, (s) => { placeClips(s, placements.map((p) => ({ trackId: p.trackId, clip: plainClone(p.clip) })), mode); });
+        for (const [child, clip] of nestedFirst) {
+          const problem = nestProblem(trial ?? seqs, seqId, child, trial ? [] : undefined);
+          if (problem && problem !== 'missing') { get().toast('warning', `Cannot place "${clip.name}": ${nestProblemText(problem)}`); return false; }
+        }
       }
       commit(mode === 'insert' ? 'Insert clips' : 'Overwrite clips', (d) => {
         const seq = d.sequences[seqId];
@@ -1721,6 +1742,15 @@ export const useStore = create<RecutStore>()((set, get) => {
       while (names.has(`Nested Sequence ${String(n).padStart(2, '0')}`)) n++;
       const inner = createSequence(name?.trim() || `Nested Sequence ${String(n).padStart(2, '0')}`, { num: seq.fps.num, den: seq.fps.den }, seq.width, seq.height);
       inner.sampleRate = seq.sampleRate; inner.channels = seq.channels;
+      // A selection that holds nested clips nests them one level deeper: check depth and size on a dry run.
+      const seqs = get().project.sequences;
+      const trialInner = plainClone(inner);
+      let trialOk = false;
+      const trial = dryRun(seqs, seq.id, (s) => { trialOk = nestMakeCompound(s, ids, trialInner).ok; });
+      if (trial && trialOk) {
+        const problem = nestLimitProblem({ ...trial, [inner.id]: trialInner }, seq.id);
+        if (problem) { get().toast('warning', `Cannot make a compound clip: ${nestProblemText(problem)}`); return null; }
+      }
       let res: ReturnType<typeof nestMakeCompound> | null = null;
       commit('Make Compound Clip', (d) => {
         const s = d.sequences[seq.id];
@@ -1740,6 +1770,13 @@ export const useStore = create<RecutStore>()((set, get) => {
     },
     breakApartCompoundClip(seqId, clipId) {
       const p = get().project;
+      // The inner clips (nested ones among them) land on this timeline: check depth and size on a dry run.
+      let trialOk = false;
+      const trial = dryRun(p.sequences, seqId, (s) => { trialOk = nestBreakApart(s, clipId, p.sequences, p.media).ok; });
+      if (trial && trialOk) {
+        const problem = nestLimitProblem(trial, seqId);
+        if (problem) { get().toast('warning', `Cannot break apart: ${nestProblemText(problem)}`); return []; }
+      }
       let res: ReturnType<typeof nestBreakApart> | null = null;
       commit('Break Apart Compound Clip', (d) => {
         const s = d.sequences[seqId];
@@ -1765,12 +1802,8 @@ export const useStore = create<RecutStore>()((set, get) => {
     },
     nestSequence(seqId, childId, frame, opts = {}) {
       const p = get().project;
-      const problem = nestProblem(p.sequences, seqId, childId);
-      if (problem) { get().toast('warning', `Cannot nest the sequence here: ${nestProblemText(problem)}`); return []; }
-      let created: ID[] = [];
-      commit('Nest sequence', (d) => {
-        const seq = d.sequences[seqId];
-        if (!seq) return;
+      /** Places the nested clips of the child in `seq`; their ids, or [] when nothing was placed. */
+      const nestInto = (seq: Sequence): ID[] => {
         const clips = nestedClipsFor(seq, p.sequences[childId], frame);
         const pick = (tracks: Track[], id: ID | undefined) => (id ? tracks.find((t) => t.id === id) : undefined)
           ?? tracks.find((t) => t.patched && !t.locked) ?? tracks.find((t) => !t.locked);
@@ -1779,7 +1812,20 @@ export const useStore = create<RecutStore>()((set, get) => {
           const t = c.kind === 'video' ? pick(seq.videoTracks, opts.videoTrackId) : pick(seq.audioTracks, opts.audioTrackId);
           if (t) placements.push({ trackId: t.id, clip: c });
         }
-        if (placements.length && placeClips(seq, placements, opts.mode ?? 'overwrite')) created = placements.map((x) => x.clip.id);
+        return placements.length && placeClips(seq, placements, opts.mode ?? 'overwrite') ? placements.map((x) => x.clip.id) : [];
+      };
+      // The rules (cycle, depth), then the size limit on a dry run of the placement itself.
+      let problem = nestProblem(p.sequences, seqId, childId);
+      if (problem === 'size' || problem === null) {
+        const trial = dryRun(p.sequences, seqId, (s) => { nestInto(s); });
+        if (trial) problem = nestProblem(trial, seqId, childId, []);
+      }
+      if (problem) { get().toast('warning', `Cannot nest the sequence here: ${nestProblemText(problem)}`); return []; }
+      let created: ID[] = [];
+      commit('Nest sequence', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        created = nestInto(seq);
       });
       if (created.length) get().select(created);
       return created;

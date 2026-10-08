@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createProject, createSequence, normalizeProjectWithReport } from '../../shared/project';
 import { makeClip, allTracks } from '../../shared/timeline';
-import { MAX_NEST_DEPTH, nestDepthBelow, nestedSequencesFor, nestingRepairs, flattenSequence } from '../../shared/nest';
+import { MAX_FLAT_CLIPS, MAX_FLAT_TRACKS, MAX_NEST_DEPTH, flattenedSize, nestDepthBelow, nestedSequencesFor, nestingRepairs, flattenSequence } from '../../shared/nest';
 import { MAX_KEYFRAMES_PER_PROPERTY } from '../../shared/keyframes';
 import { streamChannelIds, clipAudioStream } from '../../shared/audioChannels';
 import { loadProjectFile, saveProjectFile } from '../../electron/project/io';
@@ -139,34 +139,45 @@ describe('nested sequences: cycles and depth in a hostile file', () => {
     await stable(q);
   });
 
-  // OPEN BUG bugs/open/2026-10-08-nested-fan-out-flatten-blowup.md: `it.fails` passes while the bug reproduces and
-  // turns red once it is fixed (then make this a plain `it`). 4 tracks x 8 levels flattens to 349,524 tracks in ~2 s;
-  // 5 tracks throws "Maximum call stack size exceeded" in buildFlat (FANOUT_K=5).
-  it.fails('fan-out within the depth limit (every level nests the next one on 4 tracks, 8 levels) stays bounded', async () => {
-    // Legal by the depth rule (8 levels), but every level multiplies the flattened tracks by 4.
-    const K = Number(process.env.FANOUT_K ?? 4);
-    const seqs = Array.from({ length: MAX_NEST_DEPTH + 1 }, (_, i) => {
-      const s = seqWithId(`L${i}`);
-      while (s.videoTracks.length < K) s.videoTracks.push({ ...s.videoTracks[0], id: `L${i}-v${s.videoTracks.length}`, clips: [], transitions: [] });
-      return s;
+  // bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md: 4 tracks x 8 levels flattened to 349,524 tracks in ~2 s,
+  // 5 tracks threw "Maximum call stack size exceeded" in buildFlat. The loader now cuts the nested references past
+  // the flattened size limit (MAX_FLAT_TRACKS / MAX_FLAT_CLIPS), as it cuts too-deep ones.
+  for (const K of [4, 5]) {
+    it(`fan-out within the depth limit (every level nests the next one on ${K} tracks, 8 levels) is cut to the size limit and stays bounded`, async () => {
+      // Legal by the depth rule (8 levels), but every level multiplies the flattened tracks by K.
+      const seqs = Array.from({ length: MAX_NEST_DEPTH + 1 }, (_, i) => {
+        const s = seqWithId(`L${i}`);
+        while (s.videoTracks.length < K) s.videoTracks.push({ ...s.videoTracks[0], id: `L${i}-v${s.videoTracks.length}`, clips: [], transitions: [] });
+        return s;
+      });
+      for (let i = 0; i < MAX_NEST_DEPTH; i++) for (let k = 0; k < K; k++) seqs[i].videoTracks[k].clips.push(nestedClip(`L${i}-n${k}`, `L${i + 1}`));
+      const p = projectOf(seqs);
+      // The innermost level shows its media inside the nested window (0..48) on every track.
+      const bottom = p.sequences[`L${MAX_NEST_DEPTH}`];
+      for (const t of bottom.videoTracks) t.clips = [makeClip({ mediaId: Object.keys(p.media)[0], name: 'leaf', sourceIn: 0, duration: 48, kind: 'video' }, 0)];
+      const before = clipCount(p);
+      const { res } = await open(p);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      const q = res.project;
+      expect(res.repaired?.join('\n')).toMatch(/nested sequence that would expand to more than [\d,]+ tracks or [\d,]+ clips when flattened made offline/);
+      expect(clipCount(q), 'clips lost while cutting').toBe(before);
+      for (const id of q.sequenceOrder) {
+        const size = flattenedSize(q.sequences, id);
+        expect(size.tracks, id).toBeLessThanOrEqual(MAX_FLAT_TRACKS);
+        expect(size.clips, id).toBeLessThanOrEqual(MAX_FLAT_CLIPS);
+      }
+      const t0 = performance.now();
+      const flat = flattenSequence(q.sequences.L0, q.sequences, q.media);
+      const ms = performance.now() - t0;
+      const leaves = allTracks(flat).reduce((n, t) => n + t.clips.filter((c) => !c.sequenceId).length, 0);
+      console.log(`[fan-out ${K}^${MAX_NEST_DEPTH}] repaired: ${res.repaired?.join('; ')}; flatten ${ms.toFixed(0)} ms, ${flat.videoTracks.length} video tracks, ${leaves} clips`);
+      expect(ms, 'flattening a small hostile file must not stall the preview / export').toBeLessThan(1000);
+      expect(flat.videoTracks.length + flat.audioTracks.length, 'flattened tracks').toBeLessThanOrEqual(MAX_FLAT_TRACKS);
+      renderAll(q);
+      await stable(q);
     });
-    for (let i = 0; i < MAX_NEST_DEPTH; i++) for (let k = 0; k < K; k++) seqs[i].videoTracks[k].clips.push(nestedClip(`L${i}-n${k}`, `L${i + 1}`));
-    const p = projectOf(seqs);
-    // The innermost level shows its media inside the nested window (0..48) on every track.
-    const bottom = p.sequences[`L${MAX_NEST_DEPTH}`];
-    for (const t of bottom.videoTracks) t.clips = [makeClip({ mediaId: Object.keys(p.media)[0], name: 'leaf', sourceIn: 0, duration: 48, kind: 'video' }, 0)];
-    const { res } = await open(p);
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    const q = res.project;
-    const t0 = performance.now();
-    const flat = flattenSequence(q.sequences.L0, q.sequences, q.media);
-    const ms = performance.now() - t0;
-    const leaves = allTracks(flat).reduce((n, t) => n + t.clips.filter((c) => !c.sequenceId).length, 0);
-    console.log(`[fan-out ${K}^${MAX_NEST_DEPTH}] flatten ${ms.toFixed(0)} ms, ${flat.videoTracks.length} video tracks, ${leaves} clips`);
-    expect(ms, 'flattening a small hostile file must not stall the preview / export').toBeLessThan(1000);
-    expect(flat.videoTracks.length, 'flattened tracks').toBeLessThanOrEqual(10_000);
-  });
+  }
 });
 
 describe('keyframes: malformed and oversized lists', () => {

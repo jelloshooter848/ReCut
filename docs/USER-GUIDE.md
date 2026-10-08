@@ -316,7 +316,9 @@ own sequence and drop it into as many cuts as you like: an edit made inside it s
 - **Nest a whole sequence:** drag it from the Project panel onto the timeline (overwrite; hold Ctrl to insert), or
   right-click it › **Nest in Active Sequence** (at the playhead). A sequence that has picture and sound becomes a
   linked pair. A sequence cannot contain itself, directly or through another nested sequence, and nesting is limited
-  to 8 levels; ReCut refuses those with a message.
+  to 8 levels and to 1,000 tracks or 50,000 clips once flattened (every inner track of every nested clip becomes a
+  track of the cut it plays in, so nesting on several tracks at every level multiplies them); ReCut refuses those
+  with a message. A season of 20 episodes, each nesting a few scenes, stays far below that.
 - **Open in Timeline:** double-click the nested clip (or Clip menu, right-click, or the Inspector's button). Its
   sequence becomes the active one, with the playhead on the frame you were looking at.
 - **Break Apart Compound Clip** (Clip menu or right-click) puts the inner clips back on this timeline, over the range
