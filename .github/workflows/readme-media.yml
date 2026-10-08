@@ -25,7 +25,8 @@ env:
   # Sintel 720p is only published zipped. durian/subs/ has translations only (the film is in English), so the English
   # subtitles are made here with the bundled speech-to-text engine and the base.en model.
   SINTEL_ZIP_URL: https://download.blender.org/durian/movies/Sintel.2010.720p.mkv.zip
-  FOOTAGE: ${{ github.workspace }}/../readme-footage
+  # Outside the checkout (actions/cache does not accept '..' in a path).
+  FOOTAGE: /home/runner/readme-footage
 
 jobs:
   media:

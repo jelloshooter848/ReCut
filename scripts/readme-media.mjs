@@ -40,7 +40,9 @@ const only = new Set((flag('--only') ?? '').split(',').map((s) => s.trim().repla
 const work = path.resolve(flag('--work') ?? path.join(os.tmpdir(), synthetic ? 'recut-readme-media-synthetic' : 'recut-readme-media'));
 const searchArg = flag('--search');
 const W = 1600, H = 900;
-const GIF = { width: 960, fps: 12, maxSeconds: 12, softBytes: 2.3 * 1024 * 1024, maxBytes: 3 * 1024 * 1024 };
+const GIF = { width: 960, fps: 12, maxSeconds: 12, maxBytes: 3 * 1024 * 1024 };
+/** What the GIFs aim for together with the stills: under the 20 MB budget with a margin. */
+const TOTAL_TARGET = 19.3 * 1024 * 1024;
 const TOTAL_BUDGET = 20 * 1024 * 1024;
 const FRANCHISE = 'Blender Open Movies';
 const PROJECT_NAME = 'Open Movie Fan Cut';
@@ -94,11 +96,14 @@ function writeSrt(file, cues) {
   fs.writeFileSync(file, cues.map((c, i) => `${i + 1}\n${f(c.start)} --> ${f(c.end)}\n${c.text}\n`).join('\n'));
 }
 /** The `len`-second window (start on a 5 s grid) whose cues carry the most dialogue. */
-function bestWindow(cues, total, len) {
+function bestWindow(cues, total, len, word = null) {
   if (total <= len) return 0;
+  const has = (c) => !word || words([c]).includes(word);
   let best = 0, bestScore = -1;
   for (let s = 0; s + len <= total; s += 5) {
-    const score = cues.filter((c) => c.start >= s + 1 && c.end <= s + len - 2).reduce((n, c) => n + c.text.length, 0);
+    const inside = cues.filter((c) => c.start >= s + 1 && c.end <= s + len - 2);
+    // A window holding the search word wins over any window without it.
+    const score = inside.reduce((n, c) => n + c.text.length, 0) + (inside.some(has) ? 1e6 : 0);
     if (score > bestScore) { best = s; bestScore = score; }
   }
   return best;
@@ -108,7 +113,7 @@ const windowCues = (cues, start, len) => cues.filter((c) => c.start >= start + 0
 
 const STOP = new Set('that this with have from your what they there were when will would could should about into just like then them than been were here come know dont didnt cant wont youre thats were well yeah okay right want going gonna said tell they these those where which while there their again because some something nothing really still only over very much more even also make made take look need back down away other every after before through never ever always maybe sure think thing things doing done does dont lets let'.split(' '));
 const PREFERRED = ['remember', 'alone', 'dragon', 'sorry', 'home', 'world', 'help', 'time', 'never', 'again', 'together', 'hand', 'life', 'kill', 'wait', 'stop', 'everything'];
-const words = (cues) => cues.flatMap((c) => c.text.toLowerCase().replace(/[’']/g, '').split(/[^a-z]+/)).filter((w) => w.length >= 4);
+const words = (cues) => cues.flatMap((c) => c.text.toLowerCase().replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').replace(/[’']/g, '').split(/[^a-z]+/)).filter((w) => w.length >= 4);
 /** A word both films say: a preferred one if possible, else the most evenly shared non-stopword. */
 function commonWord(a, b) {
   const ca = new Map(), cb = new Map();
@@ -177,7 +182,7 @@ function rawInputs() {
 async function prepareMedia() {
   const raw = rawInputs();
   const dir = path.join(work, 'media');
-  const stamp = JSON.stringify([raw.tos, raw.sintel, raw.tosSrt, raw.sintelSrt].map((f) => [f, fs.statSync(f).size]).concat([[1]]));
+  const stamp = JSON.stringify([raw.tos, raw.sintel, raw.tosSrt, raw.sintelSrt].map((f) => [f, fs.statSync(f).size]).concat([[2, searchArg ?? '']]));
   const stampFile = path.join(dir, 'stamp.json');
   const M = {
     dir,
@@ -195,11 +200,16 @@ async function prepareMedia() {
   } else {
     rmrf(dir);
     for (const d of ['films', 'subs', 'whisper', 'rip', 'stills', 'tmp']) mkdirp(path.join(dir, d));
+    // The transcript-search demo types one word both films say: choose it on the full subtitles, then cut each
+    // excerpt around the most dialogue that still includes it.
+    const word = searchArg ?? commonWord(parseSrt(fs.readFileSync(raw.tosSrt, 'utf8')), parseSrt(fs.readFileSync(raw.sintelSrt, 'utf8')));
+    fs.writeFileSync(path.join(dir, 'search-word.txt'), word ?? '');
+    log(`media: search word "${word}"`);
     const excerpt = (src, srt, dst, dstSrt, len) => {
       const total = duration(src);
       const cues = parseSrt(fs.readFileSync(srt, 'utf8'));
       const n = Math.min(len, total);
-      const start = bestWindow(cues, total, n);
+      const start = bestWindow(cues, total, n, word);
       const v = probe(src).streams.find((s) => s.codec_type === 'video');
       const scale = v && v.height > 720 ? ['-vf', 'scale=-2:720'] : [];
       log(`media: ${path.basename(dst)} = ${path.basename(src)} ${start}s +${n}s`);
@@ -240,6 +250,7 @@ async function prepareMedia() {
   M.tosCues = parseSrt(fs.readFileSync(M.tosSrt, 'utf8'));
   M.sintelCues = parseSrt(fs.readFileSync(M.sintelSrt, 'utf8'));
   M.tosDur = duration(M.tos);
+  try { M.searchWord = fs.readFileSync(path.join(dir, 'search-word.txt'), 'utf8').trim() || null; } catch { M.searchWord = null; }
   M.sintelDur = duration(M.sintel);
   return M;
 }
@@ -475,8 +486,12 @@ function makeGif(ctx, video, name) {
   }
   const file = path.join(outDir, `${name}.gif`);
   // Settings from best to smallest: the first one under the soft target wins, else the smallest under the hard limit.
-  const tries = [{ fps: GIF.fps, colors: 160, width: GIF.width }, { fps: 10, colors: 128, width: GIF.width }, { fps: 10, colors: 96, width: 900 },
-    { fps: 8, colors: 96, width: 880 }, { fps: 7, colors: 64, width: 800 }];
+  // Width stays at 960 as long as possible (readability); frame rate and colours give way first.
+  const tries = [{ fps: GIF.fps, colors: 160, width: GIF.width }, { fps: 10, colors: 128, width: GIF.width }, { fps: 10, colors: 96, width: GIF.width },
+    { fps: 8, colors: 96, width: GIF.width }, { fps: 8, colors: 64, width: GIF.width }, { fps: 8, colors: 64, width: 880 }, { fps: 7, colors: 48, width: 880 },
+    { fps: 7, colors: 48, width: 800 }];
+  const soft = gifShare(name);
+  log(`${name}: aiming for ${(soft / 1048576).toFixed(2)} MB`);
   let best = null;
   for (const t of tries) {
     const parts = segs.map((s, i) => `[v${i}]trim=start=${s.from.toFixed(3)}:end=${s.to.toFixed(3)},setpts=(PTS-STARTPTS)/${s.speed.toFixed(4)}[s${i}]`);
@@ -486,12 +501,24 @@ function makeGif(ctx, video, name) {
     ff(['-i', video, '-filter_complex', graph, '-loop', '0', file]);
     const size = fs.statSync(file).size;
     log(`${name}.gif: ${(size / 1048576).toFixed(2)} MB at ${t.width}px ${t.fps} fps ${t.colors} colours, ${duration(file).toFixed(1)} s`);
-    if (size <= GIF.softBytes) { fs.rmSync(`${file}.best`, { force: true }); written.push(file); return; }
+    if (size <= soft) { fs.rmSync(`${file}.best`, { force: true }); written.push(file); return; }
     if (size <= GIF.maxBytes && (!best || size < best.size)) { best = { size, t }; fs.copyFileSync(file, `${file}.best`); }
   }
   if (!best) { fs.rmSync(file, { force: true }); throw new Error(`${name}.gif is over ${GIF.maxBytes} bytes at every setting`); }
   fs.renameSync(`${file}.best`, file);
   written.push(file);
+}
+
+/**
+ * This GIF's share of what is left of the total budget: the target minus every other file in the output folder
+ * (stills, README, GIFs already made or not regenerated in this run), split over the GIFs still to make.
+ */
+const gifsDone = new Set();
+function gifShare(name) {
+  const pending = DEMOS.filter((d) => wanted(d) && !gifsDone.has(d));
+  const others = fs.readdirSync(outDir).filter((f) => !pending.includes(f.replace(/\.gif$/, '')) && !f.endsWith('.best'))
+    .reduce((n, f) => n + fs.statSync(path.join(outDir, f)).size, 0);
+  return Math.max(512 * 1024, Math.min(GIF.maxBytes, (TOTAL_TARGET - others) / Math.max(1, pending.length)));
 }
 
 /** Run one recorded demo: setup (not kept), then `body(ctx, keep)` where keep(fn, speed) records a kept segment. */
@@ -514,6 +541,7 @@ async function demo(name, setup, body) {
     }
     if (!video || !fs.existsSync(video)) throw new Error('no video was recorded');
     makeGif(ctx, video, name);
+    gifsDone.add(name);
   });
 }
 
@@ -761,6 +789,7 @@ async function stills() {
       await page.getByTestId('transcript-search').focus();
       await shoot(page, 'transcript');
       await page.getByTestId('transcript-search').fill('');
+      await page.getByTestId('transcript-scope').selectOption('project').catch(() => undefined);
     });
     if (wanted('scenes')) await step('scenes', async () => {
       await hero();
@@ -882,8 +911,8 @@ async function stills() {
         const m = window.__recut.store.getState().project.media[id];
         return Object.values(m.channelProxies ?? {}).some((p) => p && p.status === 'ready');
       }, B.rip, { timeout: 120_000 }).catch(() => log('note: the centre-channel preview is not ready'));
-      const picker = page.getByTestId('inspector').getByTestId('clip-audio-channels');
-      await picker.scrollIntoViewIfNeeded().catch(() => undefined);
+      // Bring the Channels row (picker + preview status) to the middle of the Inspector.
+      await page.evaluate(() => document.querySelector('[data-testid="inspector"] [data-testid="clip-audio-channels"]')?.scrollIntoView({ block: 'center' }));
       await page.waitForTimeout(500);
       await shoot(page, 'channels', { keepToasts: true });
     });
@@ -938,7 +967,10 @@ let Media;
 const M_sintelCue = (f) => Media.sintelCues[Math.min(Media.sintelCues.length - 1, Math.floor(Media.sintelCues.length * f))] ?? { start: 2, end: 4 };
 let searchWordCache;
 function searchWord() {
-  if (!searchWordCache) searchWordCache = searchArg ?? commonWord(Media.tosCues, Media.sintelCues) ?? distinctiveWord(Media.tosCues) ?? 'the';
+  if (!searchWordCache) {
+    const shared = (w) => w && words(Media.tosCues).includes(w) && words(Media.sintelCues).includes(w);
+    searchWordCache = searchArg ?? (shared(Media.searchWord) ? Media.searchWord : null) ?? commonWord(Media.tosCues, Media.sintelCues) ?? distinctiveWord(Media.tosCues) ?? 'the';
+  }
   return searchWordCache;
 }
 
