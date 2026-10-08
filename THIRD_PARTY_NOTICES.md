@@ -38,15 +38,18 @@ named in its `configuration:` line) and is licensed under the GPL version 3 or l
 linked into the two programs, which depend only on the system's C library (glibc); `FFMPEG-BUILD.txt` records the
 platform and the linking.
 
-The macOS (Apple Silicon) dmg downloads FFmpeg with `scripts/mac/get-ffmpeg.sh`: a
-[jellyfin-ffmpeg](https://github.com/jellyfin/jellyfin-ffmpeg) `portable_macarm64-gpl` release (8.1.3-1, or 8.1.2-5
-as a fallback), pinned by version and SHA-256. It is FFmpeg 8.1.3 (a release, not a development build) with the
-Jellyfin project's patches, built from source by Jellyfin's CI on a macOS runner and configured with
-`--enable-gpl --enable-version3` (no `--enable-nonfree`), with libx264, libx265, libass and the other libraries named in
-its `configuration:` line linked in statically, so it too is licensed under the GPL version 3 or later as a whole. The
-two programs load only macOS's own libraries and frameworks and need macOS 12 or newer; `FFMPEG-BUILD.txt` records
-the platform, the minimum macOS, the linking and the archive's SHA-256. Its licence file is `COPYING.GPLv3` from the
-same jellyfin-ffmpeg release tag. Until macOS is an official platform the dmg is only a CI test build, not a release.
+The macOS dmgs download FFmpeg with `scripts/mac/get-ffmpeg.sh`: a
+[jellyfin-ffmpeg](https://github.com/jellyfin/jellyfin-ffmpeg) release (8.1.3-1, or 8.1.2-5 as a fallback), pinned
+by version and SHA-256, in its `portable_macarm64-gpl` build for the Apple Silicon dmg (`ReCut-<version>-macos-arm64.dmg`)
+and its `portable_mac64-gpl` build for the Intel dmg (`ReCut-<version>-macos-x64.dmg`). Both are the same FFmpeg 8.1.3
+(a release, not a development build) with the Jellyfin project's patches, from the same release tag and source,
+built from source by Jellyfin's CI on macOS runners and configured with `--enable-gpl --enable-version3` (no
+`--enable-nonfree`), with libx264, libx265, libass and the other libraries named in its `configuration:` line linked
+in statically, so they too are licensed under the GPL version 3 or later as a whole. Each dmg contains only its own
+architecture's build. The two programs load only macOS's own libraries and frameworks and need macOS 12 or newer;
+`FFMPEG-BUILD.txt` records the platform (`arm64 macOS` or `x86-64 macOS`), the build name, the minimum macOS, the
+linking and the archive's SHA-256. Its licence file is `COPYING.GPLv3` from the same jellyfin-ffmpeg release tag.
+Until macOS is an official platform the dmgs are only CI test builds, not releases.
 
 **Corresponding source.** `FFMPEG-BUILD.txt` is written by the download script when the build is downloaded. It records
 the URL the build came from, the build name, the full `ffmpeg -version` output (version and configuration), the
@@ -59,8 +62,9 @@ download date, and where to get the corresponding source:
   scripts at <https://github.com/BtbN/FFmpeg-Builds>, which pin the source revision of every library;
 - jellyfin-ffmpeg builds (macOS): the jellyfin-ffmpeg release tag the build was made from
   (`https://github.com/jellyfin/jellyfin-ffmpeg/tree/<tag>` and its source archive), which holds the FFmpeg source,
-  Jellyfin's patches (`debian/patches`) and the macOS build scripts (`builder/buildmac.sh`, `builder/scripts.d/`)
-  that pin the source commit of every library, plus the upstream FFmpeg release it is based on.
+  Jellyfin's patches (`debian/patches`) and the macOS build scripts (`builder/buildmac.sh`, `builder/scripts.d/`,
+  and `builder/variants/macarm64-gpl.sh` or `builder/variants/mac64-gpl.sh`) that pin the source commit of every
+  library, plus the upstream FFmpeg release it is based on.
 
 If you cannot get the corresponding source for the FFmpeg build in a ReCut release from those links, open an issue at
 <https://github.com/jelloshooter848/ReCut/issues> naming the ReCut version, and the project will provide it.
@@ -68,7 +72,8 @@ If you cannot get the corresponding source for the FFmpeg build in a ReCut relea
 FFmpeg that you download yourself, including the copy `Start ReCut.cmd` downloads into `resources\ffmpeg` of a cloned
 repository, is not redistributed by ReCut; the same licence files are written next to it. Packages you build
 yourself do not bundle FFmpeg unless you add it (see `docs/INSTALL.md`, "Bundling FFmpeg", for what to include;
-`scripts/linux/get-ffmpeg.sh` and `scripts/mac/get-ffmpeg.sh` do it on Linux and on an Apple Silicon Mac).
+`scripts/linux/get-ffmpeg.sh` and `scripts/mac/get-ffmpeg.sh` do it on Linux and on a Mac, for Apple Silicon or, with
+`--arch x64`, Intel).
 
 ## Electron and Chromium
 
@@ -139,7 +144,7 @@ not part of the app.)
 
 | | |
 |---|---|
-| Files | `resources/whisper/`: `whisper-cli` with `libwhisper.so.1`, `libggml.so.0`, `libggml-base.so.0` and `libggml-cpu-*.so` (Linux); `whisper-cli.exe` with `whisper.dll`, `ggml*.dll` and the Visual C++ runtime DLLs (Windows); a single `whisper-cli` (macOS) |
+| Files | `resources/whisper/`: `whisper-cli` with `libwhisper.so.1`, `libggml.so.0`, `libggml-base.so.0` and `libggml-cpu-*.so` (Linux); `whisper-cli.exe` with `whisper.dll`, `ggml*.dll` and the Visual C++ runtime DLLs (Windows); a single `whisper-cli` (macOS, Apple Silicon dmg); `whisper-cli` with `libwhisper.1.dylib`, `libggml.0.dylib`, `libggml-base.0.dylib` and `libggml-cpu-*.so` (macOS, Intel dmg) |
 | What it is | [whisper.cpp](https://github.com/ggml-org/whisper.cpp) 1.9.5 (commit `d1be6fde11ac6e0407606b4e42fe72d34add8037`), a C/C++ implementation of OpenAI's Whisper speech recognition model, with the [ggml](https://github.com/ggml-org/ggml) tensor library it contains, compiled for the CPU (and Metal on Apple Silicon) by `scripts/linux/get-whisper.sh`, `scripts/windows/get-whisper.ps1` and `scripts/mac/get-whisper.sh` |
 | Licence | MIT ("Copyright (c) 2023-2026 The ggml authors"), for whisper.cpp and ggml |
 | Licence text | `resources/whisper/WHISPER-LICENSE.txt` (**Help › About › Licences › whisper.cpp licence**); `WHISPER-BUILD.txt` next to it records the version, the source and its SHA-256, and the build flags |

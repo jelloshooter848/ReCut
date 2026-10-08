@@ -5,9 +5,10 @@ exe** (built on Windows by CI with FFmpeg bundled; the unpacked app they are mad
 is silently installed and the installed app smoke-tested; the unit and end-to-end suites run on Windows on every
 build and must pass before anything is published) and the **Linux x86-64 AppImage** (built on Ubuntu 22.04 by CI with
 FFmpeg bundled; the unit and end-to-end suites run on Linux on every build, and the AppImage itself is launched and
-smoke-tested before anything is published). The **macOS dmg for Apple Silicon** is in bring-up: CI builds it with
-FFmpeg bundled and launches it from the mounted dmg on every build, but it is not attached to releases yet and is
-not signed until the signing secrets are set up ([MACOS-SIGNING.md](MACOS-SIGNING.md)). Nothing else is code-signed.
+smoke-tested before anything is published). The **macOS dmgs** (one for Apple Silicon, one for Intel) are in
+bring-up: CI builds them with FFmpeg bundled and launches each from its mounted dmg on every build, but they are not
+attached to releases yet and are not signed until the signing secrets are set up ([MACOS-SIGNING.md](MACOS-SIGNING.md)).
+Nothing else is code-signed.
 
 ## Windows in one step
 
@@ -62,16 +63,28 @@ protocol, FFmpeg encode + probe with the bundled FFmpeg, licence files, OCR, UI 
 each release next to the Windows files; every other run keeps it as the run's `ReCut-linux` artifact (see
 [RELEASING.md](RELEASING.md#test-builds)).
 
-## macOS (Apple Silicon) test builds
+## macOS test builds
 
 macOS is not an official platform yet (it is planned for ReCut 0.7.0, [ROADMAP.md](ROADMAP.md) §19). Until then the
-dmg is a **test build**: it is not on the Releases page, only in CI.
+dmgs are **test builds**: they are not on the Releases page, only in CI.
 
-- **Requirements:** a Mac with Apple Silicon (M1 or newer) and macOS 12 Monterey or newer. There is no Intel build.
-- **Download:** open the repository's **Actions** tab › **Windows build** › a run whose `macos` job is green › **Artifacts**
-  › **ReCut-macos** (you must be signed in to GitHub). Unzip it to get `ReCut-<version>-macos-arm64.dmg`.
+- **Requirements:** macOS 12 Monterey or newer, on a Mac with Apple Silicon (M1 or newer) or an Intel processor.
+- **Which dmg:** there are two, one per processor. Open the Apple menu › **About This Mac**:
+  - "**Chip:** Apple M1" (M2, M3, …) → Apple Silicon → `ReCut-<version>-macos-arm64.dmg`;
+  - "**Processor:** … Intel …" → Intel → `ReCut-<version>-macos-x64.dmg`.
+
+  Each contains only its own processor's programs (FFmpeg and the speech-to-text engine), so pick the matching one:
+  the Intel build does not need Rosetta, and the Apple Silicon build does not run on an Intel Mac. (The Intel build
+  would also run on Apple Silicon under Rosetta 2, but slower; use the arm64 one there.) Intel support may be retired
+  after ReCut 1.0.
+- **Download:** open the repository's **Actions** tab › **Windows build** › a run whose "macOS arm64 dmg" or
+  "macOS x64 dmg" job is green › **Artifacts** › **ReCut-macos-arm64** or **ReCut-macos-x64** (you must be signed in to
+  GitHub). Unzip it to get the dmg.
 - **Install:** open the dmg and drag **ReCut** into **Applications**. FFmpeg and FFprobe are bundled inside the app
   (GPL; see [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)), so you do not need Homebrew or a system FFmpeg.
+- **Intel Macs:** speech-to-text (Whisper) runs on the CPU only (no Metal), so transcription is slower than on Apple
+  Silicon ([LIMITATIONS.md](LIMITATIONS.md)). The Intel build is tested in CI under Rosetta 2 on an Apple Silicon
+  runner, not on Intel hardware.
 - **First launch of an unsigned test build:** macOS refuses to open it ("Apple could not verify "ReCut" is free of
   malware…") because it is not signed with a Developer ID. Click **Done**, then open **System Settings › Privacy &
   Security**, scroll to the message about ReCut and click **Open Anyway**, then confirm with your password. On macOS
@@ -85,13 +98,17 @@ dmg is a **test build**: it is not on the Releases page, only in CI.
 - **`.recut` files** open in ReCut (double-click, or drag onto the Dock icon). Settings live in
   `~/Library/Application Support/ReCut`. To remove ReCut, move it from Applications to the Trash.
 
-macOS builds come from the advisory `macos` job of `.github/workflows/windows.yml` on a `macos-14` (Apple Silicon)
-runner: `scripts/mac/get-ffmpeg.sh` downloads a pinned, checksum-verified arm64 FFmpeg build (jellyfin-ffmpeg,
-FFmpeg 8.1 release branch with libx264, libx265 and libass), checks that it loads only macOS's own libraries and runs
-on macOS 12 or newer, and writes `FFMPEG-LICENSE.txt` and `FFMPEG-BUILD.txt` next to it; the job runs the unit tests,
-builds the dmg, checks the code signature of every binary in the app, mounts the dmg and smoke-tests the app inside it
-(media protocol, FFmpeg encode + probe with the bundled FFmpeg, licence files, OCR, UI mounted). A second advisory job
-runs the end-to-end suite on macOS. Neither gates a release yet.
+macOS builds come from the advisory `macos` job of `.github/workflows/windows.yml`, one matrix leg per processor
+(`arm64`, `x64`), both on a `macos-14` (Apple Silicon) runner: `scripts/mac/get-ffmpeg.sh --arch <arm64|x64>`
+downloads a pinned, checksum-verified FFmpeg build of that architecture (jellyfin-ffmpeg, the same FFmpeg 8.1 release
+for both, with libx264, libx265 and libass), checks that it is that architecture only, loads only macOS's own
+libraries and runs on macOS 12 or newer, and writes `FFMPEG-LICENSE.txt` and `FFMPEG-BUILD.txt` next to it;
+`scripts/mac/get-whisper.sh --arch <arm64|x64>` builds the speech-to-text engine (Metal on arm64; CPU only, with
+CPU-variant kernels, cross-compiled for x86_64 on Intel). The job runs the unit tests, builds the dmg, checks the code
+signature of every binary in the app, mounts the dmg and smoke-tests the app inside it (media protocol, FFmpeg
+encode + probe with the bundled FFmpeg, licence files, OCR, speech-to-text engine, UI mounted). The x64 leg runs all of
+this under Rosetta 2. A second advisory job runs the end-to-end suite on macOS (Apple Silicon only). Neither gates a
+release yet.
 
 ## Prerequisites
 
@@ -170,12 +187,16 @@ npm run dist       # build + electron-builder         → AppImage (Linux), dmg 
   (`get-whisper.sh` compiles the speech-to-text engine from its pinned source: it needs cmake and a C++ compiler and
   takes a few minutes; without `resources/whisper/` the package has no transcription).
   `npm run package` produces `release/linux-unpacked/` with the `recut` executable.
-- **Built and smoke-tested on macOS, in CI, not released yet:** the Apple Silicon dmg (`package.json` →
-  `build.mac`, file name `ReCut-<version>-macos-arm64.dmg`, macOS 12 or newer). See
-  [macOS (Apple Silicon) test builds](#macos-apple-silicon-test-builds). To build it yourself on an Apple Silicon Mac:
-  `./scripts/mac/get-ffmpeg.sh && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg --arm64 --publish never -c.mac.identity=- -c.mac.timestamp=none --no-config.mac.hardenedRuntime`
-  (an ad-hoc signed build; with a Developer ID in your keychain, leave out everything after `--publish never`).
-  Signing and notarization in CI: [MACOS-SIGNING.md](MACOS-SIGNING.md). Windows code signing is not set up.
+- **Built and smoke-tested on macOS, in CI, not released yet:** the Apple Silicon and Intel dmgs (`package.json` →
+  `build.mac`, file names `ReCut-<version>-macos-arm64.dmg` and `ReCut-<version>-macos-x64.dmg`, macOS 12 or newer).
+  See [macOS test builds](#macos-test-builds). To build the Apple Silicon one yourself on an Apple Silicon Mac:
+  `./scripts/mac/get-ffmpeg.sh && ./scripts/mac/get-whisper.sh && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg --arm64 --publish never -c.mac.identity=- -c.mac.timestamp=none --no-config.mac.hardenedRuntime`
+  (an ad-hoc signed build; with a Developer ID in your keychain, leave out everything after `--publish never`). For
+  the Intel one, run `./scripts/mac/get-ffmpeg.sh --arch x64 && ./scripts/mac/get-whisper.sh --arch x64` instead
+  (on Apple Silicon this needs Rosetta 2: `softwareupdate --install-rosetta --agree-to-license`) and `--x64` instead of
+  `--arm64`. `resources/ffmpeg/` and `resources/whisper/` hold one architecture at a time, so fetch them again before
+  building the other dmg. Signing and notarization in CI: [MACOS-SIGNING.md](MACOS-SIGNING.md). Windows code
+  signing is not set up.
 - A package you build yourself does **not** include FFmpeg unless `resources/ffmpeg/` exists when you build it, so
   its users install FFmpeg themselves as described above (on Windows, `Start ReCut.cmd` may already have downloaded
   it there). The Windows builds and the Linux AppImage from CI are the published builds that bundle FFmpeg: the
@@ -192,8 +213,8 @@ built without FFmpeg. To bundle FFmpeg:
    Windows), jellyfin-ffmpeg (macOS, Apple Silicon and Intel) or gyan.dev (Windows). Use builds that include libx264.
    On Windows, `scripts/windows/get-ffmpeg.ps1` does this step and steps 2 and 3 for you, including the licence files
    below; on x86-64 Linux, `scripts/linux/get-ffmpeg.sh` does (it also checks that the binaries need nothing but
-   glibc); on an Apple Silicon Mac, `scripts/mac/get-ffmpeg.sh` does (it also checks that the binaries load only
-   macOS's own libraries and run on macOS 12).
+   glibc); on a Mac, `scripts/mac/get-ffmpeg.sh` does, for Apple Silicon or with `--arch x64` for Intel (it also
+   checks that the binaries are that architecture only, load only macOS's own libraries and run on macOS 12).
 2. Put them in `resources/ffmpeg/` at the repository root, named exactly `ffmpeg` and `ffprobe` (`ffmpeg.exe` and
    `ffprobe.exe` on Windows). On Linux and macOS, run `chmod +x resources/ffmpeg/*`.
 3. Put the FFmpeg licence and source information next to them in `resources/ffmpeg/` (see the licensing note below):

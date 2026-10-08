@@ -101,15 +101,18 @@ on every push.
 
 The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow on every push.
 
-## macOS (Apple Silicon): test builds
+## macOS (Apple Silicon and Intel): test builds
 
-- **Not released yet** (planned for 0.7.0). CI builds `ReCut-<version>-macos-arm64.dmg` on an Apple Silicon runner
-  and launches it from the mounted dmg on every push; download it from the **ReCut-macos** artifact of a run whose macos job is green
-  (Actions › Windows build › the run › Artifacts). Apple Silicon (M1 or newer) and macOS 12 or newer only; no Intel
-  build. FFmpeg is bundled.
+- **Not released yet** (planned for 0.7.0). CI builds two dmgs on every push, both for macOS 12 or newer:
+  `ReCut-<version>-macos-arm64.dmg` for Apple Silicon Macs (M1 or newer) and `ReCut-<version>-macos-x64.dmg` for
+  Intel Macs. Each is launched from the mounted dmg on an Apple Silicon runner (the Intel one under Rosetta 2).
+  Download them from the **ReCut-macos-arm64** and **ReCut-macos-x64** artifacts of a run whose macos jobs are green
+  (Actions › Windows build › the run › Artifacts). FFmpeg and the speech-to-text engine are bundled in both.
+- **Which one:** Apple menu › **About This Mac**. "Chip: Apple M…" means arm64; "Processor: Intel" means x64. On Intel
+  Macs speech-to-text runs on the CPU only (no Metal), so it is slower. Intel support may be retired after 1.0.
 - Open the dmg and drag ReCut to Applications. Until the build is signed with a Developer ID, macOS refuses the first
   launch: open **System Settings › Privacy & Security** and click **Open Anyway** (on macOS 14 and earlier you can
-  also right-click ReCut › **Open**). See [docs/INSTALL.md](docs/INSTALL.md#macos-apple-silicon-test-builds); signing
+  also right-click ReCut › **Open**). See [docs/INSTALL.md](docs/INSTALL.md#macos-test-builds); signing
   is set up as described in [docs/MACOS-SIGNING.md](docs/MACOS-SIGNING.md).
 
 ## Quick start (from source, any OS)
