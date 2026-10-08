@@ -13,6 +13,9 @@ import type { ID, Project } from '../../shared/model';
 import { exportTimeline, INTERCHANGE_FORMATS, type InterchangeFormat, type InterchangeResult } from '../../shared/interchange';
 import { fileUrl, Issues, prepare, safeFileStem } from '../../shared/interchange/common';
 import { edlReels, REEL_MAX, reelBase } from '../../shared/interchange/edl';
+import { MAX_FLAT_TRACKS, MAX_NEST_DEPTH } from '../../shared/nest';
+import { normalizeProjectWithReport } from '../../shared/project';
+import { allTracks, makeTrack } from '../../shared/timeline';
 import { clip, dropFrame, media, mkProject, mkSeq, put, R23, representative, sourceTimecode, tr } from '../fixtures/interchange/fixture';
 
 const DIR = path.resolve(__dirname, '../fixtures/interchange');
@@ -386,5 +389,37 @@ describe('FCPXML audio crossfades of linked clips', () => {
     expect(sec(v2[1]) - sec(v2[2])).toBeCloseTo(6 * 1001 / 24000, 9);
     expect(x).toMatch(/<fadeIn type="linear" duration="1001\/2000s"\/>/);
     expect(issue(r, 'transition', 'info')).toEqual([expect.objectContaining({ count: 1, message: '1 audio crossfade of linked clips is written as overlapping audio with fades.' })]);
+  });
+});
+
+describe('a project whose nesting the load repair cut (flatten size cap)', () => {
+  it('exports in every format: the cut nested clips are reported as missing media and left out, no crash', () => {
+    // A 4-track fan-out MAX_NEST_DEPTH levels deep flattens far past MAX_FLAT_TRACKS: loading cuts nested clips
+    // (they keep their sequence id as mediaId, without sequenceId: clips of missing media).
+    const K = 4;
+    const levels = Array.from({ length: MAX_NEST_DEPTH + 1 }, (_, i) => {
+      const s = mkSeq(`L${i}`, `L${i}`, R23);
+      s.videoTracks = Array.from({ length: K }, (_, k) => ({ ...makeTrack('video', k + 1), id: `L${i}V${k + 1}` }));
+      s.audioTracks = [{ ...makeTrack('audio', 1), id: `L${i}A1` }];
+      return s;
+    });
+    levels.forEach((s, i) => s.videoTracks.forEach((t, k) => put(t, i < MAX_NEST_DEPTH
+      ? clip(`n${i}-${k}`, `L${i + 1}`, 0, 48, 0, { sequenceId: `L${i + 1}`, name: `nest L${i + 1}` })
+      : clip(`m${k}`, 'm', 0, 48, k * 2))));
+    const raw = mkProject('P', [media('m', '/m.mp4')], levels);
+    const { project, repairs } = normalizeProjectWithReport(JSON.parse(JSON.stringify(raw)));
+    expect(repairs.join('\n')).toContain('when flattened made offline');
+    const cut = Object.values(project.sequences.L0.videoTracks).flatMap((t) => t.clips).filter((c) => !c.sequenceId).length;
+    for (const f of FORMATS) {
+      const r = exportTimeline(project, 'L0', f);
+      expect(r.files.length).toBeGreaterThan(0);
+      expect(r.summary.videoTracks + r.summary.audioTracks).toBeLessThanOrEqual(MAX_FLAT_TRACKS);
+      if (cut) expect(issue(r, 'offline', 'warning')).toEqual([expect.objectContaining({ message: expect.stringMatching(/with no media in the project (is|are) left out\.$/) })]);
+    }
+    // Some sequence lost references, and an export of one that did reports them.
+    const host = project.sequenceOrder.find((id) => allTracks(project.sequences[id]).some((t) => t.clips.some((c) => !c.sequenceId && c.mediaId.startsWith('L'))))!;
+    expect(host).toBeDefined();
+    const r = exportTimeline(project, host, 'otio');
+    expect(issue(r, 'offline', 'warning')).toEqual([expect.objectContaining({ message: expect.stringMatching(/with no media in the project (is|are) left out\.$/) })]);
   });
 });

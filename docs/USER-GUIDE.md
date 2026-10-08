@@ -321,7 +321,9 @@ own sequence and drop it into as many cuts as you like: an edit made inside it s
 - **Nest a whole sequence:** drag it from the Project panel onto the timeline (overwrite; hold Ctrl to insert), or
   right-click it › **Nest in Active Sequence** (at the playhead). A sequence that has picture and sound becomes a
   linked pair. A sequence cannot contain itself, directly or through another nested sequence, and nesting is limited
-  to 8 levels; ReCut refuses those with a message.
+  to 8 levels and to 1,000 tracks or 50,000 clips once flattened (every inner track of every nested clip becomes a
+  track of the cut it plays in, so nesting on several tracks at every level multiplies them); ReCut refuses those
+  with a message. A season of 20 episodes, each nesting a few scenes, stays far below that.
 - **Open in Timeline:** double-click the nested clip (or Clip menu, right-click, or the Inspector's button). Its
   sequence becomes the active one, with the playhead on the frame you were looking at.
 - **Break Apart Compound Clip** (Clip menu or right-click) puts the inner clips back on this timeline, over the range
@@ -400,8 +402,11 @@ move it to another drive or hand it to someone else.
 1. **Choose…** a destination folder. ReCut creates a folder named after the project inside it; that folder must not
    exist yet, or be empty.
 2. Pick **Media used in sequences only** (every file a clip or a sequence snapshot uses) or **All project media**.
-   Turn on **Include subtitle files** to copy the subtitle files the project imported, and **Include proxies** to copy
-   ready proxies so the copy previews without rebuilding them on another computer.
+   Turn on **Include subtitle files** to copy the subtitle files the project imported (also those only a snapshot
+   still names), and **Include proxies** to copy ready proxies, including the preview audio of channel selections
+   (an extracted centre channel, a downmix), so the copy previews without rebuilding them on another computer.
+   Media used only inside a nested sequence or compound clip count as used. Whisper and OCR tracks, keyframes and
+   nested sequences are part of the project file and need no copying.
 3. Check the summary: the folder it creates, the total size and the free space on the destination. Media that are
    offline are listed and skipped. **Collect** stays disabled when the folder is not empty or the space is short.
 4. **Collect** runs as a job: the dialog (and **Jobs**) shows the bytes copied, and **Cancel collect** stops it.
@@ -414,7 +419,7 @@ Saga Fan Cut/
   Saga Fan Cut.recut
   Media/        title_t00.mkv, Disc 1/title_t01.mkv, Disc 2/title_t01.mkv, …
   Subtitles/    the subtitle files (option)
-  Proxies/      the proxies (option)
+  Proxies/      the proxies and channel-selection preview audio (option)
 ```
 
 - Each file keeps its own name. Files with the same name from different folders go into subfolders named after the

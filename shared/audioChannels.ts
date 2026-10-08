@@ -100,10 +100,16 @@ export function layoutChannelNames(stream: StreamLike | undefined): string[] | n
   return [...names];
 }
 
-/** The channel ids a stream offers: its layout's names, or `c0`..`c<N-1>` when the layout is unknown. */
+/** Numbered channels a selection can address: CHANNEL_ID stores `c0`..`c99`. */
+const MAX_NUMBERED_CHANNELS = 100;
+
+/**
+ * The channel ids a stream offers: its layout's names, or `c0`..`c<N-1>` when the layout is unknown (at most the
+ * MAX_NUMBERED_CHANNELS a selection can store, whatever count a stored probe claims).
+ */
 export function streamChannelIds(stream: StreamLike | undefined): string[] {
   if (!stream || !(stream.channels > 0)) return [];
-  return layoutChannelNames(stream) ?? Array.from({ length: stream.channels }, (_, i) => `c${i}`);
+  return layoutChannelNames(stream) ?? Array.from({ length: Math.min(stream.channels, MAX_NUMBERED_CHANNELS) }, (_, i) => `c${i}`);
 }
 
 /** "Centre (FC)", "LFE (subwoofer) (LFE)", "Channel 3" for `c2`. */
@@ -190,7 +196,12 @@ export function channelSelectionProblem(sel: AudioChannelSelection | undefined, 
   if (!sel || !stream) return null;
   if (resolveChannelSelection(sel, stream)) return null;
   if (!isMultichannel(stream)) return 'the stream is mono';
-  if (sel.mode === 'channel') return `the stream (${stream.layout || `${stream.channels} channels`}) has no ${channelLabel(sel.channel)} channel`;
+  if (sel.mode === 'channel') {
+    // A layout the probe guessed from the channel count is not the stream's: its channels are numbered (c0, c1, ...).
+    const what = stream.layoutGuessed ? `${stream.channels} channels in an unknown layout` : stream.layout || `${stream.channels} channels`;
+    const numbered = stream.layoutGuessed && !/^c\d+$/.test(sel.channel) ? '; its channels are numbered' : '';
+    return `the stream (${what}) has no ${channelLabel(sel.channel)} channel${numbered}`;
+  }
   return stream.channels <= 2 ? 'a stereo stream has nothing to downmix' : 'the stream\'s channel layout is unknown';
 }
 

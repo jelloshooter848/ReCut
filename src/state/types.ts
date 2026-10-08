@@ -68,8 +68,9 @@ export interface StoreState {
   projectPath: string | null;
   dirty: boolean;
   /**
-   * Bumped by every write that makes the project differ from its file (each one that sets `dirty`) and by
-   * newProject / loadProjectData. A save records it when it snapshots the project; `markSaved` clears `dirty` only
+   * Bumped by every edit (each write that sets `dirty`) and by newProject / loadProjectData. Job mirrors that do not
+   * mark the project dirty (proxy / channel-proxy / scene-detect state) do not bump it: they are written with the next
+   * save / autosave, but are not unsaved work. A save records it when it snapshots the project; `markSaved` clears `dirty` only
    * if it is unchanged when the write lands (edits made during the save stay unsaved).
    */
   revision: number;
@@ -131,7 +132,10 @@ export interface SeriesItemInput { id: ID; episode?: number; title?: string }
 export interface StoreActions {
   // ---- undo model ----
   commit(label: string, recipe: Recipe): boolean;
-  /** Apply a recipe without pushing history or clearing redo (status mirrors, view state). `dirty` marks the project modified. */
+  /**
+   * Apply a recipe without pushing history or clearing redo (status mirrors, view state). `dirty` marks the project
+   * modified (an edit); without it the change is still in the project the next save / autosave writes.
+   */
   quiet(recipe: Recipe, opts?: { dirty?: boolean }): void;
   undo(): boolean;
   redo(): boolean;
@@ -167,13 +171,15 @@ export interface StoreActions {
   addMedia(items: MediaItem[]): void;
   updateMedia(id: ID, patch: Partial<MediaItem>): void;
   removeMedia(ids: ID[]): void;
+  /** Quiet (non-undoable) but marks dirty: completes an import / relink, and is not re-read when a project opens. */
   setMediaProbe(id: ID, result: MediaProbe | { error: string }): void;
+  /** Quiet (non-undoable, not dirty: a job mirror, written with the next save / autosave). */
   setProxy(id: ID, proxy: ProxyInfo): void;
-  /** Quiet (non-undoable, marks dirty): forget a proxy whose file failed to load → `{status:'none'}`. */
+  /** Quiet (non-undoable, not dirty: a job mirror): forget a proxy whose file failed to load → `{status:'none'}`. */
   invalidateProxy(id: ID): void;
   /**
-   * Quiet (non-undoable, marks dirty): the channel proxies of a media item (MediaItem.channelProxies), by key; null
-   * removes an entry. Mirrors of the 'channelProxy' jobs (src/state/channelProxies.ts).
+   * Quiet (non-undoable, not dirty: a job mirror): the channel proxies of a media item (MediaItem.channelProxies), by
+   * key; null removes an entry. Mirrors of the 'channelProxy' jobs (src/state/channelProxies.ts).
    */
   setChannelProxies(id: ID, patch: Record<string, ProxyInfo | null>): void;
   setSceneDetectStatus(id: ID, status: NonNullable<MediaItem['sceneDetectStatus']>): void;

@@ -251,7 +251,7 @@ describe('media', () => {
     expect(m.path).toBe('/media/new.mkv');
     expect(S().history.past.length).toBe(past);
     expect(S().canRedo()).toBe(true);
-    expect(S().dirty).toBe(true); // proxies / paths are persisted
+    expect(S().dirty).toBe(true); // the relink (a new path) is an edit; the job mirrors alone are not
     S().redo();
     expect(S().project.name).toBe('B');
     expect(S().canRedo()).toBe(false);
@@ -551,7 +551,8 @@ describe('attack fixes (store)', () => {
     S().invalidateProxy(media.id);
     expect(S().project.media[media.id].proxy).toEqual({ status: 'none' });
     expect(S().history.past.length).toBe(n);
-    expect(S().dirty).toBe(true);
+    // A job mirror, not an edit (bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md).
+    expect(S().dirty).toBe(false);
   });
 
   it('updateMarker clamps time and duration to >= 0', () => {

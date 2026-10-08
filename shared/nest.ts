@@ -27,6 +27,9 @@
  *   the inner frames before / after the nested clip's in / out as its handles.
  * - The nested clip past the end of its inner sequence is empty (black / silence), like media trimmed past its end.
  * - References to a missing sequence, or that close a cycle, render nothing (normalizeProject repairs cycles).
+ * - Limits: nesting is at most MAX_NEST_DEPTH levels deep, and no sequence may flatten to more than MAX_FLAT_TRACKS
+ *   tracks or MAX_FLAT_CLIPS clips (flattenedSize, computed without flattening). nestProblem / nestLimitProblem
+ *   refuse edits past them; normalizeProject cuts references past them in files (nestingRepairs, nestSizeRepairs).
  */
 import type { Clip, ClipAudio, ClipTransform, ID, Keyframe, MediaItem, Rational, Sequence, SequenceSubtitleTrack, Track, TransformKeyframes, Transition } from './model';
 import { evaluateKeyframes, hasKeyframes, hasMotionKeyframes, MAX_KEYFRAMES_PER_PROPERTY, TRANSFORM_KEY_PROPS } from './keyframes';
@@ -38,6 +41,22 @@ import { fpsEquals } from './time';
 
 /** Deepest chain of nested sequences (A in B in C ... : at most this many levels below the top sequence). */
 export const MAX_NEST_DEPTH = 8;
+
+/**
+ * Most tracks (video and audio together) and clips a sequence may flatten to (`flattenSequence`, measured by
+ * `flattenedSize`), beside MAX_NEST_DEPTH: every active inner track of every nested clip becomes a flattened track,
+ * so nesting multiplies per level (9 sequences each nesting the next on 4 tracks flatten to 349,524 tracks).
+ * A sequence whose own tracks / clips are already more than this is held to its own count instead.
+ *
+ * Measured on the development machine (Linux, Node 22, warm, median of 7 runs), flattenSequence takes:
+ * - 993 flattened tracks (1 clip each): 3 ms. Tracks are cheap; 1,000 leaves room for any real edit (a season of 20
+ *   episodes of 6 tracks, each nesting 5 scenes of 6 tracks, with dissolves between them, counts 42).
+ * - flattened clips: about 3 to 6 us each, so ~150 ms (one level of nesting) to ~250 ms (two levels) at 50,000.
+ *   A realistic season (20 episodes x 5 scenes, about 24,000 clips) already takes ~100 ms, so a lower limit would
+ *   cut real projects; 50,000 is twice that season. (100,000 measured 300 to 620 ms.)
+ */
+export const MAX_FLAT_TRACKS = 1_000;
+export const MAX_FLAT_CLIPS = 50_000;
 
 /** A clip that plays a sequence. */
 export function isNestedClip(c: Pick<Clip, 'sequenceId'> | null | undefined): c is Clip & { sequenceId: ID } {
@@ -143,15 +162,45 @@ export function nestDepthAbove(sequences: Seqs, seqId: ID): number {
 }
 
 /** Why `childId` cannot be nested in `hostId`, or null when it can. */
-export type NestProblem = 'missing' | 'self' | 'cycle' | 'depth';
+export type NestProblem = 'missing' | 'self' | 'cycle' | 'depth' | 'size';
 
-export function nestProblem(sequences: Seqs, hostId: ID, childId: ID): NestProblem | null {
-  if (!own(sequences, childId) || !own(sequences, hostId)) return 'missing';
+/**
+ * Why `childId` cannot be nested in `hostId`, or null when it can. `adding` are the clips the caller adds to the
+ * host, for the size limit (MAX_FLAT_TRACKS / MAX_FLAT_CLIPS on the host and every sequence that contains it): by
+ * default one clip per kind playing the whole child (what nesting the sequence makes), each on a new track. Pass
+ * `[]` when `sequences` already holds the edited host (a dry run of the edit, as the store does): the size is then
+ * measured on it as it is.
+ */
+export function nestProblem(sequences: Seqs, hostId: ID, childId: ID, adding?: readonly Clip[]): NestProblem | null {
+  const host = own(sequences, hostId), child = own(sequences, childId);
+  if (!child || !host) return 'missing';
   if (hostId === childId) return 'self';
   if (reachableSequences(sequences, childId).has(hostId)) return 'cycle';
   if (nestDepthAbove(sequences, hostId) + 1 + nestDepthBelow(sequences, childId) > MAX_NEST_DEPTH) return 'depth';
+  const add = adding ?? wholeNestedClips(host, child);
+  const seqs = add.length ? { ...sequences, [hostId]: withExtraTracks(host, add) } : sequences;
+  if (nestSizeExceeded(seqs, hostId)) return 'size';
   return null;
 }
+
+/**
+ * The nesting limits for an edited project (`sequences` already holds the edit made in `hostId`, e.g. Make Compound
+ * Clip or Break Apart on a copy): 'cycle' when the host contains itself, 'depth' when a chain of nested sequences
+ * through it is deeper than MAX_NEST_DEPTH, 'size' when it or a sequence that contains it flattens past the size
+ * limits; null when none.
+ */
+export function nestLimitProblem(sequences: Seqs, hostId: ID): Exclude<NestProblem, 'missing' | 'self'> | null {
+  if (!own(sequences, hostId)) return null;
+  if (reachableSequences(sequences, hostId).has(hostId)) return 'cycle';
+  if (nestDepthAbove(sequences, hostId) + nestDepthBelow(sequences, hostId) > MAX_NEST_DEPTH) return 'depth';
+  if (nestSizeExceeded(sequences, hostId)) return 'size';
+  return null;
+}
+
+const fmtCount = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+/** The size limits in words ("1,000 tracks or 50,000 clips"). */
+export const FLAT_LIMIT_TEXT = `${fmtCount(MAX_FLAT_TRACKS)} tracks or ${fmtCount(MAX_FLAT_CLIPS)} clips`;
 
 /** User-facing text for a NestProblem ("Cannot nest X in Y: ..."). */
 export function nestProblemText(p: NestProblem): string {
@@ -160,7 +209,238 @@ export function nestProblemText(p: NestProblem): string {
     case 'self': return 'a sequence cannot contain itself';
     case 'cycle': return 'the sequence already contains this one (directly or through another nested sequence)';
     case 'depth': return `nesting would be more than ${MAX_NEST_DEPTH} levels deep`;
+    case 'size': return `nesting would expand to more than ${FLAT_LIMIT_TEXT} when flattened`;
   }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Flattened size (the second nesting limit, beside depth)
+// ---------------------------------------------------------------------------------------------------
+
+/** Tracks and clips (video and audio together) of a flattened sequence. */
+export interface FlatSize { tracks: number; clips: number }
+
+type Kind = 'video' | 'audio';
+const KINDS: readonly Kind[] = ['video', 'audio'];
+
+/**
+ * One kind of a sequence as flattening makes it: its track and clip count, and its clips as weighted spans over its
+ * timeline (frames), so the clips a nested clip of this sequence plays over a window are a prefix-sum lookup.
+ */
+interface KindSize {
+  tracks: number;
+  clips: number;
+  starts: Float64Array; startSum: Float64Array; // spans by start, prefix sums of their weights
+  ends: Float64Array; endSum: Float64Array;     // spans by end, prefix sums of their weights
+}
+
+/** A nested clip that expands: its span on its track widened by transition handles, its inner tracks and clips. */
+interface NestItem { clip: Clip; start: number; from: number; to: number; n: number; w: number }
+interface TrackScan { clips: number; nested: NestItem[]; plain: { from: number; to: number }[] }
+
+/** Frames a transition at a nested clip's edge can add before / after it (flattenTrack's handles, at most half its length). */
+function edgeExtents(T: Track, kind: Kind): Map<ID, { before: number; after: number }> {
+  const out = new Map<ID, { before: number; after: number }>();
+  const get = (id: ID) => { let x = out.get(id); if (!x) { x = { before: 0, after: 0 }; out.set(id, x); } return x; };
+  for (const tr of T.transitions) {
+    if (!tr.outClipId || !tr.inClipId || tr.type === 'dipToBlack' || !typeOk(kind, tr.type)) continue;
+    const D = Math.round(tr.duration);
+    if (!Number.isFinite(D) || D <= 0) continue;
+    const h = Math.floor(D / 2);
+    const i = get(tr.inClipId), o = get(tr.outClipId);
+    if (h > i.before) i.before = h;
+    if (h > o.after) o.after = h;
+  }
+  return out;
+}
+
+/**
+ * Tracks flattenTrack makes for the nested clips `items` (in start order) beside the base track: each goes to the
+ * first group (in creation order) that has ended by its start, else to a new group; a group has as many tracks as
+ * its widest member. First fit through a segment tree of group ends, so a track with thousands of overlapping
+ * nested clips stays O(n log n).
+ */
+function groupTracks(items: readonly NestItem[]): number {
+  if (items.length === 0) return 0;
+  let cap = 1;
+  while (cap < items.length) cap *= 2;
+  const tree = new Float64Array(2 * cap).fill(Infinity);
+  const widest: number[] = [];
+  for (const it of items) {
+    let g = -1;
+    if (tree[1] <= it.from) {
+      let i = 1;
+      while (i < cap) i = tree[2 * i] <= it.from ? 2 * i : 2 * i + 1;
+      g = i - cap;
+    }
+    if (g < 0) { g = widest.length; widest.push(it.n); } else if (it.n > widest[g]) widest[g] = it.n;
+    let i = g + cap;
+    tree[i] = it.to;
+    for (i >>= 1; i >= 1; i >>= 1) tree[i] = Math.min(tree[2 * i], tree[2 * i + 1]);
+  }
+  let n = 0;
+  for (const x of widest) n += x;
+  return n;
+}
+
+/** First index of sorted `a` whose value is greater than `x`. */
+function upperBound(a: Float64Array, x: number): number {
+  let lo = 0, hi = a.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] <= x) lo = m + 1; else hi = m; }
+  return lo;
+}
+
+/** Weight of the spans that start at or before `b` and end after `a` (all of them when the window is not finite). */
+function windowSum(k: KindSize, a: number, b: number): number {
+  const total = k.startSum[k.startSum.length - 1];
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return total;
+  const v = k.startSum[upperBound(k.starts, b)] - k.endSum[upperBound(k.ends, a)];
+  return v < 0 ? 0 : v > total ? total : v;
+}
+
+function spansOf(list: { from: number; to: number; w: number }[]): Pick<KindSize, 'starts' | 'startSum' | 'ends' | 'endSum'> {
+  const build = (key: 'from' | 'to') => {
+    const sorted = [...list].sort((x, y) => x[key] - y[key]);
+    const at = new Float64Array(sorted.length), sum = new Float64Array(sorted.length + 1);
+    sorted.forEach((x, i) => { at[i] = x[key]; sum[i + 1] = sum[i] + x.w; });
+    return [at, sum] as const;
+  };
+  const [starts, startSum] = build('from');
+  const [ends, endSum] = build('to');
+  return { starts, startSum, ends, endSum };
+}
+
+/**
+ * The size flattenSequence gives each sequence, computed from per-sequence counts memoized bottom-up, without
+ * flattening. It counts every clip and track as enabled and unmuted (so disabling a clip or muting a track never
+ * changes it), and for a nested clip the inner clips its window (with transition handles) overlaps, so a nested
+ * sequence cut into many pieces counts about once. Clips in `cut` count as plain clips (references being removed).
+ */
+class FlatSizer {
+  private readonly memo = new Map<string, KindSize | null>();
+  readonly cut = new Set<Clip>();
+  constructor(private readonly sequences: Seqs) {}
+
+  /** Measure `id` again (after cutting some of its clips). */
+  forget(id: ID): void { for (const k of KINDS) this.memo.delete(`${k}\u0000${id}`); }
+
+  total(id: ID): FlatSize {
+    let tracks = 0, clips = 0;
+    for (const k of KINDS) { const s = this.of(id, k); if (s) { tracks += s.tracks; clips += s.clips; } }
+    return { tracks, clips };
+  }
+
+  of(id: ID, kind: Kind): KindSize | null {
+    const key = `${kind}\u0000${id}`;
+    if (this.memo.has(key)) return this.memo.get(key)!;
+    const seq = own(this.sequences, id);
+    if (!seq) return null;
+    this.memo.set(key, null); // a reference back while measuring (only through a cycle) expands to nothing
+    let tracks = 0, clips = 0;
+    const spans: { from: number; to: number; w: number }[] = [];
+    for (const t of this.scan(seq, kind)) {
+      tracks += 1 + groupTracks(t.nested);
+      clips += t.clips;
+      for (const p of t.plain) spans.push({ from: p.from, to: p.to, w: 1 });
+      for (const x of t.nested) { clips += x.w; if (x.w > 0) spans.push({ from: x.from, to: x.to, w: x.w }); }
+    }
+    const out: KindSize = { tracks, clips, ...spansOf(spans) };
+    this.memo.set(key, out);
+    return out;
+  }
+
+  /** Per track of `kind`: its clip count, its nested clips that expand (not cut, inner present, no cycle), its other clips. */
+  scan(seq: Sequence, kind: Kind): TrackScan[] {
+    const fdO = fdOf(seq.fps);
+    return (kind === 'video' ? seq.videoTracks : seq.audioTracks).map((T) => {
+      const ext = edgeExtents(T, kind);
+      const nested: NestItem[] = [];
+      const plain: TrackScan['plain'] = [];
+      for (const c of T.clips) {
+        const e = ext.get(c.id);
+        const from = c.start - (e?.before ?? 0), to = clipEnd(c) + (e?.after ?? 0);
+        if (!isNestedClip(c) || this.cut.has(c)) { plain.push({ from, to }); continue; }
+        const inner = own(this.sequences, c.sequenceId);
+        if (!inner || cyclic(this.sequences, seq.id, c.sequenceId)) continue;
+        const k = this.of(c.sequenceId, kind);
+        if (!k) continue;
+        // The inner clips flattenTrack / mapNested keep: they end after the window's first outer frame and start
+        // at or before its last one (outer frame f shows inner time sourceIn + (f - start) x outer frame duration).
+        const fdI = fdOf(inner.fps);
+        const a = (c.sourceIn + (from - c.start + 1e-6) * fdO) / fdI;
+        const b = (c.sourceIn + (to - 1 - c.start + 1e-6) * fdO) / fdI;
+        nested.push({ clip: c, start: c.start, from, to, n: k.tracks, w: windowSum(k, a, b) });
+      }
+      nested.sort((x, y) => x.start - y.start);
+      return { clips: T.clips.length, nested, plain };
+    });
+  }
+}
+
+const ownTracks = (s: Sequence) => s.videoTracks.length + s.audioTracks.length;
+function ownClips(s: Sequence): number {
+  let n = 0;
+  for (const t of s.videoTracks) n += t.clips.length;
+  for (const t of s.audioTracks) n += t.clips.length;
+  return n;
+}
+/** True when `size` is past the limits for `seq` (a sequence is always allowed its own tracks and clips). */
+function overLimit(seq: Sequence, size: FlatSize): boolean {
+  return size.tracks > Math.max(MAX_FLAT_TRACKS, ownTracks(seq)) || size.clips > Math.max(MAX_FLAT_CLIPS, ownClips(seq));
+}
+
+/**
+ * Tracks and clips (video and audio together) flattenSequence makes of `seqId` with every clip and track enabled:
+ * an upper bound of what it makes, computed without flattening (see FlatSizer). Zero for a missing sequence.
+ */
+export function flattenedSize(sequences: Seqs, seqId: ID): FlatSize {
+  return new FlatSizer(sequences).total(seqId);
+}
+
+/** Sequences that contain `seqId` (directly or through other nested sequences). */
+function containers(sequences: Seqs, seqId: ID): ID[] {
+  const parents = new Map<ID, ID[]>();
+  for (const id of Object.keys(sequences)) {
+    for (const r of nestedSequenceRefs(sequences[id])) {
+      const l = parents.get(r);
+      if (l) l.push(id); else parents.set(r, [id]);
+    }
+  }
+  const seen = new Set<ID>([seqId]);
+  const stack = [seqId];
+  const out: ID[] = [];
+  while (stack.length) {
+    for (const p of parents.get(stack.pop()!) ?? []) if (!seen.has(p)) { seen.add(p); out.push(p); stack.push(p); }
+  }
+  return out;
+}
+
+/** True when `hostId` or a sequence that contains it flattens past MAX_FLAT_TRACKS / MAX_FLAT_CLIPS. */
+export function nestSizeExceeded(sequences: Seqs, hostId: ID): boolean {
+  const sizer = new FlatSizer(sequences);
+  for (const id of [hostId, ...containers(sequences, hostId)]) {
+    const s = own(sequences, id);
+    if (s && overLimit(s, sizer.total(id))) return true;
+  }
+  return false;
+}
+
+/** The nested clips nesting `child` in `host` makes (as nestedClipsFor), for measuring only. */
+function wholeNestedClips(host: Sequence, child: Sequence): Clip[] {
+  const hasV = child.videoTracks.some((t) => t.clips.length > 0);
+  const hasA = child.audioTracks.some((t) => t.clips.length > 0);
+  const kinds: Kind[] = hasV || hasA ? KINDS.filter((k) => (k === 'video' ? hasV : hasA)) : [...KINDS];
+  const duration = Math.max(1, Math.floor((sequenceSeconds(child) * host.fps.num) / host.fps.den + 1e-6));
+  return kinds.map((kind) => ({ id: `\u0000nest-check-${kind}`, mediaId: child.id, sequenceId: child.id, name: '', start: 0, duration, sourceIn: 0, speed: 1, kind, enabled: true, linkId: null } as unknown as Clip));
+}
+
+/** `host` with one more track per kind holding the clips of `add` of that kind (for measuring only). */
+function withExtraTracks(host: Sequence, add: readonly Clip[]): Sequence {
+  const extra = (kind: Kind, list: Track[]): Track[] => {
+    const clips = add.filter((c) => (c.kind ?? 'video') === kind);
+    return clips.length ? [...list, { id: `\u0000nest-check-${kind}`, clips, transitions: [] } as unknown as Track] : list;
+  };
+  return { ...host, videoTracks: extra('video', host.videoTracks), audioTracks: extra('audio', host.audioTracks) };
 }
 
 /** Length of a sequence's timeline in seconds (what a nested clip can play). */
@@ -217,6 +497,72 @@ export function nestingRepairs(sequences: Seqs, order: readonly ID[]): [ID, ID][
       }
       if (changed) break;
     }
+  }
+  return out;
+}
+
+/**
+ * The nested clips that must be cut so no sequence flattens past MAX_FLAT_TRACKS / MAX_FLAT_CLIPS (flattenedSize;
+ * a sequence is always allowed its own tracks and clips): `[hostId, clipId]` pairs, in a deterministic order. Used
+ * by normalizeProject after nestingRepairs (no cycles, no chain past MAX_NEST_DEPTH): such a clip loses its
+ * `sequenceId` (it becomes a clip of missing media), and the clips linked to it that nest the same sequence go with
+ * it (a nested picture + sound pair is cut as one).
+ *
+ * Greedy, bottom up: sequences in order of nesting depth below them (`order` first, then the remaining ids sorted,
+ * among equals), each measured with what it nests already cut down. In a sequence past a limit, nested clips are cut
+ * widest first (most inner tracks while the track count is over, then most clips while the clip count is over; the
+ * later one on the timeline among equals) until it fits. Cutting a sequence's own references never changes the
+ * sequences below it, so the result passes again unchanged: normalizing the repaired project cuts nothing more.
+ */
+export function nestSizeRepairs(sequences: Seqs, order: readonly ID[]): [ID, ID][] {
+  const ids = [...new Set([...order.filter((id) => own(sequences, id)), ...Object.keys(sequences).sort()])];
+  const depth = new Map<ID, number>();
+  const rank = new Map<ID, number>();
+  ids.forEach((id, i) => { rank.set(id, i); nestDepthBelow(sequences, id, depth); });
+  const bottomUp = [...ids].sort((a, b) => (depth.get(a)! - depth.get(b)!) || (rank.get(a)! - rank.get(b)!));
+  const sizer = new FlatSizer(sequences);
+  const out: [ID, ID][] = [];
+  for (const id of bottomUp) {
+    const seq = sequences[id];
+    if (!overLimit(seq, sizer.total(id))) continue;
+    // Units: a nested clip and the clips linked to it that nest the same sequence, in timeline order.
+    const scans = KINDS.map((k) => sizer.scan(seq, k));
+    const units = new Map<string, { clips: Clip[]; n: number; w: number; at: number }>();
+    let at = 0;
+    for (const kind of scans) for (const t of kind) for (const x of t.nested) {
+      const key = x.clip.linkId ? `l\u0000${x.clip.linkId}\u0000${x.clip.sequenceId}` : `c\u0000${x.clip.id}\u0000${at}`;
+      let u = units.get(key);
+      if (!u) { u = { clips: [], n: 0, w: 0, at: at++ }; units.set(key, u); }
+      u.clips.push(x.clip); u.n += x.n; u.w += x.w;
+    }
+    const cut = new Set<Clip>();
+    const base = ownClips(seq);
+    const measure = (extra: readonly { clips: Clip[] }[] = []): FlatSize => {
+      const gone = new Set(cut);
+      for (const u of extra) for (const c of u.clips) gone.add(c);
+      let tracks = 0, clips = base;
+      for (const kind of scans) for (const t of kind) {
+        const live = t.nested.filter((x) => !gone.has(x.clip));
+        tracks += 1 + groupTracks(live);
+        for (const x of live) clips += x.w;
+      }
+      return { tracks, clips };
+    };
+    const limT = Math.max(MAX_FLAT_TRACKS, ownTracks(seq)), limC = Math.max(MAX_FLAT_CLIPS, base);
+    for (;;) {
+      const now = measure();
+      const byTracks = now.tracks > limT;
+      if (!byTracks && now.clips <= limC) break;
+      const left = [...units.values()].filter((u) => !u.clips.some((c) => cut.has(c)));
+      left.sort(byTracks ? (a, b) => (b.n - a.n) || (b.at - a.at) : (a, b) => (b.w - a.w) || (b.at - a.at));
+      // The shortest run of `left` that brings the count within the limit (cutting all of them always does).
+      let lo = 1, hi = left.length;
+      const fits = (k: number) => { const s = measure(left.slice(0, k)); return byTracks ? s.tracks <= limT : s.clips <= limC; };
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (fits(mid)) hi = mid; else lo = mid + 1; }
+      for (const u of left.slice(0, hi)) for (const c of u.clips) cut.add(c);
+    }
+    for (const c of cut) { sizer.cut.add(c); out.push([id, c.id]); }
+    sizer.forget(id);
   }
   return out;
 }
@@ -371,8 +717,9 @@ function innerFlat(ctx: Ctx, host: Sequence, id: ID): Sequence | null {
 function buildFlat(seq: Sequence, ctx: Ctx): Sequence {
   const videoTracks: Track[] = [];
   const audioTracks: Track[] = [];
-  for (const t of seq.videoTracks) videoTracks.push(...flattenTrack(seq, t, 'video', ctx));
-  for (const t of seq.audioTracks) audioTracks.push(...flattenTrack(seq, t, 'audio', ctx));
+  // Loops, not push(...spread): a spread of a huge array overflows the stack (RangeError).
+  for (const t of seq.videoTracks) append(videoTracks, flattenTrack(seq, t, 'video', ctx));
+  for (const t of seq.audioTracks) append(audioTracks, flattenTrack(seq, t, 'audio', ctx));
   return { ...seq, videoTracks, audioTracks, subtitleTracks: freeSubtitleTracks(seq), snapshots: [] };
 }
 
@@ -480,8 +827,8 @@ function flattenTrack(seq: Sequence, T: Track, kind: 'video' | 'audio', ctx: Ctx
       g.end = to;
       mapped.forEach((t, j) => {
         if (!g!.tracks[j]) g!.tracks[j] = { clips: [], transitions: [] };
-        g!.tracks[j].clips.push(...t.clips);
-        g!.tracks[j].transitions.push(...t.transitions);
+        append(g!.tracks[j].clips, t.clips);
+        append(g!.tracks[j].transitions, t.transitions);
       });
       continue;
     }
@@ -564,7 +911,7 @@ function mapNested(outer: Sequence, N: Clip & { sequenceId: ID }, innerSeq: Sequ
   const R = Math.round(tIn / fdO);
   const keyed = hasKeyframes(N);
   for (const I of tracks) {
-    const pad = Math.ceil(Math.max(0, ...I.transitions.map((t) => (Number.isFinite(t.duration) ? t.duration : 0))) * (sameRate ? 1 : fdI / fdO)) + 1;
+    const pad = Math.ceil(longestTransition(I) * (sameRate ? 1 : fdI / fdO)) + 1;
     const mappedClips: Clip[] = [];
     const ids = new Map<ID, Clip>();
     const intact = new Map<ID, { head: boolean; tail: boolean }>();
@@ -586,7 +933,7 @@ function mapNested(outer: Sequence, N: Clip & { sequenceId: ID }, innerSeq: Sequ
         linkId: c.linkId ? `${N.linkId ?? N.id}>${c.linkId}` : null,
       };
       const env: Envelope[] = (io?.env ?? []).map((e) => ({ from: outerPos(e.from), to: outerPos(e.to), dir: e.dir }));
-      env.push(...envN);
+      append(env, envN);
       const head = a === fa, tail = b === fb;
       const keys = keyed || hasKeyframes(c);
       const nMap: FrameMap = { mul: 1, add: S - a };
@@ -643,6 +990,18 @@ function mapNested(outer: Sequence, N: Clip & { sequenceId: ID }, innerSeq: Sequ
     out.push({ clips: mappedClips, transitions });
   }
   return out;
+}
+
+/** Longest finite transition of a track (0 when none). */
+function longestTransition(I: Track): number {
+  let d = 0;
+  for (const t of I.transitions) if (Number.isFinite(t.duration) && t.duration > d) d = t.duration;
+  return d;
+}
+
+/** `into.push(...items)` without the spread (which overflows the stack for very long arrays). */
+function append<T>(into: T[], items: readonly T[]): void {
+  for (const x of items) into.push(x);
 }
 
 function innerClipStart(I: Track, id: ID): number { return I.clips.find((c) => c.id === id)?.start ?? 0; }
@@ -933,14 +1292,16 @@ export function makeCompoundClip(outer: Sequence, clipIds: Iterable<ID>, inner: 
   if (chosen.length === 0) return { ok: false, error: 'Select the clips to nest first.' };
   if (chosen.some((x) => x.track.locked)) return { ok: false, error: 'A selected clip is on a locked track.' };
   const ids = new Set(chosen.map((x) => x.clip.id));
-  const s0 = Math.min(...chosen.map((x) => x.clip.start));
-  const s1 = Math.max(...chosen.map((x) => clipEnd(x.clip)));
+  let s0 = Infinity, s1 = -Infinity;
+  for (const x of chosen) { s0 = Math.min(s0, x.clip.start); s1 = Math.max(s1, clipEnd(x.clip)); }
   const fd = outer.fps.den / outer.fps.num;
   const outerTracks = (kind: 'video' | 'audio') => (kind === 'video' ? outer.videoTracks : outer.audioTracks);
   const innerTracks = (kind: 'video' | 'audio') => (kind === 'video' ? inner.videoTracks : inner.audioTracks);
   const hostIndex = (kind: 'video' | 'audio') => {
     const used = chosen.filter((x) => x.kind === kind);
-    return used.length ? Math.min(...used.map((x) => x.index)) : -1;
+    let i = Infinity;
+    for (const x of used) i = Math.min(i, x.index);
+    return used.length ? i : -1;
   };
   const vHost = hostIndex('video'), aHost = hostIndex('audio');
 
@@ -948,7 +1309,8 @@ export function makeCompoundClip(outer: Sequence, clipIds: Iterable<ID>, inner: 
   for (const kind of ['video', 'audio'] as const) {
     const used = chosen.filter((x) => x.kind === kind);
     const list = innerTracks(kind);
-    const n = used.length ? Math.max(...used.map((x) => x.index)) + 1 : 0;
+    let n = 0;
+    for (const x of used) n = Math.max(n, x.index + 1);
     while (list.length < n) list.push(makeTrack(kind, list.length + 1));
     const src = outerTracks(kind);
     const host = kind === 'video' ? vHost : aHost;
@@ -1059,7 +1421,7 @@ export function breakApartCompoundClip(outer: Sequence, clipId: ID, sequences: S
     const live = new Set(activeTracks(tracks).map((t) => t.id));
     let from = x.index;
     for (const I of tracks) {
-      const pad = Math.ceil(Math.max(0, ...I.transitions.map((t) => (Number.isFinite(t.duration) ? t.duration : 0)))) + 1;
+      const pad = Math.ceil(longestTransition(I)) + 1;
       const copies: Clip[] = [];
       const idMap = new Map<ID, ID>();
       for (const c of readItems(I.clips)) {
@@ -1106,7 +1468,7 @@ export function breakApartCompoundClip(outer: Sequence, clipId: ID, sequences: S
         target.transitions.push({ ...plain(tr), id: uid('tr'), outClipId: o ?? null, inClipId: i ?? null });
       }
       reconcileTransitions(target);
-      created.push(...copies.map((c) => c.id));
+      for (const c of copies) created.push(c.id);
     }
   }
   return { ok: true, clipIds: created };

@@ -146,8 +146,9 @@ clip on a video track shows the inner sequence's video tracks; one on an audio t
 Compound Clip pair shares a `linkId` like any linked picture + sound pair. The inner sequence is an ordinary entry in
 `sequences` / `sequenceOrder`; nothing else in the file changes. On load, a nested clip whose `mediaId` or `speed`
 disagrees is set to `sequenceId` / 1, and references that close a cycle (a sequence that contains itself, directly or
-through others) or nest more than 8 levels deep are removed, leaving those clips as clips of missing media (both
-reported as repairs, see below). A reference to a sequence that is not in the project is kept and plays nothing.
+through others) or nest more than 8 levels deep are removed, and then nested clips that make a sequence flatten to
+more than 1,000 tracks or 50,000 clips, leaving those clips as clips of missing media (all reported as repairs, see
+below). A reference to a sequence that is not in the project is kept and plays nothing.
 Added in 0.8.0; `formatVersion` stays 1, and files without nested clips are unchanged.
 
 `transform.keyframes` and `audio.keyframes` (optional; absent = the static values) animate a clip (Roadmap §11):
@@ -235,7 +236,8 @@ the app shows a warning naming the repairs and the copy. Repairs include:
   `Object.prototype` (`"constructor"`, `"toString"`, ...) are cleared;
 * settings clamped to the Preferences ranges, clip speed clamped, reversed story blocks turned around;
 * nested sequence clips: `mediaId` / `speed` set to match `sequenceId` / 1; references that close a cycle or nest
-  more than 8 levels deep removed (the clips stay, as clips of missing media).
+  more than 8 levels deep removed, then nested clips that make a sequence flatten to more than 1,000 tracks or
+  50,000 clips (the clips stay, as clips of missing media).
 * keyframe lists repaired as described under Clip.
 
 Valid files and expected resets (jobs that were running) report nothing, and normalizing a repaired project

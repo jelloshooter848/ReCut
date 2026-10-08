@@ -123,7 +123,10 @@ and `history`. Project changes go through immer:
   sharing keeps this cheap: undo is about 0.4 ms on a 2,500-clip project, and history is capped at 200 entries.
   `carryViewState` keeps the current playhead, zoom and In/Out when undoing.
 - `quiet(recipe)` changes the project without a history entry. It is used for async mirrors: probe results, proxy
-  and scene-detect status, offline flags, the active sequence.
+  and scene-detect status, offline flags, the active sequence. Job mirrors (proxy, channel-proxy and scene-detect
+  state) do not mark the project dirty: the next save / autosave writes them, but they are not unsaved work (the jobs
+  make them again from the content-keyed cache), so a job finishing after a save never asks "Save changes?". The
+  probe of an import / relink does mark it dirty (it completes that edit and is not re-read on open).
 - `beginTransaction` / `updateTransient` / `endTransaction` turn a drag or a multi-step command into one undo step.
 - Timeline logic is **pure** in `shared/timeline.ts` (insert/overwrite placement, trims, ripple, roll, slip, slide,
   razor, transitions reconciliation, story-block shifting, `resolveSubtitleCues`). Store actions call it on drafts.
@@ -253,7 +256,10 @@ frame by construction, and the unit and real-FFmpeg tests compare nested timelin
   reaches it and nothing else, and projects without nests pay a `WeakMap` lookup.
 - **Rules.** `nestProblem` refuses a sequence in itself, a cycle and nesting deeper than `MAX_NEST_DEPTH` (8) in every
   command that can create a reference (Make Compound Clip, nest / drop a sequence, paste, snapshot restore);
-  `normalizeProject` cuts such references in files (`nestingRepairs`). A missing or cyclic reference flattens to
+  `normalizeProject` cuts such references in files (`nestingRepairs`). The same commands (and Break Apart, on a dry
+  run of the edit) refuse anything that makes a sequence flatten to more than `MAX_FLAT_TRACKS` (1,000) tracks or
+  `MAX_FLAT_CLIPS` (50,000) clips (`flattenedSize`, counted without flattening), and `normalizeProject` cuts the
+  nested clips past that (`nestSizeRepairs`). A missing or cyclic reference flattens to
   nothing, with a warning in the Export dialog's Checks.
 - **Other walkers.** Match Frame (`sourceUnder`) and the Program's SRC timecode look at the flattened clip under the
   playhead; transcript "on timeline" hits and the Export dialog's media and timeline checks run on the flattened
@@ -329,9 +335,11 @@ frame by construction, and the unit and real-FFmpeg tests compare nested timelin
   from a newer format version (or without one) is refused and never replaced by the `.bak`.
 - **Open:** `mediaActions.openProject` is the one open path (File › Open, recent, OS open, command line). Loading or
   creating a project closes all modal dialogs of the previous one.
-- **Quit:** main sends `ev:beforeQuit`. The renderer **acks** within 3 s (otherwise main force-quits, for a hung
-  renderer), asks Save / Don't Save / Cancel if dirty, then confirms with `quit(true)`, or sends `quitCancel` to keep
-  running.
+- **Quit:** main sends `ev:beforeQuit` (`electron/quitFlow.ts`). The renderer **acks** within 3 s (otherwise main
+  force-quits, for a hung renderer), asks Save / Don't Save / Cancel if dirty, then confirms with `quit(true)`, or
+  sends `quitCancel` to keep running. After the ack no timer quits behind the prompt; a renderer that dies (crash,
+  window destroyed) finishes the quit, one that becomes unresponsive makes main ask "Quit anyway?" (Wait / Quit), and
+  a repeated quit request while a live renderer's prompt is up only brings the window forward.
 
 ## Performance design
 
