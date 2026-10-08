@@ -8,6 +8,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeftRight, Columns2, Pause, Play, SkipBack, SkipForward, StepBack, StepForward, Volume2, VolumeX } from 'lucide-react';
 import type { ID, Sequence } from '@shared/model';
 import { formatSequenceTimecode } from '@shared/time';
+import { flattenSequence } from '@shared/nest';
 import { useStore } from '@/state';
 import type { PanelProps } from '@/panels/registry';
 import { SequencePlayer, SyncGroup } from '@/playback';
@@ -130,9 +131,10 @@ export function ComparePanel({ active, focused }: PanelProps) {
   useEffect(() => {
     const p = players.current; if (!p) return;
     const settings = { useProxies, playbackResolution };
-    if (seqA) p.a.setSequence(seqA, media, settings);
-    if (seqB) p.b.setSequence(seqB, media, settings);
-  }, [ready, seqA, seqB, media, useProxies, playbackResolution]);
+    // Nested sequences play flattened into media clips (shared/nest.ts).
+    if (seqA) p.a.setSequence(flattenSequence(seqA, sequences, media), media, settings);
+    if (seqB) p.b.setSequence(flattenSequence(seqB, sequences, media), media, settings);
+  }, [ready, seqA, seqB, sequences, media, useProxies, playbackResolution]);
 
   // Sync group.
   useEffect(() => {

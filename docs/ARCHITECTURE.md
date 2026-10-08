@@ -105,6 +105,7 @@ flowchart LR
 | `exportPlan.ts` | Export planning shared by the render graph and the Export dialog's checklist: per-track segments, transition handles (`transitionHandles`: rendered length, or why a transition is shortened or dropped), the range widened so no transition is cut, clips that run past their media. The dialog's pre-export warnings predict exactly what the export renders. |
 | `audioChannels.ts` | Per-clip channel selection (Roadmap §9): channel names from FFmpeg layouts (numbered when unknown), the `pan` filter both the render graph and the channel proxy use (one channel as mono, controlled BS.775 downmix), proxy keys, normalisation, and whether Extract Centre Channel can run on a clip. |
 | `exportFormat.ts` | Export file formats: containers, encoder arguments (H.264 / H.265, ProRes, DNxHR, AAC / AC-3, PCM, FLAC), extensions, size-estimate rates, the per-track audio file plan, and MKV packaging (output audio tracks as mix definitions, soft subtitle streams, language codes), shared by the render graph and the Export dialog. |
+| `nest.ts` | Nested sequences and compound clips (Roadmap §8): cycle and depth rules (`nestProblem`, `nestingRepairs` for `normalizeProject`), `flattenSequence` (the one flattening the preview planner and the export both use, see [Nested sequences](#nested-sequences)), Make Compound Clip / Break Apart ops, Match Frame through nesting (`sourceUnder`). |
 | `keyframes.ts` | Keyframes (Roadmap §11): evaluation (`evaluateClipProperty`, `transformAt`; linear and ease = smoothstep), edits at the playhead (add / remove / interpolation / clear, Position keys x and y together), the head-trim shift that keeps keyframes on their source moments (called from the trim ops in `timeline.ts` and from load repair), load-time repair, and the FFmpeg expression the export builds (`keyframesExpr`). Times are clip-relative timeline frames. |
 | `linkSync.ts` | Linked-clip sync offsets (`linkedSyncOffsets`), used by the timeline's out-of-sync badge and the Export dialog's warning. |
 | `pathKey.ts` | Lexical `path.resolve` + case folding for the renderer's early "is this a project source?" check (subtitle export). The main process repeats the check with realpath and inode (`electron/pathSafety.ts`). |
@@ -196,16 +197,67 @@ key ','  →  useShortcuts → runCommand('edit.insert')
 ### Data flow: export
 
 ```
-Export dialog → window.recut.startExport({ sequence, media, settings, subtitles[, subtitleTracks], protectedPaths[, overwrite] })
+Export dialog → window.recut.startExport({ sequence[, sequences], media, settings, subtitles[, subtitleTracks], protectedPaths[, overwrite] })
   main: validate (absolute folder, not a project source, exists? → code 'exists' → dialog asks "Replace it?")
         → JobQueue('export') → exporter
         per output file (one; or one per audio track for a per-track WAV / FLAC export):
+        renderSequence(req) = flattenSequence(sequence, sequences, media)   (nested sequences, memoized per export)
         shouldChunk? ── no ─→ buildRenderGraph → ffmpeg -filter_complex_script → <name>.recut-part-<random>.<ext>
                      └─ yes ─→ per-chunk video (.mp4 / .mov) + audio (.wav f32, one per MKV output track) → concat demuxer join
         (MKV: [aout], [aout1], ... output audio tracks, soft subtitle .srt inputs, stream languages / titles / flags)
         → move onto <name>.<ext> (mp4, mkv, mov, wav, flac), write .srt sidecar (temp + rename), delete temp dir
   progress: ffmpeg -progress → job.progress → ev:jobs → jobsStore → Export dialog / Jobs panel
 ```
+
+## Nested sequences
+
+A clip with `sequenceId` plays another project sequence (`shared/nest.ts`; Roadmap §8). Nothing renders a nested
+sequence to a file: `flattenSequence(seq, sequences, media)` turns a sequence with nested clips into an equivalent
+sequence of media clips only, and both the preview (`ProgramPanel` / Compare hand the flattened sequence to
+`SequencePlayer`, whose `planFrame` renders it like any sequence) and the export (`renderSequence` in
+`electron/export/renderGraph.ts`, also used by chunk planning) render that. So preview and export agree frame for
+frame by construction, and the unit and real-FFmpeg tests compare nested timelines with the equivalent flat ones
+(`tests/unit/nest*.test.ts`).
+
+- **Shape of the result.** Each nested clip stays on its track, disabled (so lengths, clip lookups and the outer
+  track list are unchanged). Each active inner track of the matching kind becomes an extra track right after the
+  nested clip's track; `trackGroupId(track)` names the outer track it belongs to, which is what the audio mixes, the
+  per-track WAV files and the MKV output tracks select by. Inner clips are clipped to the range the nested clip plays
+  (plus transition handles) and mapped to outer frames; their ids are `<nested id>><inner id>` and
+  `flatOrigin(clip)` keeps the path of nested clips and the original inner clip. `outerClipId` maps a flattened clip
+  back to the clip of the outer sequence (Export Checks point there).
+- **Time.** The inner timeline plays in real time at the outer frame rate: outer frame f shows inner time
+  `sourceIn + (f − start) / outerFps`, and an inner cut lands on the first outer frame that starts at or after it.
+  With equal rates this is frame for frame.
+- **Picture and sound.** Transforms are composed per layer (`composeTransform`: inner transform, fit of the inner
+  frame into the outer one, the nested clip's transform), with the nested clip's crop and the inner frame edge cut
+  into each unrotated layer's crop and the nested opacity multiplied in. Audio gains, levels and inner track volumes
+  multiply; inner mute / solo apply.
+- **Transitions at a nested clip's edges** (and fades that the nested clip's range cuts) become `Envelope` ramps on
+  the flattened clips: the planner multiplies `envelopeAt(clip, frame)` into each layer's alpha / gain, the render
+  graph adds the same ramps as `fade=...:alpha=1` / `afade`. Inner frames before the in point / after the out point are
+  the handles of a dissolve into or out of a nested clip.
+- **Keyframes** (§11) are clip-relative, so every flattened copy gets its own: the inner clip's moved to the copy's
+  start (rescaled by innerFrameDuration / outerFrameDuration across frame rates) and the nested clip's moved likewise,
+  then composed with composeTransform's formulas (`composeTransformKeys`, `composeAudioKeys`). When one input varies,
+  its keyframe values are mapped directly (interpolation kept); when several vary together (the nested scale times an
+  inner offset, both opacities, both levels, an ease against another curve), `composeKeyList` samples linear
+  keyframes at every integer frame of those spans, so preview and export are exact at every frame. A list stays within
+  2,000 keyframes (denser sampling is strided). A layer whose own position or scale is keyed is not clipped to the
+  nested crop and the inner frame edge.
+- **Memoization.** The result is cached per sequence object and is reused while the sequences it reaches and `media`
+  are the same objects; a sequence without nested clips is returned as it is after one cached reference scan per
+  track list. So an edit inside a nested sequence (a new sequence object) invalidates every outer sequence that
+  reaches it and nothing else, and projects without nests pay a `WeakMap` lookup.
+- **Rules.** `nestProblem` refuses a sequence in itself, a cycle and nesting deeper than `MAX_NEST_DEPTH` (8) in every
+  command that can create a reference (Make Compound Clip, nest / drop a sequence, paste, snapshot restore);
+  `normalizeProject` cuts such references in files (`nestingRepairs`). A missing or cyclic reference flattens to
+  nothing, with a warning in the Export dialog's Checks.
+- **Other walkers.** Match Frame (`sourceUnder`) and the Program's SRC timecode look at the flattened clip under the
+  playhead; transcript "on timeline" hits and the Export dialog's media and timeline checks run on the flattened
+  sequence; the Compare diff, linked-clip sync and trims treat a nested clip as one clip whose "media" is its sequence
+  (`mediaId` = `sequenceId`, length = the inner timeline). Chapters, burn-in and soft subtitles come from the outer
+  sequence only.
 
 ## Timing model
 

@@ -16,6 +16,7 @@ import {
 import type { Clip, ID, Marker, MediaItem, Rational, Sequence } from '@shared/model';
 import { formatSequenceTimecode } from '@shared/time';
 import { clipAt, nextEdit, prevEdit, sequenceDuration } from '@shared/timeline';
+import { flattenSequence } from '@shared/nest';
 import { SequencePlayer, planFrame, type MissingMedia } from '@/playback';
 import { useStore } from '@/state/store';
 import { activeSequence, activeSequenceDuration, originalTimecode } from '@/state/selectors';
@@ -85,7 +86,8 @@ function TimecodeOverlay({ frame, fps, mode, onToggle }: { frame: FrameSignal; f
   if (mode === 'source' && videoTracks) {
     const st = useStore.getState();
     const seq = activeSequence(st);
-    const clip = seq ? topClipAt(seq, f) : undefined;
+    // Nested clips show the source timecode of the media under them (shared/nest.ts).
+    const clip = seq ? topClipAt(flattenSequence(seq, st.project.sequences, st.project.media), f) : undefined;
     if (clip) {
       const tc = originalTimecode(clip, f, fps, st.project.media[clip.mediaId]);
       text = tc.sourceTimecode;
@@ -174,7 +176,8 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
   const refreshStatus = useCallback(() => {
     const player = playerRef.current; if (!player) return;
     const st = useStore.getState();
-    const seq = activeSequence(st);
+    const outer = activeSequence(st);
+    const seq = outer && flattenSequence(outer, st.project.sequences, st.project.media);
     let next = EMPTY_STATUS;
     if (seq) {
       // Distinct media files of the whole sequence (BUG-4), plus element failures under the playhead.
@@ -200,6 +203,7 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
     player.setMasterVolume(prefs.muted ? 0 : prefs.volume);
 
     let lastSeq: Sequence | null = null;
+    let lastFlat: Sequence | null = null;
     let lastMedia: Record<ID, MediaItem> | null = null;
     let lastSettings: StoreState['project']['settings'] | null = null;
 
@@ -209,10 +213,14 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
       const media = s.project.media;
       const settings = s.project.settings;
       const switched = !lastSeq || lastSeq.id !== seq.id;
-      const changed = switched || (lastSeq !== seq && !sameRenderContent(lastSeq!, seq)) || media !== lastMedia || settings !== lastSettings;
+      // Nested sequences are flattened into media clips (shared/nest.ts; memoized): an edit inside a nested sequence
+      // changes the flattened sequence without changing this one.
+      const flat = flattenSequence(seq, s.project.sequences, media);
+      const nestChanged = flat !== lastFlat && (flat !== seq || lastFlat !== lastSeq);
+      const changed = switched || nestChanged || (lastSeq !== seq && !sameRenderContent(lastSeq!, seq)) || media !== lastMedia || settings !== lastSettings;
       if (changed) {
         if (switched && player.isPlaying) player.pause();
-        player.setSequence(seq, media, { useProxies: settings.useProxies, playbackResolution: settings.playbackResolution });
+        player.setSequence(flat, media, { useProxies: settings.useProxies, playbackResolution: settings.playbackResolution });
         if (switched) { player.seek(seq.view.playhead); frameSig.set(player.currentFrame(), true); }
         else if (!player.isPlaying) player.renderFrame(seq.view.playhead);
         scheduleStatus();
@@ -224,7 +232,7 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
         player.seek(seq.view.playhead);
         frameSig.set(player.currentFrame(), true);
       }
-      lastSeq = seq; lastMedia = media; lastSettings = settings;
+      lastSeq = seq; lastFlat = flat; lastMedia = media; lastSettings = settings;
     };
     apply(useStore.getState());
     const unsubStore = useStore.subscribe(apply);

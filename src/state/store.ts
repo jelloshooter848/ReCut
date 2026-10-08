@@ -17,7 +17,11 @@ import type {
 } from '../../shared/model';
 import { uid } from '../../shared/ids';
 import { isValidFps, secondsToFrames } from '../../shared/time';
-import { createProject, LiveView } from '../../shared/project';
+import { createProject, createSequence, LiveView } from '../../shared/project';
+import {
+  breakApartCompoundClip as nestBreakApart, innerFrameAt, isNestedClip, makeCompoundClip as nestMakeCompound, nestedClipsFor, nestProblem,
+  nestProblemText, sequenceSeconds,
+} from '../../shared/nest';
 import { STILL_IMAGE_CODECS, STILL_IMAGE_EXTS } from '../../shared/media';
 import {
   MIN_CLIP_FRAMES, allTracks, clipEnd, clipSourceOut, findClip, maxDurationFrom, findTrack, linkedClips, makeClip, placeClips,
@@ -121,6 +125,8 @@ export function kindFromProbe(p: MediaProbe, path = ''): MediaKind {
 
 export function mediaDurationLookup(project: Project): MediaDurationLookup {
   return (id) => {
+    // A nested clip's "media" is its sequence (shared/nest.ts): it can play the inner timeline's length.
+    if (!Object.hasOwn(project.media, id) && Object.hasOwn(project.sequences, id)) return sequenceSeconds(project.sequences[id]);
     const m = project.media[id];
     if (!m || m.kind === 'image') return Infinity;
     return m.probe?.duration ?? Infinity;
@@ -900,13 +906,21 @@ export const useStore = create<RecutStore>()((set, get) => {
       return ok ? snapId : null;
     },
     restoreSnapshot(seqId, snapshotId) {
+      let blocked: string | null = null;
       commit('Restore snapshot', (d) => {
         const seq = d.sequences[seqId];
         const snap = seq?.snapshots.find((s) => s.id === snapshotId);
         if (!seq || !snap) return;
+        // A snapshot may nest a sequence that nests this one by now: restoring it would make a cycle.
+        const restored = { ...get().project.sequences, [seqId]: { ...snap.data, id: seqId, snapshots: [] } as Sequence };
+        for (const t of [...snap.data.videoTracks, ...snap.data.audioTracks]) for (const c of t.clips) {
+          const problem = isNestedClip(c) ? nestProblem(restored, seqId, c.sequenceId) : null;
+          if (problem && problem !== 'missing') { blocked = nestProblemText(problem); return; }
+        }
         const live = current(seq);
         d.sequences[seqId] = { ...plainClone(snap.data), id: seqId, snapshots: live.snapshots, view: live.view } as Sequence;
       }, { followMarkers: false });
+      if (blocked) get().toast('warning', `Cannot restore the snapshot: ${blocked}`);
     },
     deleteSnapshot(seqId, snapshotId) {
       commit('Delete snapshot', (d) => { const seq = d.sequences[seqId]; if (seq) seq.snapshots = seq.snapshots.filter((s) => s.id !== snapshotId); });
@@ -1013,6 +1027,12 @@ export const useStore = create<RecutStore>()((set, get) => {
     },
     placeClipsAction(seqId, placements, mode) {
       let ok = false;
+      // Nested clips (a paste) may not make a sequence contain itself or nest too deep.
+      for (const p of placements) {
+        if (!isNestedClip(p.clip)) continue;
+        const problem = nestProblem(get().project.sequences, seqId, p.clip.sequenceId);
+        if (problem && problem !== 'missing') { get().toast('warning', `Cannot place "${p.clip.name}": ${nestProblemText(problem)}`); return false; }
+      }
       commit(mode === 'insert' ? 'Insert clips' : 'Overwrite clips', (d) => {
         const seq = d.sequences[seqId];
         if (!seq) return;
@@ -1214,8 +1234,8 @@ export const useStore = create<RecutStore>()((set, get) => {
         const seq = d.sequences[seqId];
         if (!seq) return;
         const loc = findClip(seq, clipId);
-        if (!loc) return;
-        const group = linkedClips(seq, loc.clip);
+        if (!loc || isNestedClip(loc.clip)) return; // a nested sequence always plays at 100 %
+        const group = linkedClips(seq, loc.clip).filter((g) => !isNestedClip(g));
         const groupIds = new Set(group.map((g) => g.id));
         const oldEnd = clipEnd(loc.clip);
         const mediaDur = mediaDurationLookup(d);
@@ -1606,6 +1626,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       const loc = seq && findClip(seq, clipId);
       if (!seq || !loc) return null;
       const c = loc.clip;
+      if (isNestedClip(c)) { get().toast('info', 'A nested sequence clip has no source media to make a scene of: open it in the timeline and add its clips'); return null; }
       const record: SceneRecord = {
         id: uid('scn'), name: name ?? c.name, mediaId: c.mediaId, in: c.sourceIn, out: clipSourceOut(c, seq.fps),
         characters: [...c.characters], location: c.locations[0] ?? '', arc: c.plotlines[0] ?? '', tags: [...c.tags], notes: c.notes,
@@ -1662,6 +1683,81 @@ export const useStore = create<RecutStore>()((set, get) => {
     setCompare(patch) { setUi((ui) => ({ compare: { ...ui.compare, ...patch } })); },
     openDialog(name: DialogName) { setUi((ui) => ({ dialogs: { ...ui.dialogs, [name]: true } })); },
     closeDialog(name: DialogName) { setUi((ui) => ({ dialogs: { ...ui.dialogs, [name]: false } })); },
+    // ---------------------------------------------------------------- nested sequences (Roadmap §8)
+    makeCompoundClip(seqId, clipIds, name) {
+      const seq = seqOf(seqId);
+      if (!seq) return null;
+      const ids = clipIds ?? get().ui.selectedClipIds;
+      if (!ids.length) { get().toast('info', 'Select the clips to make a compound clip of'); return null; }
+      const names = new Set(Object.values(get().project.sequences).map((s) => s.name));
+      let n = 1;
+      while (names.has(`Nested Sequence ${String(n).padStart(2, '0')}`)) n++;
+      const inner = createSequence(name?.trim() || `Nested Sequence ${String(n).padStart(2, '0')}`, { num: seq.fps.num, den: seq.fps.den }, seq.width, seq.height);
+      inner.sampleRate = seq.sampleRate; inner.channels = seq.channels;
+      let res: ReturnType<typeof nestMakeCompound> | null = null;
+      commit('Make Compound Clip', (d) => {
+        const s = d.sequences[seq.id];
+        if (!s) return;
+        res = nestMakeCompound(s, ids, inner);
+        if (!res.ok) return;
+        inner.binId = seq.binId ?? (d.bins['bin-sequences'] ? 'bin-sequences' : null);
+        d.sequences[inner.id] = inner;
+        const at = d.sequenceOrder.indexOf(seq.id);
+        d.sequenceOrder.splice(at >= 0 ? at + 1 : d.sequenceOrder.length, 0, inner.id);
+      });
+      const r = res as ReturnType<typeof nestMakeCompound> | null;
+      if (!r) return null;
+      if (!r.ok) { get().toast('warning', `Cannot make a compound clip: ${r.error}`); return null; }
+      get().select([r.videoClipId, r.audioClipId].filter((x): x is ID => !!x));
+      return inner.id;
+    },
+    breakApartCompoundClip(seqId, clipId) {
+      const p = get().project;
+      let res: ReturnType<typeof nestBreakApart> | null = null;
+      commit('Break Apart Compound Clip', (d) => {
+        const s = d.sequences[seqId];
+        if (!s) return;
+        res = nestBreakApart(s, clipId, p.sequences, p.media);
+      });
+      const r = res as ReturnType<typeof nestBreakApart> | null;
+      if (!r) return [];
+      if (!r.ok) { get().toast('warning', `Cannot break apart: ${r.error}`); return []; }
+      get().select(r.clipIds);
+      return r.clipIds;
+    },
+    openNestedSequence(seqId, clipId, frame) {
+      const p = get().project;
+      const seq = p.sequences[seqId];
+      const clip = seq ? findClip(seq, clipId)?.clip : undefined;
+      if (!seq || !clip || !isNestedClip(clip)) return false;
+      const inner = Object.hasOwn(p.sequences, clip.sequenceId) ? p.sequences[clip.sequenceId] : undefined;
+      if (!inner) { get().toast('warning', `The sequence of "${clip.name}" is no longer in the project`); return false; }
+      get().setView(inner.id, { playhead: innerFrameAt(clip, frame ?? seq.view.playhead, seq.fps, inner.fps) });
+      get().setActiveSequence(inner.id);
+      return true;
+    },
+    nestSequence(seqId, childId, frame, opts = {}) {
+      const p = get().project;
+      const problem = nestProblem(p.sequences, seqId, childId);
+      if (problem) { get().toast('warning', `Cannot nest the sequence here: ${nestProblemText(problem)}`); return []; }
+      let created: ID[] = [];
+      commit('Nest sequence', (d) => {
+        const seq = d.sequences[seqId];
+        if (!seq) return;
+        const clips = nestedClipsFor(seq, p.sequences[childId], frame);
+        const pick = (tracks: Track[], id: ID | undefined) => (id ? tracks.find((t) => t.id === id) : undefined)
+          ?? tracks.find((t) => t.patched && !t.locked) ?? tracks.find((t) => !t.locked);
+        const placements: { trackId: ID; clip: Clip }[] = [];
+        for (const c of clips) {
+          const t = c.kind === 'video' ? pick(seq.videoTracks, opts.videoTrackId) : pick(seq.audioTracks, opts.audioTrackId);
+          if (t) placements.push({ trackId: t.id, clip: c });
+        }
+        if (placements.length && placeClips(seq, placements, opts.mode ?? 'overwrite')) created = placements.map((x) => x.clip.id);
+      });
+      if (created.length) get().select(created);
+      return created;
+    },
+
     toast(kind: ToastKind, text) {
       const id = uid('toast');
       setUi((ui) => ({ toasts: [...ui.toasts, { id, kind, text }] }));

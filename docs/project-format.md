@@ -131,6 +131,17 @@ left out). On load an unusable selection is removed (the normal mix) and out-of-
 reported as repairs. A selection the clip's stream cannot honour is kept and plays the normal mix, with a pre-export
 warning. Added in 0.8.0; `formatVersion` stays 1.
 
+`sequenceId` (optional; absent on every clip that plays a media file) makes the clip a **nested sequence clip**: it
+plays that project sequence instead of a media file (Roadmap §8, `shared/nest.ts`). Its `mediaId` then holds the same
+id (no media item has it), `sourceIn` is seconds of the inner sequence's timeline, and `speed` is always 1. A nested
+clip on a video track shows the inner sequence's video tracks; one on an audio track plays its audio tracks. A Make
+Compound Clip pair shares a `linkId` like any linked picture + sound pair. The inner sequence is an ordinary entry in
+`sequences` / `sequenceOrder`; nothing else in the file changes. On load, a nested clip whose `mediaId` or `speed`
+disagrees is set to `sequenceId` / 1, and references that close a cycle (a sequence that contains itself, directly or
+through others) or nest more than 8 levels deep are removed, leaving those clips as clips of missing media (both
+reported as repairs, see below). A reference to a sequence that is not in the project is kept and plays nothing.
+Added in 0.8.0; `formatVersion` stays 1, and files without nested clips are unchanged.
+
 `transform.keyframes` and `audio.keyframes` (optional; absent = the static values) animate a clip (Roadmap §11):
 
 ```jsonc
@@ -214,6 +225,8 @@ the app shows a warning naming the repairs and the copy. Repairs include:
 * duplicate ids within a sequence are re-issued (the first keeps its id); references that resolve only through
   `Object.prototype` (`"constructor"`, `"toString"`, ...) are cleared;
 * settings clamped to the Preferences ranges, clip speed clamped, reversed story blocks turned around;
+* nested sequence clips: `mediaId` / `speed` set to match `sequenceId` / 1; references that close a cycle or nest
+  more than 8 levels deep removed (the clips stay, as clips of missing media).
 * keyframe lists repaired as described under Clip.
 
 Valid files and expected resets (jobs that were running) report nothing, and normalizing a repaired project
