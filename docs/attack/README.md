@@ -56,4 +56,4 @@ Bugs found:
 |---|---|---|
 | [Stored probe audio streams trusted as is: a huge channel count freezes the channel menu](../../bugs/closed/2026-10-08-stored-probe-audio-streams-not-repaired.md) | medium | fixed |
 | [Channel-selection warning presents a guessed layout as the stream's](../../bugs/closed/2026-10-08-channel-warning-names-guessed-layout.md) | low | fixed |
-| [Nested fan-out within the depth limit makes flattening exponential](../../bugs/open/2026-10-08-nested-fan-out-flatten-blowup.md) | medium | open (`it.fails` in `hostile-080.test.ts`) |
+| [Nested fan-out within the depth limit makes flattening exponential](../../bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md) | medium | fixed |

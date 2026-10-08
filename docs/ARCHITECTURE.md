@@ -256,7 +256,10 @@ frame by construction, and the unit and real-FFmpeg tests compare nested timelin
   reaches it and nothing else, and projects without nests pay a `WeakMap` lookup.
 - **Rules.** `nestProblem` refuses a sequence in itself, a cycle and nesting deeper than `MAX_NEST_DEPTH` (8) in every
   command that can create a reference (Make Compound Clip, nest / drop a sequence, paste, snapshot restore);
-  `normalizeProject` cuts such references in files (`nestingRepairs`). A missing or cyclic reference flattens to
+  `normalizeProject` cuts such references in files (`nestingRepairs`). The same commands (and Break Apart, on a dry
+  run of the edit) refuse anything that makes a sequence flatten to more than `MAX_FLAT_TRACKS` (1,000) tracks or
+  `MAX_FLAT_CLIPS` (50,000) clips (`flattenedSize`, counted without flattening), and `normalizeProject` cuts the
+  nested clips past that (`nestSizeRepairs`). A missing or cyclic reference flattens to
   nothing, with a warning in the Export dialog's Checks.
 - **Other walkers.** Match Frame (`sourceUnder`) and the Program's SRC timecode look at the flattened clip under the
   playhead; transcript "on timeline" hits and the Export dialog's media and timeline checks run on the flattened

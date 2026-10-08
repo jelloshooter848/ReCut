@@ -12,7 +12,7 @@ import { saneSar } from './media';
 import { CHANNEL_PROXY_KEY, normalizeChannelSelection } from './audioChannels';
 import { AUDIO_KEY_PROPS, normalizeKeyframeSet, shiftClipKeyframes, TRANSFORM_KEY_PROPS, type KeyProp } from './keyframes';
 import { formatProjectJson } from './projectJson';
-import { nestingRepairs } from './nest';
+import { FLAT_LIMIT_TEXT, nestingRepairs, nestSizeRepairs } from './nest';
 import {
   MAX_TIMELINE_FRAMES, MAX_SOURCE_SECONDS, MAX_PROJECT_DEPTH, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX, PROXY_HEIGHTS,
   AUTOSAVE_INTERVAL_MIN_SEC, AUTOSAVE_INTERVAL_MAX_SEC, DEFAULT_TRANSITION_FRAMES_MIN, DEFAULT_TRANSITION_FRAMES_MAX,
@@ -779,7 +779,8 @@ function retargetTransitions(track: Track, renamedFrom: Map<Clip, ID>): void {
 
 /**
  * Nested sequences (Roadmap §8): a reference that only resolves through Object.prototype is removed, and so is every
- * reference that closes a cycle (A in B in A) or nests deeper than MAX_NEST_DEPTH (shared/nest.ts nestingRepairs):
+ * reference that closes a cycle (A in B in A) or nests deeper than MAX_NEST_DEPTH (shared/nest.ts nestingRepairs),
+ * and then every nested clip that makes a sequence flatten past MAX_FLAT_TRACKS / MAX_FLAT_CLIPS (nestSizeRepairs):
  * those clips stay where they are as clips of missing media. A reference to a sequence that is not in the project
  * stays (the clip renders as offline, like missing media).
  */
@@ -801,6 +802,18 @@ function repairNesting(p: Project): void {
       if (c.sequenceId === child) { delete c.sequenceId; note('nested sequence that contained itself or was nested too deep made offline'); }
     }
     // New track lists: shared/nest.ts caches the references per list.
+    seq.videoTracks = [...seq.videoTracks]; seq.audioTracks = [...seq.audioTracks];
+  }
+  const sized = new Set<ID>();
+  for (const [host, clipId] of nestSizeRepairs(p.sequences, p.sequenceOrder)) {
+    const seq = p.sequences[host];
+    for (const t of [...seq.videoTracks, ...seq.audioTracks]) for (const c of t.clips) {
+      if (c.id === clipId && c.sequenceId !== undefined) { delete c.sequenceId; note(`nested sequence that would expand to more than ${FLAT_LIMIT_TEXT} when flattened made offline`); }
+    }
+    sized.add(host);
+  }
+  for (const host of sized) {
+    const seq = p.sequences[host];
     seq.videoTracks = [...seq.videoTracks]; seq.audioTracks = [...seq.audioTracks];
   }
 }
