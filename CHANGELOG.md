@@ -5,6 +5,55 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
+## [0.8.2] - 2026-10-09
+
+Bug fixes: the cache folder on Windows and macOS, exports of MPEG-TS files whose video starts after the audio, and a
+warning for damaged source files. Project files stay `formatVersion` 1.
+
+### Fixed
+
+- **On Windows and macOS, ReCut emptied its default cache folder at every start**, so proxies, thumbnails,
+  waveforms, scene detection, OCR and Whisper results had to be made again each time: the app's built-in browser
+  kept its own cache in the same folder and cleared it. At the first start of 0.8.2, ReCut also removes, once, what
+  that browser cache left in the folder. Linux, and cache folders chosen in Preferences, were not affected
+  ([report](bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md)).
+- **.ts, .m2ts and .mts files (and .mpg / .vob) whose video starts after the audio**, as in most TV and camcorder
+  recordings, exported the picture early by that gap, in clips whose video was exported without its sound or with
+  sound trimmed differently (an audio-only clip of an audio track that starts late lost its lead-in); scene detection put cuts early by the same gap, and the preview audio of a channel
+  selection on a late audio stream played early. MKV files that start slightly before zero (some FFmpeg-made MKVs
+  with AAC audio) exported one frame early ([report](bugs/closed/2026-10-09-ts-late-video-export-early.md)).
+- An export from a truncated or damaged source file finished as "Export complete", with a frozen, silent stretch
+  and no warning. The export now warns, in the Export dialog and as a notification, naming the file and where its
+  data stops or what FFmpeg reported ([report](bugs/closed/2026-10-09-export-silently-pads-truncated-sources.md)).
+
+After updating, scene detection and the preview audio of channel selections (an extracted centre channel, a
+downmix) are made again the next time they are needed, because the results cached by earlier versions could be
+wrong. Scenes already detected in a project stay as they are: run **Detect Scenes…** again on an affected .ts or
+.m2ts file to correct them.
+
+### Development
+
+- The MKV export test checks the downmix level of each segment, with limits on both sides, and explains a failure
+  (it failed intermittently on macOS CI)
+  ([report](bugs/closed/2026-10-09-mkv-downmix-tone-level-ci-failure.md)).
+- A saved-project fixture for 0.8.2 (`tests/fixtures/projects/recut-0.8.2.recut`).
+- No new npm dependencies.
+
+### Known issues
+
+- Whisper transcripts of a file whose audio starts after its video (an audio track muxed with a delay) are early by
+  that delay; shifting the subtitle track works around it
+  ([report](bugs/open/2026-10-09-whisper-ignores-late-audio-start.md)).
+- Thumbnails and filmstrips of an MPEG-TS file with long keyframe intervals can show the next keyframe instead of
+  the frame at that time; the preview and the export are right
+  ([report](bugs/open/2026-10-09-ts-thumbnail-next-keyframe.md)).
+- In a file that starts slightly before zero (some FFmpeg-made MKVs with AAC audio), thumbnails are one frame early,
+  and a clip that starts at the file's first frame exports that frame black; trimming one frame works around it
+  ([report](bugs/open/2026-10-09-negative-start-video-start-offset.md)).
+- Unchanged from 0.8.0: the Intel dmg is tested only under Rosetta 2
+  ([LIMITATIONS](docs/LIMITATIONS.md#platform-and-packaging)), unsigned Windows builds (SmartScreen), NSIS 3.0.4
+  (CVE-2025-43715, only when an installer runs as SYSTEM).
+
 ## [0.8.1] - 2026-10-09
 
 Bug fixes, chiefly for installing transcription models, which failed for every model in 0.8.0. Project files stay
