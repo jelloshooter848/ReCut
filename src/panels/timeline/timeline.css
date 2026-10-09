@@ -61,7 +61,7 @@
 .tl-th-divider { position: absolute; left: 0; right: 0; background: var(--bg-0); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .tl-th-sub { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 4px; padding: 0 6px; font-size: var(--font-size-xs); color: var(--text-dim); background: var(--bg-2); border-bottom: 1px solid var(--bg-0); }
 .tl-th-sub > svg { width: 11px; height: 11px; }
-.tl-th-sub-btn { width: 16px; height: 14px; padding: 0; flex: none; margin-left: auto; }
+.tl-th-sub-btn { width: 20px; height: 18px; padding: 0; flex: none; margin-left: auto; }
 
 /* tracks column */
 .tl-tracks-col { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
@@ -102,8 +102,8 @@
 .tl-track-clips { position: absolute; left: 0; }
 .tl-sub-lane { position: absolute; left: 0; right: 0; top: 0; background: #202026; border-bottom: 1px solid var(--bg-0); }
 .tl-cue {
-  position: absolute; top: 2px; height: 13px; background: var(--clip-title); border: 1px solid rgba(0,0,0,0.5); border-radius: 2px;
-  font-size: 10px; line-height: 11px; padding: 0 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #fff; cursor: pointer;
+  position: absolute; top: 4px; height: 18px; background: var(--clip-title); border: 1px solid rgba(0,0,0,0.5); border-radius: 2px;
+  font-size: 10px; line-height: 16px; padding: 0 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #fff; cursor: pointer;
 }
 .tl-cue.orphan { background: var(--danger); }
 .tl-cue:hover { filter: brightness(1.15); }
