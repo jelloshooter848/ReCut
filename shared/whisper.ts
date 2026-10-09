@@ -22,11 +22,14 @@ export const WHISPER_MODELS_BASE = `https://huggingface.co/ggerganov/whisper.cpp
 /** Origin model downloads start from. */
 export const WHISPER_MODELS_ORIGIN = 'https://huggingface.co';
 /**
- * Hosts a model download may be redirected to (https only, exact names). Hugging Face answers a `resolve/` URL of a
- * large file with a redirect to its Xet storage bridge; a redirect anywhere else is refused. The SHA-256 check is
- * what guarantees the file: a different file is never installed, whichever host sent it.
+ * Domains a model download may be redirected to: each name itself or any subdomain of it (https, default port only).
+ * Hugging Face answers a `resolve/` URL of a large file with a redirect to one of its storage or CDN hosts, and which
+ * one varies by region and over time (cas-bridge.xethub.hf.co, us.aws.cdn.hf.co, cdn-lfs*.hf.co, ...), so the policy
+ * allows Hugging Face's own domains rather than a list of hosts (issue #102: an exact-host list refused
+ * us.aws.cdn.hf.co). The SHA-256 check is what guarantees the file: a different file is never installed, whichever
+ * host sent it. scripts/check-model-redirects.mjs checks the real chain against this policy in CI.
  */
-export const WHISPER_REDIRECT_HOSTS: readonly string[] = ['cas-bridge.xethub.hf.co'];
+export const WHISPER_REDIRECT_DOMAINS: readonly string[] = ['huggingface.co', 'hf.co'];
 
 /** One installable Whisper model. */
 export interface WhisperModelInfo {

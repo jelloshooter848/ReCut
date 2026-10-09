@@ -118,7 +118,7 @@ async function openWithApp(app, startUrl, policy) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (/^network error/.test(msg)) throw new Transient(msg);
-    return { ok: false, policyRefused: /refusing|too many redirects/.test(msg), error: msg, hops };
+    return { ok: false, policyRefused: e?.name === 'DownloadRefusedError' || /refusing|too many redirects/.test(msg), error: msg, hops };
   }
   const { res, url } = opened;
   await res.body?.cancel().catch(() => undefined);

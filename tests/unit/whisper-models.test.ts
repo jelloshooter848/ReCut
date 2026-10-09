@@ -13,11 +13,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  WHISPER_ENGINE_VERSION, WHISPER_LANGUAGES, WHISPER_MODELS, WHISPER_MODELS_BASE, WHISPER_MODELS_REVISION, WHISPER_REDIRECT_HOSTS,
+  WHISPER_ENGINE_VERSION, WHISPER_LANGUAGES, WHISPER_MODELS, WHISPER_MODELS_BASE, WHISPER_MODELS_REVISION, WHISPER_REDIRECT_DOMAINS,
   guessWhisperLanguage, isWhisperLanguageCode, whisperModel, whisperModelUrl, whisperTrackName,
 } from '../../shared/whisper';
 import { JobQueue } from '../../electron/jobs/jobQueue';
-import { downloadVerified, isAllowedRedirect, isAllowedStartUrl, parseLoopbackBaseUrl } from '../../electron/net/download';
+import {
+  DOWNLOAD_STALL_MS, DownloadRefusedError, downloadVerified, isAllowedRedirect, isAllowedStartUrl, isHostInDomain, openFollowingRedirects,
+  parseLoopbackBaseUrl,
+} from '../../electron/net/download';
 import { OCR_DOWNLOAD_POLICY } from '../../electron/ocr/download';
 import {
   WHISPER_DOWNLOAD_POLICY, _resetVerifiedModels, activeModelInstallJob, allWhisperModels, assertWhisperModelId, findWhisperModel,
@@ -99,20 +102,48 @@ describe('download policy', () => {
     expect(isAllowedStartUrl('http://127.0.0.1:9/x', P, true)).toBe(true);
   });
 
-  it('follows redirects only within the origin or to the listed storage hosts, over https', () => {
+  it('follows redirects within the origin, or over https on the default port to Hugging Face domains (issue #102)', () => {
     const from = 'https://huggingface.co';
-    expect(WHISPER_REDIRECT_HOSTS).toEqual(['cas-bridge.xethub.hf.co']);
+    expect(WHISPER_REDIRECT_DOMAINS).toEqual(['huggingface.co', 'hf.co']);
+    expect(P.redirectHosts ?? []).toEqual([]);
     expect(isAllowedRedirect('https://huggingface.co/api/resolve-cache/x', from, P)).toBe(true);
-    expect(isAllowedRedirect('https://cas-bridge.xethub.hf.co/xet-bridge-us/abc?X-Amz-Signature=1', from, P)).toBe(true);
-    expect(isAllowedRedirect('http://cas-bridge.xethub.hf.co/x', from, P)).toBe(false);
-    expect(isAllowedRedirect('https://cas-bridge.xethub.hf.co:8443/x', from, P)).toBe(false);
-    expect(isAllowedRedirect('https://evil.xethub.hf.co/x', from, P)).toBe(false);
-    expect(isAllowedRedirect('https://cas-bridge.xethub.hf.co.evil.com/x', from, P)).toBe(false);
-    expect(isAllowedRedirect('https://cdn-lfs.huggingface.co/x', from, P)).toBe(false);
-    expect(isAllowedRedirect('https://u:p@cas-bridge.xethub.hf.co/x', from, P)).toBe(false);
+    // Hosts Hugging Face really redirects to (us.aws.cdn.hf.co seen from GitHub's US runners on 2026-10-09, issue #102),
+    // the Xet bridge, the LFS CDNs and the bare domains.
+    for (const ok of [
+      'https://us.aws.cdn.hf.co/xet-bridge-us/641ab5d15d107c5c5f346372/518970a2?X-Amz-Signature=1',
+      'https://cas-bridge.xethub.hf.co/xet-bridge-us/abc?X-Amz-Signature=1',
+      'https://cdn-lfs.huggingface.co/repos/x', 'https://cdn-lfs-us-1.hf.co/repos/x', 'https://eu.gcp.cdn.hf.co/x',
+      'https://hf.co/x', 'https://huggingface.co/x', 'https://HF.CO/x', 'https://us.aws.cdn.hf.co:443/x',
+    ]) expect(isAllowedRedirect(ok, from, P), ok).toBe(true);
+    for (const bad of [
+      // look-alikes: the suffix must match at a label boundary
+      'https://huggingface.co.evil.com/x', 'https://hf.co.evil.com/x', 'https://evilhf.co/x', 'https://xhuggingface.co/x',
+      'https://evil-hf.co/x', 'https://hf.com/x', 'https://huggingface.com/x', 'https://us.aws.cdn.hf.co.evil.com/x',
+      'https://hf.co./x', 'https://us.aws.cdn.hf.co./x',
+      // plain http (no downgrade), another port, credentials
+      'http://us.aws.cdn.hf.co/x', 'http://huggingface.co/x', 'http://cas-bridge.xethub.hf.co/x',
+      'https://us.aws.cdn.hf.co:8443/x', 'https://cas-bridge.xethub.hf.co:8443/x', 'https://huggingface.co:444/x',
+      'https://u:p@cas-bridge.xethub.hf.co/x', 'https://u@us.aws.cdn.hf.co/x',
+      // other schemes, IPs, garbage
+      'ftp://us.aws.cdn.hf.co/x', 'https://1.2.3.4/x', 'not a url',
+    ]) expect(isAllowedRedirect(bad, from, P), bad).toBe(false);
     // OCR keeps its same-origin-only rule.
+    expect(OCR_DOWNLOAD_POLICY.redirectDomains ?? []).toEqual([]);
     expect(isAllowedRedirect('https://cas-bridge.xethub.hf.co/x', 'https://raw.githubusercontent.com', OCR_DOWNLOAD_POLICY)).toBe(false);
+    expect(isAllowedRedirect('https://objects.githubusercontent.com/x', 'https://raw.githubusercontent.com', OCR_DOWNLOAD_POLICY)).toBe(false);
     expect(isAllowedRedirect('https://raw.githubusercontent.com/y', 'https://raw.githubusercontent.com', OCR_DOWNLOAD_POLICY)).toBe(true);
+  });
+
+  it('matches a domain only at a label boundary', () => {
+    expect(isHostInDomain('hf.co', 'hf.co')).toBe(true);
+    expect(isHostInDomain('a.b.hf.co', 'hf.co')).toBe(true);
+    expect(isHostInDomain('evilhf.co', 'hf.co')).toBe(false);
+    expect(isHostInDomain('hf.co.evil.com', 'hf.co')).toBe(false);
+    expect(isHostInDomain('a..hf.co', 'hf.co')).toBe(false);
+    expect(isHostInDomain('hf.co.', 'hf.co')).toBe(false);
+    expect(isHostInDomain('co', 'hf.co')).toBe(false);
+    expect(isHostInDomain('', 'hf.co')).toBe(false);
+    expect(isHostInDomain('hf.co', '')).toBe(false);
   });
 
   it('accepts only a loopback base URL override', () => {
@@ -197,6 +228,191 @@ describe('redirects to an allowed host', () => {
     await expect(downloadVerified({ ...o, policy: { origins: [], redirectHosts: [] } })).rejects.toThrow(/refusing redirect to http:\/\/localhost/);
     await downloadVerified({ ...o, policy: { origins: [], redirectHosts: ['localhost'] } });
     expect(fs.readFileSync(o.dest).equals(DATA)).toBe(true);
+  });
+});
+
+// ------------------------------------------------------------------
+// Hugging Face's real redirect shape, with a fake DNS: every https://<host>/<path> request goes to the loopback server
+// as /host/<host>/<path>, so the downloader sees (and its policy judges) the real https URLs, without allowLoopback.
+// ------------------------------------------------------------------
+
+describe('Hugging Face redirects through the production policy (issue #102)', () => {
+  let hf: http.Server;
+  let hfPort = 0;
+  let hits: string[] = [];
+  const REV_PATH = `/ggerganov/whisper.cpp/resolve/${WHISPER_MODELS_REVISION}`;
+  beforeAll(async () => {
+    hf = http.createServer((req, res) => {
+      const p = new URL(req.url ?? '/', 'http://x').pathname;
+      hits.push(p);
+      const redirect = (to: string) => { res.writeHead(302, { location: to }); res.end(); };
+      // huggingface.co: the pinned resolve URL answers with a redirect to a regional CDN host, as it does today.
+      if (p === `/host/huggingface.co${REV_PATH}/ggml-test-tiny.bin`) return redirect('https://us.aws.cdn.hf.co/xet-bridge-us/641ab5d1/518970a2?X-Amz-Signature=abc');
+      if (p === '/host/us.aws.cdn.hf.co/xet-bridge-us/641ab5d1/518970a2') return sendRange(req, res, DATA);
+      if (p === '/host/huggingface.co/to-evil') return redirect('https://huggingface.co.evil.com/x');
+      if (p === '/host/huggingface.co/to-http') return redirect('http://us.aws.cdn.hf.co/xet-bridge-us/641ab5d1/518970a2');
+      if (p === '/host/huggingface.co/to-port') return redirect('https://us.aws.cdn.hf.co:8443/xet-bridge-us/641ab5d1/518970a2');
+      if (p === '/host/huggingface.co/gone') { res.writeHead(404, 'Not Found'); res.end(); return; }
+      // A chain of n redirects across Hugging Face hosts: /chain/<n> on alternating hosts, /chain/0 is the file.
+      const c = /^\/host\/([^/]+)\/chain\/(\d+)$/.exec(p);
+      if (c) {
+        const k = Number(c[2]);
+        if (k === 0) return sendRange(req, res, DATA);
+        return redirect(`https://${k % 2 ? 'cdn-lfs-us-1.hf.co' : 'huggingface.co'}/chain/${k - 1}`);
+      }
+      res.writeHead(404); res.end();
+    });
+    await new Promise<void>((r) => hf.listen(0, '127.0.0.1', () => r()));
+    hfPort = (hf.address() as AddressInfo).port;
+  });
+  afterAll(async () => { await new Promise<void>((r) => hf.close(() => r())); });
+  beforeEach(() => { hits = []; });
+
+  /** fetch with a fake DNS: https://<host>[:port]/<path> -> the loopback server. The Response keeps no URL. */
+  const fakeDns = async (url: string, init?: RequestInit) => {
+    const u = new URL(url);
+    const r = await fetch(`http://127.0.0.1:${hfPort}/host/${u.host}${u.pathname}${u.search}`, init);
+    return new Response(r.body, { status: r.status, statusText: r.statusText, headers: r.headers });
+  };
+  const opts = (url: string, name: string) => {
+    fs.mkdirSync(dir, { recursive: true });
+    return { url, bytes: SIZE, sha256: SHA, dest: path.join(dir, name), fetch: fakeDns, policy: WHISPER_DOWNLOAD_POLICY };
+  };
+
+  it('installs a model Hugging Face redirects to us.aws.cdn.hf.co (the old exact-host list refused it)', async () => {
+    const q = new JobQueue({ throttleMs: 0 });
+    // No baseUrl: the real pinned https URL, the production policy, no loopback allowance.
+    const job = startModelInstallJob(q, 'test-tiny', { modelsDir: dir, fetch: fakeDns });
+    const done = await q.waitFor(job.id);
+    expect(done.status, done.error).toBe('done');
+    expect(hits).toEqual([`/host/huggingface.co${REV_PATH}/ggml-test-tiny.bin`, '/host/us.aws.cdn.hf.co/xet-bridge-us/641ab5d1/518970a2']);
+    expect(fs.readFileSync(path.join(dir, TEST.file)).equals(DATA)).toBe(true);
+    // The old policy (one exact host) refuses the same chain.
+    const old = { origins: ['https://huggingface.co'], redirectHosts: ['cas-bridge.xethub.hf.co'] };
+    await expect(downloadVerified({ ...opts(whisperModelUrl(TEST as never), 'old.bin'), policy: old })).rejects.toThrow(/refusing redirect to https:\/\/us\.aws\.cdn\.hf\.co/);
+  });
+
+  it('refuses a look-alike, plain http or another port, in plain words naming the host, without fetching it', async () => {
+    await expect(downloadVerified(opts('https://huggingface.co/to-evil', 'e.bin')))
+      .rejects.toThrow("Hugging Face redirected the download to huggingface.co.evil.com, which ReCut doesn't allow (refusing redirect to https://huggingface.co.evil.com)");
+    await expect(downloadVerified(opts('https://huggingface.co/to-http', 'h.bin'))).rejects.toThrow(/redirected the download to us\.aws\.cdn\.hf\.co over plain http, which ReCut doesn't allow/);
+    await expect(downloadVerified(opts('https://huggingface.co/to-port', 'p.bin'))).rejects.toThrow(/redirected the download to us\.aws\.cdn\.hf\.co:8443, which ReCut doesn't allow/);
+    await expect(downloadVerified(opts('https://huggingface.co/to-evil', 'e.bin'))).rejects.toBeInstanceOf(DownloadRefusedError);
+    expect(hits.every((h) => h.startsWith('/host/huggingface.co/'))).toBe(true);
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
+  it('the job error (shown in the toast) names the refused host', async () => {
+    const q = new JobQueue({ throttleMs: 0 });
+    const evilDns = (url: string, init?: RequestInit) => fakeDns(url.replace(`${REV_PATH}/ggml-test-tiny.bin`, '/to-evil'), init);
+    const done = await q.waitFor(startModelInstallJob(q, 'test-tiny', { modelsDir: dir, fetch: evilDns }).id);
+    expect(done.status).toBe('failed');
+    expect(done.error).toMatch(/^Hugging Face redirected the download to huggingface\.co\.evil\.com, which ReCut doesn't allow/);
+  });
+
+  it('names the host with an HTTP error status', async () => {
+    await expect(downloadVerified(opts('https://huggingface.co/gone', 'g.bin'))).rejects.toThrow('download failed: HTTP 404 Not Found from huggingface.co');
+  });
+
+  it('follows at most 5 redirects', async () => {
+    const five = opts('https://huggingface.co/chain/5', 'five.bin');
+    await downloadVerified(five);
+    expect(fs.readFileSync(five.dest).equals(DATA)).toBe(true);
+    hits = [];
+    await expect(downloadVerified(opts('https://huggingface.co/chain/6', 'six.bin')))
+      .rejects.toThrow(/Hugging Face redirected the download more than 5 times/);
+    expect(hits).toHaveLength(6); // the 6th redirect is never followed
+    const opened = await openFollowingRedirects({ url: 'https://huggingface.co/chain/2', policy: WHISPER_DOWNLOAD_POLICY, fetch: fakeDns, headers: { range: 'bytes=0-0' } });
+    expect(opened.url).toBe('https://cdn-lfs-us-1.hf.co/chain/0');
+    await opened.res.body?.cancel();
+  });
+});
+
+// ------------------------------------------------------------------
+// Stall timeout
+// ------------------------------------------------------------------
+
+describe('stall timeout', () => {
+  let st: http.Server;
+  let stPort = 0;
+  const hanging = new Set<http.ServerResponse>();
+  let stHits: { path: string; range?: string }[] = [];
+  beforeAll(async () => {
+    st = http.createServer((req, res) => {
+      const p = new URL(req.url ?? '/', 'http://x').pathname;
+      stHits.push({ path: p, range: req.headers.range });
+      if (p === '/connect') { hanging.add(res); return; } // never answers
+      if (p === '/body') {
+        if (req.headers.range) return sendRange(req, res, DATA); // the resume works
+        res.writeHead(200, { 'content-length': SIZE });
+        res.write(DATA.subarray(0, SIZE / 2)); // then nothing more
+        hanging.add(res);
+        return;
+      }
+      if (p === '/trickle') {
+        // Slow but steady: 8 chunks 60 ms apart (480 ms in all), each well within a 250 ms stall timeout.
+        res.writeHead(200, { 'content-length': SIZE });
+        let i = 0;
+        const step = SIZE / 8;
+        const t = setInterval(() => {
+          res.write(DATA.subarray(i * step, (i + 1) * step));
+          if (++i === 8) { clearInterval(t); res.end(); }
+        }, 60);
+        return;
+      }
+      res.writeHead(404); res.end();
+    });
+    await new Promise<void>((r) => st.listen(0, '127.0.0.1', () => r()));
+    stPort = (st.address() as AddressInfo).port;
+  });
+  afterAll(async () => {
+    for (const r of hanging) r.destroy();
+    st.closeAllConnections?.();
+    await new Promise<void>((r) => st.close(() => r()));
+  });
+  beforeEach(() => { stHits = []; });
+  const opts = (p: string, name: string, stallTimeoutMs = 250) => {
+    fs.mkdirSync(dir, { recursive: true });
+    return {
+      url: `http://127.0.0.1:${stPort}${p}`, bytes: SIZE, sha256: SHA, dest: path.join(dir, name), fetch: fetchFn,
+      policy: WHISPER_DOWNLOAD_POLICY, allowLoopback: true, stallTimeoutMs,
+    };
+  };
+
+  it('defaults to 60 s', () => {
+    expect(DOWNLOAD_STALL_MS).toBe(60_000);
+  });
+
+  it('fails a connection that never answers', async () => {
+    const t0 = Date.now();
+    await expect(downloadVerified(opts('/connect', 'c.bin'))).rejects.toThrow('network error: the download stalled (no data for 250 ms)');
+    expect(Date.now() - t0).toBeLessThan(5000);
+  });
+
+  it('fails a body that stops, keeps the .part, and the next attempt resumes it', async () => {
+    const o = opts('/body', 'b.bin');
+    await expect(downloadVerified(o)).rejects.toThrow('network error: the download stalled (no data for 250 ms)');
+    expect(fs.existsSync(o.dest)).toBe(false);
+    expect(fs.statSync(`${o.dest}.part`).size).toBe(SIZE / 2);
+    await downloadVerified(o);
+    expect(stHits.at(-1)).toEqual({ path: '/body', range: `bytes=${SIZE / 2}-` });
+    expect(fs.readFileSync(o.dest).equals(DATA)).toBe(true);
+  });
+
+  it('does not fail a slow download that keeps receiving data', async () => {
+    const o = opts('/trickle', 't.bin');
+    await downloadVerified(o);
+    expect(fs.readFileSync(o.dest).equals(DATA)).toBe(true);
+  });
+
+  it('cancel still wins over the watchdog and removes the .part', async () => {
+    const ac = new AbortController();
+    const o = { ...opts('/body', 'x.bin', 5000), signal: ac.signal };
+    const p = downloadVerified(o);
+    for (let i = 0; i < 100 && !fs.existsSync(`${o.dest}.part`); i++) await new Promise((r) => setTimeout(r, 10));
+    ac.abort();
+    await expect(p).rejects.toThrow('download canceled');
+    expect(fs.existsSync(`${o.dest}.part`)).toBe(false);
   });
 });
 

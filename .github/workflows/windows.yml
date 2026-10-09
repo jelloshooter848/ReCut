@@ -13,7 +13,8 @@ name: Windows build
 #   tests      unit tests (vitest) on Windows
 #   e2e        end-to-end tests (Playwright + Electron) on Windows
 #   launcher   "Start ReCut.cmd" self-test from a fresh clone
-#   linux      on ubuntu-22.04: typecheck, unit tests and the e2e suite (xvfb) with the bundled FFmpeg and speech-to-text
+#   linux      on ubuntu-22.04: typecheck, the download redirect check (scripts/check-model-redirects.mjs, also in
+#              macos), unit tests and the e2e suite (xvfb) with the bundled FFmpeg and speech-to-text
 #              engine, the x86-64 AppImage (scripts/linux/get-ffmpeg.sh bundles FFmpeg and its licence files,
 #              scripts/linux/get-whisper.sh builds whisper.cpp), an AppImage smoke test (FUSE-mounted and
 #              --appimage-extract-and-run), and the ReCut-linux artifact (every run)
@@ -518,8 +519,9 @@ jobs:
       - run: npm run typecheck
       # Would ReCut's download policy (electron/net/download.ts, WHISPER_DOWNLOAD_POLICY / OCR_DOWNLOAD_POLICY) accept
       # the real redirect chain of every pinned Whisper model and two OCR language files from this runner? First byte
-      # only (Range: bytes=0-0), the app's own redirect loop; fails when the policy refuses a hop (bugs/closed,
-      # issue #102), so a storage move on Hugging Face's side shows up here before users hit it.
+      # only (Range: bytes=0-0), the app's own redirect loop; fails when the policy refuses a hop
+      # (bugs/closed/2026-10-09-whisper-model-download-redirect.md, issue #102), so a storage move on Hugging Face's
+      # side shows up here before users hit it. A network error or HTTP 5xx is retried once; a refusal never is.
       - name: Download redirect check (Hugging Face, GitHub raw)
         timeout-minutes: 5
         run: node scripts/check-model-redirects.mjs
@@ -818,8 +820,9 @@ jobs:
       - run: npm run typecheck
       # Would ReCut's download policy (electron/net/download.ts, WHISPER_DOWNLOAD_POLICY / OCR_DOWNLOAD_POLICY) accept
       # the real redirect chain of every pinned Whisper model and two OCR language files from this runner? First byte
-      # only (Range: bytes=0-0), the app's own redirect loop; fails when the policy refuses a hop (bugs/closed,
-      # issue #102), so a storage move on Hugging Face's side shows up here before users hit it.
+      # only (Range: bytes=0-0), the app's own redirect loop; fails when the policy refuses a hop
+      # (bugs/closed/2026-10-09-whisper-model-download-redirect.md, issue #102), so a storage move on Hugging Face's
+      # side shows up here before users hit it. A network error or HTTP 5xx is retried once; a refusal never is.
       - name: Download redirect check (Hugging Face, GitHub raw)
         timeout-minutes: 5
         run: node scripts/check-model-redirects.mjs

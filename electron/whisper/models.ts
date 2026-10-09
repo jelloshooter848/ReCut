@@ -5,7 +5,7 @@
  *
  * Models are always one of the pinned manifest files (shared/whisper.ts WHISPER_MODELS): a download or a picked file
  * is accepted only when its size and SHA-256 match. Downloads use the shared verified downloader
- * (electron/net/download.ts) with the Hugging Face policy: https://huggingface.co, redirects to WHISPER_REDIRECT_HOSTS.
+ * (electron/net/download.ts) with the Hugging Face policy: https://huggingface.co, redirects within WHISPER_REDIRECT_DOMAINS.
  * No Electron import, so it stays unit-testable.
  */
 import fsp from 'node:fs/promises';
@@ -13,7 +13,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { ID, JobInfo } from '@shared/model';
 import {
-  WHISPER_MODELS, WHISPER_MODELS_ORIGIN, WHISPER_REDIRECT_HOSTS, whisperModelUrl,
+  WHISPER_MODELS, WHISPER_MODELS_ORIGIN, WHISPER_REDIRECT_DOMAINS, whisperModelUrl,
   type WhisperModelInfo, type WhisperModelState,
 } from '@shared/whisper';
 import type { MediaFetch } from '../ipc';
@@ -22,8 +22,14 @@ import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
 import { ensureDirSafe } from '../safeMkdir';
 import { downloadVerified, renameRetrying, sha256File, type DownloadPolicy } from '../net/download';
 
-/** Model downloads: https://huggingface.co, redirected only to Hugging Face's file storage hosts. */
-export const WHISPER_DOWNLOAD_POLICY: DownloadPolicy = { origins: [WHISPER_MODELS_ORIGIN], redirectHosts: WHISPER_REDIRECT_HOSTS };
+/**
+ * Model downloads: start at https://huggingface.co; redirects only over https (default port) to Hugging Face's own
+ * domains, huggingface.co and hf.co and their subdomains (its storage and CDN hosts change by region and over time,
+ * issue #102). The pinned SHA-256 guarantees the file.
+ */
+export const WHISPER_DOWNLOAD_POLICY: DownloadPolicy = {
+  origins: [WHISPER_MODELS_ORIGIN], redirectDomains: WHISPER_REDIRECT_DOMAINS, provider: 'Hugging Face',
+};
 
 /** The Whisper folder of a user-data folder (`<userData>/whisper`). */
 export function whisperDir(userData: string): string {
