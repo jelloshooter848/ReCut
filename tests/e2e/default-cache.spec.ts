@@ -19,8 +19,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { launchApp } from './helpers';
 
-test.describe.configure({ mode: 'serial' });
-
 /** One file in each cache subfolder (electron/media/cache.ts CACHE_SUBDIRS), shaped like what the app writes. */
 const KEY = '0123456789abcdef0123456789abcdef01234567';
 const SEED: Record<string, string> = {
