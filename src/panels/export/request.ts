@@ -9,7 +9,9 @@ import { resolveSubtitleCues } from '@shared/timeline';
 import { sidecarCandidates } from '@/transcript/providers';
 import { sequenceHasSubtitles } from './settings';
 import { subtitleOutputPlan } from '@shared/exportFormat';
-import { nestedSequencesFor } from '@shared/nest';
+import { flattenSequence, nestedSequencesFor } from '@shared/nest';
+import { clipTranscriptTrack, onScreenTranscript, transcriptIndex } from '@shared/transcripts';
+import { allTracks } from '@shared/timeline';
 
 /**
  * The parts of the project an export request is built from. `sequences` (for files imported into the
@@ -78,7 +80,36 @@ export function softSubtitleTracks(seq: Sequence, settings: ExportSettings): Exp
   }));
 }
 
-export function buildExportRequest(project: ExportProjectSources, seq: Sequence, settings: ExportSettings): ExportRequest {
+/** Id of the subtitle track an export adds for the on-screen transcript (#127). */
+export const TRANSCRIPT_EXPORT_TRACK_ID = 'transcript';
+
+/**
+ * The on-screen transcript of `seq` (#126: what the Subtitles row and the Program monitor show), as a sequence subtitle
+ * track named "Transcript" with free cues in frames, or null when the sequence has no transcript. Nested sequences
+ * are flattened first, as the Program monitor does, so transcripts inside them count.
+ */
+export function transcriptExportTrack(project: ExportProjectSources, seq: Sequence): SequenceSubtitleTrack | null {
+  const flat = flattenSequence(seq, project.sequences ?? {}, project.media);
+  const index = transcriptIndex(flat, project.media, project.subtitleTracks);
+  const cues = onScreenTranscript(flat, index);
+  if (!cues.length) return null;
+  const firstClip = allTracks(flat).flatMap((t) => t.clips).find((c) => c.id === cues[0].clipId);
+  const source = firstClip?.mediaId ? clipTranscriptTrack(firstClip, project.media[firstClip.mediaId], project.subtitleTracks) : null;
+  return {
+    id: TRANSCRIPT_EXPORT_TRACK_ID, name: 'Transcript', language: source?.language ?? 'und', enabled: true,
+    cues: cues.map((c) => ({ id: c.id, start: c.start, duration: c.end - c.start, offset: 0, text: c.text })),
+  };
+}
+
+/** `seq` with the transcript track added when `settings.includeTranscripts` is on and there is a transcript (#127). */
+export function withTranscriptTrack(project: ExportProjectSources, seq: Sequence, settings: Pick<ExportSettings, 'includeTranscripts'>): Sequence {
+  if (!settings.includeTranscripts || seq.subtitleTracks.some((t) => t.id === TRANSCRIPT_EXPORT_TRACK_ID)) return seq;
+  const track = transcriptExportTrack(project, seq);
+  return track ? { ...seq, subtitleTracks: [...seq.subtitleTracks, track] } : seq;
+}
+
+export function buildExportRequest(project: ExportProjectSources, source: Sequence, settings: ExportSettings): ExportRequest {
+  const seq = withTranscriptTrack(project, source, settings);
   const subtitles = sequenceHasSubtitles(seq)
     ? resolveSubtitleCues(seq).map((c) => ({ start: framesToSeconds(c.start, seq.fps), end: framesToSeconds(c.end, seq.fps), text: c.text }))
     : undefined;
