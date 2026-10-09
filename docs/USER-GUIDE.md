@@ -178,6 +178,9 @@ search use. It runs on your computer: **nothing is uploaded, and transcribing ne
    "English (Whisper Small)" ("French (Whisper Small, #2)" when the media has more than one audio stream, "English
    (Whisper Small, translated)" for a translation).
 
+A Whisper transcript is split into short lines of a few words, each word with its own timing: the Source and
+Program monitors show the line being spoken and highlight each word as it is said.
+
 Transcribing the same stream again (for example with a bigger model) replaces that track in one undo step; repeating
 the same settings is instant, because results are cached. Whisper is good but not perfect: names, songs, shouting,
 overlapping voices and quiet lines can be misheard or missed, and it does not say who is speaking. See

@@ -1,6 +1,6 @@
 /** #114: Program monitor subtitles wrap instead of overflowing both edges of the frame. */
 import { describe, it, expect } from 'vitest';
-import { wrapSubtitleText } from '../../src/playback/subtitleWrap';
+import { activeWordIndex, wrapSubtitleText, wrapWords } from '../../src/playback/subtitleWrap';
 
 const measure = (s: string) => s.length; // one unit per character
 
@@ -21,5 +21,23 @@ describe('wrapSubtitleText', () => {
   it('returns no lines for empty or blank text', () => {
     expect(wrapSubtitleText('', 10, measure)).toEqual([]);
     expect(wrapSubtitleText(' \n ', 10, measure)).toEqual([]);
+  });
+});
+
+describe('karaoke helpers (#119)', () => {
+  const words = [{ start: 10 }, { start: 12 }, { start: 15 }];
+  it('activeWordIndex: the last word that has started, -1 before the first', () => {
+    expect(activeWordIndex(words, 9)).toBe(-1);
+    expect(activeWordIndex(words, 10)).toBe(0);
+    expect(activeWordIndex(words, 14.9)).toBe(1);
+    expect(activeWordIndex(words, 99)).toBe(2);
+    expect(activeWordIndex(undefined, 10)).toBe(-1);
+  });
+
+  it('wrapWords lays words out like wrapSubtitleText, as word indices', () => {
+    const texts = ['the', 'quick', 'brown', 'fox', 'jumps', 'over', 'the', 'lazy', 'dog'];
+    const lines = wrapWords(texts, 15, measure);
+    expect(lines.map((l) => l.map((i) => texts[i]).join(' '))).toEqual(wrapSubtitleText(texts.join(' '), 15, measure));
+    expect(lines.flat()).toEqual(texts.map((_, i) => i));
   });
 });

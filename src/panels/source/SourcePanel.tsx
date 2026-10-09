@@ -14,6 +14,7 @@ import { useStore, identityLabel, startProxy } from '@/state';
 import type { StoreState } from '@/state';
 import { SourcePlayer, resolvePlaybackPath, mediaFps, mediaSize, type SourcePlayerStatus } from '@/playback';
 import { isStillImage } from '@/playback/mediaSource';
+import { activeWordIndex } from '@/playback/subtitleWrap';
 import { resumeAudio } from '@/app/media';
 import { registerTransport, setActiveTransport, shuttle, useActiveTransportId, type Transport } from '@/app/transport';
 import { setClipDrag } from '@/app/dnd';
@@ -115,6 +116,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
     return out.sort((a, b) => a.start - b.start);
   }, [media, subtitleTracks]);
   const currentCue = useMemo(() => cues.find((c) => c.start <= time && time < c.end) ?? null, [cues, time]);
+  const activeWord = activeWordIndex(currentCue?.words, time);
 
   // ------------------------------------------------------------- refs shared with the transport / callbacks
   const live = useRef({ inPoint, outPoint, duration, fps, loop, isImage, mediaId: media?.id ?? null, playRange: null as { in: number; out: number } | null });
@@ -361,7 +363,15 @@ export function SourcePanel({ focused, active }: PanelProps) {
             {media.offline ? <span className="source-badge offline"><WifiOff /> Offline</span> : null}
             {size ? <span className="source-badge" title="Source resolution">{size.width}×{size.height}</span> : null}
           </div>
-          {currentCue ? <div className="source-subtitle">{currentCue.text}</div> : null}
+          {currentCue ? (
+            <div className="source-subtitle" data-testid="source-subtitle">
+              {currentCue.words?.length
+                ? currentCue.words.map((w, i) => (
+                  <React.Fragment key={i}>{i ? ' ' : ''}<span className={i === activeWord ? 'source-word active' : 'source-word'}>{w.text}</span></React.Fragment>
+                ))
+                : currentCue.text}
+            </div>
+          ) : null}
           {loading && !errored ? <div className="source-spinner"><LoaderCircle className="spin" /></div> : null}
           {errored ? (
             <div className="source-error-card" role="alert">

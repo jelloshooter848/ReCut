@@ -23,7 +23,7 @@ import { MediaElementPool, poolKey } from './elementPool';
 import { mixesWith, planFrame, type FramePlan, type LayerPlan, type AudioPlan, type MissingMedia } from './planner';
 import { clampElementTime, toElementTime } from './mediaSource';
 import { selectAudioTrack } from './audioTracks';
-import { SUBTITLE_MAX_WIDTH, wrapSubtitleText } from './subtitleWrap';
+import { SUBTITLE_HIGHLIGHT, SUBTITLE_MAX_WIDTH, activeWordIndex, wrapSubtitleText, wrapWords } from './subtitleWrap';
 import { pathToMediaUrl } from '../../shared/ipc';
 import { videoDisplaySize } from '../../shared/media';
 
@@ -837,7 +837,7 @@ export class SequencePlayer {
     }
     if (this.drawSubtitles) {
       const sk = this.subtitleKey; // the cue scan runs once per timeline frame, not on every rAF tick
-      if (sk.seq !== this.seq || sk.frame !== frame) { sk.seq = this.seq; sk.frame = frame; sk.key = this.getSubtitleAt(frame).map((c) => `|s${c.id}`).join(''); }
+      if (sk.seq !== this.seq || sk.frame !== frame) { sk.seq = this.seq; sk.frame = frame; sk.key = this.getSubtitleAt(frame).map((c) => `|s${c.id}w${activeWordIndex(c.words, frame)}`).join(''); }
       key += sk.key;
     }
     return key;
@@ -1236,19 +1236,35 @@ export class SequencePlayer {
     ctx.globalAlpha = 1;
     ctx.font = `600 ${size}px system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif`;
     const maxWidth = seq.width * SUBTITLE_MAX_WIDTH;
-    const lines = cues.flatMap((c) => wrapSubtitleText(c.text, maxWidth, (t) => ctx.measureText(t).width));
+    const measure = (t: string) => ctx.measureText(t).width;
+    // Each line is a list of [text, highlighted] runs: a cue with word timing is laid out word by word so the word
+    // being spoken can be drawn in the highlight colour (#119); other cues are plain wrapped lines.
+    const lines: [string, boolean][][] = [];
+    for (const c of cues) {
+      if (c.words?.length) {
+        const active = activeWordIndex(c.words, frame);
+        const texts = c.words.map((w) => w.text);
+        for (const line of wrapWords(texts, maxWidth, measure)) lines.push(line.map((i, k) => [k ? ` ${texts[i]}` : texts[i], i === active]));
+      } else {
+        for (const l of wrapSubtitleText(c.text, maxWidth, measure)) lines.push([[l, false]]);
+      }
+    }
     if (!lines.length) { ctx.restore(); return; }
-    ctx.textAlign = 'center';
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.lineJoin = 'round';
     ctx.lineWidth = Math.max(2, size * 0.14);
     ctx.strokeStyle = 'rgba(0,0,0,0.9)';
-    ctx.fillStyle = '#fff';
     const lineH = size * 1.2;
     let y = seq.height * 0.93;
     for (let i = lines.length - 1; i >= 0; i--) {
-      ctx.strokeText(lines[i], seq.width / 2, y);
-      ctx.fillText(lines[i], seq.width / 2, y);
+      let x = (seq.width - measure(lines[i].map((r) => r[0]).join(''))) / 2;
+      for (const [text, hot] of lines[i]) {
+        ctx.fillStyle = hot ? SUBTITLE_HIGHLIGHT : '#fff';
+        ctx.strokeText(text, x, y);
+        ctx.fillText(text, x, y);
+        x += measure(text);
+      }
       y -= lineH;
     }
     ctx.restore();
