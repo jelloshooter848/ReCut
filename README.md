@@ -192,6 +192,23 @@ scripts/make-test-media.sh ./test-media        # movies, TV episodes, SRTs, 5.1 
 Then press **Ctrl+I** (Cmd+I on macOS) to import, double-click a clip, mark **I** / **O**, and press **,** to insert it.
 The [User Guide](docs/USER-GUIDE.md) walks through a complete fan edit.
 
+## Testing unreleased changes
+
+To try what is on `main` (or a pull request) before it is released, run it from a clone as in the quick start:
+
+```bash
+git checkout main && git pull       # or: gh pr checkout <number>
+npm install                         # picks up any new dependencies
+npm run dev                         # hot-reloads the renderer; restart after changes under electron/
+```
+
+- `npm start` runs the production build, which is closer to what ships than `npm run dev`.
+- `npm run package` builds an unpacked, unsigned app under `release/` with electron-builder. It catches packaging
+  problems, such as missing bundled FFmpeg (see [INSTALL.md](docs/INSTALL.md#bundling-ffmpeg)).
+- `npm run typecheck`, `npm test` and `npm run test:e2e` run the same checks as CI.
+- No build tools? Every push to `main` makes a **test build**: the Windows, Linux and macOS installers of that commit,
+  downloadable from the CI run's Artifacts. See [Test builds](docs/RELEASING.md#test-builds).
+
 ## Documentation
 
 | Doc | Contents |
