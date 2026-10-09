@@ -108,6 +108,22 @@ export function createProject(name = 'Untitled Project'): Project {
   };
 }
 
+/**
+ * Whether a project holds anything a user would want back: media, scenes, subtitle tracks, tags, a name other than
+ * the default, more than one sequence, or a sequence with clips, markers, story blocks, snapshots or subtitles.
+ * Empty bins, track layout and settings do not count. An untitled project without user work is not autosaved, not
+ * offered for recovery and closes without a "Save changes?" prompt (#111).
+ */
+export function projectHasUserWork(p: Project): boolean {
+  if (p.name !== 'Untitled Project') return true;
+  if (Object.keys(p.media).length || Object.keys(p.scenes).length || Object.keys(p.subtitleTracks).length) return true;
+  if (Object.values(p.tags).some((list) => list.length > 0)) return true;
+  const seqs = Object.values(p.sequences);
+  if (seqs.length > 1) return true;
+  return seqs.some((s) => s.markers.length > 0 || s.storyBlocks.length > 0 || s.snapshots.length > 0 || s.subtitleTracks.length > 0
+    || [...s.videoTracks, ...s.audioTracks].some((t) => t.clips.length > 0));
+}
+
 export function createMediaItem(path: string, name: string): MediaItem {
   return {
     id: uid('med'), name, path, kind: 'unknown', category: 'Other', identity: {}, binId: null,
