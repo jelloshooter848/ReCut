@@ -229,6 +229,16 @@ export const MIN_TRACK_HEIGHT = 24;
 export const MAX_TRACK_HEIGHT = 240;
 
 /**
+ * Track targets of a media or sequence drop on `row` (#120): that track for its own kind, and the track at the same
+ * index for the other kind (V2 -> A2, A2 -> V2), so the linked half never lands on, and overwrites, another track.
+ */
+export function dropTracks(row: Pick<TrackRow, 'id' | 'kind' | 'index'> | null | undefined):
+  { videoTrackId?: string; audioTrackId?: string; videoTrackIndex?: number; audioTrackIndex?: number } {
+  if (!row) return {};
+  return row.kind === 'video' ? { videoTrackId: row.id, audioTrackIndex: row.index } : { audioTrackId: row.id, videoTrackIndex: row.index };
+}
+
+/**
  * Premiere ordering: video tracks stacked with V1 nearest the divider (V3 on top), audio A1 just under the divider.
  * `heights` lets a live drag override a track height without touching the store.
  */

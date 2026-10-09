@@ -220,8 +220,10 @@ Scenes in the library are reusable, tagged source ranges.
    (positions are frames), so neither the Inspector nor **Sequence Settings…** can change it.
 5. The source-patch buttons (**V1**, **A1**, ...) in the track headers choose the target tracks. Un-patch video for an audio-only edit
    (and the reverse).
-6. Other ways to add clips: drag from Project, Source (the grip button), Scenes or Transcript. You can also use
-   **Insert at Playhead** / **Overwrite at Playhead** in the Project context menu.
+6. Other ways to add clips: drag from Project, Source (the grip button), Scenes or Transcript. A drag goes to the
+   track you drop it on, and its linked half to the track with the same number (drop on **V2** and the audio goes to
+   **A2**; a missing track is added). You can also use **Insert at Playhead** / **Overwrite at Playhead** in the
+   Project context menu.
 7. **Match Frame** (F) opens the source of the clip under the playhead. Double-clicking a timeline clip opens it in
    Source with its range marked.
 

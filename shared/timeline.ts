@@ -1243,6 +1243,18 @@ export function addTrack(seq: Sequence, kind: 'video' | 'audio', index?: number)
   return t;
 }
 
+/**
+ * The track of `kind` at `index` for a drop on the other kind's track (#120): a clip dropped on Vn puts its audio on
+ * An, and one dropped on An its video on Vn, never on another track's clips. Tracks are added when the sequence has
+ * fewer; a locked track at that index gets a new track instead.
+ */
+export function trackForDrop(seq: Sequence, kind: 'video' | 'audio', index: number): Track {
+  const list = kind === 'video' ? seq.videoTracks : seq.audioTracks;
+  const i = Math.max(0, Math.round(index));
+  while (list.length <= i) addTrack(seq, kind);
+  return list[i].locked ? addTrack(seq, kind) : list[i];
+}
+
 export function removeTrack(seq: Sequence, trackId: ID): boolean {
   for (const list of [seq.videoTracks, seq.audioTracks]) {
     const i = list.findIndex((t) => t.id === trackId);

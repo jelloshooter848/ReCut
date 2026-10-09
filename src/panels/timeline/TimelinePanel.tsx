@@ -41,7 +41,7 @@ import { linkedSyncOffsets, syncOffsetsByTrack } from './clipBadges';
 import type { DialogState, DragPreview } from './types';
 import { RULER_H } from './types';
 import {
-  frameToX, itemsInRange, layoutTracks, lodHit, minZoomFor, nextMountRange, prefetchMountRange, rowAtY, scrollContentFrames, snapFrame, snapThresholdFrames, splitScroll,
+  dropTracks, frameToX, itemsInRange, layoutTracks, lodHit, minZoomFor, nextMountRange, prefetchMountRange, rowAtY, scrollContentFrames, snapFrame, snapThresholdFrames, splitScroll,
   xToFrame, xToFrameInt, zoomAround, zoomToFit, type MountRange, type TrackLayout,
 } from './viewMath';
 
@@ -543,7 +543,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
       e.preventDefault();
       const { row, frame } = dropTarget(e);
       const created = useStore.getState().nestSequence(seqId, nestId, frame, {
-        mode: e.ctrlKey ? 'insert' : 'overwrite', videoTrackId: row?.kind === 'video' ? row.id : undefined, audioTrackId: row?.kind === 'audio' ? row.id : undefined,
+        mode: e.ctrlKey ? 'insert' : 'overwrite', ...dropTracks(row),
       });
       if (created.length) rootRef.current?.focus({ preventScroll: true });
       return;
@@ -569,7 +569,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
         if (p.sceneRecordId) extra.sceneRecordId = p.sceneRecordId;
         const res = performSourceEdit({
           mode: insertMode ? 'insert' : 'overwrite', mediaId: p.mediaId, srcIn: p.in ?? null, srcOut: p.out ?? null, at,
-          videoTrackId: row?.kind === 'video' ? row.id : undefined, audioTrackId: row?.kind === 'audio' ? row.id : undefined,
+          ...dropTracks(row),
           includeVideo: p.includeVideo, includeAudio: p.includeAudio, extra, quiet: true,
         }, seqId);
         if (!res.ok || res.endFrame === null) continue;
