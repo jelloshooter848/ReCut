@@ -168,13 +168,25 @@ search use. It runs on your computer: **nothing is uploaded, and transcribing ne
 3. In **Transcribe with Whisper**, tick the media to transcribe (others with audio can be added; a filter helps in
    long projects) and, when a media has several audio streams, choose the stream. Choose the **Model** (installed
    ones; **Manage models…** opens the model list) and the **Language** spoken: the stream's language tag is used
-   when it has one, otherwise **Auto-detect** (which listens to the start of the audio). **Translate the speech to
-   English** is off by default.
+   when it has one, otherwise **Auto-detect** (which listens to the start of the audio). **Verbatim (exact)** is on by
+   default for English: it keeps every word as spoken, including "um", "uh", stutters and repeats, so they can be
+   found and cut (choose English as the language to use it). **Translate the speech to English** is off by default;
+   a translated transcript is less exact, because filler words are dropped.
 4. Click **Transcribe**. Each media becomes one job in the **Jobs** list with its progress; cancel it there. Long
    films are processed in parts of up to 30 minutes, cut at quiet moments.
 5. When a job finishes, a toast says how many lines were transcribed and the media gets a track named, for example,
    "English (Whisper Small)" ("French (Whisper Small, #2)" when the media has more than one audio stream, "English
    (Whisper Small, translated)" for a translation).
+
+A Whisper transcript is split into short lines of a few words, each word with its own timing: the Source and
+Program monitors show the line being spoken and highlight each word as it is said.
+
+On the timeline, a transcribed clip's words show in a **transcript lane** under its audio track: **T1** under A1,
+**T2** under A2. The lane reads the transcript from the media, so transcribing (or re-transcribing) a clip that is
+already in the sequence shows at once. The Program monitor shows the transcript of the clip whose picture is on
+screen: the top visible video clip, or the next one down when that clip has no transcript (a cutaway over dialogue
+keeps the dialogue's words) or its audio is muted. The **Subtitles** row at the top of the timeline shows that same
+on-screen transcript (green), switching between clips as the edit cuts, next to any imported subtitle files (purple).
 
 Transcribing the same stream again (for example with a bigger model) replaces that track in one undo step; repeating
 the same settings is instant, because results are cached. Whisper is good but not perfect: names, songs, shouting,
@@ -218,8 +230,10 @@ Scenes in the library are reusable, tagged source ranges.
    (positions are frames), so neither the Inspector nor **Sequence Settings…** can change it.
 5. The source-patch buttons (**V1**, **A1**, ...) in the track headers choose the target tracks. Un-patch video for an audio-only edit
    (and the reverse).
-6. Other ways to add clips: drag from Project, Source (the grip button), Scenes or Transcript. You can also use
-   **Insert at Playhead** / **Overwrite at Playhead** in the Project context menu.
+6. Other ways to add clips: drag from Project, Source (the grip button), Scenes or Transcript. A drag goes to the
+   track you drop it on, and its linked half to the track with the same number (drop on **V2** and the audio goes to
+   **A2**; a missing track is added). You can also use **Insert at Playhead** / **Overwrite at Playhead** in the
+   Project context menu.
 7. **Match Frame** (F) opens the source of the clip under the playhead. Double-clicking a timeline clip opens it in
    Source with its range marked.
 
@@ -441,8 +455,11 @@ Saga Fan Cut/
    `C:\Videos`). Optionally adjust Video (frame size, frame rate, and the codec settings of the format), Audio
    (codec or bit depth, Stereo or **5.1 Surround** when a source has 6+ channels, sample rate; AC-3 offers 32, 44.1
    and 48 kHz only) and **Range** (Entire sequence or In to Out).
-4. **Subtitles:** **Burn in** renders them into the picture, on exactly the frames where the Program monitor shows
-   them. **Sidecar** writes a `.srt` next to the exported file. Burn-in is off for the audio-only formats (there is
+4. **Subtitles:** **Include transcripts as subtitles** (off by default) adds the on-screen transcript, what the
+   Subtitles row and Program monitor show, as a subtitle track named "Transcript". **Burn in** renders the subtitles
+   into the picture, on exactly the frames where the Program monitor shows them. With transcripts included,
+   **Highlight the spoken word** (it follows the timeline's highlighter until you change it) burns in the word being
+   spoken in yellow, as the monitors show it; the sidecar and MKV subtitle tracks stay plain text. **Sidecar** writes a `.srt` next to the exported file. Burn-in is off for the audio-only formats (there is
    no picture); the sidecar still works. An **MKV** can also carry the subtitle tracks as soft subtitles that viewers
    switch on and off (see **Subtitle tracks (MKV)** below).
 5. The **Checks** list blocks the export with a reason when something is wrong (an empty sequence, offline or missing

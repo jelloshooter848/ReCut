@@ -1243,6 +1243,18 @@ export function addTrack(seq: Sequence, kind: 'video' | 'audio', index?: number)
   return t;
 }
 
+/**
+ * The track of `kind` at `index` for a drop on the other kind's track (#120): a clip dropped on Vn puts its audio on
+ * An, and one dropped on An its video on Vn, never on another track's clips. Tracks are added when the sequence has
+ * fewer; a locked track at that index gets a new track instead.
+ */
+export function trackForDrop(seq: Sequence, kind: 'video' | 'audio', index: number): Track {
+  const list = kind === 'video' ? seq.videoTracks : seq.audioTracks;
+  const i = Math.max(0, Math.round(index));
+  while (list.length <= i) addTrack(seq, kind);
+  return list[i].locked ? addTrack(seq, kind) : list[i];
+}
+
 export function removeTrack(seq: Sequence, trackId: ID): boolean {
   for (const list of [seq.videoTracks, seq.audioTracks]) {
     const i = list.findIndex((t) => t.id === trackId);
@@ -1297,7 +1309,11 @@ export function addMarker(seq: Sequence, marker: Omit<Marker, 'id'>): Marker {
 // Subtitle cue positions
 // ------------------------------------------------------------------
 
-export interface ResolvedCue { id: ID; trackId: ID; start: number; end: number; text: string; clipId?: ID; orphan: boolean }
+export interface ResolvedCue {
+  id: ID; trackId: ID; start: number; end: number; text: string; clipId?: ID; orphan: boolean;
+  /** Word timing of a clip-anchored cue, in sequence frames like start / end (#118). */
+  words?: { start: number; end: number; text: string }[];
+}
 
 export function resolveSubtitleCues(seq: Sequence): ResolvedCue[] {
   const out: ResolvedCue[] = [];
@@ -1314,7 +1330,10 @@ export function resolveSubtitleCues(seq: Sequence): ResolvedCue[] {
         const e = clip.start + Math.round((cue.srcEnd - clip.sourceIn) / clip.speed * seq.fps.num / seq.fps.den) + cue.offset;
         const cs = Math.max(s, clip.start); const ce = Math.min(e, clipEnd(clip));
         if (ce <= cs) continue;
-        out.push({ id: cue.id, trackId: st.id, start: cs, end: ce, text: cue.text, clipId: clip.id, orphan: false });
+        const frameOf = (sec: number) => clip.start + Math.round((sec - clip.sourceIn) / clip.speed * seq.fps.num / seq.fps.den) + cue.offset;
+        const words = cue.words?.map((w) => ({ start: Math.max(cs, frameOf(w.start)), end: Math.min(ce, frameOf(w.end)), text: w.text }))
+          .filter((w) => w.end > w.start);
+        out.push({ id: cue.id, trackId: st.id, start: cs, end: ce, text: cue.text, clipId: clip.id, orphan: false, ...(words?.length ? { words } : {}) });
       } else {
         // An offset may not move a cue before the sequence start: clamp at 0, drop what is left of nothing.
         const start = Math.max(0, cue.start + cue.offset);

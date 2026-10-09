@@ -180,6 +180,25 @@ export interface TranscribeRequest {
   language: string;
   /** Translate the speech to English (multilingual models only). Default false. */
   translate?: boolean;
+  /** Keep filler words, stutters and repeats (see verbatimApplies). Default false. */
+  verbatim?: boolean;
+}
+
+/**
+ * Prompt given to whisper-cli for a verbatim transcript. Whisper drops "um", "uh", stutters and restarts because it
+ * was trained on cleaned-up transcripts; a prompt written that way makes it keep them (#117).
+ */
+export const WHISPER_VERBATIM_PROMPT = 'Um, so, uh, I- I mean, like, you know, um... Okay, uh, let me, um, let me think. Hmm, yeah, uh-huh.';
+
+/** whisper.cpp's `--dtw` alignment preset of a model (word timing, #118), or null when it has none. */
+export function whisperDtwPreset(modelId: string): string | null {
+  const preset = modelId.replace(/-/g, '.');
+  return ['tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large.v1', 'large.v2', 'large.v3', 'large.v3.turbo'].includes(preset) ? preset : null;
+}
+
+/** The verbatim prompt is English: it is used only for English speech that is not being translated. */
+export function verbatimApplies(req: Pick<TranscribeRequest, 'verbatim' | 'language' | 'translate'>): boolean {
+  return Boolean(req.verbatim) && !req.translate && req.language === 'en';
 }
 
 /** `JobInfo.result` of a finished 'transcribe' job. */

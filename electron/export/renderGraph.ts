@@ -1231,6 +1231,69 @@ const AC3_SAMPLE_RATES = [32000, 44100, 48000];
  * millisecond in the SRT) showed or hid about half the cue edges one frame late or early (D3). Burn-in runs on the
  * sequence-rate frames, before any output frame-rate conversion. The sidecar keeps exact times (buildSubtitleSrt).
  */
+/**
+ * The ASS header FFmpeg itself uses when it burns in an SRT (`ffmpeg -i x.srt x.ass`, FFmpeg 8.1): with it, a line
+ * without a highlight renders pixel-identical to the SRT burn-in, so turning highlighting on only changes colours.
+ */
+const BURN_IN_ASS_HEADER = [
+  '[Script Info]', 'ScriptType: v4.00+', 'PlayResX: 384', 'PlayResY: 288', 'ScaledBorderAndShadow: yes', 'YCbCr Matrix: None', '',
+  '[V4+ Styles]',
+  'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+  'Style: Default,Arial,16,&Hffffff,&Hffffff,&H0,&H0,0,0,0,0,100,100,0,0,1,1,0,2,10,10,10,1', '',
+  '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+].join('\n');
+
+/** The highlight colour of the spoken word (SUBTITLE_HIGHLIGHT, #ffd84d) as an ASS colour (&HBBGGRR&). */
+const ASS_HIGHLIGHT = '&H4DD8FF&';
+
+/** ASS event text: `\`, `{` and `}` escaped and line breaks as `\N`, as FFmpeg converts SRT text. */
+export function assText(s: string): string {
+  return s.replace(/[\\{}]/g, (c) => `\\${c}`).replace(/\r?\n/g, '\\N');
+}
+
+/** Seconds → ASS time (H:MM:SS.cc). */
+function assTime(sec: number): string {
+  const cs = Math.max(0, Math.round(sec * 100));
+  const h = Math.floor(cs / 360000); const m = Math.floor(cs / 6000) % 60; const s = Math.floor(cs / 100) % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs % 100).padStart(2, '0')}`;
+}
+
+/**
+ * Burn-in subtitles with the spoken word highlighted (#134), as ASS: a cue with word timing becomes one event per
+ * word span: the whole line, the word that has most recently started in the highlight colour (as activeWordIndex
+ * in the monitors), before the first word none. Cue and word edges snap to sequence frames and are timed at frame
+ * centres like buildBurnInSrt (centiseconds are well inside half a frame up to 60 fps). Cues without words are
+ * plain events. Null when there is nothing to show.
+ */
+export function buildBurnInAss(req: ExportRequest, startF: number, endF: number): string | null {
+  const cues = req.subtitles;
+  if (!cues || cues.length === 0) return null;
+  const { num, den } = req.sequence.fps;
+  const fd = den / num;
+  const frame = (sec: number) => Math.round((sec * num) / den);
+  const t = (f: number) => assTime(Math.max(0, (f - startF - 0.5) * fd));
+  const events: { a: number; line: string }[] = [];
+  for (const c of cues) {
+    if (!Number.isFinite(c.start) || !Number.isFinite(c.end) || c.text.trim().length === 0) continue;
+    const a = Math.max(startF, frame(c.start)); const b = Math.min(endF, frame(c.end));
+    if (b <= a) continue;
+    const words = (c.words ?? []).filter((w) => Number.isFinite(w.start) && w.text.length > 0);
+    if (!words.length) { events.push({ a, line: `Dialogue: 0,${t(a)},${t(b)},Default,,0,0,0,,${assText(c.text)}` }); continue; }
+    const starts = words.map((w) => Math.min(b, Math.max(a, frame(w.start))));
+    const spans: { from: number; to: number; active: number }[] = [];
+    if (starts[0] > a) spans.push({ from: a, to: starts[0], active: -1 });
+    starts.forEach((s, i) => spans.push({ from: s, to: i + 1 < starts.length ? starts[i + 1] : b, active: i }));
+    for (const sp of spans) {
+      if (sp.to <= sp.from) continue;
+      const text = words.map((w, i) => (i === sp.active ? `{\\c${ASS_HIGHLIGHT}}${assText(w.text)}{\\c}` : assText(w.text))).join(' ');
+      events.push({ a: sp.from, line: `Dialogue: 0,${t(sp.from)},${t(sp.to)},Default,,0,0,0,,${text}` });
+    }
+  }
+  if (!events.length) return null;
+  events.sort((x, y) => x.a - y.a);
+  return `${BURN_IN_ASS_HEADER}\n${events.map((e) => e.line).join('\n')}\n`;
+}
+
 function buildBurnInSrt(req: ExportRequest, startF: number, endF: number): string | null {
   const cues = req.subtitles;
   if (!cues || cues.length === 0) return null;
@@ -1364,7 +1427,9 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
     const finalVideo: string[] = [];
     if (renderFrames !== frameCount) finalVideo.push(`trim=start_frame=${lead}:end_frame=${lead + frameCount}`, 'setpts=PTS-STARTPTS');
     if (settings.burnSubtitles) {
-      const srt = buildBurnInSrt(req, startF, endF);
+      // Highlighting the spoken word (#134) needs per-word colours: ASS (libass reads it from the same file name).
+      const highlight = settings.highlightWords === true && (req.subtitles ?? []).some((c) => (c.words?.length ?? 0) > 0);
+      const srt = highlight ? buildBurnInAss(req, startF, endF) : buildBurnInSrt(req, startF, endF);
       if (srt) {
         subtitleContent = srt;
         if (opts.subtitleFilePath) finalVideo.push(`subtitles=filename=${escapeFilterPath(opts.subtitleFilePath)}`);

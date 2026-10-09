@@ -43,6 +43,7 @@ export function defaultSettings(): ProjectSettings {
     snapping: true,
     defaultTransitionFrames: 24,
     showSourceTimecodeOnClips: false,
+    highlightSpokenWords: true,
   };
 }
 
@@ -107,6 +108,22 @@ export function createProject(name = 'Untitled Project'): Project {
     media: {}, bins, sequences: { [seq.id]: seq }, sequenceOrder: [seq.id],
     scenes: {}, subtitleTracks: {}, tags: emptyTags(), settings: defaultSettings(), activeSequenceId: seq.id,
   };
+}
+
+/**
+ * Whether a project holds anything a user would want back: media, scenes, subtitle tracks, tags, a name other than
+ * the default, more than one sequence, or a sequence with clips, markers, story blocks, snapshots or subtitles.
+ * Empty bins, track layout and settings do not count. An untitled project without user work is not autosaved, not
+ * offered for recovery and closes without a "Save changes?" prompt (#111).
+ */
+export function projectHasUserWork(p: Project): boolean {
+  if (p.name !== 'Untitled Project') return true;
+  if (Object.keys(p.media).length || Object.keys(p.scenes).length || Object.keys(p.subtitleTracks).length) return true;
+  if (Object.values(p.tags).some((list) => list.length > 0)) return true;
+  const seqs = Object.values(p.sequences);
+  if (seqs.length > 1) return true;
+  return seqs.some((s) => s.markers.length > 0 || s.storyBlocks.length > 0 || s.snapshots.length > 0 || s.subtitleTracks.length > 0
+    || [...s.videoTracks, ...s.audioTracks].some((t) => t.clips.length > 0));
 }
 
 export function createMediaItem(path: string, name: string): MediaItem {
@@ -668,6 +685,7 @@ function repairSequenceCue(c: Obj): SequenceSubtitleCue | null {
   else if (!isFiniteNum(c.offset) || Math.abs(Math.round(c.offset)) > MAX_TIMELINE_FRAMES) { note(FIELD_RESET); c.offset = 0; }
   else if (Math.round(c.offset) !== c.offset) { note(ROUNDED); c.offset = Math.round(c.offset) + 0; }
   c.text = str(c.text, '');
+  repairWords(c);
   return c as unknown as SequenceSubtitleCue;
 }
 
@@ -981,6 +999,16 @@ function repairScene(s: Obj, id: ID): SceneRecord | null {
   return s as unknown as SceneRecord;
 }
 
+/** Optional per-word timing of a cue (#118): a list of {start, end, text} in source seconds; anything else is dropped. */
+function repairWords(c: Obj): void {
+  if (c.words === undefined) return;
+  const ok = (w: unknown): boolean => isObj(w) && isFiniteNum(w.start) && isFiniteNum(w.end) && Math.abs(w.start) <= MAX_SOURCE_SECONDS
+    && Math.abs(w.end) <= MAX_SOURCE_SECONDS && typeof w.text === 'string';
+  const list = Array.isArray(c.words) ? c.words.filter(ok).map((w) => ({ start: (w as Obj).start, end: (w as Obj).end, text: (w as Obj).text })) : [];
+  if (!Array.isArray(c.words) || list.length !== c.words.length) note('subtitle word timing without a usable time removed');
+  if (list.length) c.words = list; else delete c.words;
+}
+
 function repairSubtitleTrack(t: Obj, id: ID): SubtitleTrack {
   keyedId(t, id);
   t.name = str(t.name, ''); t.language = str(t.language, 'und'); t.origin = str(t.origin, 'srt');
@@ -994,6 +1022,7 @@ function repairSubtitleTrack(t: Obj, id: ID): SubtitleTrack {
     return ok;
   }).map((c) => {
     c.id = idOr(c.id, () => uid('cue')); c.text = str(c.text, '');
+    repairWords(c);
     return c;
   });
   return t as unknown as SubtitleTrack;

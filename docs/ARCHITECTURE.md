@@ -339,7 +339,9 @@ frame by construction, and the unit and real-FFmpeg tests compare nested timelin
   `<userData>/autosave/untitled.recut.autosave` for an unsaved project, from a renderer-serialised string.
 - **Recovery:** at startup, an autosave newer than its project (or the untitled autosave) is offered (**Recover** /
   **Discard**). Corrupt autosaves are ignored. An autosave that needed repairs is still offered, and the prompt says
-  it was repaired.
+  it was repaired. An untitled autosave without user work (`projectHasUserWork` in `shared/project.ts`: no media,
+  clips, markers, scenes, subtitles, tags, extra sequences or project name; empty bins and settings don't count) is
+  deleted instead of offered, and such a project closes (New, Open, Quit) without a "Save changes?" prompt.
 - **Save:** atomic temp + rename, keeping a `.bak`. A structurally damaged main file opens from `.bak` with a toast.
   A file that normalizes with repairs opens with a warning toast that names the `<file>.pre-repair-<ts>` copy. A file
   from a newer format version (or without one) is refused and never replaced by the `.bak`.

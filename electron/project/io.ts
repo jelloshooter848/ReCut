@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { ensureDirSafe } from '../safeMkdir';
-import { normalizeProjectWithReport, serializeProject, ProjectIncompatibleError } from '../../shared/project';
+import { normalizeProjectWithReport, serializeProject, ProjectIncompatibleError, projectHasUserWork } from '../../shared/project';
 import type { AppPreferences, Project } from '../../shared/model';
 import { isReleasePageUrl, isUpdateCheckSetting, parseSemver } from '../../shared/update';
 import type { LoadResult, RecoveryInfo, SaveResult } from '../../shared/ipc';
@@ -612,7 +612,9 @@ async function recoveryFrom(autosavePath: string, projectPath: string | null): P
 export async function checkRecovery(userData: string, candidateProjects: string[]): Promise<RecoveryInfo | null> {
   const found: RecoveryInfo[] = [];
   const untitled = await recoveryFrom(untitledAutosavePath(userData), null);
-  if (untitled) found.push(untitled);
+  // An untitled autosave without user work (a blank project, maybe with an empty bin) is not worth a prompt (#111).
+  if (untitled && !projectHasUserWork(untitled.project)) await removeAutosave(untitled.autosavePath).catch(() => { /* never offered; a failed delete is harmless */ });
+  else if (untitled) found.push(untitled);
   const seen = new Set<string>();
   for (const p of candidateProjects) {
     if (typeof p !== 'string' || !p) continue;

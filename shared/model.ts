@@ -302,6 +302,8 @@ export interface SequenceSubtitleCue {
   duration: number;     // frames (authoritative only when no clipId)
   offset: number;       // frames nudge applied on top of derived position
   text: string;
+  /** Per-word timing carried from a media cue, in source seconds like srcStart / srcEnd (#118). */
+  words?: SubtitleWord[];
 }
 
 export interface SequenceSubtitleTrack {
@@ -372,7 +374,17 @@ export interface SceneRecord {
   createdAt: number;
 }
 
-export interface SubtitleCue { id: ID; start: number; end: number; text: string }  // seconds
+/** One word of a transcribed cue, in source seconds (#118). */
+export interface SubtitleWord { start: number; end: number; text: string }
+
+export interface SubtitleCue {
+  id: ID;
+  start: number;  // seconds
+  end: number;    // seconds
+  text: string;
+  /** Per-word timing (Whisper transcripts); the words joined by spaces are `text`. */
+  words?: SubtitleWord[];
+}
 
 export interface SubtitleTrack {
   id: ID;
@@ -409,6 +421,8 @@ export interface ProjectSettings {
   snapping: boolean;
   defaultTransitionFrames: number;
   showSourceTimecodeOnClips: boolean;
+  /** Highlight the word being spoken in word-timed subtitles, in the Source and Program monitors (#119). */
+  highlightSpokenWords: boolean;
 }
 
 export interface Project {
@@ -519,6 +533,10 @@ export interface ExportSettings {
   audioOutputs?: ExportAudioOutput[];
   /** MKV: sequence subtitle tracks muxed as soft subtitle streams, in order; absent or empty = none. */
   subtitleOutputs?: ExportSubtitleOutput[];
+  /** Include the on-screen transcript (#127) as a subtitle track named "Transcript"; absent = off. */
+  includeTranscripts?: boolean;
+  /** Burn-in: highlight the word being spoken in cues with word timing, as the monitors do (#134); absent = off. */
+  highlightWords?: boolean;
 }
 
 /** Export file formats (§6, §7). */

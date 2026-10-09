@@ -1,4 +1,4 @@
-// Dev runner: builds the electron main/preload, starts Vite, launches Electron pointing at the dev server.
+// Dev runner: gets FFmpeg and the speech-to-text engine when missing (scripts/setup-dev.mjs), builds the electron main/preload, starts Vite, launches Electron pointing at the dev server.
 import { spawn } from 'node:child_process';
 import { createServer } from 'vite';
 import path from 'node:path';
@@ -10,6 +10,7 @@ const run = (cmd, args, opts = {}) => new Promise((res, rej) => {
   p.on('exit', (c) => (c === 0 ? res() : rej(new Error(`${cmd} exited ${c}`))));
 });
 
+await run('node', ['scripts/setup-dev.mjs']);
 await run('node', ['scripts/build-electron.mjs']);
 const server = await createServer({ configFile: path.join(root, 'vite.config.ts') });
 await server.listen();

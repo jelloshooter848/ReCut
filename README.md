@@ -173,16 +173,22 @@ the latest green `dev` run (Actions › Windows build › filter by branch `dev`
 
 ## Quick start (from source, any OS)
 
-Requires Node.js 20+ (22 recommended) and FFmpeg 6+ (`ffmpeg` and `ffprobe` on `PATH`, or set `RECUT_FFMPEG` /
-`RECUT_FFPROBE`). ReCut shows a banner at startup when it cannot find them. See [docs/INSTALL.md](docs/INSTALL.md),
-which also explains how to bundle FFmpeg into a package.
+Requires Node.js 20+ (22 recommended). For speech-to-text, also install **cmake** and a C++ compiler (macOS: Xcode
+command line tools and `brew install cmake`; Linux: `cmake` and `g++`; Windows: Visual Studio with the C++ workload).
+
+The first `npm run dev` or `npm start` sets up what the release installers bundle: it downloads FFmpeg into
+`resources/ffmpeg/` (unless `ffmpeg` and `ffprobe` are already on `PATH`) and compiles the speech-to-text engine into
+`resources/whisper/`, which takes a few minutes once. Later runs skip both. Without cmake the engine is skipped and
+ReCut still runs, but it says the engine is not included; install cmake and run `npm run setup`. Set
+`RECUT_SKIP_SETUP=1` to skip setup. See [docs/INSTALL.md](docs/INSTALL.md) for FFmpeg details and
+[Development setup in CONTRIBUTING.md](CONTRIBUTING.md#development-setup) for tests and conventions.
 
 ```bash
 git clone <this repo> ReCut && cd ReCut
 npm install
-npm run dev            # Vite + Electron with hot reload
+npm run dev            # first run: gets FFmpeg and the speech-to-text engine; then Vite + Electron with hot reload
 # or
-npm start              # production build, then launch
+npm start              # same setup, then a production build and launch
 ```
 
 To try it without your own media, generate synthetic test files (requires FFmpeg):
@@ -193,6 +199,24 @@ scripts/make-test-media.sh ./test-media        # movies, TV episodes, SRTs, 5.1 
 
 Then press **Ctrl+I** (Cmd+I on macOS) to import, double-click a clip, mark **I** / **O**, and press **,** to insert it.
 The [User Guide](docs/USER-GUIDE.md) walks through a complete fan edit.
+
+## Testing unreleased changes
+
+To try what is on `main` (or a pull request) before it is released, run it from a clone as in the quick start
+(first-time setup is in [CONTRIBUTING.md](CONTRIBUTING.md#development-setup)):
+
+```bash
+git checkout main && git pull       # or: gh pr checkout <number>
+npm install                         # picks up any new dependencies
+npm run dev                         # hot-reloads the renderer; restart after changes under electron/
+```
+
+- `npm start` runs the production build, which is closer to what ships than `npm run dev`.
+- `npm run package` builds an unpacked, unsigned app under `release/` with electron-builder. It catches packaging
+  problems, such as missing bundled FFmpeg (see [INSTALL.md](docs/INSTALL.md#bundling-ffmpeg)).
+- `npm run typecheck`, `npm test` and `npm run test:e2e` run the same checks as CI.
+- No build tools? Every push to `main` makes a **test build**: the Windows, Linux and macOS installers of that commit,
+  downloadable from the CI run's Artifacts. See [Test builds](docs/RELEASING.md#test-builds).
 
 ## Documentation
 
