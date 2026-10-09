@@ -219,11 +219,11 @@ test('Collect round trip of 0.8.0 content: nested compound clips, keyframes, cen
     'Media/Disc B/title_t00.mp4',
     'Media/surround51.mkv',
     'Media/title card.png',
-    'Proxies/surround51.mkv_ch1.ch-FC_v1.m4a',
+    'Proxies/surround51.mkv_ch1.ch-FC_v2.m4a',
     ...Object.values<any>(before.media).filter((m) => m.proxy.status === 'ready')
       .map((m) => `Proxies/${path.basename(m.path)}_${/_(\d+p[^/\\]*\.mp4|still\.png)$/.exec(m.proxy.path)![1]}`),
   ].sort());
-  expect(fs.readFileSync(path.join(folder, 'Proxies', 'surround51.mkv_ch1.ch-FC_v1.m4a')).equals(fs.readFileSync(cacheProxy))).toBe(true);
+  expect(fs.readFileSync(path.join(folder, 'Proxies', 'surround51.mkv_ch1.ch-FC_v2.m4a')).equals(fs.readFileSync(cacheProxy))).toBe(true);
 
   await page.evaluate(() => (window as unknown as W).__recut.store.setState({ dirty: false }));
   await page.getByTestId('collect-open').click();
@@ -242,7 +242,7 @@ test('Collect round trip of 0.8.0 content: nested compound clips, keyframes, cen
     if (m.proxy.status === 'ready') expect(inFolder(m.proxy.path), m.proxy.path).toBe(true);
     for (const cp of Object.values<any>(m.channelProxies ?? {})) if (cp.path) expect(inFolder(cp.path), cp.path).toBe(true);
   }
-  expect(after.media[surroundId].channelProxies['1.ch-FC']).toMatchObject({ status: 'ready', path: path.join(folder, 'Proxies', 'surround51.mkv_ch1.ch-FC_v1.m4a') });
+  expect(after.media[surroundId].channelProxies['1.ch-FC']).toMatchObject({ status: 'ready', path: path.join(folder, 'Proxies', 'surround51.mkv_ch1.ch-FC_v2.m4a') });
   expect(maskedEdit(after)).toBe(maskedEdit(before));
   const nestedIn = (id: string) => Object.values<any>(after.sequences)
     .filter((s) => [...s.videoTracks, ...s.audioTracks].some((t: any) => t.clips.some((c: any) => c.sequenceId === id))).map((s) => s.name).sort();

@@ -46,7 +46,7 @@ export const BITMAP_CODEC_LABELS: Record<OcrSubtitleCodec, string> = {
   hdmv_pgs_subtitle: 'PGS', dvd_subtitle: 'DVD', dvb_subtitle: 'DVB', xsub: 'XSUB',
 };
 
-/** Image-like subtitle codecs ReCut cannot read at all (not text, not OCR), with what to call them. */
+/** Image-like subtitle codecs the app cannot read at all (not text, not OCR), with what to call them. */
 export const UNSUPPORTED_SUBTITLE_CODECS: Record<string, string> = {
   dvb_teletext: 'teletext', arib_caption: 'ARIB captions',
 };
@@ -80,12 +80,12 @@ export function embeddedStreamEntry(s: SubtitleStreamInfo): EmbeddedStreamEntry 
   return { label: `#${s.index} ${lang}${s.title ? ` — ${s.title}` : ''} (${s.codec})`, disabled: false, ocr: false };
 }
 
-/** The media's bitmap subtitle streams ReCut can read with OCR. */
+/** The media's bitmap subtitle streams the app can read with OCR. */
 export function ocrStreams(media: MediaItem | undefined): SubtitleStreamInfo[] {
   return (media?.probe?.subtitles ?? []).filter((s) => isOcrCodec((s.codec ?? '').toLowerCase()));
 }
 
-/** The probed stream `streamIndex` of `media`, when it is a bitmap stream ReCut can OCR. */
+/** The probed stream `streamIndex` of `media`, when it is a bitmap stream the app can OCR. */
 export function ocrStream(media: MediaItem | undefined, streamIndex: number): SubtitleStreamInfo | undefined {
   return ocrStreams(media).find((s) => s.index === streamIndex);
 }

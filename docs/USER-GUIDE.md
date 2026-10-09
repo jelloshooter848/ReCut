@@ -556,6 +556,26 @@ muted, inside the chosen range) and warns about:
 Each warning names the media or clips (the first three, then "and N more"). **Show** closes the dialog, selects
 them (or the transition) on the timeline and moves the playhead to the first one. Warnings never block the export.
 
+**Warnings after the export (damaged or short source files).** A source file can be damaged in a way the Checks list
+cannot see: a download that stopped halfway, a file cut short while copying, or bad data in the middle. Such a file
+often still reports its full length, and FFmpeg finishes the export without an error, filling the missing part with
+the last frame and silence. So after rendering, ReCut reads what FFmpeg reported and checks where each source file's
+data really ends, and the finished export shows a warning (in the dialog's **Warnings** list and as a toast), for
+example:
+
+- `Export finished, but "Holiday.mp4" ends early: its data stops at about 4.97 s, but the export reads it up to
+  9.00 s, so that part of the output is frozen and silent. ...`: the file is shorter than the project thinks. The
+  exported file is complete, but from that point on the clip shows its last frame and is silent.
+- `Export finished, but FFmpeg reported a problem reading "Holiday.mp4": <FFmpeg's message> ...`: FFmpeg found
+  damaged data (a decode error, a corrupt packet). Part of the clip may be silent, frozen or show broken pictures.
+
+The exported file is kept either way. Check the source in a player around that point. If it is damaged, get a good
+copy: put it in place of the damaged file (same name and folder), or move the damaged file away so the project lists
+it as offline and use **Relink…** to point it at the good copy. Then export again. When FFmpeg's message cannot be
+tied to one file, the warning lists the files it could come from. Harmless FFmpeg notes (a guessed channel layout, a
+deprecated pixel format, decoder notes after a seek) are not shown, and at most five such warnings are listed, then
+a count.
+
 **Chapters:** markers of kind **Chapter** (marker dialog or Markers panel) become the chapters of an MP4, MKV, MOV or FLAC file (WAV has none), with their
 names. Only chapter markers inside the exported range count; times are measured from the start of the range. A chapter
 marker before the In point that is still current at In becomes the first chapter, starting at the beginning of the

@@ -3,25 +3,32 @@
  * release-list replies, the release-page URL check, the daily throttle). The check itself runs in the main process (electron/updateCheck.ts); the renderer shows the
  * notice and the opt-in prompt (src/app/updates.ts).
  *
- * ReCut never downloads or installs anything: it only says that a newer release exists and links to its page.
+ * The app never downloads or installs anything: it only says that a newer release exists and links to its page.
  *
  * Pure: no DOM, no Node.
  */
+import { RELEASE_PAGE_REPO_SLUGS, REPO_SLUG } from './productIdentity';
 
 /**
  * The one request the check makes (GitHub's REST API; no token, no cookies, only a User-Agent header), from a stable
  * version. GitHub's "latest" release is the newest one that is neither a draft nor a pre-release.
  */
-export const UPDATE_API_URL = 'https://api.github.com/repos/jelloshooter848/ReCut/releases/latest';
+export const UPDATE_API_URL = `https://api.github.com/repos/${REPO_SLUG}/releases/latest`;
 /**
  * The one request the check makes from a pre-release (a release candidate such as 1.0.0-rc.1): the newest releases,
  * pre-releases included, because `releases/latest` never returns a pre-release (docs/RELEASING.md, Release
  * candidates). A few releases are enough: the list is newest first, and the release to offer is among the newest.
  */
-export const UPDATE_LIST_API_URL = 'https://api.github.com/repos/jelloshooter848/ReCut/releases?per_page=10';
+export const UPDATE_LIST_API_URL = `https://api.github.com/repos/${REPO_SLUG}/releases?per_page=10`;
 /** The releases page. Only this page and its `/tag/<tag>` pages are ever opened from the notice. */
-export const RELEASES_PAGE_URL = 'https://github.com/jelloshooter848/ReCut/releases';
-const RELEASES_PATH = '/jelloshooter848/ReCut/releases';
+export const RELEASES_PAGE_URL = `https://github.com/${REPO_SLUG}/releases`;
+/**
+ * Releases paths a reply's `html_url` may name: the repository's, and those of its earlier slugs
+ * (productIdentity LEGACY_REPO_SLUGS), which GitHub redirects after a repository rename.
+ */
+const RELEASES_PATHS: readonly string[] = RELEASE_PAGE_REPO_SLUGS.map((slug) => `/${slug}/releases`);
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const RELEASE_TAG_PATH = new RegExp(`^(?:${RELEASES_PATHS.map(escapeRegExp).join('|')})/tag/[0-9A-Za-z._+-]+$`);
 
 /** At most one automatic check per this interval. */
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -147,7 +154,7 @@ export function isReleasePageUrl(url: unknown): url is string {
   let u: URL;
   try { u = new URL(url); } catch { return false; }
   if (u.protocol !== 'https:' || u.hostname !== 'github.com' || u.port || u.username || u.password || u.search || u.hash) return false;
-  return u.pathname === RELEASES_PATH || new RegExp(`^${RELEASES_PATH}/tag/[0-9A-Za-z._+-]+$`).test(u.pathname);
+  return RELEASES_PATHS.includes(u.pathname) || RELEASE_TAG_PATH.test(u.pathname);
 }
 
 /** The release page of tag `tag` (a version tag such as `v1.2.3`). */

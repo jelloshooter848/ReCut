@@ -1,5 +1,5 @@
 /**
- * ReCut project model.
+ * Project model.
  *
  * Time conventions:
  *  - Timeline positions/durations are integer FRAMES at the owning sequence's frame rate.

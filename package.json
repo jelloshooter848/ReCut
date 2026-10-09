@@ -1,7 +1,7 @@
 {
   "name": "recut",
   "productName": "ReCut",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "A Premiere-style desktop video editor purpose-built for fan edits of movies and television",
   "main": "dist/electron/main.js",
   "private": true,
@@ -171,7 +171,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "ReCut",
       "runAfterFinish": true,
-      "artifactName": "ReCut-Setup-${version}.${ext}"
+      "artifactName": "ReCut-Setup-${version}.${ext}",
+      "guid": "71b5ac76-3d71-54f8-ab45-e7992d0fc22e"
     },
     "portable": {
       "artifactName": "ReCut-Portable-${version}.${ext}"

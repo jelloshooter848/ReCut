@@ -26,7 +26,8 @@ the app version changed. A format change is a MINOR bump at least, and the chang
 
 ## Who changes the version
 
-Only a **release PR** changes the version. Feature and bug PRs never touch `package.json` `version`,
+Only a **release PR** (the release-prep PR into `dev`, see [How to cut a release](#how-to-cut-a-release)) or a
+[hotfix](#hotfixes) changes the version. Feature and bug PRs never touch `package.json` `version`,
 `package-lock.json` versions or `CHANGELOG.md` release headings. A release PR contains only:
 
 1. The version bump: `npm version <x.y.z> --no-git-tag-version` (updates `package.json` and `package-lock.json`).
@@ -35,22 +36,35 @@ Only a **release PR** changes the version. Feature and bug PRs never touch `pack
 4. The saved-project fixture of the new version, `tests/fixtures/projects/recut-<x.y.z>.recut`, made with
    `node scripts/make-project-fixture.mjs` after the bump (see [the fixtures' README](../tests/fixtures/projects/README.md)).
    A release candidate has none ([Release candidates](#release-candidates)).
+5. [LIMITATIONS](LIMITATIONS.md) brought up to date for what the release ships, if it changed.
+
+## Branches
+
+`main` holds released code only; it moves only when a release or a [hotfix](#hotfixes) is merged into it. `dev` is
+the integration branch: features and fixes are merged there (through the personal branches `devDavid` and `devJames`,
+see [CONTRIBUTING › Branches and pull requests](../CONTRIBUTING.md#branches-and-pull-requests)), never into `main`. A
+release is a snapshot of `dev` merged into `main`, so `main` always equals a `dev` commit and nothing needs merging
+back after a release. Only the owner merges into `dev` and `main`; nobody pushes to either directly.
 
 ## How to cut a release
 
-Releases are published automatically by CI when a release PR is merged. Nobody pushes a tag or creates a release by
-hand: agents cannot push tags (their git proxy drops tag pushes), and the owner works in the GitHub web UI.
+Releases are published automatically by CI when the release is merged into `main`. Nobody pushes a tag or creates a
+release by hand: agents cannot push tags (their git proxy drops tag pushes), and the owner works in the GitHub web UI.
+A release takes two PRs: the **release PR** into `dev`, then the **release merge**, one PR from `dev` into `main`.
 
-1. **Release PR.** Branch from `main` (for example `claude/release-0.3.0`). Bump the version with
-   `npm version 0.3.0 --no-git-tag-version` and add the `## [0.3.0] - YYYY-MM-DD` section to `CHANGELOG.md` (see
-   below). Check `docs/ROADMAP.md`: every roadmap entry this release ships has its **Status** line and its row in the
-   Progress table marked done with this version (the feature PR sets them; the release PR fixes any that are
+1. **Release PR into `dev`.** Branch from `dev` (for example `claude/release-0.3.0`), after everything the release
+   ships has been merged into `dev`. Bump the version with `npm version 0.3.0 --no-git-tag-version` and add the
+   `## [0.3.0] - YYYY-MM-DD` section to `CHANGELOG.md` (see below). Update [LIMITATIONS](LIMITATIONS.md) if what it
+   lists changed. Check `docs/ROADMAP.md`: every roadmap entry this release ships has its **Status** line and its row
+   in the Progress table marked done with this version (the feature PR sets them; the release PR fixes any that are
    missing or still name an older version). Add the version's saved-project fixture:
    `node scripts/make-project-fixture.mjs` writes `tests/fixtures/projects/recut-0.3.0.recut` with this checkout's own
    code (the unit suite fails while the fixture of a stable version in `package.json` is missing; a pre-release such
    as `1.0.0-rc.1` needs none). Never edit or regenerate an older fixture. Run `npm run typecheck` and `npm test`.
-   Open the PR.
-2. **Merge it.** That is the whole release step.
+   Open the PR against `dev`. Its CI run is a test build; the owner merges it once it is green.
+2. **Release merge: one PR from `dev` into `main`.** Open it once the release PR is merged and the `dev` push run of
+   that merge is green. It contains nothing but `dev`'s commits since the last release. Merging it is the whole
+   release step. Don't merge anything else into `dev` between the two, or it ships too.
 3. **CI publishes.** The merge is a push to `main`, so `.github/workflows/windows.yml` runs. Its first step sees that
    the `package.json` version (`0.3.0`) has a `## [0.3.0]` section in `CHANGELOG.md` and that no tag `v0.3.0` exists
    yet, and makes this run a release. It then builds, smoke-tests the unpacked app, installs and uninstalls the
@@ -67,8 +81,12 @@ hand: agents cannot push tags (their git proxy drops tag pushes), and the owner 
    correctly. In the installer, linux and macos jobs' logs, the smoke tests list the licence files the builds ship
    (see [Licence files every release ships](#licence-files-every-release-ships)).
 
+The release PR's merge into `dev` publishes nothing: only a push to `main` (or the
+[tag-push fallback](#fallback-pushing-the-tag-yourself)) can release. Pushes to `dev` and pull requests are always
+test builds.
+
 Every later push to `main` finds `v0.3.0` already tagged and makes a [test build](#test-builds) (all gates, installers
-kept as a CI artifact, nothing published) until the next release PR is merged.
+kept as a CI artifact, nothing published) until the next release is merged into `main`.
 
 **Only real versions appear on the Releases page** (owner's decision, 7 October 2026). CI never publishes a dev
 prerelease and never creates a `-dev.` tag; every run that is not a release is a test build whose installers are only
@@ -76,18 +94,20 @@ the run's `ReCut-windows` artifact (its AppImage the `ReCut-linux` artifact, its
 `ReCut-macos-x64` artifacts). The one kind of pre-release on the Releases page is a
 [release candidate](#release-candidates): a real version with its own release PR.
 
-**Never create the release or the tag by hand before the release PR is merged**, not in the web UI ("Draft a new
-release" / "Choose a tag") and not with git. A tag made that way points at whatever commit was selected (twice so
-far, a release was created on the wrong target this way). If a `vX.Y.Z` tag exists when the release PR is merged, CI
-treats the version as already released and only makes a test build.
+**Never create the release or the tag by hand before the release is merged into `main`**, not in the web UI
+("Draft a new release" / "Choose a tag") and not with git. A tag made that way points at whatever commit was selected
+(twice so far, a release was created on the wrong target this way). If a `vX.Y.Z` tag exists when the release is
+merged into `main`, CI treats the version as already released and only makes a test build.
 
 Details:
 
-- Only pushes to `main` release automatically. Other branches and manual runs (*Run workflow*, `workflow_dispatch`)
-  always make test builds, which publish nothing.
+- Only pushes to `main` release automatically. Pushes to `dev`, pull requests (into `dev`, `devDavid` or
+  `devJames`) and manual runs (*Run workflow*, `workflow_dispatch`) always make test builds, which publish nothing:
+  the release decision and the `publish` job both require a push to `main` or of a `v` tag.
 - A push to `main` that changes only `*.md` or `docs/**` files does not run the workflow, so it cannot release. A
-  release PR always changes `package.json`, so its merge always runs.
-- Runs on `main` queue instead of cancelling each other, so a release run is never cancelled by a quick follow-up
+  release always changes `package.json`, so its merge into `main` always runs.
+- Runs on `main` (and on tags, `dev` and manual runs) queue instead of cancelling each other; only a pull request's
+  run is cancelled by a newer push to that pull request. So a release run is never cancelled by a quick follow-up
   merge, and the next run sees the tag the release run created. If a merge lands while an earlier `main` run is still
   going, GitHub keeps only the newest waiting run: a release run that had not started yet can be replaced by the next
   merge's run, which then publishes the release from that newer commit (the version is still untagged).
@@ -97,6 +117,19 @@ Details:
   AppImage in `ReCut-linux` and its dmgs in `ReCut-macos-arm64` and `ReCut-macos-x64`.
 - The tag is created by the workflow's `GITHUB_TOKEN`, and GitHub does not start workflows for events caused by
   `GITHUB_TOKEN`, so the new tag does not start a second build.
+
+### Hotfixes
+
+A fix that cannot wait for the next release from `dev` (a published release is broken) goes straight to `main`:
+
+1. Branch from `main` (for example `claude/hotfix-0.3.1`). Make the fix with its regression test, and make it a
+   release in the same branch: bump to the next PATCH version (`npm version 0.3.1 --no-git-tag-version`), add the
+   `## [0.3.1] - YYYY-MM-DD` section to `CHANGELOG.md` and the version's saved-project fixture, as in a release PR.
+   Run `npm run typecheck` and `npm test`.
+2. Open the PR against `main`. Hotfix PRs and the `dev` → `main` release merge are the only PRs that ever target
+   `main`. Merging it publishes `0.3.1` like any release.
+3. Then merge `main` into `dev` (a PR from `main` into `dev`, merged by the owner), so `dev` has the fix, the version
+   and the changelog section, and the next release from `dev` does not undo them.
 
 ### What gates a release
 
@@ -182,11 +215,11 @@ of these, in the installed app, in the portable exe and in the AppImage:
 ### Fallback: pushing the tag yourself
 
 The old tag-push path still works and is optional; it is not needed for a normal release. Use it only after the
-release PR is merged, only if no `vX.Y.Z` tag exists yet, and only from a machine that can push tags:
+release is merged into `main`, only if no `vX.Y.Z` tag exists yet, and only from a machine that can push tags:
 
 ```bash
 git fetch origin main
-git log --oneline -3 origin/main          # find the release PR's merge commit
+git log --oneline -3 origin/main          # find the release merge commit
 git tag v0.3.0 <merge sha>
 git push origin v0.3.0
 ```
@@ -208,8 +241,10 @@ unreleased, and the next `main` run that passes every gate will release it.
   and click **Re-run failed jobs** (or **Re-run all jobs**). The publish job runs again after the re-run gates pass,
   and releases the same merge commit, because `vX.Y.Z` still does not exist.
 - **Real failure** (the build, smoke test, install check, a unit or end-to-end test or the launcher is broken): fix
-  forward. Fix the problem in a normal PR. Because `X.Y.Z` is still unreleased, the first `main` run after that merge
-  that passes every gate publishes `X.Y.Z` from the fixed commit; nothing else is needed. If the fix belongs in the
+  forward. Fix the problem in a normal PR into `dev`, then merge `dev` into `main` again with another `dev` → `main`
+  PR (or, for a small fix, take the [hotfix](#hotfixes) path without the version bump and merge `main` into `dev`
+  afterwards). Because `X.Y.Z` is still unreleased, the first `main` run after that merge that passes every gate
+  publishes `X.Y.Z` from the fixed commit; nothing else is needed. If the fix belongs in the
   notes, the fix PR may add its line to the unreleased `## [X.Y.Z]` section (it does not change the heading or the
   version). A new PATCH release PR is only needed once `X.Y.Z` has actually been published (next item).
 - **A macos leg fails with "a release must be signed and notarized"**: one or more of the five signing secrets are
@@ -219,7 +254,8 @@ unreleased, and the next `main` run that passes every gate will release it.
 - **Manual tag does not match the version** (fallback path only, for example a tag on the wrong commit): delete the
   tag (`git push origin :refs/tags/v0.3.0`, `git tag -d v0.3.0`) and tag the right commit, or let the next `main`
   run release it. This is only allowed while no release exists for that tag.
-- **A published release turns out to be broken:** fix it and release the next PATCH version with a release PR.
+- **A published release turns out to be broken:** fix it and release the next PATCH version, with a release PR into
+  `dev` and a `dev` → `main` merge, or as a [hotfix](#hotfixes) when it cannot wait for what is on `dev`.
 
 **Never move or re-use a published tag.** Once a release exists for `vX.Y.Z`, that tag and its files are final.
 
@@ -266,27 +302,29 @@ after `rc.9`) or about a newer stable release (`1.0.0`), whichever comes first i
 
 ### Cutting 1.0.0-rc.1
 
-1. The 1.0 milestones are merged and the feature freeze starts (ROADMAP → Release candidates): from now on `main`
+1. The 1.0 milestones are merged and the feature freeze starts (ROADMAP → Release candidates): from now on `dev`
    takes only fixes for release-blocking defects (and documentation).
-2. Release PR, branch `claude/release-1.0.0-rc.1` from `main`:
+2. Release PR into `dev`, branch `claude/release-1.0.0-rc.1` from `dev`:
    - `npm version 1.0.0-rc.1 --no-git-tag-version`
    - add `## [1.0.0-rc.1] - YYYY-MM-DD` at the top of `CHANGELOG.md`, written like any release section
      ([What goes in the changelog](#what-goes-in-the-changelog)) and covering everything since the last stable
      release
    - no saved-project fixture; no roadmap **Status** or Progress change (they name stable releases)
-   - `npm run typecheck` and `npm test`, then open the PR.
-3. Merge it. CI runs every gate and the publish job publishes `ReCut 1.0.0-rc.1` on tag `v1.0.0-rc.1`.
+   - `npm run typecheck` and `npm test`, then open the PR against `dev`.
+3. Merge it, then open and merge the `dev` → `main` PR. CI runs every gate and the publish job publishes
+   `ReCut 1.0.0-rc.1` on tag `v1.0.0-rc.1`.
 4. Check the release page: the **Pre-release** label is shown, **Latest** is still on the last stable release, the
    notes start with the release-candidate line, and both `.exe` files, the `.AppImage` and both `.dmg` files are
    attached.
 
 ### Cutting 1.0.0-rc.2 (and later candidates)
 
-1. Fixes land in normal PRs. They do not touch the version or the `## [1.0.0-rc.1]` section (it is published and
-   final).
+1. Fixes land in normal PRs into `dev` (through the personal branches). They do not touch the version or the
+   `## [1.0.0-rc.1]` section (it is published and final).
 2. Release PR `claude/release-1.0.0-rc.2`: `npm version 1.0.0-rc.2 --no-git-tag-version`, and a new
    `## [1.0.0-rc.2] - YYYY-MM-DD` section above `## [1.0.0-rc.1]` listing what changed since rc.1 (usually only
-   **Fixed**). No fixture. `npm run typecheck`, `npm test`, open the PR, merge it.
+   **Fixed**). No fixture. `npm run typecheck`, `npm test`, open the PR against `dev`, merge it, then merge `dev`
+   into `main` with a `dev` → `main` PR.
 3. CI publishes `ReCut 1.0.0-rc.2` as a pre-release. People running rc.1 with the update check on are told about it.
 4. A broken candidate is never fixed in place: fix forward and cut the next one (`rc.3`). The tag and the release of
    a published candidate are final, like any release.
@@ -294,7 +332,7 @@ after `rc.9`) or about a newer stable release (`1.0.0`), whichever comes first i
 ### Releasing 1.0.0
 
 1. Every item under **Ready for 1.0** holds (ROADMAP), including a week of normal use of the last candidate.
-2. Release PR `claude/release-1.0.0`, as for any stable release ([How to cut a release](#how-to-cut-a-release)):
+2. Release PR into `dev`, `claude/release-1.0.0`, as for any stable release ([How to cut a release](#how-to-cut-a-release)):
    - `npm version 1.0.0 --no-git-tag-version`
    - `## [1.0.0] - YYYY-MM-DD` at the top of `CHANGELOG.md`, above the candidates' sections, written for people
      coming from the last stable release: it covers everything since that release, the candidates' fixes included.
@@ -302,8 +340,8 @@ after `rc.9`) or about a newer stable release (`1.0.0`), whichever comes first i
    - `node scripts/make-project-fixture.mjs` writes `tests/fixtures/projects/recut-1.0.0.recut` (the unit suite
      fails without it)
    - the roadmap **Status** lines and Progress rows of what 1.0.0 ships
-   - `npm run typecheck` and `npm test`, then open the PR.
-3. Merge it. CI publishes `ReCut 1.0.0` on tag `v1.0.0`, a full release marked **Latest**. Everyone with the update
+   - `npm run typecheck` and `npm test`, then open the PR against `dev`.
+3. Merge it, then the `dev` → `main` PR. CI publishes `ReCut 1.0.0` on tag `v1.0.0`, a full release marked **Latest**. Everyone with the update
    check on is told about it, candidate users included.
 4. The candidates' releases stay on the Releases page as pre-releases; nothing needs deleting.
 
@@ -322,7 +360,7 @@ section uses these headings (leave out empty ones):
 Rules:
 
 - Describe what users see, not how it was implemented. One line per item where possible. No marketing.
-- Build the section from `git log --oneline <previous tag>..origin/main` and from the reports moved to
+- Build the section from `git log --oneline <previous tag>..origin/dev` and from the reports moved to
   `bugs/closed/` since the previous release.
 - Link repository files with relative links (`bugs/closed/...`, `docs/...`). CI rewrites them to absolute links at
   the release tag for the GitHub release notes.
@@ -338,7 +376,7 @@ Rules:
 | The same, with a pre-release `<version>` such as `1.0.0-rc.1` | `v1.0.0-rc.1` (created by CI) | Release `ReCut 1.0.0-rc.1`, marked **Pre-release**, never Latest |
 | Push of tag `v<version>` (optional fallback; `v<x.y.z>` or `v<x.y.z>-rc.<N>`) | `v<version>` (yours) | The same release as the automatic path (Latest, or Pre-release for a candidate) |
 | Push to `main`; `v<version>` already tagged, or no changelog section | none | [Test build](#test-builds): `ReCut-windows`, `ReCut-linux`, `ReCut-macos-arm64` and `ReCut-macos-x64` CI artifacts only |
-| Push to another watched branch, or a manual run (`workflow_dispatch`) | none | [Test build](#test-builds): `ReCut-windows`, `ReCut-linux`, `ReCut-macos-arm64` and `ReCut-macos-x64` CI artifacts only |
+| Push to `dev`, a pull request into `dev`, `devDavid` or `devJames`, or a manual run (`workflow_dispatch`) | none | [Test build](#test-builds): `ReCut-windows`, `ReCut-linux`, `ReCut-macos-arm64` and `ReCut-macos-x64` CI artifacts only |
 
 A release is published only when all seven gates pass ([What gates a release](#what-gates-a-release)), release
 candidates included, and its dmgs are always signed and notarized. Only real versions (`0.4.0`, `0.5.0`, …, and the
@@ -364,7 +402,9 @@ builds are the **ReCut-macos-arm64** (Apple Silicon) and **ReCut-macos-x64** (In
 dmg. Use a test build only if the seven required jobs of its run (installer, tests, e2e, launcher, linux, macos,
 macos-e2e) are green. Users should install the release marked **Latest**.
 
-To make a test build of a work branch, run the workflow by hand (*Run workflow*, `workflow_dispatch`) on that branch.
+The newest unreleased code is on `dev`: the latest green run of the `dev` branch has its test builds. A pull request
+into `dev`, `devDavid` or `devJames` makes a test build of the pull request's merge result. To make a test build of
+any other branch, run the workflow by hand (*Run workflow*, `workflow_dispatch`) on that branch.
 
 ### Tags
 

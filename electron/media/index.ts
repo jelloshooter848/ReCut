@@ -41,6 +41,8 @@ import { startProxyJob } from './proxy';
 import { startChannelProxyJob } from './channelProxy';
 import { startSceneDetectJob } from './sceneDetect';
 import { extractSubtitles } from './subtitlesExtract';
+import { envVar } from '../env';
+import { PRODUCT_NAME } from '../../shared/productIdentity';
 
 export type { MediaHandlers, MediaContext } from '../ipc';
 
@@ -94,16 +96,16 @@ function activeDownloadJob(code: string): ID | undefined {
 
 export const mediaHandlers: MediaHandlers = {
   init(ctx: MediaContext): void {
-    const rawLangUrl = process.env.RECUT_OCR_LANG_URL;
+    const rawLangUrl = envVar('OCR_LANG_URL');
     const langBaseUrl = parseLangUrlOverride(rawLangUrl);
     if (rawLangUrl && !langBaseUrl) console.warn('RECUT_OCR_LANG_URL ignored: only a loopback http(s) URL is accepted');
     ocrCtx = { userData: ctx.userData, fetch: ctx.fetch, langBaseUrl };
-    const rawModelUrl = process.env.RECUT_WHISPER_MODEL_URL;
+    const rawModelUrl = envVar('WHISPER_MODEL_URL');
     const modelBaseUrl = parseLoopbackBaseUrl(rawModelUrl);
     if (rawModelUrl && !modelBaseUrl) console.warn('RECUT_WHISPER_MODEL_URL ignored: only a loopback http(s) URL is accepted');
     whisperCtx = { userData: ctx.userData, fetch: ctx.fetch, modelBaseUrl };
     // Tests only: a generated model served by a loopback model server, never in a packaged app.
-    const testModel = modelBaseUrl && ctx.packaged === false ? parseTestModelSpec(process.env.RECUT_WHISPER_TEST_MODEL) : null;
+    const testModel = modelBaseUrl && ctx.packaged === false ? parseTestModelSpec(envVar('WHISPER_TEST_MODEL')) : null;
     setTestWhisperModels(testModel ? [testModel] : []);
     // Temp folders of transcriptions that never finished (a crash, a forced quit): nothing runs yet, so remove them.
     void fsp.rm(whisperContext().tempRoot, { recursive: true, force: true }).catch(() => undefined);
@@ -195,7 +197,7 @@ export const mediaHandlers: MediaHandlers = {
   async whisperEngine(): Promise<WhisperEngineInfo> {
     const { modelsDir } = whisperContext();
     const bin = getWhisperCliPath();
-    if (!bin) return { path: null, version: null, modelsDir, error: 'The speech-to-text engine (whisper-cli) is not included in this build of ReCut.' };
+    if (!bin) return { path: null, version: null, modelsDir, error: `The speech-to-text engine (whisper-cli) is not included in this build of ${PRODUCT_NAME}.` };
     engineVersion ??= whisperCliVersion(bin);
     try {
       return { path: bin, version: await engineVersion, modelsDir };

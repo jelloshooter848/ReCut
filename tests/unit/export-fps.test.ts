@@ -210,7 +210,8 @@ describe('export frame-rate conversion: equal or invalid rates', () => {
     return { sequence: s, media: { [m.id]: m }, settings: { ...settings(F23), outputDir: OUT_DIR, fileName: 'x.mp4', fps: outFps as Rational } };
   };
 
-  // Recorded from the renderer before output frame-rate conversion existed (sequence 23.976, export 23.976).
+  // Recorded from the renderer before output frame-rate conversion existed (sequence 23.976, export 23.976). The input
+  // no longer has `-start_at_zero` (bugs/closed/2026-10-09-ts-late-video-export-early.md); the graph is unchanged.
   const BEFORE_FILTER = [
     "[0:v:0]trim=start=0.979146:duration=1.522104,settb=AVTB,setpts=PTS-1.000001/TB,fps=24000/1001:start_time=0,format=yuva420p,scale=w='if(gt(sar,1.000001),max(2,round(iw*sar/2)*2),iw)':h='if(lt(sar,0.999999),max(2,round(ih/sar/2)*2),ih)':flags=bicubic,setsar=1,scale=64:36:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,setsar=1,pad=64:36:(ow-iw)/2:(oh-ih)/2:color=black@0,tpad=stop=30:stop_mode=clone,trim=end_frame=30,setpts=PTS-STARTPTS[v0]",
     '[v0]settb=1001/24000,setpts=N[tv1]',
@@ -221,7 +222,7 @@ describe('export frame-rate conversion: equal or invalid rates', () => {
     '[a2]asetpts=PTS-STARTPTS[ta3]',
     '[ta3]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[aout]',
   ].join(';\n');
-  const BEFORE_ARGS = ['-hide_banner', '-nostdin', '-y', '-copyts', '-start_at_zero', '-t', '2.50125', '-i', '/media/a.mp4',
+  const BEFORE_ARGS = ['-hide_banner', '-nostdin', '-y', '-copyts', '-t', '2.50125', '-i', '/media/a.mp4',
     '-filter_complex_script', '__FILTER_SCRIPT__', '-map', '[vout]', '-map', '[aout]',
     '-map_metadata:g', '-1', '-map_metadata:s', '-1', '-map_chapters', '-1',
     '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '10', '-pix_fmt', 'yuv420p', '-r', '24000/1001', '-fps_mode', 'cfr',

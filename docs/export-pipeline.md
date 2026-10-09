@@ -82,7 +82,7 @@ video + audio pair with the same range shares one input (identical args are reus
 so a linked clip is decoded once:
 
 ```
--copyts -start_at_zero [-ss <seek>] -t <(S - seek) + srcLen + 0.25> -i file:<media.path>
+-copyts [-ss <seek>] -t <(S - seek) + srcLen + 0.25> -i file:<media.path>
 ```
 
 The exporter passes every input and output path as `file:<absolute path>` (`ffmpegFileArg`,
@@ -90,9 +90,12 @@ The exporter passes every input and output path as `file:<absolute path>` (`ffmp
 `tee:...` or `pipe:0` is never an FFmpeg protocol, and a relative path is refused instead of being read relative to
 the main process's working directory. `buildRenderGraph` itself (and "Show FFmpeg command") shows the plain paths.
 
-**Timestamps are container-relative source seconds.** `-copyts -start_at_zero` keeps every stream's own
-pts minus the container start_time, which is exactly what `sourceIn` means (and what the editor, proxies and
-thumbnails use). ffmpeg's default rebasing is not used because it depends on the container: MPEG-TS does not
+**Timestamps are container-relative source seconds.** `-copyts` keeps every stream's own pts, and the filters
+subtract the probed container start_time `t0` (`MediaProbe.startTime`, clamped at 0) themselves: pts - t0 is
+exactly what `sourceIn` means (and what the editor, proxies and thumbnails use). Not `-start_at_zero`: for MPEG-TS,
+MPEG-PS and FLV, FFmpeg takes that zero from the streams the command maps, so an input that mapped only a video stream
+starting after the audio exported early by that offset
+([report](../bugs/closed/2026-10-09-ts-late-video-export-early.md)). ffmpeg's default rebasing is not used because it depends on the container: MPEG-TS does not
 rebase to the `-ss` point (its picture came out 1 s early), and each stream's own start offset was lost for
 clips in the first second of a file. `-ss` is only a decode shortcut: `seek = max(0, S - h - preroll)` with
 `h = 0.5/mediaFps`, `preroll = 0.04 s` for MP4/MOV/MKV/WebM (frame-exact input seek) and `1 s` for other
@@ -104,7 +107,7 @@ clips whose media lacks the needed stream are skipped with a warning (black / si
 ### Video segments (one chain per clip)
 
 ```
-[i:v:0] trim=start=S-h:duration=h+L, settb=AVTB, setpts=PTS-(S+c)/TB, [setpts=PTS/speed,]
+[i:v:0] trim=start=t0+S-h:duration=h+L, settb=AVTB, setpts=PTS-(t0+S+c)/TB, [setpts=PTS/speed,]
         fps=FPS:start_time=0, format=yuva420p, [lut=a=0:enable='lt(t,T)',]
         scale=<un-squeeze by sar>, setsar=1, scale=W:H:force_original_aspect_ratio=decrease:force_divisible_by=2, setsar=1,
         <transform>, [lut=a=val*opacity,]
@@ -259,7 +262,7 @@ Audio comes only from audio-track clips (linked video/audio are separate clips).
 with a warning). Chain:
 
 ```
-[pan=... (channel selection),] atrim=start=S:duration=L, asetpts=PTS-S/TB, aresample=async=1:first_pts=0, [atempo... (stages within 0.5..2)],
+[pan=... (channel selection),] atrim=start=t0+S:duration=L, asetpts=PTS-(t0+S)/TB, aresample=async=1:first_pts=0, [atempo... (stages within 0.5..2)],
 aresample=SR, aformat=sample_fmts=fltp:channel_layouts=stereo|5.1,
 [volume=<gain>dB,] [volume=<volume>,] [afade in/out,] apad=whole_dur=len, atrim=duration=len, asetpts=PTS-STARTPTS,
 [asetnsamples=n=256:p=0, volume=volume='st(0,(t+128/sample_rate)*fps+k0);<keyframe expression of ld(0)>':eval=frame]

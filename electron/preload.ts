@@ -74,6 +74,7 @@ const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
   readText: (path: string) => ipcRenderer.invoke(IPC.fsReadText, path),
   exportSubtitleFile: (path: string, content: string, protectedPaths: string[]) => ipcRenderer.invoke(IPC.subtitlesExport, path, content, protectedPaths),
   listDir: (path: string) => ipcRenderer.invoke(IPC.fsListDir, path),
+  relocateLegacyPath: (path: string) => ipcRenderer.invoke(IPC.fsRelocateLegacyPath, path),
   scanForRelink: (req: RelinkScanRequest) => ipcRenderer.invoke(IPC.fsScanForRelink, req),
 
   probe: (path: string) => ipcRenderer.invoke(IPC.mediaProbe, path),

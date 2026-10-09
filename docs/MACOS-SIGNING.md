@@ -140,9 +140,10 @@ owner confirms.
 3. Delete the shared note.
 
 GitHub encrypts secrets, shows them to nobody (not even you, after saving) and masks them in logs. Only the `macos`
-job of `.github/workflows/windows.yml` reads them, and only for pushes and manual runs in this repository: GitHub
-never passes secrets to pull requests from forks. Pushing to the repository is needed to change the workflow, so keep
-the list of people with write access short.
+job of `.github/workflows/windows.yml` reads them, for pushes, manual runs and pull requests from branches of this
+repository (a pull request run is always a test build, signed like any other when the secrets are set). GitHub never
+passes secrets to pull requests from forks: those runs make ad-hoc signed test builds. Pushing to the repository is
+needed to change the workflow, so keep the list of people with write access short.
 
 ## Checking a signed build
 

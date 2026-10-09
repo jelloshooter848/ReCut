@@ -23,6 +23,9 @@ import { canonicalPath, fileIdentity } from '../pathSafety';
 import { adaptFfmpegArgs, ffmpegFileArg, ffmpegMajorVersionSync, getFfmpegPath } from '../media/ffmpeg';
 import { ffmpegMissingMessage } from '../../shared/ipc';
 import { CHUNK_MAX_AUDIO_SEGMENTS, CHUNK_MAX_SEGMENTS, planExportChunks, sampleIndexAt, shouldChunk, type ExportChunk } from './chunks';
+import { exportSourceWarnings, FfmpegProblemCollector, ffmpegInputPaths, planSourceEndChecks, type FfmpegRunProblems } from './ffmpegWarnings';
+import { checkSourceEnds } from './sourceCheck';
+import { envVar } from '../env';
 
 // Canonical form of a path for comparisons (realpath, else realpath(dir)/basename, else path.resolve); renderGraph
 // folds case. Shared with the subtitle export check (electron/pathSafety.ts).
@@ -156,7 +159,13 @@ export interface ExportRunResult {
   /** Every file written, in track order for a per-track audio export. */
   outputPaths: string[];
   durationSec: number;
+  /** Every warning: `sourceWarnings` first, then the render graph's (offline media, dropped transitions, ...). */
   warnings: string[];
+  /**
+   * Problems reading the sources that FFmpeg reported or that the source end check found although FFmpeg exited 0
+   * (a truncated or damaged file: part of the output is silent or frozen). See ffmpegWarnings.ts.
+   */
+  sourceWarnings: string[];
   /** Path of the sidecar .srt when one was written. */
   sidecarPath?: string;
   /** Number of video chunks rendered (1 = single pass). */
@@ -297,6 +306,8 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
   /** Reserved render temps not moved onto their output yet (deleted on failure). */
   const parts: { path: string; stamp: RenderFileStamp; outputPath: string }[] = [];
   let sidecarTemp: string | null = null;
+  /** FFmpeg's problem lines from every successful run (stderr at -loglevel warning), for the source warnings. */
+  const ffmpegRuns: FfmpegRunProblems[] = [];
   try {
     if (signal?.aborted) throw new Error('Export canceled');
     // One graph per output file: one file, or one per audio track (per-track audio export).
@@ -322,10 +333,17 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
         : onProgress;
       const fileDir = n > 1 ? fs.mkdtempSync(path.join(tmpDir, `file-${i}-`)) : tmpDir;
       const used = await renderOutputFile(file.req, graph, file.audioTrackId, reserved.path, fileDir, chaptersContent ? chaptersFilePath : null, subtitleFilePath,
-        softSubtitleFilePaths.slice(0, graph.softSubtitles.length), fileProgress, signal, opts);
+        softSubtitleFilePaths.slice(0, graph.softSubtitles.length), fileProgress, signal, opts, ffmpegRuns);
       chunks = Math.max(chunks, used.chunks);
       audioChunks = Math.max(audioChunks, used.audioChunks);
     }
+
+    // FFmpeg exits 0 when a source ends early or has damaged data and the graph pads the clip: check where each
+    // source's data really ends (best effort), then turn that and FFmpeg's problem lines into warnings.
+    onProgress?.(0.999, 'Checking the sources');
+    const ends = await checkSourceEnds(planSourceEndChecks(graphs, req.media), signal);
+    if (signal?.aborted) throw new Error('Export canceled');
+    const sourceWarnings = exportSourceWarnings(ffmpegRuns, ends, req.media);
 
     // ffmpeg wrote into the files reserved above; never move anything else onto an output.
     for (let i = 0; i < parts.length; i++) {
@@ -375,8 +393,8 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
       }
     }
     onProgress?.(1, 'Done');
-    const warnings = graphs.flatMap((g) => g.warnings).filter((w, i, all) => all.indexOf(w) === i);
-    return { outputPath: written[0], outputPaths: written, durationSec: graphs[0].durationSec, warnings, sidecarPath, chunks, audioChunks };
+    const warnings = [...sourceWarnings, ...graphs.flatMap((g) => g.warnings)].filter((w, i, all) => all.indexOf(w) === i);
+    return { outputPath: written[0], outputPaths: written, durationSec: graphs[0].durationSec, warnings, sourceWarnings, sidecarPath, chunks, audioChunks };
   } finally {
     for (const part of parts) { try { fs.unlinkSync(part.path); } catch { /* nothing to clean */ } }
     if (sidecarTemp) { try { fs.unlinkSync(sidecarTemp); } catch { /* nothing to clean */ } }
@@ -390,14 +408,14 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
  */
 async function renderOutputFile(
   req: ExportRequest, graph: RenderGraph, audioTrackId: ID | undefined, partPath: string, tmpDir: string, chaptersFile: string | null, subtitleFilePath: string,
-  softSubtitleFiles: string[], onProgress: ExportProgress | undefined, signal: AbortSignal | undefined, opts: ExportRunOptions,
+  softSubtitleFiles: string[], onProgress: ExportProgress | undefined, signal: AbortSignal | undefined, opts: ExportRunOptions, runs: FfmpegRunProblems[],
 ): Promise<{ chunks: number; audioChunks: number }> {
   const planInput = { req, startF: graph.startF, endF: graph.endF };
   const chunked = opts.chunked ?? (graph.audioOnly ? graph.inputCount > CHUNK_MAX_AUDIO_SEGMENTS : shouldChunk(planInput, graph.inputCount));
   const chunks = chunked && !graph.audioOnly ? mergeChunksWithoutOutputFrames(planExportChunks(planInput, opts.maxSegmentsPerChunk ?? CHUNK_MAX_SEGMENTS, 'video'), req, graph) : [];
   const audioChunks = chunked ? planExportChunks(planInput, opts.maxAudioSegmentsPerChunk ?? CHUNK_MAX_AUDIO_SEGMENTS, 'audio') : [];
   if (chunked) {
-    await runChunkedExport(req, graph, chunks, audioChunks, tmpDir, chaptersFile, softSubtitleFiles, partPath, onProgress, signal, opts.onSpawn, audioTrackId);
+    await runChunkedExport(req, graph, chunks, audioChunks, tmpDir, chaptersFile, softSubtitleFiles, partPath, onProgress, signal, opts.onSpawn, runs, audioTrackId);
   } else {
     if (graph.subtitleContent) fs.writeFileSync(subtitleFilePath, graph.subtitleContent, 'utf8');
     const scriptPath = path.join(tmpDir, 'filter.txt');
@@ -405,7 +423,7 @@ async function renderOutputFile(
     const args = fileInputs(graph.args.map((a) => (a === FILTER_SCRIPT_TOKEN ? scriptPath : a)));
     args[args.length - 1] = ffmpegFileArg(partPath);
     onProgress?.(0, 'Starting ffmpeg');
-    await runFfmpeg(args, graph.durationSec, onProgress, signal, opts.onSpawn);
+    await runFfmpeg(args, graph.durationSec, onProgress, signal, opts.onSpawn, runs);
   }
   return { chunks: Math.max(1, chunks.length), audioChunks: Math.max(1, audioChunks.length) };
 }
@@ -470,7 +488,7 @@ function concatList(files: string[]): string {
 async function runChunkedExport(
   req: ExportRequest, full: RenderGraph, chunks: ExportChunk[], audioChunks: ExportChunk[], tmpDir: string, chaptersFile: string | null,
   softSubtitleFiles: string[], partPath: string,
-  onProgress: ExportProgress | undefined, signal: AbortSignal | undefined, onSpawn: ExportRunOptions['onSpawn'], audioTrackId?: ID,
+  onProgress: ExportProgress | undefined, signal: AbortSignal | undefined, onSpawn: ExportRunOptions['onSpawn'], runs: FfmpegRunProblems[], audioTrackId?: ID,
 ): Promise<void> {
   const n = chunks.length;
   const na = audioChunks.length;
@@ -491,7 +509,7 @@ async function runChunkedExport(
     const of = kind === 'video' ? n : na;
     const label = `chunk ${i + 1}/${of} (${kind}, frames ${c.startF}-${c.endF})`;
     try {
-      await runFfmpeg(args, dur, (p, m) => report(w, p, `Chunk ${i + 1}/${of} ${kind}: ${m ?? ''}`.trim()), signal, onSpawn);
+      await runFfmpeg(args, dur, (p, m) => report(w, p, `Chunk ${i + 1}/${of} ${kind}: ${m ?? ''}`.trim()), signal, onSpawn, runs);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg === 'Export canceled') throw e;
@@ -562,7 +580,7 @@ async function runChunkedExport(
     ...full.muxArgs.slice(0, -2), '-t', sec(n ? Math.max(full.durationSec, full.outputDurationSec) : full.durationSec), ...full.muxArgs.slice(-2), ffmpegFileArg(partPath)];
   try {
     if (signal?.aborted) throw new Error('Export canceled');
-    await runFfmpeg(args, full.durationSec, (p) => report(W_MUX, p, `Joining ${Math.max(n, na)} chunks`), signal, onSpawn);
+    await runFfmpeg(args, full.durationSec, (p) => report(W_MUX, p, `Joining ${Math.max(n, na)} chunks`), signal, onSpawn, runs);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'Export canceled') throw e;
@@ -574,7 +592,11 @@ async function runChunkedExport(
 // ffmpeg process runner
 // ---------------------------------------------------------------------------------------------------
 
-function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgress, signal?: AbortSignal, onSpawn?: (c: ChildProcess) => void): Promise<void> {
+/**
+ * Runs one FFmpeg process. On exit 0 its problem lines (ffmpegWarnings.ts classifier) are appended to `runs` with
+ * the run's inputs; on failure the error carries the last stderr lines.
+ */
+function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgress, signal?: AbortSignal, onSpawn?: (c: ChildProcess) => void, runs?: FfmpegRunProblems[]): Promise<void> {
   let bin: string;
   try { bin = resolveFfmpegPath(); } catch (e) { return Promise.reject(e); }
   const full = adaptFfmpegArgs(['-progress', 'pipe:1', '-nostats', '-loglevel', 'warning', ...args], ffmpegMajorVersionSync(bin));
@@ -588,6 +610,7 @@ function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgr
     }
     try { onSpawn?.(child); } catch { /* observer errors do not affect the export */ }
     const stderrLines: string[] = [];
+    const problems = new FfmpegProblemCollector();
     let stderrBuf = '';
     let stdoutBuf = '';
     let canceled = false;
@@ -621,7 +644,7 @@ function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgr
       stderrBuf += chunk;
       const lines = stderrBuf.split(/\r?\n|\r/);
       stderrBuf = lines.pop() ?? '';
-      for (const l of lines) if (l.trim()) { stderrLines.push(l); if (stderrLines.length > 200) stderrLines.shift(); }
+      for (const l of lines) if (l.trim()) { stderrLines.push(l); if (stderrLines.length > 200) stderrLines.shift(); problems.push(l); }
     });
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
@@ -652,14 +675,18 @@ function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgr
     });
     child.on('close', (code, sig) => {
       if (settled) return; settled = true; cleanup();
-      if (stderrBuf.trim()) stderrLines.push(stderrBuf);
+      if (stderrBuf.trim()) { stderrLines.push(stderrBuf); problems.push(stderrBuf); }
       if (canceled) { reject(new Error('Export canceled')); return; }
       if (stalled) {
         reject(new Error(`FFmpeg stopped making progress for ${Math.round(stallMs / 1000)} s and was stopped. `
           + 'This is usually an FFmpeg bug: try another FFmpeg release (development builds are not recommended) or a different audio bitrate.'));
         return;
       }
-      if (code === 0) { resolve(); return; }
+      if (code === 0) {
+        if (problems.problems.length) runs?.push({ inputs: ffmpegInputPaths(args), problems: problems.problems });
+        resolve();
+        return;
+      }
       const tail = stderrLines.slice(-30).join('\n');
       reject(new Error(`ffmpeg exited with ${code !== null ? `code ${code}` : `signal ${sig}`}${tail ? `:\n${tail}` : ''}`));
     });
@@ -668,7 +695,7 @@ function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgr
 
 /** No-progress limit for one FFmpeg run (env RECUT_EXPORT_STALL_MS, default 2 minutes). */
 export function exportStallMs(): number {
-  const v = Number(process.env.RECUT_EXPORT_STALL_MS);
+  const v = Number(envVar('EXPORT_STALL_MS'));
   return Number.isFinite(v) && v > 0 ? v : 120_000;
 }
 

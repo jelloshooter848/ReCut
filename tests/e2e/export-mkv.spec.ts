@@ -126,6 +126,7 @@ test('exports an MKV with two audio tracks, two soft subtitle tracks and chapter
   await page.getByTestId('export-start').click();
   const job = await waitForExport(1);
   expect(job.status, job.error ?? '').toBe('done');
+  expect((job.result as { sourceWarnings?: string[] }).sourceWarnings).toEqual([]); // clean sources: nothing from FFmpeg
   await expect(page.getByTestId('export-done')).toBeVisible();
 
   const out = path.join(outDir, 'package.mkv');

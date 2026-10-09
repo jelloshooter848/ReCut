@@ -6,7 +6,7 @@
  *   renderer show a one-time prompt), at most once per UPDATE_CHECK_INTERVAL_MS, UPDATE_CHECK_DELAY_MS after startup.
  * - Manual (Help › Check for Updates…): whatever the setting.
  * - One GET to UPDATE_API_URL (UPDATE_LIST_API_URL when the running version is a pre-release) with only a
- *   `User-Agent: ReCut/<version>` header, no cookies, a short timeout. Nothing
+ *   `User-Agent: <product>/<version>` header (productIdentity userAgentProduct), no cookies, a short timeout. Nothing
  *   else is sent. Every failure is logged and reported as `failed`, never thrown, never blocking anything.
  * - Nothing is downloaded or installed.
  *
@@ -14,6 +14,7 @@
  */
 import * as io from './project/io';
 import type { AppPreferences } from '../shared/model';
+import { userAgentProduct } from '../shared/productIdentity';
 import {
   UPDATE_CHECK_DELAY_MS, UPDATE_CHECK_TIMEOUT_MS, UPDATE_REPLY_MAX_BYTES,
   autoCheckDue, availableUpdate, isNewerRelease, parseSemver, parseUpdateReplyText, updateApiUrlFor,
@@ -155,7 +156,7 @@ export class UpdateChecker {
       try {
         res = await this.deps.fetch(this.deps.apiUrl ?? updateApiUrlFor(this.deps.currentVersion), {
           method: 'GET',
-          headers: { 'User-Agent': `ReCut/${this.deps.currentVersion}` },
+          headers: { 'User-Agent': userAgentProduct(this.deps.currentVersion) },
           credentials: 'omit',
           signal: ctl.signal,
         });

@@ -17,9 +17,10 @@ import { formatOcrSize, useOcrStatus } from '@/state/ocrStatus';
 import { closeOcrLanguages, useOcrUi } from '@/ocr/ocrUi';
 import type { JobInfo } from '@shared/model';
 import type { OcrLanguageState } from '@shared/ocr';
+import { PRODUCT_NAME } from '@shared/productIdentity';
 import './ocrLanguages.css';
 
-export const OCR_LANGUAGES_NOTE = 'Language data from the Tesseract project (tessdata_fast, Apache-2.0). ReCut downloads a language only when you click Install; reading subtitles then works offline.';
+export const OCR_LANGUAGES_NOTE = `Language data from the Tesseract project (tessdata_fast, Apache-2.0). ${PRODUCT_NAME} downloads a language only when you click Install; reading subtitles then works offline.`;
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 

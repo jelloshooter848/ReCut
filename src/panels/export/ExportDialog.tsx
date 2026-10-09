@@ -721,7 +721,7 @@ function ProgressView({ seq, job, jobId, outputPath, outputPaths, onClose, onAno
           })()}
           {(job.result as { sidecarPath?: string } | undefined)?.sidecarPath ? <><dt>Subtitles</dt><dd className="wrap xd-path">{(job.result as { sidecarPath?: string }).sidecarPath}</dd></> : null}
           {Array.isArray((job.result as { warnings?: string[] } | undefined)?.warnings) && (job.result as { warnings: string[] }).warnings.length ? (
-            <><dt>Warnings</dt><dd className="wrap"><div className="xd-check">{(job.result as { warnings: string[] }).warnings.map((w, i) => <div key={i} className="xd-check-item warning"><AlertTriangle /><span>{w}</span></div>)}</div></dd></>
+            <><dt>Warnings</dt><dd className="wrap"><div className="xd-check" data-testid="export-done-warnings">{(job.result as { warnings: string[] }).warnings.map((w, i) => <div key={i} className="xd-check-item warning"><AlertTriangle /><span>{w}</span></div>)}</div></dd></>
           ) : null}
         </dl>
       </div>

@@ -319,6 +319,16 @@ function videoStreamStart(m: MediaItem): number {
   return typeof st === 'number' && Number.isFinite(st) && st > 0 ? st : 0;
 }
 
+/**
+ * The container start time (seconds) the export subtracts from an input's pts: the probed format start_time,
+ * clamped at 0 as probeMedia stores it. The same zero as the preview (src/playback/mediaSource.ts mediaTimeOffset),
+ * the OCR extraction and the source check.
+ */
+function containerStart(m: MediaItem): number {
+  const st = m.probe?.startTime;
+  return typeof st === 'number' && Number.isFinite(st) && st > 0 ? st : 0;
+}
+
 /** `PTS-x/TB` with a signed offset (x may be negative). */
 function ptsMinus(x: number, ptsName = 'PTS'): string {
   return x >= 0 ? `${ptsName}-${sec(x)}/TB` : `${ptsName}+${sec(-x)}/TB`;
@@ -332,15 +342,19 @@ interface InputInfo {
   srcLen: number;
   /** Source seconds read before srcStart (half a media frame for the video frame choice). */
   lead: number;
+  /** The input's pts are absolute: container-relative source second s has pts s + t0 (containerStart). */
+  t0: number;
 }
 
 /**
  * Adds (or reuses) an ffmpeg input for the segment and returns its index.
  *
- * Timestamps: every media input is opened with `-copyts -start_at_zero`, so decoded pts are
- * container-relative source seconds (pts - format start_time) whatever the container does on seek
- * (MPEG-TS does not rebase to the `-ss` point, M-02) and whatever each stream's own start is
- * (late audio/video keeps its offset, M-04). The filters then trim on those absolute source times.
+ * Timestamps: every media input is opened with `-copyts`, so decoded pts are the file's own timestamps whatever
+ * the container does on seek (MPEG-TS does not rebase to the `-ss` point, M-02) and whatever each stream's own
+ * start is (late audio/video keeps its offset, M-04). The filters subtract the probed container start (t0,
+ * containerStart) themselves, so they trim on container-relative source times. Not `-start_at_zero`: for MPEG-TS /
+ * MPEG-PS (and FLV) FFmpeg takes that zero from the streams the command maps, so an input that maps only a video
+ * stream starting after the audio was rebased to the video start and exported early by that offset.
  * `-ss` is only a decode shortcut: exact containers seek right before the trim point, others keep 1 s
  * of pre-roll (M-09). A linked video+audio pair with the same range shares one input.
  */
@@ -354,7 +368,7 @@ function addInput(ctx: Ctx, seg: ClipSeg, kind: 'video' | 'audio'): InputInfo {
     ctx.inputs.push(loopableStill(seg.media)
       ? ['-loop', '1', '-framerate', fpsStr(ctx.fps), '-t', sec(tlLen + 0.5), '-i', seg.media.path]
       : ['-i', seg.media.path]);
-    return { index: ctx.inputs.length - 1, srcStart: 0, srcLen: tlLen, lead: 0 };
+    return { index: ctx.inputs.length - 1, srcStart: 0, srcLen: tlLen, lead: 0, t0: 0 };
   }
   const srcStart = Math.max(0, seg.srcStart - seg.extBefore * ctx.fd * seg.speed);
   // Same lead for video and audio so a linked pair produces identical input args (and shares the input).
@@ -365,7 +379,8 @@ function addInput(ctx: Ctx, seg: ClipSeg, kind: 'video' | 'audio'): InputInfo {
   const readLen = srcLen + (readBefore + readAfter) * ctx.fd * seg.speed;
   const from = Math.max(0, readStart - lead);
   const seek = Math.max(0, from - inputPreroll(seg.media));
-  const args: string[] = ['-copyts', '-start_at_zero'];
+  const t0 = containerStart(seg.media);
+  const args: string[] = ['-copyts'];
   if (seek > 0) args.push('-ss', sec(seek));
   args.push('-t', sec((readStart - seek) + readLen + 0.25), '-i', seg.media.path);
   const key = args.join('\u0000');
@@ -373,13 +388,13 @@ function addInput(ctx: Ctx, seg: ClipSeg, kind: 'video' | 'audio'): InputInfo {
   const shared = same.find((e) => !e.kinds.has(kind));
   if (shared) {
     shared.kinds.add(kind);
-    return { index: shared.index, srcStart, srcLen, lead };
+    return { index: shared.index, srcStart, srcLen, lead, t0 };
   }
   ctx.inputs.push(args);
   const index = ctx.inputs.length - 1;
   same.push({ index, kinds: new Set([kind]) });
   ctx.inputKeys.set(key, same);
-  return { index, srcStart, srcLen, lead };
+  return { index, srcStart, srcLen, lead, t0 };
 }
 
 /** Transform placement: returns the extra filters applied after the fit scale, or [] for identity. */
@@ -462,7 +477,7 @@ function fitFilters(ctx: Ctx): string[] {
 /** Builds the exact-length video stream for a clip segment. Returns its label. */
 function videoSegment(ctx: Ctx, seg: ClipSeg): string {
   const totalFrames = seg.extBefore + seg.frames + seg.extAfter;
-  const { index, srcStart, srcLen, lead } = addInput(ctx, seg, 'video');
+  const { index, srcStart, srcLen, lead, t0 } = addInput(ctx, seg, 'video');
   seg.input = index;
   const f: string[] = [];
   if (seg.isImage) {
@@ -472,13 +487,13 @@ function videoSegment(ctx: Ctx, seg: ClipSeg): string {
     // srcStart + n*fd*speed + 0.5/mediaFps (SequencePlayer seeks to frame centres). Keep frames from
     // half a media frame before the in-point and keep their sub-frame phase, biased by
     // c = 0.5/mediaFps - 0.5*fd*speed so that fps= (which keeps the last frame whose pts rounds to a slot)
-    // picks exactly that frame (M-03). pts are container-relative (-copyts -start_at_zero, see addInput).
+    // picks exactly that frame (M-03). Times are container-relative; the input pts are those plus t0 (see addInput).
     const from = Math.max(0, srcStart - lead);
     // +1 µs: a frame starting exactly at the seek time belongs to that time (the editor model floors t*fps + 0.5).
     const c = lead > 0 ? lead - 0.5 * ctx.fd * seg.speed + 1e-6 : 0;
     // settb=AVTB first: setpts truncates to the stream time base (1/1000 in MKV, 1/120 in some MP4s), which
     // would move frames across fps slot boundaries.
-    f.push(`trim=start=${sec(from)}:duration=${sec(srcStart - from + srcLen + 0.25)}`, 'settb=AVTB', `setpts=${ptsMinus(srcStart + c)}`);
+    f.push(`trim=start=${sec(t0 + from)}:duration=${sec(srcStart - from + srcLen + 0.25)}`, 'settb=AVTB', `setpts=${ptsMinus(t0 + srcStart + c)}`);
     if (Math.abs(seg.speed - 1) > 1e-9) f.push(`setpts=PTS/${num(seg.speed)}`);
     // start_time=0 anchors slot 0 at the in-point; earlier frames are dropped and a stream that starts after
     // the in-point is padded with copies of its first frame...
@@ -885,7 +900,7 @@ function atempoChain(speed: number): string[] {
 function audioSegment(ctx: Ctx, seg: ClipSeg): string {
   const totalFrames = seg.extBefore + seg.frames + seg.extAfter;
   const lenSec = totalFrames * ctx.fd;
-  const { index, srcStart, srcLen } = addInput(ctx, seg, 'audio');
+  const { index, srcStart, srcLen, t0 } = addInput(ctx, seg, 'audio');
   seg.input = index;
   const streamIdx = audioStreamIndex(seg, ctx.warnings);
   const inLabel = streamIdx === null ? `[${index}:a:0]` : `[${index}:${streamIdx}]`;
@@ -895,8 +910,9 @@ function audioSegment(ctx: Ctx, seg: ClipSeg): string {
   const pan = clipChannelPan(ctx, seg, streamIdx);
   if (pan) f.push(pan);
   // Rebase to the in-point (not to the stream's first sample) and fill a late start with silence, so a
-  // stream that starts after the container start keeps its offset (M-04). pts are container-relative.
-  f.push(`atrim=start=${sec(srcStart)}:duration=${sec(srcLen + 0.25)}`, `asetpts=${ptsMinus(srcStart)}`, 'aresample=async=1:first_pts=0');
+  // stream that starts after the container start keeps its offset (M-04). The input pts are container-relative
+  // times plus t0 (see addInput).
+  f.push(`atrim=start=${sec(t0 + srcStart)}:duration=${sec(srcLen + 0.25)}`, `asetpts=${ptsMinus(t0 + srcStart)}`, 'aresample=async=1:first_pts=0');
   if (Math.abs(seg.speed - 1) > 1e-9) f.push(...atempoChain(seg.speed));
   f.push(`aresample=${ctx.SR}`, `aformat=sample_fmts=fltp:channel_layouts=${ctx.layout}`);
   const a = seg.clip.audio;

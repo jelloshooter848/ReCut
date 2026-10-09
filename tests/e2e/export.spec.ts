@@ -77,7 +77,11 @@ test('exports the active sequence with the 720p Preview preset', async () => {
     return w.__recut.jobsStore.getState().jobs.find((j) => j.kind === 'export')!;
   });
   expect(job.status, job.error ?? '').toBe('done');
+  // Clean source read inside its length: no FFmpeg / source warnings, no warnings at all.
+  expect((job.result as { warnings?: string[] }).warnings).toEqual([]);
+  expect((job.result as { sourceWarnings?: string[] }).sourceWarnings).toEqual([]);
   await expect(page.getByTestId('export-done')).toBeVisible();
+  await expect(page.getByTestId('export-done-warnings')).toHaveCount(0);
   await expect(page.getByTestId('export-reveal')).toBeVisible();
 
   const out = path.join(outDir, 'out.mp4');

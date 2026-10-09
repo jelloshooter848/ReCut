@@ -17,6 +17,7 @@ import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
 import { ensureDirSafe } from '../safeMkdir';
 import { ocrLanguagePath } from './dataDir';
 import { downloadVerified, renameRetrying, sha256File } from './download';
+import { PRODUCT_NAME } from '../../shared/productIdentity';
 
 /** What the installer needs from the media layer (electron/media/index.ts ocrContext()). */
 export interface OcrLanguageContext {
@@ -118,7 +119,7 @@ export async function installFromFile(queue: JobQueue, code: string, src: string
   let st;
   try { st = await fsp.stat(src); } catch { return { ok: false, error: `${path.basename(src)} was not found.` }; }
   if (!st.isFile()) return { ok: false, error: `${path.basename(src)} is not a file.` };
-  const wrong = `${path.basename(src)} is not the ${lang.name} language file ReCut expects (${lang.file}, ${formatOcrSize(lang.bytes)} from tessdata_fast).`;
+  const wrong = `${path.basename(src)} is not the ${lang.name} language file ${PRODUCT_NAME} expects (${lang.file}, ${formatOcrSize(lang.bytes)} from tessdata_fast).`;
   if (st.size !== lang.bytes) return { ok: false, error: wrong };
   const dest = ocrLanguagePath(ctx.dataDir, code);
   const tmp = `${dest}.${crypto.randomBytes(4).toString('hex')}.tmp`;
