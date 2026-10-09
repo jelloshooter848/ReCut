@@ -131,7 +131,7 @@ export const TrackHeader = memo(function TrackHeader({ seqId, track, top, height
 export function SubtitleLaneHeader({ height, count }: { height: number; count: number }) {
   const highlight = useStore((s) => s.project.settings.highlightSpokenWords);
   return (
-    <div className="tl-th-sub" style={{ height }} title="Subtitle lane (double-click a cue to open the Subtitles panel)">
+    <div className="tl-th-sub" style={{ height }} title="Subtitles: the transcript of the clip on screen (green; it follows the visible clip) and imported subtitles (double-click one to open the Subtitles panel)">
       <Captions /> <span>Subtitles</span><span className="text-faint">{count}</span>
       <button type="button" className={['tl-th-btn', 'tl-th-sub-btn', highlight ? 'on' : ''].join(' ')} aria-pressed={highlight} data-highlight-words
         title={highlight ? 'Highlighting the spoken word in the monitors (click to turn off)' : 'Highlight the spoken word in the monitors'}

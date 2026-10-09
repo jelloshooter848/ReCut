@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { createMediaItem, createProject, createSequence } from '../../shared/project';
 import { defaultAudio, defaultTransform } from '../../shared/timeline';
 import {
-  clipTranscriptCues, clipTranscriptTrack, onScreenTranscriptAt, onScreenTranscriptClip, transcriptIndex, withoutCopiedTranscripts,
+  clipTranscriptCues, clipTranscriptTrack, cuesAt, onScreenTranscript, onScreenTranscriptAt, onScreenTranscriptClip, transcriptIndex, withoutCopiedTranscripts,
 } from '../../shared/transcripts';
 import { layoutTracks, TRANSCRIPT_LANE_PX } from '../../src/panels/timeline/viewMath';
 import { useStore, resetStore } from '../../src/state/store';
@@ -125,6 +125,40 @@ describe('the on-screen transcript', () => {
     seq.videoTracks[0].clips = [];
     seq.audioTracks[0].clips = [clip('vo', interview, 'audio', 0, 100, 0, null)];
     expect(onScreenTranscriptAt(seq, transcriptIndex(seq, md, tracks), 5).map((c) => c.text)).toEqual(['hello there']);
+  });
+});
+
+describe('the Subtitles row (#126): the whole on-screen transcript', () => {
+  it('matches the per-frame on-screen rule at every frame', () => {
+    for (const cutawayTranscript of [true, false]) {
+      const { seq, media: md, tracks } = scene({ cutawayTranscript });
+      seq.audioTracks[1].clips[0].audio = { ...defaultAudio(), muted: !cutawayTranscript }; // a second variant: a muted cutaway
+      const idx = transcriptIndex(seq, md, tracks);
+      const row = onScreenTranscript(seq, idx);
+      for (let f = 0; f < 110; f++) {
+        expect(cuesAt(row, f).map((c) => c.text), `frame ${f}`).toEqual(onScreenTranscriptAt(seq, idx, f).map((c) => c.text));
+      }
+    }
+  });
+
+  it('switches between the clips at the cut and back, cutting a cue that spans the cutaway', () => {
+    const { seq, media: md, tracks } = scene({ cutawayTranscript: true });
+    const row = onScreenTranscript(seq, transcriptIndex(seq, md, tracks));
+    expect(row.map((c) => [c.text, c.start, c.end])).toEqual([
+      ['hello there', 0, 20], ['look at this', 40, 50], ['the end', 70, 90],
+    ]);
+  });
+
+  it('joins a cue cut by a clip edge that does not change the owner, keeping all its words', () => {
+    const { seq, media: md, interview } = scene({ cutawayTranscript: false });
+    seq.videoTracks[1].clips = []; seq.audioTracks[1].clips = [];
+    seq.audioTracks[2].clips.push(clip('music', md[Object.keys(md)[1]], 'audio', 40, 10, 0, null)); // an edge at 40 and 50
+    const t = whisper('w2', interview, [[3, 6, 'we built a monitor']]);
+    t.cues[0].words = [{ start: 3, end: 4, text: 'we' }, { start: 4.5, end: 5, text: 'built' }, { start: 5.2, end: 6, text: 'a monitor' }];
+    const row = onScreenTranscript(seq, transcriptIndex(seq, md, { w2: t }));
+    expect(row).toHaveLength(1);
+    expect(row[0]).toMatchObject({ start: 30, end: 60, text: 'we built a monitor' });
+    expect(row[0].words!.map((w) => w.text)).toEqual(['we', 'built', 'a monitor']);
   });
 });
 
