@@ -84,11 +84,12 @@ The same zero affects, on TS / PS sources:
 - **audio-only export clips** of a stream that starts after the container start (late audio): the sound started at
   the in-point with no lead-in (onset 0.0001 s instead of 0.30 s in the test);
 - **scene detection** (no `-copyts`, `-map 0:v:0`): cuts relative to the video start, 0.541333 s early;
-- **thumbnails** (`-ss T -i`, no `-copyts`, `-map 0:v:0`): with the corrected zero FFmpeg's accurate-seek trim no
-  longer drops the frame before the seek point, so the thumbnail is one frame early (frames 10, 42, 59, 122 instead of
-  11, 43, 60, 123 at 1.0, 2.3, 2.95 and 5.5 s on an all-intra TS with late video). Any TS whose audio starts even
-  slightly before its video (0.021 s in a plain FFmpeg-made TS) is affected: 55 instead of 56 at 2.3 s. The MKV remux
-  gives the right frames;
+- **thumbnails, with FFmpeg 6.1 only** (`-ss T -i`, no `-copyts`, `-map 0:v:0`): with the corrected zero FFmpeg's
+  accurate-seek trim no longer drops the frame before the seek point, so the thumbnail is one frame early (frames 10,
+  42, 59, 122 instead of 11, 43, 60, 123 at 1.0, 2.3, 2.95 and 5.5 s on an all-intra TS with late video). Any TS whose
+  audio starts even slightly before its video (0.021 s in a plain FFmpeg-made TS) is affected: 55 instead of 56 at
+  2.3 s. The MKV remux gives the right frames. FFmpeg 8.1.3 and 9.0.2 give the right frames without `-copyts`, so
+  the bundled builds were not affected (a source checkout on Ubuntu 24.04's FFmpeg 6.1 was);
 - **channel proxies** (no `-copyts`, one audio stream mapped): a late stream lost its leading silence (onset 0.010 s
   instead of 0.50 s), so the preview played it early;
 - **media proxies** (no `-copyts`, `-map 0:v:0` + the audio streams): right in the normal case (video and every
@@ -132,7 +133,8 @@ Every affected command reads with `-copyts` (the file's own timestamps) and subt
   source starting at 0 the filter graph is byte-identical.
 - **Scene detection** (`sceneDetect.ts`): `-copyts`, the probed start subtracted from each cut (in whole
   microseconds). `SCENE_VERSION` 3, so cached cuts are recomputed.
-- **Thumbnails** (`thumbs.ts`): `-copyts` (single and batch). `THUMB_VERSION` `covering-frame-display-shape-v4`.
+- **Thumbnails** (`thumbs.ts`): `-copyts` (single and batch). `THUMB_VERSION` unchanged: only FFmpeg 6.1 cached
+  wrong thumbnails, and re-extracting every user's thumbnails for that is not worth it.
 - **Channel proxies** (`channelProxy.ts`): `-copyts` and `asetpts=PTS-<start>/TB` before the pan, so
   `aresample=async=1:first_pts=0` pads a late stream from the container start. `CHANNEL_PROXY_VERSION` 2.
 - **Media proxies** (`proxy.ts`): `-copyts -itsoffset -<start>` and `-fps_mode cfr` (what FFmpeg picks for mp4
@@ -153,19 +155,24 @@ On a TS whose video starts 0.541333 s after its audio (25 fps), FFmpeg 6.1.1:
   0.30 s).
 - channel proxy of that stream: sound from 0.010 s → 0.50 s (MKV remux: 0.50 s).
 - scene cuts: 1.0, 2.0, 3.0 → 1.541333, 2.541333, 3.541333 (MKV remux the same).
-- thumbnails (all-intra TS, late video) at 1.0, 2.3, 2.95, 5.5 s: frames 10, 42, 59, 122 → 11, 43, 60, 123.
+- thumbnails (all-intra TS, late video, FFmpeg 6.1) at 1.0, 2.3, 2.95, 5.5 s: frames 10, 42, 59, 122 → 11, 43, 60,
+  123.
 - media proxy mapping video + the later of two audio streams: video 7 frames → 14 frames from the start, the same
   as the all-streams proxy.
 
-Also changed, and checked in Chromium: a source with a **negative** container start, such as an FFmpeg-made MKV with
-AAC (start -0.021 s). `-start_at_zero` shifted it by +0.021 s, so it exported one frame early at 24, 25 and 30 fps
-(source 2 s: frame 47 instead of 48 at 24 fps, 49 instead of 50 at 25 fps, 59 instead of 60 at 30 fps; video-only
-and linked). The preview plays it at its file times (the container start is clamped at 0; Chromium presents frame N
-at media time N/24), so the export now matches it. Proxies of such a file drop the 21 ms of priming before 0 instead
-of shifting the audio 21 ms late.
+Also changed, and checked in Chromium: a source with a **negative** container start. `-start_at_zero` shifted it by
+minus that start, so it exported early by it. With FFmpeg 6.1 an MKV made with AAC starts at -0.021 s (the priming):
+one frame early at 24, 25 and 30 fps (source 2 s: frame 47 instead of 48 at 24 fps, 49 instead of 50 at 25 fps, 59
+instead of 60 at 30 fps; video-only and linked). FFmpeg 8.1 and 9.0 start such an MKV at 0. The regression test sets
+the start explicitly instead (PCM audio from -0.1 s, `-avoid_negative_ts disabled`): two frames early before the fix
+on every build (source 2 s: 48..72 instead of 50..74). The preview plays such a file at its file times (the
+container start is clamped at 0; Chromium presents frame N at media time N/24), so the export now matches it.
+Proxies of such a file drop the audio before 0 instead of shifting the audio late by it.
 
 ### Regression test proof
-`tests/unit/ts-start-offset.test.ts` on 8d72c55 (fix stashed):
+`tests/unit/ts-start-offset.test.ts` with the source files of 0cf4266, FFmpeg 6.1.1 (the negative-start rows are
+from the fixture of the first version of this test, AAC priming; with the explicit -0.1 s fixture they fail the same
+way: 48..72 instead of 50..74):
 ```
 × a video-only clip: -copyts, and the trim / setpts add the container start
   → expected [ '-hide_banner', '-nostdin', …(48) ] to not include '-start_at_zero'
@@ -179,7 +186,7 @@ of shifting the audio 21 ms late.
 ✓ TS, late video: linked picture + sound clip shows the editor's frames
 ✓ MKV remux of the same streams: video-only / linked
 ✓ MP4 starting at 0: video-only / linked
-× MKV with a negative container start (AAC priming): video-only / linked
+× MKV with a negative container start: video-only / linked
   "in 2: got 49..73 (25), want 50..74 (25)"
 × an audio-only clip starts its sound where the MKV remux does → expected 0.000104 to be greater than 0.28
 × the channel proxy is padded to the container start → expected 0.010125 to be greater than 0.48
@@ -188,7 +195,9 @@ of shifting the audio 21 ms late.
 × a media proxy that maps only some streams of a TS stays on the container start
 Tests  13 failed | 7 passed (20)
 ```
-On the fix: 20/20, with FFmpeg 6.1.1 (system), 8.1.3-Jellyfin (the bundled build) and n9.0.2 (BtbN).
+On the fix: 20/20, with FFmpeg 6.1.1 (system), 8.1.3-Jellyfin (the bundled macOS build) and n9.0.2 (BtbN, the
+bundled Linux build). With 8.1.3 and 9.0.2 the old code passes the thumbnail test (see Verification): 12 failed |
+8 passed with 9.0.2.
 
 ### Tests run
 - `npm run typecheck`: clean.
@@ -206,15 +215,14 @@ On the fix: 20/20, with FFmpeg 6.1.1 (system), 8.1.3-Jellyfin (the bundled build
 - `tests/unit/centre-channel.test.ts` channel proxy args: `-copyts` first, cache name `_v2`.
 - `tests/unit/collect-roundtrip.test.ts`, `tests/e2e/collect.spec.ts`: collected channel proxy names `_v2` (from
   `CHANNEL_PROXY_VERSION`).
-- `tests/unit/media-move-cache.test.ts`: the legacy thumbnail directory hash uses the new `THUMB_VERSION`.
 None of these encoded the wrong timing; they pinned the argument shape or the cache version.
 
 ### Compatibility risks
 - Exports of TS / PS sources with late video (video-only clips) or late audio (audio-only clips) change to the right
-  frames / timing; so do sources with a negative container start (one frame later at 24-30 fps when the start is
-  more than half a frame, e.g. FFmpeg-made MKV with AAC). Sources starting at 0 or with a positive start in other
+  frames / timing; so do sources with a negative container start (later by that start: one frame at 24-30 fps for
+  an FFmpeg 6.1 MKV with AAC). Sources starting at 0 or with a positive start in other
   containers export exactly as before (byte-identical graphs at start 0).
-- Caches: all thumbnails and filmstrips are re-extracted once (THUMB_VERSION), cached scene cuts are recomputed on
+- Caches: cached scene cuts are recomputed on
   the next detection (SCENE_VERSION), and channel proxies are re-encoded when next requested (CHANNEL_PROXY_VERSION).
   Scene cuts already saved in a project (`detectedScenes`) and a channel proxy already recorded as ready in a project
   keep their old values until detection is run again or the proxy is rebuilt (Clip Inspector). Media proxies are not

@@ -7,13 +7,14 @@
 | Area | media/FFmpeg (electron/media/probe.ts streamStartOffset), thumbnails, export |
 | Reported by / date | Claude (agent), found while fixing [2026-10-09-ts-late-video-export-early](../closed/2026-10-09-ts-late-video-export-early.md), 2026-10-09 |
 | Found on commit | 0cf4266 plus the fix branch `claude/fix-ts-export-start-offset` (not changed by it) |
-| Environment | Ubuntu 24.04.4 LTS container, FFmpeg 6.1.1-3ubuntu5, source checkout |
+| Environment | Ubuntu 24.04.4 LTS container, FFmpeg 6.1.1-3ubuntu5 (the fixture below needs 6.1; see Summary for other builds), source checkout |
 
 ## Report
 
 ### Summary
-An MKV made by FFmpeg with AAC (or Opus) audio has a negative container start: the audio priming starts at
--0.021 s, the video at 0. `probeMedia` clamps the container start to 0 (`MediaProbe.startTime = 0`, so source time t
+A file whose audio starts before its video at 0 has a negative container start. An MKV made by FFmpeg 6.1 with AAC
+audio is one (the priming starts at -0.021 s; FFmpeg 8.1 and 9.0 write such an MKV from 0), as is any MKV muxed with
+an audio offset and `-avoid_negative_ts disabled`. `probeMedia` clamps the container start to 0 (`MediaProbe.startTime = 0`, so source time t
 is file time t, as Chromium plays it), but measures `video.startTime` from the unclamped start: 0 - (-0.021) =
 0.021 s. Code that places the video with `video.startTime` then puts it 21 ms late.
 

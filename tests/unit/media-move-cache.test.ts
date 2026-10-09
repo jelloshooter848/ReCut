@@ -159,7 +159,7 @@ describe('derived media after moving a source file', () => {
     const thumbsRoot = path.dirname(path.dirname(thumb));
     const contentThumbDir = path.dirname(thumb);
     const { createHash } = await import('node:crypto');
-    const legacyThumbDir = path.join(thumbsRoot, createHash('sha1').update(`${keys.legacyKey}|covering-frame-display-shape-v4`).digest('hex'));
+    const legacyThumbDir = path.join(thumbsRoot, createHash('sha1').update(`${keys.legacyKey}|covering-frame-display-shape-v3`).digest('hex'));
     fs.renameSync(contentThumbDir, legacyThumbDir);
     const wc = waveformCachePaths(keys.key), wl = waveformCachePaths(keys.legacyKey);
     fs.renameSync(wc.pk, wl.pk);

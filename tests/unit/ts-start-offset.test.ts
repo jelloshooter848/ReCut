@@ -6,12 +6,13 @@
  * streams the command maps (fftools correct_input_start_times), and `-copyts -start_at_zero` (or no `-copyts`) uses
  * that as zero. An export input that mapped only a late video stream was rebased to the video start: the clip came out
  * early by the offset (12-14 frames at 25 fps for a 0.5 s delay). Linked picture + sound sharing one input, and an MKV
- * of the same streams, were exact. The same zero moved scene-detection cuts, thumbnails (one frame early), channel
- * proxies (one audio stream) and media proxies that leave out the file's earliest stream.
+ * of the same streams, were exact. The same zero moved scene-detection cuts, thumbnails (one frame early, FFmpeg 6.1),
+ * channel proxies (one audio stream) and media proxies that leave out the file's earliest stream.
  *
  * The export now opens inputs with `-copyts` alone and subtracts the probed container start (clamped at 0, the preview's
- * zero) in its filters. That also moved sources with a negative container start (an FFmpeg-made MKV with AAC), which
- * `-start_at_zero` had shifted by the priming: they exported one frame early at 24-30 fps.
+ * zero) in its filters. That also moved sources with a negative container start (an MKV whose audio starts before
+ * its video, as AAC priming does in FFmpeg 6.1's MKVs), which `-start_at_zero` had shifted by that lead: they exported
+ * early by it (one frame for the 0.021 s of AAC priming at 24-30 fps).
  *
  * Checked here on real FFmpeg output: exported frame indices (12-bit gray code burned into the top half) for a TS with
  * late video, its MKV remux, a start-0 MP4 and a negative-start MKV, video-only and linked; an audio-only clip and a
@@ -35,7 +36,7 @@ import { makeClip } from '@shared/timeline';
 import { buildRenderGraph } from '../../electron/export/renderGraph';
 import { runExport } from '../../electron/export/exporter';
 import { probeMedia } from '../../electron/media/probe';
-import { getFfmpegPath } from '../../electron/media/ffmpeg';
+import { getFfmpegPath, getFfprobePath } from '../../electron/media/ffmpeg';
 import { buildChannelProxyArgs, startChannelProxyJob } from '../../electron/media/channelProxy';
 import { buildProxyArgs } from '../../electron/media/proxy';
 import { startSceneDetectJob } from '../../electron/media/sceneDetect';
@@ -44,6 +45,7 @@ import { JobQueue } from '../../electron/jobs/jobQueue';
 
 const exec = promisify(execFile);
 const FFMPEG = getFfmpegPath() ?? 'ffmpeg';
+const FFPROBE = getFfprobePath() ?? 'ffprobe';
 const F25: Rational = { num: 25, den: 1 };
 const W = 192, H = 64;
 
@@ -188,10 +190,12 @@ describe('exported frames: a TS whose video starts 0.5 s after its audio, and so
     await ff(['-i', tsFile, '-map', '0', '-c', 'copy', mkvFile]);
     await ff(['-f', 'lavfi', '-i', GRAY_VIDEO, '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=12',
       '-map', '0:v', '-map', '1:a', ...VIDEO_ENC, '-c:a', 'aac', '-ac', '2', mp4File]);
-    // An MKV made by FFmpeg with AAC: the audio priming gives the container a negative start (-0.021 s).
+    // An MKV whose audio starts 0.1 s before its video: a negative container start (-0.1 s). Set explicitly (PCM audio
+    // moved by -itsoffset, FFmpeg's shift to non-negative timestamps turned off) rather than through AAC priming, which
+    // only FFmpeg 6.1 writes into an MKV this way (-0.021 s; 8.1 and 9.0 start such a file at 0).
     const negFile = path.join(dir, 'negstart.mkv');
-    await ff(['-f', 'lavfi', '-i', GRAY_VIDEO, '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=12',
-      '-map', '0:v', '-map', '1:a', ...VIDEO_ENC, '-c:a', 'aac', '-ac', '2', negFile]);
+    await ff(['-f', 'lavfi', '-i', GRAY_VIDEO, '-itsoffset', '-0.1', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=12',
+      '-map', '0:v', '-map', '1:a', ...VIDEO_ENC, '-c:a', 'pcm_s16le', '-ac', '2', '-avoid_negative_ts', 'disabled', negFile]);
     [tsV, mkvV, mp4, negMkv] = await Promise.all([probed('tsV', tsFile), probed('mkvV', mkvFile), probed('mp4', mp4File), probed('neg', negFile)]);
   }, 120_000);
 
@@ -213,14 +217,19 @@ describe('exported frames: a TS whose video starts 0.5 s after its audio, and so
     { name: 'MP4 starting at 0', media: () => mp4, vStart: probedStart },
     // The container start is clamped at 0, so source time t is file time t and the video's frame k is at k/25, as
     // Chromium plays it (requestVideoFrameCallback mediaTime N/24 for frame N of a 24 fps variant). The probe's
-    // video.startTime (0.021, measured from the negative start) is not where the video is on that timeline
+    // video.startTime (0.1, measured from the negative start) is not where the video is on that timeline
     // (bugs/open/2026-10-09-negative-start-video-start-offset.md).
-    { name: 'MKV with a negative container start (AAC priming)', media: () => negMkv, vStart: () => 0 },
+    { name: 'MKV with a negative container start (audio from -0.1 s)', media: () => negMkv, vStart: () => 0 },
   ];
 
-  it('the negative-start fixture', () => {
+  it('the negative-start fixture: container start -0.1 s, video at 0', async () => {
+    const { stdout } = await exec(FFPROBE, ['-v', 'error', '-show_entries', 'format=start_time:stream=codec_type,start_time', '-of', 'json', negMkv.path]);
+    const j = JSON.parse(stdout) as { format: { start_time: string }; streams: { codec_type: string; start_time: string }[] };
+    expect(Number(j.format.start_time)).toBeCloseTo(-0.1, 3);
+    expect(Number(j.streams.find((x) => x.codec_type === 'video')!.start_time)).toBeCloseTo(0, 3);
+    expect(Number(j.streams.find((x) => x.codec_type === 'audio')!.start_time)).toBeCloseTo(-0.1, 3);
     expect(negMkv.probe!.startTime).toBe(0);
-    expect(negMkv.probe!.video!.startTime).toBeGreaterThan(0.02);
+    expect(negMkv.probe!.video!.startTime).toBeCloseTo(0.1, 3);
   });
 
   for (const c of cases) {
@@ -311,6 +320,7 @@ describe('scene detection of a TS whose video starts 0.5 s after its audio', () 
 describe('thumbnails of a TS whose video starts 0.5 s after its audio', () => {
   it('show the frame covering the time (what <video> shows), as for the MKV remux', async () => {
     // All-intra, so the seek itself lands on any frame and only FFmpeg's drop of the frames before the seek point counts.
+    // Without -copyts FFmpeg 6.1 showed the frame before (8.1 and 9.0 did not).
     const tsFile = path.join(dir, 'thumbs.ts'), mkvFile = path.join(dir, 'thumbs.mkv');
     await ff(['-itsoffset', '0.5', '-f', 'lavfi', '-i', GRAY_VIDEO, '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=12.5',
       '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '8', '-g', '1', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-f', 'mpegts', tsFile]);

@@ -100,10 +100,9 @@ function timeKey(time: number): number {
 /**
  * Per-file thumbnail directory name: the file's cache key, re-hashed with the extraction version so entries
  * written by an older extraction are never served again: before M-10 they held the frame AFTER a mid-frame time
- * (v2), before v3 an anamorphic source's thumbnail had its stored (squeezed) shape, before v4 an MPEG-TS / MPEG-PS
- * thumbnail was one frame early when the video did not start with the file (see extractOne).
+ * (v2), before v3 an anamorphic source's thumbnail had its stored (squeezed) shape.
  */
-const THUMB_VERSION = 'covering-frame-display-shape-v4';
+const THUMB_VERSION = 'covering-frame-display-shape-v3';
 function thumbDirName(key: string): string {
   return createHash('sha1').update(`${key}|${THUMB_VERSION}`).digest('hex');
 }
@@ -215,9 +214,10 @@ export function thumbScaleFilter(width: number): string {
  * One ffmpeg invocation: seek to `time`, grab one frame, write JPEG to `out` (via .part). `signal` kills it.
  *
  * `-copyts`: FFmpeg drops the frames decoded before the `-ss` point by comparing them with the seek time on the
- * container's timeline. Without `-copyts`, for MPEG-TS / MPEG-PS it rebases the input to the start of the mapped
+ * container's timeline. Without `-copyts`, FFmpeg 6.1 rebases an MPEG-TS / MPEG-PS input to the start of the mapped
  * streams instead (the video alone), and when the video does not start with the file (audio first, as usual) that
- * comparison let the frame before the seek point through: the thumbnail was one frame early.
+ * comparison let the frame before the seek point through: the thumbnail was one frame early. (8.1 and 9.0 got it
+ * right without `-copyts`; the bundled builds were not affected, so THUMB_VERSION did not change.)
  */
 async function extractOne(file: string, time: number, width: number, out: string, signal?: AbortSignal): Promise<boolean> {
   const part = `${out}.part`;
