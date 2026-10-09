@@ -231,13 +231,13 @@ with the budget in brackets.
 
 | Row (tier) | R1 | R2 | B1–B3 | A1–A3 (0.7.0) | V1 | V2 | Verdict |
 |---|---|---|---|---|---|---|---|
-| long tasks during scrub multi-hour @ 1 px/frame, no selection (gate, == 0) | 2 | 3 | 0, 0, 0 | 5, 4, 3 | 4 | 0 | Flaky and pre-existing: no change against 0.7.0, which fails 3/3; see `bugs/open/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md` |
+| long tasks during scrub multi-hour @ 1 px/frame, no selection (gate, == 0) | 2 | 3 | 0, 0, 0 | 5, 4, 3 | 4 | 0 | Flaky and pre-existing: no change against 0.7.0, which fails 3/3. Fixed in the bench on 9 October (see below and `bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md`) |
 | long tasks during scrub @ 1 px/frame, within the visible page, no selection (gate, == 0) | 0 | 1 (56 ms) | 0, 0, 0 | 0, 0, 0 | 0 | 0 | Noise: one task 6 ms over the 50 ms limit in the run with outside load |
 | wheel ×100 @ 1 px/frame: median / fps / real mouse.wheel long tasks (gates) | 7.1 ms / 55.6 / 0 | 6.1 / 57.0 / 0 | pass | pass | 9.7 / 48.7 / 1 | 6.4 / 58.6 / 0 | Noise: V1 overlapped my unlocked test |
-| main filmstrip 48 frames cold (guardrail, ≤ 3,000 ms) | 3,036 | 2,859 | (node) | (node) | — | — | Pre-existing: the baseline median is 2,984 ms, over budget in 1 of its 2 seed runs; `electron/media/thumbs.ts` is unchanged since 0.7.0 |
+| main filmstrip 48 frames cold (guardrail, ≤ 3,000 ms) | 3,036 | 2,859 | (node) | (node) | — | — | Pre-existing: the baseline median is 2,984 ms, over budget in 1 of its 2 seed runs; `electron/media/thumbs.ts` is unchanged since 0.7.0. Open: `bugs/open/2026-10-09-perf-filmstrip-cold-borderline.md` |
 | autosave round trip while playing (guardrail, ≤ 500 ms) | 574 | 658 | 764, 611, 617 | 618, 657, 569 | 274 | 231 | Bench artifact; fixed below |
 | store insertFromSource overwrite (p95) (guardrail, regression) | 1.65 ms | 6.58 ms | (node) | (node) | — | — | Noise: R2's node suite ran at load 22; two more store-only runs gave 1.90 and 1.45 ms (baseline 1.45) |
-| pool: media elements created during 10 s playback (guardrail, count, baseline 0) | 1 | 2 | 2, 2, 2 | 1, 2, 1 | 2 | 0 | Not a 0.8.0 change: the row reads 0–2 on every build since the seed (1 and 2 on 7 October code equal to the baseline's playback code); the seed's 0 / 0 was the low end. The A/B calls it `same`. |
+| pool: media elements created during 10 s playback (guardrail, count, baseline 0) | 1 | 2 | 2, 2, 2 | 1, 2, 1 | 2 | 0 | Not a 0.8.0 change: the row reads 0–2 on every build since the seed (1 and 2 on 7 October code equal to the baseline's playback code); the seed's 0 / 0 was the low end. The A/B calls it `same`. Open: `bugs/open/2026-10-09-perf-pool-elements-created-during-playback.md` |
 
 **The four rows that missed on a loaded run earlier today** (load 4.1) all pass on quiet runs:
 
@@ -278,6 +278,65 @@ filmstrip cold is the pre-existing borderline row in the table above. The multi-
 not reproducibly green on this container: the multi-hour scrub long-task gate is flaky on both 0.7.0 and 0.8.0, and
 filmstrip cold sits on its budget. That is filed in the bug above for the owner, as a 1.0 item ("The performance gate
 passes").
+
+### Multi-hour scrub long tasks: root cause and fix (9 October 2026)
+
+**This is a fix to the test harness, not to the app.** The flaky gate `long tasks during scrub multi-hour @ 1 px/frame,
+no selection` measured an artifact of how Playwright launches Electron, which the shipped app never hits. No app code,
+budget, tier, row name or baseline changed. Record: `bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md`.
+
+- **What the long tasks were.** They were ordinary page-flip frames: about 15 ms of main-thread work at 60 fps, with
+  the thread about 95 % busy. In each long task every phase (JS, style, layout, paint, layerize) ran 4–8× its usual
+  cost for the same work, with no GC and no extra work. Thread CPU time equalled wall time, and the thread had no
+  run-queue wait: the whole renderer ran slower, it was not preempted.
+- **Why.** Playwright's Electron loader appends `--disable-dev-shm-usage` (`playwright-core`
+  `lib/server/electron/loader.js`). With it, Chromium creates its shared memory (decoded video frames,
+  software-compositor tiles, IPC buffers) as deleted files in `TMPDIR`, and `/tmp` is the ext4 disk on this
+  container. Scrubbing dirtied 400–800 MB of these file pages in the renderer. About 30 s later the kernel's flush
+  worker wrote them back, and while it did, the renderer ran 4–6× slower for 0.2–0.5 s. In all 5 sampled runs, the
+  long tasks (3 runs) or their absence (2 runs) lined up exactly with that writeback. The app's autosaves added only
+  about 30 MB each. The timing of the flush against the 3 s pass decided pass or fail, hence about half the runs.
+- **The shipped app never gets the switch.** `electron/main.ts` appends only `no-sandbox` (when given) and
+  `enable-blink-features`. A normal launch keeps Chromium's shared memory in `/dev/shm` or memfd, in RAM.
+- **Fix.** `tests/perf/_launch-env.mjs`: `electron-perf.mjs` and every script using `_electron-common.mjs` launch
+  the app with `TMPDIR` on a per-run directory in `/dev/shm` (Linux), so the regions are RAM-backed again.
+  - It is used only when `/dev/shm` has at least 2 GiB free. Otherwise it warns and keeps the old behaviour: a full
+    run keeps up to 0.60 GB live there, and a too-small tmpfs would crash Chromium, which is why Playwright adds the
+    switch in the first place.
+  - `RECUT_PERF_DISK_SHM=1` restores the old behaviour.
+  - No CI workflow runs `tests/perf`; Windows is unaffected.
+
+**A/B of the one variable (same machine, interleaved, locked, quiet).** A harness reproduced the scrub in about 40 s
+per run: big project, 20 distinct media copies as in the bench, the multi-hour sequence, the bench's sweep driver.
+Each run has a timing pass and a counting pass.
+
+| Shared memory in | Runs | Passes with long tasks | Long tasks (ms) | Renderer disk writes per run |
+|---|---|---|---|---|
+| `/tmp` (disk), before | 8 | 4 of 16 | 56, 63, 58, 68 | 435–463 MB |
+| `/dev/shm` (tmpfs), after | 6 | 0 of 12 | — | 0 |
+
+**Full bench.**
+
+| | Runs | The row (long tasks) |
+|---|---|---|
+| Before (37912dd) | 11 | 0, 4, 3, 2, 0, 0, 4, 0, 3, 0, 3 (fails in 6 of 11; tasks of 50–101 ms) |
+| After | 5 single runs, plus `perf:check --runs 2` | 0 in all 7 |
+
+**`npm run perf:check -- --runs 2` after the fix.**
+- Gates: **98 of 98 PASS** in both runs, with raw verdicts (the host calibrated within ±10 %).
+- Guardrails: 132 of 134.
+  - The pool row read 2 and 2: open, `bugs/open/2026-10-09-perf-pool-elements-created-during-playback.md`.
+  - `filmstrip 48 frames warm` read 5.6 and 13.8 ms against 5.2 ms. It is noise: the node suite is unchanged, and
+    three locked reruns read 4.35, 4.73 and 3.65 ms.
+- `filmstrip 48 frames cold` passed at 2,528 and 2,706 ms but stays borderline:
+  `bugs/open/2026-10-09-perf-filmstrip-cold-borderline.md`.
+
+**Side finding.** In 1 of 11 runs (possibly 2) the Program monitor issued no seeks during the whole scrub:
+`bugs/open/2026-10-09-program-scrub-stalls-on-unready-element.md`.
+
+The same artifact applies to every Playwright-launched suite (e2e, attack). They check correctness, not timing, and
+are unchanged. Perf results recorded before this fix on a disk-backed `/tmp` include the writeback noise. Mostly the
+page-flip and decode-heavy rows were affected.
 
 ## How to run
 
