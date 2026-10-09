@@ -516,6 +516,13 @@ jobs:
           echo "installed: $(dpkg-query -W -f='${Package} ${Version}, ' xvfb $optional 2> /dev/null)"
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
+      # Would ReCut's download policy (electron/net/download.ts, WHISPER_DOWNLOAD_POLICY / OCR_DOWNLOAD_POLICY) accept
+      # the real redirect chain of every pinned Whisper model and two OCR language files from this runner? First byte
+      # only (Range: bytes=0-0), the app's own redirect loop; fails when the policy refuses a hop (bugs/closed,
+      # issue #102), so a storage move on Hugging Face's side shows up here before users hit it.
+      - name: Download redirect check (Hugging Face, GitHub raw)
+        timeout-minutes: 5
+        run: node scripts/check-model-redirects.mjs
 
       # The same build is bundled into the AppImage (resources/ffmpeg -> <resources>/ffmpeg) and put on PATH for the
       # unit and e2e tests, so the tests exercise the FFmpeg users get. The app run from the checkout also finds it as
@@ -809,6 +816,13 @@ jobs:
 
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
+      # Would ReCut's download policy (electron/net/download.ts, WHISPER_DOWNLOAD_POLICY / OCR_DOWNLOAD_POLICY) accept
+      # the real redirect chain of every pinned Whisper model and two OCR language files from this runner? First byte
+      # only (Range: bytes=0-0), the app's own redirect loop; fails when the policy refuses a hop (bugs/closed,
+      # issue #102), so a storage move on Hugging Face's side shows up here before users hit it.
+      - name: Download redirect check (Hugging Face, GitHub raw)
+        timeout-minutes: 5
+        run: node scripts/check-model-redirects.mjs
 
       # The x64 leg runs x86_64 programs on this Apple Silicon runner: Rosetta 2 must be installed.
       - name: Rosetta 2

@@ -145,15 +145,37 @@ function contentRangeStart(h: string | null): number | null {
   return m ? Number(m[1]) : null;
 }
 
-interface Opened { res: Response; url: string }
+/** A response opened by `openFollowingRedirects`, and the URL it came from (after any redirects). */
+export interface Opened { res: Response; url: string }
+
+/** One response on the way to the file: its URL, status and (for a redirect) where it points. */
+export interface DownloadHop { url: string; status: number; location?: string }
+
+export interface OpenOptions {
+  url: string;
+  policy: DownloadPolicy;
+  fetch: MediaFetch;
+  signal?: AbortSignal;
+  allowLoopback?: boolean;
+  /** Request headers (e.g. a Range). */
+  headers?: Record<string, string>;
+  /** Called with every response, redirects included, before the policy decides on it (diagnostics, CI check). */
+  onHop?: (hop: DownloadHop) => void;
+}
 
 function originOf(url: string): string {
   try { return new URL(url).origin; } catch { return 'another host'; }
 }
 
-/** Fetch with manual redirects: same origin, or a host in `policy.redirectHosts`. */
-async function fetchFollowingRedirects(o: DownloadVerifiedOptions, headers: Record<string, string>): Promise<Opened> {
+/**
+ * Request `o.url` with manual redirects, following one only when the policy allows it (same origin, or a host in
+ * `policy.redirectHosts`), at most MAX_REDIRECTS times. Resolves with the first non-redirect response; throws
+ * "refusing …" for a URL the policy refuses, "network error: …" when the request fails, DownloadCanceledError on cancel.
+ * scripts/check-model-redirects.mjs runs this against the real servers in CI.
+ */
+export async function openFollowingRedirects(o: OpenOptions): Promise<Opened> {
   let url = o.url;
+  const headers = o.headers ?? {};
   const origin = new URL(o.url).origin;
   for (let hop = 0; ; hop++) {
     const allowed = hop === 0 ? isAllowedStartUrl(url, o.policy, o.allowLoopback) : isAllowedRedirect(url, origin, o.policy, o.allowLoopback);
@@ -165,6 +187,8 @@ async function fetchFollowingRedirects(o: DownloadVerifiedOptions, headers: Reco
       if (o.signal?.aborted) throw new DownloadCanceledError();
       throw new Error(`network error: ${e instanceof Error ? e.message : String(e)}`);
     }
+    const location = res.headers.get('location') ?? undefined;
+    o.onHop?.({ url, status: res.status, ...(location ? { location } : {}) });
     // A client that followed a redirect anyway: the final URL must still be one we would have followed.
     if (res.url && res.url !== url && !isAllowedRedirect(res.url, origin, o.policy, o.allowLoopback)) {
       await res.body?.cancel().catch(() => undefined);
@@ -173,7 +197,7 @@ async function fetchFollowingRedirects(o: DownloadVerifiedOptions, headers: Reco
     if (res.type === 'opaqueredirect') throw new Error('refusing a redirect to an unknown location');
     if (res.status >= 300 && res.status < 400 && res.status !== 304) {
       await res.body?.cancel().catch(() => undefined);
-      const loc = res.headers.get('location');
+      const loc = location;
       if (!loc) throw new Error(`HTTP ${res.status} without a location`);
       const next = new URL(loc, url);
       if (!isAllowedRedirect(next.toString(), origin, o.policy, o.allowLoopback)) throw new Error(`refusing redirect to ${next.origin}`);
@@ -212,7 +236,7 @@ export async function downloadVerified(o: DownloadVerifiedOptions): Promise<void
 
     let opened: Opened;
     try {
-      opened = await fetchFollowingRedirects(o, headers);
+      opened = await openFollowingRedirects({ url: o.url, policy: o.policy, fetch: o.fetch, signal: o.signal, allowLoopback: o.allowLoopback, headers });
     } catch (e) {
       if (e instanceof DownloadCanceledError) await removeQuietly(part);
       throw e;
