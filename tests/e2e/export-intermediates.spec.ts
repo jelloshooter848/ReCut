@@ -76,6 +76,7 @@ test('exports ProRes 422 in MOV from the dialog', async () => {
   await page.getByTestId('export-start').click();
   const job = await waitForExport(1);
   expect(job.status, job.error ?? '').toBe('done');
+  expect((job.result as { sourceWarnings?: string[] }).sourceWarnings).toEqual([]); // clean sources: nothing from FFmpeg
   await expect(page.getByTestId('export-done')).toBeVisible();
 
   const out = path.join(outDir, 'pro.mov');
@@ -105,6 +106,7 @@ test('exports one WAV per audio track from the dialog', async () => {
   await page.getByTestId('export-start').click();
   const job = await waitForExport(2);
   expect(job.status, job.error ?? '').toBe('done');
+  expect((job.result as { sourceWarnings?: string[] }).sourceWarnings).toEqual([]); // clean sources: nothing from FFmpeg
   await expect(page.getByTestId('export-done-files')).toContainText('stems - A2 Music.wav');
 
   const paths = ['stems - A1.wav', 'stems - A2 Music.wav'].map((f) => path.join(outDir, f));
