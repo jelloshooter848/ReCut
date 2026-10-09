@@ -148,6 +148,11 @@ search use. It runs on your computer: **nothing is uploaded, and transcribing ne
    computers without internet access); ReCut checks every model against a fixed checksum before installing or using
    it. The footer shows how much disk space the models use; **Remove** deletes one, **Open folder** shows where they
    are (`whisper/models` in ReCut's user-data folder, so updates keep them).
+   Models come from Hugging Face (huggingface.co, which hands the file to one of its storage hosts under hf.co); a
+   firewall or filter that blocks either domain stops the download. A download that receives nothing for 60 seconds
+   stops with "the download stalled"; **Resume** continues it. When a download fails, the message names the host or
+   the HTTP error; if your network cannot reach Hugging Face, download the `ggml-<model>.bin` file elsewhere and use
+   **Install from file…**.
 
    | Model | Size | |
    |---|---|---|
