@@ -6,7 +6,7 @@
  * Layout of a collected project, inside the destination folder the user picked:
  *
  *   <Project name>/
- *     <Project name>.recut
+ *     <Project name>.recut           (productIdentity PROJECT_EXTENSION)
  *     Media/        the media files
  *     Subtitles/    subtitle files the project imported (option)
  *     Proxies/      ready proxies (option): `<media file name>_<proxy suffix>`, e.g. `title_t00.mkv_540p_all.mp4`;
@@ -28,6 +28,7 @@
  * Pure: no DOM, no Node. Paths are handled as strings (POSIX, or Windows when they look like Windows paths).
  */
 import type { ID, MediaItem, Project, ProxyInfo, Sequence } from './model';
+import { PROJECT_EXTENSION } from './productIdentity';
 
 export type CollectScope = 'sequences' | 'all';
 
@@ -380,7 +381,7 @@ export function planCollect(project: Project, options: CollectOptions, stat: (pa
   const unusedMedia = Object.values(project.media).filter((m) => m.path && !chosen.has(m.id)).length;
   return {
     folderName,
-    projectFileName: `${folderName}.recut`,
+    projectFileName: `${folderName}.${PROJECT_EXTENSION}`,
     entries,
     missing,
     totalBytes: entries.reduce((a, e) => a + e.size, 0),

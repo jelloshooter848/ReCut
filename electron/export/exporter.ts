@@ -25,6 +25,7 @@ import { ffmpegMissingMessage } from '../../shared/ipc';
 import { CHUNK_MAX_AUDIO_SEGMENTS, CHUNK_MAX_SEGMENTS, planExportChunks, sampleIndexAt, shouldChunk, type ExportChunk } from './chunks';
 import { exportSourceWarnings, FfmpegProblemCollector, ffmpegInputPaths, planSourceEndChecks, type FfmpegRunProblems } from './ffmpegWarnings';
 import { checkSourceEnds } from './sourceCheck';
+import { envVar } from '../env';
 
 // Canonical form of a path for comparisons (realpath, else realpath(dir)/basename, else path.resolve); renderGraph
 // folds case. Shared with the subtitle export check (electron/pathSafety.ts).
@@ -667,7 +668,7 @@ function runFfmpeg(args: string[], durationSec: number, onProgress?: ExportProgr
 
 /** No-progress limit for one FFmpeg run (env RECUT_EXPORT_STALL_MS, default 2 minutes). */
 export function exportStallMs(): number {
-  const v = Number(process.env.RECUT_EXPORT_STALL_MS);
+  const v = Number(envVar('EXPORT_STALL_MS'));
   return Number.isFinite(v) && v > 0 ? v : 120_000;
 }
 

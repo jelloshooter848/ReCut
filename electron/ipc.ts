@@ -29,6 +29,8 @@ import type {
 import { encodeProjectWire, isAutosaveStreamRef, SAVE_STREAM_IPC as IPC_SAVE, type SaveBeginResult } from '../shared/projectWire';
 import * as io from './project/io';
 import * as fsApi from './fs';
+import { legacyPathRoots } from '../shared/legacyPaths';
+import { createLegacyPathRemapper } from './legacyPathRemap';
 
 // ------------------------------------------------------------------
 // Media / jobs / export contract (implemented by electron/media/index.ts)
@@ -159,6 +161,8 @@ export interface IpcDeps {
   /** The renderer chose to stay open (Cancel / failed save). */
   cancelQuit?(): void;
   userData: string;
+  /** Legacy user-data folders other than `userData` (electron/userDataStartup.ts); their cache paths are remapped. */
+  legacyUserData?: string[];
   isDev: boolean;
   /** Called whenever the recent-projects list changes (menu rebuild). */
   onRecentChanged?(): void;
@@ -442,6 +446,15 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.subtitlesExport, (_e, p: unknown, content: unknown, protectedPaths: unknown) =>
     fsApi.writeSubtitleFile(p as string, content as string, protectedPaths as string[]));
   ipcMain.handle(IPC.fsListDir, (_e, p: string) => fsApi.listDir(assertString(p, 'path')));
+  // Built once (the cache folder is resolved from prefs): no legacy folder, no remapping.
+  let remap: Promise<(p: string) => string | null> | null = null;
+  ipcMain.handle(IPC.fsRelocateLegacyPath, async (_e, p: string) => {
+    assertString(p, 'path');
+    const legacy = deps.legacyUserData ?? [];
+    if (!legacy.length) return null;
+    remap ??= resolveCacheDir(userData).then((cacheDir) => createLegacyPathRemapper(legacyPathRoots(legacy, userData, cacheDir)));
+    return (await remap)(p);
+  });
   ipcMain.handle(IPC.fsScanForRelink, (_e, req: RelinkScanRequest) => fsApi.scanForRelink(req));
 
   // --- media url (pure; preload also computes this synchronously) ---

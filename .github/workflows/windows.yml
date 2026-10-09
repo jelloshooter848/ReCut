@@ -356,12 +356,31 @@ jobs:
             '',
             "$env:NAME is not a release: nothing is published to GitHub Releases and no tag is created. Use it only if the required jobs of this run (installer, tests, e2e, launcher, linux, macos, macos-e2e) are green. The artifact is kept for 14 days.")
 
-      # Five silent install / smoke / uninstall cycles plus one portable launch, because the installer crash in
-      # bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md was intermittent. Prints the CPU first and, on a
-      # failed install, the faulting module (Application error events) and the NSIS temp dir.
-      - name: Install check (installer x5, uninstall, portable exe)
+      # The latest published release's installer, for the upgrade cycle of the install check: this build must upgrade
+      # it in place (same NSIS GUID, package.json build.nsis.guid). No published installer (a fork): skipped.
+      - name: Previous release installer (upgrade check)
+        id: prev
         shell: pwsh
-        run: ./scripts/windows/install-check.ps1 -Release release -Attempts 5 -SmokeAttempts 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          New-Item -ItemType Directory -Force -Path prev-release | Out-Null
+          gh release download --repo $env:REPO --pattern '*-Setup-*.exe' --dir prev-release
+          $exe = Get-ChildItem prev-release -Filter '*-Setup-*.exe' | Select-Object -First 1
+          if ($exe) { Write-Host "Upgrade check from $($exe.Name)"; "path=$($exe.FullName)" >> $env:GITHUB_OUTPUT }
+          else { Write-Host '::warning::No published installer to upgrade from: the upgrade check is skipped.' }
+          $global:LASTEXITCODE = 0
+
+      # Five silent install / smoke / uninstall cycles, an upgrade over the latest release and one portable launch,
+      # because the installer crash in bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md was intermittent.
+      # Prints the CPU first and, on a failed install, the faulting module (Application error events) and the NSIS
+      # temp dir.
+      - name: Install check (installer x5, upgrade, uninstall, portable exe)
+        shell: pwsh
+        env:
+          UPGRADE_FROM: ${{ steps.prev.outputs.path }}
+        run: ./scripts/windows/install-check.ps1 -Release release -Attempts 5 -SmokeAttempts 1 -UpgradeFrom "$env:UPGRADE_FROM"
 
   # Manual only (workflow_dispatch with installer_stress): repeats the install check on several runners to raise the
   # chance of landing on the host types where the intermittent NSIS installer crash showed up (AMD EPYC 7763), see

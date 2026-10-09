@@ -1,11 +1,11 @@
 /**
- * Chromium's HTTP cache and ReCut's default cache folder
+ * Chromium's HTTP cache and the app's default cache folder
  * (bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md).
  *
- * ReCut's default cache folder is `<userData>/cache`. Chromium keeps its HTTP cache in `<sessionData>/Cache`
+ * The app's default cache folder is `<userData>/cache`. Chromium keeps its HTTP cache in `<sessionData>/Cache`
  * (`<sessionData>` = `<userData>`), and on Windows and macOS, whose file systems ignore case, those are the same folder.
  * With the HTTP cache on, Chromium 130 deletes every entry of that folder except `Cache_Data` at every start
- * (content/browser/network_service_instance_impl.cc MaybeCleanCacheDirectory / MaybeDeleteOldCache), taking ReCut's
+ * (content/browser/network_service_instance_impl.cc MaybeCleanCacheDirectory / MaybeDeleteOldCache), taking the app's
  * proxies, thumbnails, waveforms, scene, OCR and Whisper results with it. main.ts therefore starts Electron with
  * `--disable-http-cache`, which turns that cleanup off and keeps Chromium out of the folder.
  *
@@ -37,7 +37,7 @@ export function isChromiumCacheEntryName(name: string): boolean {
   return name === CHROMIUM_CACHE_DATA_DIR || OLD_CACHE_DATA_RE.test(name);
 }
 
-/** ReCut's default cache folder: `<userData>/cache` (electron/ipc.ts resolveCacheDir). */
+/** The app's default cache folder: `<userData>/cache` (electron/ipc.ts resolveCacheDir). */
 export function defaultCacheDir(userData: string): string {
   return path.join(userData, 'cache');
 }

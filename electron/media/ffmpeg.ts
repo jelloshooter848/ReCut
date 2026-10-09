@@ -11,6 +11,7 @@ import { spawn, execFile, execFileSync, type ChildProcess } from 'node:child_pro
 import fs from 'node:fs';
 import path from 'node:path';
 import { ffmpegMissingMessage } from '../../shared/ipc';
+import { envVar } from '../env';
 
 export type FfBinary = 'ffmpeg' | 'ffprobe';
 
@@ -69,11 +70,11 @@ function whichSync(name: FfBinary): string | null {
  */
 export function resolveBinary(name: FfBinary): string | null {
   if (name in resolved) return resolved[name] ?? null;
-  const envVar = name === 'ffmpeg'
-    ? (process.env.RECUT_FFMPEG || process.env.RECUT_FFMPEG_PATH)
-    : (process.env.RECUT_FFPROBE || process.env.RECUT_FFPROBE_PATH);
+  const fromEnv = name === 'ffmpeg'
+    ? (envVar('FFMPEG') || envVar('FFMPEG_PATH'))
+    : (envVar('FFPROBE') || envVar('FFPROBE_PATH'));
   let found: string | null = null;
-  if (envVar && isExecutable(envVar)) found = envVar;
+  if (fromEnv && isExecutable(fromEnv)) found = fromEnv;
   if (!found) {
     outer: for (const dir of bundledDirs()) {
       for (const file of exeNames(name)) {

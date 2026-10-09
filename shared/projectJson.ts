@@ -6,7 +6,7 @@
  * makes a project under version control undiffable. This layout sits between the two: the structure (project,
  * sequences, tracks, snapshots, subtitle tracks, media items, settings) is indented two spaces per level with one
  * field per line, and each record inside it (a clip, transition, marker, story block, cue, scene, bin, detected
- * scene) is compact JSON on its own line. It is plain JSON: any JSON reader (and every ReCut build) reads it, and
+ * scene) is compact JSON on its own line. It is plain JSON: any JSON reader (and every build of the app) reads it, and
  * it parses to exactly what `JSON.stringify(project)` parses to. Readers accept any JSON layout.
  *
  * `projectJsonChunks` yields between records so a caller can spread the work over several tasks

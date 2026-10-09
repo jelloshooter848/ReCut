@@ -5,8 +5,9 @@
  * the app-data directory takes it as the `userData` argument.
  *
  * Conventions:
- *  - Project files are `*.recut` JSON (see PROJECT_EXT / ensureProjectExt).
- *  - Autosaves live next to the project as `<project>.recut.autosave`, or for never-saved
+ *  - Project files are JSON with one of productIdentity PROJECT_EXTENSIONS (`*.recut`; see ensureProjectExt): new
+ *    files get the primary extension, a file opened with another one keeps it.
+ *  - Autosaves live next to the project as `<project>.<ext>.autosave`, or for never-saved
  *    projects at `<userData>/autosave/untitled.recut.autosave`. An autosave file is itself a
  *    plain project JSON, so it can be opened/renamed by hand.
  *  - Prefs live at `<userData>/prefs.json`.
@@ -19,18 +20,22 @@ import { normalizeProjectWithReport, serializeProject, ProjectIncompatibleError 
 import type { AppPreferences, Project } from '../../shared/model';
 import { isReleasePageUrl, isUpdateCheckSetting, parseSemver } from '../../shared/update';
 import type { LoadResult, RecoveryInfo, SaveResult } from '../../shared/ipc';
+import { isProjectFilePath, PROJECT_EXTENSION, withProjectExtension } from '../../shared/productIdentity';
 
-export const PROJECT_EXT = '.recut';
+/** Extension (with the dot) of new project files; every extension in productIdentity PROJECT_EXTENSIONS opens. */
+export const PROJECT_EXT = `.${PROJECT_EXTENSION}`;
 export const AUTOSAVE_EXT = '.autosave';
 export const BACKUP_EXT = '.bak';
 export const MAX_RECENT = 15;
 
+/** `p` unchanged when it already has a project extension (any of PROJECT_EXTENSIONS), else with PROJECT_EXT appended. */
 export function ensureProjectExt(p: string): string {
-  return p.toLowerCase().endsWith(PROJECT_EXT) ? p : p + PROJECT_EXT;
+  return withProjectExtension(p);
 }
 
+/** Whether `p` names a project file: any of PROJECT_EXTENSIONS, any case. */
 export function isProjectPath(p: string): boolean {
-  return p.toLowerCase().endsWith(PROJECT_EXT);
+  return isProjectFilePath(p);
 }
 
 function errMsg(e: unknown): string {
@@ -164,7 +169,7 @@ export async function atomicWriteFile(target: string, data: string | Uint8Array,
  * Make `bak` hold the previous version `from`, under a temp name renamed onto `bak`, so a symlink planted at
  * `bak` is replaced rather than followed. The temp name is a hard link to `from` where the filesystem allows
  * it: that version is complete and was synced when it was saved, and the rename that follows only points
- * `from`'s name at the new file (nothing ReCut writes is ever modified in place), so the link keeps exactly
+ * `from`'s name at the new file (nothing the app writes is ever modified in place), so the link keeps exactly
  * the old bytes without copying them; a 30 MB copy cost about as much as writing the new file. Where hard
  * links are refused (FAT / exFAT, some network shares, a symlinked project on another volume) it is a copy, as
  * before. A missing `from` (first save) or a failure is ignored: the backup is best effort and never blocks
@@ -235,7 +240,7 @@ export function serializeAutosave(p: Project): string {
   return JSON.stringify(p);
 }
 
-/** Save a project. The `.recut` extension is appended when missing; the final path is returned. */
+/** Save a project. PROJECT_EXT is appended when no project extension is present; the final path is returned. */
 export async function saveProjectFile(filePath: string, project: Project): Promise<SaveResult> {
   try {
     const toWrite: Project = { ...project, modifiedAt: project.modifiedAt || Date.now() };
@@ -310,7 +315,7 @@ export class ProjectFileWriter {
    */
   private constructor(readonly path: string, private readonly file: AtomicFile, readonly kind: 'project' | 'autosave' = 'project') {}
 
-  /** Open a save of the project file at `filePath` (`.recut` appended when missing). Throws when the temp file cannot be created. */
+  /** Open a save of the project file at `filePath` (PROJECT_EXT appended when no project extension is present). Throws when the temp file cannot be created. */
   static async open(filePath: string): Promise<ProjectFileWriter> {
     const target = ensureProjectExt(path.resolve(filePath));
     return new ProjectFileWriter(target, await openAtomic(target, true));
@@ -487,11 +492,11 @@ async function repairInfo(file: string, repairs: string[]): Promise<{ repaired?:
 /**
  * Load a project. Falls back to `<path>.bak` only when the main file is damaged (unreadable / not JSON /
  * not an object / content normalizeProject cannot repair). A project this build refuses
- * (ProjectIncompatibleError: saved by a newer ReCut, or no formatVersion) is reported as an error so a
+ * (ProjectIncompatibleError: saved by a newer version, or no formatVersion) is reported as an error so a
  * stale backup never silently replaces it. On fallback the damaged file is copied aside (it would
  * otherwise become the next `.bak` on save) and the result says `fromBackup`. When the file read (main or
  * .bak) needed repairs, its original is copied to `<file>.pre-repair-<ts>` and the result lists the repairs
- * (`repaired`, `preRepairPath`). A file refused as not a ReCut project names an existing `.bak` in the error.
+ * (`repaired`, `preRepairPath`). A file refused as not a project names an existing `.bak` in the error.
  */
 export async function loadProjectFile(filePath: string): Promise<LoadResult> {
   const resolved = path.resolve(filePath);
@@ -503,7 +508,7 @@ export async function loadProjectFile(filePath: string): Promise<LoadResult> {
     if (code === 'ENOENT') return { ok: false, error: `Project file not found: ${resolved}` };
     const bak = resolved + BACKUP_EXT;
     if (e instanceof ProjectIncompatibleError) {
-      // Never substituted automatically (it may be stale), but say it is there when this is not a ReCut project at all.
+      // Never substituted automatically (it may be stale), but say it is there when this is not a project file at all.
       const hint = e.reason === 'notProject' && (await statOrNull(bak))?.isFile() ? ` A backup of this project exists: ${bak}` : '';
       return { ok: false, error: `Could not open project: ${errMsg(e)}.${hint}` };
     }
@@ -524,8 +529,12 @@ export async function loadProjectFile(filePath: string): Promise<LoadResult> {
 // Autosave / recovery
 // ------------------------------------------------------------------
 
+// frozen: changing this would make startup recovery miss the untitled autosave an earlier version left in the
+// user-data folder (the folder moves with the user-data migration; this name inside it must not change).
+const UNTITLED_AUTOSAVE_NAME = 'untitled.recut.autosave';
+
 export function untitledAutosavePath(userData: string): string {
-  return path.join(userData, 'autosave', `untitled${PROJECT_EXT}${AUTOSAVE_EXT}`);
+  return path.join(userData, 'autosave', UNTITLED_AUTOSAVE_NAME);
 }
 
 export function autosavePathFor(projectPath: string | null, userData: string): string {
@@ -539,7 +548,7 @@ export function projectPathForAutosave(autosavePath: string, userData: string): 
   return autosavePath.endsWith(AUTOSAVE_EXT) ? autosavePath.slice(0, -AUTOSAVE_EXT.length) : null;
 }
 
-/** Autosaves are written only next to a `.recut` project path, or as the untitled autosave (the path is renderer input). */
+/** Autosaves are written only next to a project path (any project extension), or as the untitled autosave (the path is renderer input). */
 function autosaveTargetError(projectPath: string | null): SaveResult | null {
   if (projectPath === null) return null;
   if (typeof projectPath !== 'string' || !isProjectPath(projectPath)) return { ok: false, error: `Autosave failed: not a project path (${String(projectPath)})` };
@@ -657,7 +666,7 @@ export async function clearUntitledAutosaveFor(project: Project, userData: strin
   await clearUntitledAutosaveForId(project.id, userData);
 }
 
-/** Bytes of the untitled autosave read to find its project id (the second key of every file ReCut writes). */
+/** Bytes of the untitled autosave read to find its project id (the second key of every project file the app writes). */
 const ID_PROBE_BYTES = 64 * 1024;
 
 /**
@@ -694,7 +703,7 @@ const JSON_WS = new Set([' ', '\n', '\r', '\t']);
 /**
  * The top-level `"id"` string of a project JSON text, scanning only as far as that key: null when the object has
  * no string id, undefined when the text is not a JSON object or ends before the answer (a file head cut short).
- * The first top-level "id" key counts (ReCut never writes duplicate keys).
+ * The first top-level "id" key counts (the app never writes duplicate keys).
  */
 export function topLevelProjectId(text: string): string | null | undefined {
   const n = text.length;

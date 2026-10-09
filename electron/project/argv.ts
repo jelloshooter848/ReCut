@@ -3,7 +3,7 @@
  *
  * Chromium re-orders argv (switches first, positionals last), so `recut --project <path>` can arrive
  * as `[..., --project, --allow-file-access-from-files, ..., main.js, <path>]`. Order of preference:
- *  1. the last positional argument ending in `.recut`;
+ *  1. the last positional argument ending in a project extension (productIdentity PROJECT_EXTENSIONS: `.recut`);
  *  2. `--project=<path>`;
  *  3. `--project <path>`, only when the next token is not itself a switch.
  * Linux desktop entries pass files as `%U`, so a file manager may hand over a `file://` URI instead of a path:
