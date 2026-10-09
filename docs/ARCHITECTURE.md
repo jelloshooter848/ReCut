@@ -57,7 +57,9 @@ flowchart LR
 
 | Module | Responsibility |
 |---|---|
-| `main.ts` | Single-instance lock (a second launch with a `.recut` path opens it in the running window), window creation (bounds persisted in prefs), navigation lock-down, privileged `recut-media` scheme, quit protocol, `RECUT_SMOKE` self-test. |
+| `main.ts` | Single-instance lock (a second launch with a project path opens it in the running window), window creation (bounds persisted in prefs), navigation lock-down, privileged `recut-media` scheme, quit protocol, `RECUT_SMOKE` self-test. |
+| `userDataStartup.ts`, `userDataMigration.ts` | Where this launch keeps its user data, decided before anything touches it: the app name, the `RECUT_USER_DATA` override and the one-time move of a legacy user-data folder (see [Product identity and user data](#product-identity-and-user-data)). |
+| `env.ts` | `envVar('X')` reads `RECUT_X` (and `X` under every prefix in `ENV_PREFIXES`); no module reads `process.env.RECUT_*` directly. |
 | `menu.ts` | Native menu. Items send **command ids** over `ev:menu`; the renderer runs them through its command registry (aliases in `src/app/bootstrap.ts`). |
 | `ipc.ts` | `ipcMain.handle` for dialogs, project I/O, prefs, fs helpers (stat, listDir, relink scan), media services, jobs and export. Validates arguments at the boundary. |
 | `media/protocol.ts` + `range.ts` | `recut-media://local/<encodeURIComponent(path)>` streams local files with full HTTP `Range` / `HEAD` / 206 / 416 support so `<video>` can seek. |
@@ -109,6 +111,8 @@ flowchart LR
 | `keyframes.ts` | Keyframes (Roadmap §11): evaluation (`evaluateClipProperty`, `transformAt`; linear and ease = smoothstep), edits at the playhead (add / remove / interpolation / clear, Position keys x and y together), the head-trim shift that keeps keyframes on their source moments (called from the trim ops in `timeline.ts` and from load repair), load-time repair, and the FFmpeg expression the export builds (`keyframesExpr`). Times are clip-relative timeline frames. |
 | `linkSync.ts` | Linked-clip sync offsets (`linkedSyncOffsets`), used by the timeline's out-of-sync badge and the Export dialog's warning. |
 | `pathKey.ts` | Lexical `path.resolve` + case folding for the renderer's early "is this a project source?" check (subtitle export). The main process repeats the check with realpath and inode (`electron/pathSafety.ts`). |
+| `productIdentity.ts` | The one module that names the product: display name, executable and release file names, repository slug, project extensions, user-data folder names, environment-variable prefixes, appId and the pinned NSIS GUID. See [Product identity and user data](#product-identity-and-user-data). |
+| `legacyPaths.ts` | Remaps cache paths saved under a legacy user-data folder to the current one (`verifyProxies`, the channel-proxy check). |
 | `subtitles.ts`, `ipc.ts`, `ids.ts`, `peaks.ts` | SRT / VTT parse + serialize, the IPC contract and `recut-media://` helpers, ids, waveform peaks. |
 
 ## Renderer
@@ -346,6 +350,64 @@ frame by construction, and the unit and real-FFmpeg tests compare nested timelin
   sends `quitCancel` to keep running. After the ack no timer quits behind the prompt; a renderer that dies (crash,
   window destroyed) finishes the quit, one that becomes unresponsive makes main ask "Quit anyway?" (Wait / Quit), and
   a repeated quit request while a live renderer's prompt is up only brings the window forward.
+
+## Product identity and user data
+
+**One source of truth.** `shared/productIdentity.ts` holds every value that names the product. The main process,
+the renderer (window and page titles, About, menus, dialogs, toasts), the update check (`shared/update.ts` URLs,
+the accepted release-page paths, the User-Agent), the project-file extensions and the user-data folder name all read
+it; `index.html` gets the name through a Vite transform. Two tests keep it that way:
+
+- `tests/unit/product-name-guard.test.ts` fails when the display name (current or legacy) or the repository slug
+  appears literally in `src/`, `electron/`, `shared/` or `index.html` outside the module, comments included.
+- `tests/unit/product-identity-sync.test.ts` keeps the copies that cannot import it equal to it: `package.json`
+  (`productName`, `author`, `appId`, `linux.executableName`, the five `artifactName`s, `nsis.shortcutName`,
+  `nsis.guid`, every project extension in `fileAssociations` with its name and description), and the file, artifact,
+  executable and app-bundle names in `.github/workflows/windows.yml`, `scripts/windows/install-check.ps1` (which reads
+  them from `package.json`) and `docs/RELEASING.md`.
+
+The `LEGACY_*` lists hold every value the product has shipped with, the current one included; entries are never
+removed. **Project extensions:** every extension in `PROJECT_EXTENSIONS` opens (Open dialog, drag and drop on the
+Project panel, recent list, command line and second instance, OS file associations, autosaves); a new file gets
+`PROJECT_EXTENSION`, and a file opened with another extension keeps it on Save. **Environment variables:**
+`electron/env.ts` reads each variable under every prefix in `ENV_PREFIXES`; `RECUT_` is always one of them.
+
+**User-data folder migration** (`electron/userDataMigration.ts`, run by `electron/userDataStartup.ts` right after
+`app.setName`). When the folder's name changes, the first launch moves the first legacy folder that holds data
+(`<appData>/<LEGACY_USER_DATA_DIR_NAMES>`) into the new one. While the names are equal it reads and writes nothing.
+
+- Skipped with `RECUT_USER_DATA`, when the legacy folder is the current one (equal names, or a case-only change on
+  a case-insensitive file system), and once `<userData>/user-data-migration.json` exists (the marker: `from`, `at`,
+  `result` = `moved` / `copied` / `nothing-to-migrate` / `both-existed`, `appVersion`).
+- The legacy app still running (its Chromium single-instance lock: the `SingletonLock` symlink's live pid on Linux
+  and macOS, `lockfile` held open on Windows): nothing moves. This session uses the legacy folder, and before the
+  single-instance lock is taken the user is asked to quit the other app (Restart / Continue without moving / Quit).
+- Both folders hold data: neither is touched or merged; the new one is used; a one-time notice names both.
+- Otherwise `rename`. If it fails (another volume, a scanner holding a file on Windows): copy to
+  `<new>.migrating` without Chromium's disposable caches, verify file count and sizes, rename into place, and keep
+  the legacy folder. A `cacheDir` preference inside the legacy folder is rewritten to the same place in the new one.
+- Nothing in the legacy folder is deleted on a failure path: the session falls back to it, the user is told once, and
+  the next launch tries again. `<new>.migration-lock` keeps two simultaneous launches from both migrating.
+- Projects store absolute proxy paths into the cache. `AppInfo.legacyPathRoots` tells the renderer where paths under
+  a legacy folder (and its `cache`) live now, and `verifyProxies` and the channel-proxy check try the remapped path
+  before calling a proxy missing.
+
+Test-only switches (honoured only by an unpackaged app): `RECUT_TEST_APP_DATA`, `RECUT_TEST_APP_NAME`,
+`RECUT_TEST_LEGACY_USER_DATA`, `RECUT_TEST_MIGRATION_FORCE_COPY`, `RECUT_TEST_MIGRATION_DIALOG`
+(`tests/e2e/user-data-migration.spec.ts`).
+
+**Frozen identifiers.** These keep their value whatever the product is called; each is marked `// frozen:` with the
+reason in the code:
+
+| Identifier | Where | Why it never changes |
+|---|---|---|
+| Cache-key salts `recut-content-key`, `recut-media-fingerprint-v…` | `electron/media/cache.ts`, `electron/media/identity.ts` | Hashed into every cache entry name: changing them orphans every cached thumbnail, waveform, proxy, scene, OCR and Whisper result. |
+| `recut.*.v1` localStorage keys, `recut.jobsPanel.tab` | `layoutStore.ts`, `shortcuts.ts`, `panels/export/settings.ts`, `inspector/primitives.tsx`, `JobsPanel.tsx` | Changing them resets every user's layout, shortcuts and saved export settings. |
+| `recut-media://` scheme | `shared/ipc.ts` `MEDIA_SCHEME` | Invisible and never saved; changing it touches every URL builder and parser for nothing. |
+| `window.__recut` | `src/main.tsx` | The automation hook every e2e test, perf script and the README media script drive. |
+| `untitled.recut.autosave` | `electron/project/io.ts` | Recovery must find the untitled autosave an earlier version left in the (moved) user-data folder. |
+| `appId` `app.recut.editor`, `nsis.guid` `71b5ac76-3d71-54f8-ab45-e7992d0fc22e` | `productIdentity.ts`, `package.json` | The GUID (electron-builder's UUID v5 of the appId, pinned) names the Windows install and uninstall keys: a different one installs side by side instead of upgrading. The install check upgrades the latest release in place to prove it. |
+| `tests/fixtures/projects/*.recut` | `tests/unit/project-compat.test.ts` | What earlier releases wrote; never renamed or regenerated. |
 
 ## Performance design
 
