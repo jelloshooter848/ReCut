@@ -119,7 +119,7 @@ Recommendation when filing: option 1. It was taken (see Resolution).
 | Field | Value |
 |---|---|
 | Closed by / date | Claude (cache-collision fix agent), 2026-10-09 |
-| Fix | branch `claude/fix-chromium-cache-collision` |
+| Fix | commit acf32aa on branch `claude/fix-chromium-cache-collision` |
 | Files changed | `electron/main.ts`, `electron/chromiumCache.ts` (new), `tests/e2e/default-cache.spec.ts` (new), `tests/unit/chromium-cache.test.ts` (new), `CHANGELOG.md`, this report |
 | Regression test | `tests/e2e/default-cache.spec.ts` (3 tests); `tests/unit/chromium-cache.test.ts` (8 tests) |
 
@@ -192,7 +192,12 @@ only cleans `Cache_Data` itself.
   The first push of the test (commit a545a71, [run 37976420078](https://github.com/jelloshooter848/ReCut/actions/runs/37976420078),
   tests in serial mode, so only the first ran) failed the same way: Windows job 113975764693 and macOS job
   113975764833, `cache: [Cache_Data]; proxies: [(ENOENT)]`.
-- CI with the fix: the run on the fix commit (see the PR).
+- CI with the fix, commit acf32aa, [run 37978830505](https://github.com/jelloshooter848/ReCut/actions/runs/37978830505):
+  e2e green on Windows (job 113983863768), macOS (job 113983863892, 103/103, including `default-cache.spec.ts` 3/3,
+  the Whisper model install, `ocr-languages.spec.ts` and `update.spec.ts`) and Linux (job 113983863714); unit tests,
+  installer, launcher and the macOS arm64 dmg smoke test green.
+- On the red run Linux failed only test 3 (job 113979721846, 102 passed): no cleanup without the fix, while
+  `cache` and `Cache` are separate folders there.
 
 ### Tests run
 Linux (this sandbox), on the fix: `npm run typecheck` clean; `npm test` 2097 passed, 2 skipped (123 files; the new
