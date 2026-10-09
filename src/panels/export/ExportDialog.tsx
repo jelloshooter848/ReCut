@@ -131,6 +131,8 @@ export function ExportDialog() {
   const projectId = useStore((s) => s.project.id);
   const projectPath = useStore((s) => s.projectPath);
   const projectUsesProxies = useStore((s) => s.project.settings.useProxies);
+  /** The timeline's highlight setting: the export's "Highlight the spoken word" follows it until changed (#134). */
+  const projectHighlight = useStore((s) => s.project.settings.highlightSpokenWords);
 
   const [settings, setSettings] = useState<ExportSettings | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: 'edit' });
@@ -206,7 +208,7 @@ export function ExportDialog() {
 
   return (
     <SettingsView
-      seq={exportSeq} hasTranscripts={transcriptTrack !== null} settings={settings} media={media} projectUsesProxies={projectUsesProxies} sequences={sequences} update={update}
+      seq={exportSeq} hasTranscripts={transcriptTrack !== null} projectHighlight={projectHighlight} settings={settings} media={media} projectUsesProxies={projectUsesProxies} sequences={sequences} update={update}
       onShowTarget={(t) => onShowTarget(seq.id, t)}
       command={command} commandError={commandError} starting={starting} startError={startError}
       onShowCommand={async () => {
@@ -214,7 +216,7 @@ export function ExportDialog() {
         if (!api) { setCommandError('IPC unavailable'); return; }
         setCommand(null); setCommandError(null);
         try {
-          const args = await api.previewExportCommand(buildRequest(seq, { media, subtitleTracks, sequences }, settings));
+          const args = await api.previewExportCommand(buildRequest(seq, { media, subtitleTracks, sequences }, { ...settings, highlightWords: settings.highlightWords ?? projectHighlight }));
           setCommand(['ffmpeg', ...args.map(shellQuote)].join(' '));
         } catch (e) { setCommandError(e instanceof Error ? e.message : String(e)); }
       }}
@@ -228,7 +230,7 @@ export function ExportDialog() {
         const api = recutApi();
         if (!api) { setStartError('IPC unavailable'); return; }
         setStarting(true); setStartError(null);
-        const final: ExportSettings = { ...settings, fileName: withFormatExtension(sanitizeFileName(settings.fileName), settings), useProxies: false };
+        const final: ExportSettings = { ...settings, fileName: withFormatExtension(sanitizeFileName(settings.fileName), settings), useProxies: false, highlightWords: settings.highlightWords ?? projectHighlight };
         saveExportSettings(projectId, seq.id, final);
         api.setPrefs({ lastExportDir: final.outputDir }).catch(() => { /* ignore */ });
         const noFfmpeg = ffmpegUnavailable('ffmpeg');
@@ -270,6 +272,8 @@ interface SettingsViewProps {
   seq: Sequence;
   /** The sequence has a transcript that "Include transcripts" can add (#127). */
   hasTranscripts: boolean;
+  /** The timeline's highlight setting, the default of "Highlight the spoken word" (#134). */
+  projectHighlight: boolean;
   settings: ExportSettings;
   media: ExportRequest['media'];
   projectUsesProxies: boolean;
@@ -288,7 +292,7 @@ interface SettingsViewProps {
 }
 
 function SettingsView(p: SettingsViewProps) {
-  const { seq, settings, media, update, hasTranscripts } = p;
+  const { seq, settings, media, update, hasTranscripts, projectHighlight } = p;
   const presets = useMemo(() => presetsFor(seq), [seq]);
   const [chosenPreset, setChosenPreset] = useState<string | undefined>(undefined);
   const presetName = presetNameFor(settings, presets, chosenPreset);
@@ -587,6 +591,20 @@ function SettingsView(p: SettingsViewProps) {
                 <Toggle checked={settings.burnSubtitles && hasSubs && !audioOnly} disabled={!hasSubs || audioOnly} onChange={(v) => update({ burnSubtitles: v })} label={<span className="text-sm">Render subtitles into the picture</span>} />
               </div>
             </div>
+            {(() => {
+              // Only word-timed cues (transcripts) can be highlighted (#134).
+              const canHighlight = settings.burnSubtitles && hasSubs && !audioOnly && !!settings.includeTranscripts && hasTranscripts;
+              return (
+                <div className="xd-row">
+                  <label>Highlight</label>
+                  <div className="ctl">
+                    <Toggle checked={canHighlight && (settings.highlightWords ?? projectHighlight)} disabled={!canHighlight} onChange={(v) => update({ highlightWords: v })}
+                      label={<span className="text-sm">Highlight the spoken word</span>}
+                      title={canHighlight ? 'Burned-in transcripts show the word being spoken in yellow, as the monitors do' : 'Needs Burn in and Include transcripts as subtitles'} />
+                  </div>
+                </div>
+              );
+            })()}
             {audioOnly && hasSubs ? <div className="xd-row"><span /><span className="xd-hint" data-testid="export-burn-in-note">Burn-in needs a picture, so it is off for audio-only formats. A sidecar .srt can still be written.</span></div> : null}
             <div className="xd-row">
               <label>Sidecar</label>

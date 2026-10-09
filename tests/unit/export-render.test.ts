@@ -392,6 +392,50 @@ describe('D3: burned-in subtitles appear on exactly the cue frames', () => {
 // D4: range shorter than half an output frame
 // ---------------------------------------------------------------------------------------------------
 
+describe('#134: burn-in highlights the spoken word', () => {
+  const F = R(25);
+  let black: MediaItem;
+  beforeAll(async () => { black = await colorMedia('black-hl', 'color=c=black:s=640x360:r=25:d=3'); }, 60000);
+
+  /** Yellow (highlight) and white pixels of output frame `n`. */
+  async function colours(file: string, n: number): Promise<{ yellow: number; white: number }> {
+    const out = path.join(dir, `hl-${outN++}.rgb`);
+    await ff(['-i', file, '-vf', `select=eq(n\\,${n}),format=rgb24`, '-frames:v', '1', '-f', 'rawvideo', out]);
+    const d = fs.readFileSync(out);
+    let yellow = 0, white = 0;
+    for (let i = 0; i + 2 < d.length; i += 3) {
+      if (d[i] > 200 && d[i + 1] > 150 && d[i + 2] < 140) yellow++;
+      else if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) white++;
+    }
+    return { yellow, white };
+  }
+
+  async function render(highlightWords: boolean) {
+    const s = createSequence('S', F, 640, 360);
+    s.videoTracks[0].clips.push(makeClip({ mediaId: black.id, name: 'b', sourceIn: 0, duration: 60, kind: 'video' }, 0));
+    // A cue over frames 5-55; its words start at frames 20, 30 and 40 (nothing highlighted before 20).
+    const sec = (f: number) => framesToSeconds(f, F);
+    const subtitles = [{ start: sec(5), end: sec(55), text: 'AAA BBB CCC',
+      words: [{ start: sec(20), end: sec(29), text: 'AAA' }, { start: sec(30), end: sec(39), text: 'BBB' }, { start: sec(40), end: sec(50), text: 'CCC' }] }];
+    const res = await runExport(reqFor(s, [black], F, { burnSubtitles: true, highlightWords, width: 640, height: 360 }, { subtitles }), undefined, undefined, NO_CHUNKS);
+    return res.outputPath;
+  }
+
+  it('the word being spoken is yellow, the rest of the line white; nothing yellow before the first word or when off', async () => {
+    const on = await render(true);
+    const before = await colours(on, 12);
+    expect(before.white).toBeGreaterThan(150);
+    expect(before.yellow).toBe(0);
+    for (const n of [25, 35, 45]) {
+      const c = await colours(on, n);
+      expect(c.yellow, `frame ${n}`).toBeGreaterThan(30);
+      expect(c.white, `frame ${n}`).toBeGreaterThan(100);
+    }
+    const off = await render(false);
+    expect((await colours(off, 35)).yellow).toBe(0);
+  }, 60000);
+});
+
 describe('D4: a range shorter than half an output frame still exports one video frame', () => {
   let m120: MediaItem;
   beforeAll(async () => { m120 = await lumaMedia(F120, 1); }, 60000);

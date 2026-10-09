@@ -8,6 +8,7 @@ import { defaultAudio, defaultTransform } from '../../shared/timeline';
 import { onScreenTranscript, transcriptIndex } from '../../shared/transcripts';
 import { buildExportRequest, TRANSCRIPT_EXPORT_TRACK_ID, transcriptExportTrack, withTranscriptTrack } from '../../src/panels/export/request';
 import { defaultExportSettings } from '../../src/panels/export/settings';
+import { assText, buildBurnInAss } from '../../electron/export/renderGraph';
 import type { Clip, MediaItem, SubtitleTrack } from '../../shared/model';
 
 const FPS = { num: 10, den: 1 };
@@ -63,5 +64,37 @@ describe('export: include transcripts (#127)', () => {
     expect(withTranscriptTrack(sources, once, { includeTranscripts: true })).toBe(once);
     expect(withTranscriptTrack(sources, seq, { includeTranscripts: false })).toBe(seq);
     expect(withTranscriptTrack({ ...sources, subtitleTracks: {} }, seq, { includeTranscripts: true })).toBe(seq);
+  });
+});
+
+describe('burn-in highlighting (#134)', () => {
+  it('words reach the request only with Include transcripts and Highlight on', () => {
+    const { sources, seq } = project();
+    sources.subtitleTracks.w.cues[0].words = [{ start: 1, end: 1.5, text: 'um,' }, { start: 1.5, end: 2, text: 'hello' }];
+    const base = { ...defaultExportSettings(seq), includeTranscripts: true, burnSubtitles: true };
+    const sub = (over: object) => buildExportRequest(sources, seq, { ...base, ...over }).subtitles![0];
+    expect(sub({ highlightWords: false }).words).toBeUndefined();
+    expect(sub({ highlightWords: true }).words).toEqual([{ start: 1, end: 1.5, text: 'um,' }, { start: 1.5, end: 2, text: 'hello' }]);
+  });
+
+  it('ASS: one event per word span with the active word coloured, timed at frame centres; text escaped', () => {
+    const fps = { num: 25, den: 1 };
+    const seq = createSequence('S', fps);
+    const req = { sequence: seq, media: {}, settings: defaultExportSettings(seq),
+      subtitles: [
+        { start: 0.2, end: 2, text: 'a {b}', words: [{ start: 0.4, end: 1, text: 'a' }, { start: 1, end: 2, text: '{b}' }] },
+        { start: 3, end: 4, text: 'plain\nline' },
+      ] };
+    const ass = buildBurnInAss(req as never, 0, 200)!;
+    const events = ass.split('\n').filter((l) => l.startsWith('Dialogue:'));
+    // Frames: cue 5-50, words at 10 and 25. Frame f is shown from (f - 0.5) / 25 s.
+    expect(events).toEqual([
+      'Dialogue: 0,0:00:00.18,0:00:00.38,Default,,0,0,0,,a \\{b\\}',
+      'Dialogue: 0,0:00:00.38,0:00:00.98,Default,,0,0,0,,{\\c&H4DD8FF&}a{\\c} \\{b\\}',
+      'Dialogue: 0,0:00:00.98,0:00:01.98,Default,,0,0,0,,a {\\c&H4DD8FF&}\\{b\\}{\\c}',
+      'Dialogue: 0,0:00:02.98,0:00:03.98,Default,,0,0,0,,plain\\Nline',
+    ]);
+    expect(ass.startsWith('[Script Info]')).toBe(true);
+    expect(assText('x\\y')).toBe('x\\\\y');
   });
 });

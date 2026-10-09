@@ -535,6 +535,8 @@ export interface ExportSettings {
   subtitleOutputs?: ExportSubtitleOutput[];
   /** Include the on-screen transcript (#127) as a subtitle track named "Transcript"; absent = off. */
   includeTranscripts?: boolean;
+  /** Burn-in: highlight the word being spoken in cues with word timing, as the monitors do (#134); absent = off. */
+  highlightWords?: boolean;
 }
 
 /** Export file formats (§6, §7). */
