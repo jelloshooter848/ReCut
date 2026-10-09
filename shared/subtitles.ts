@@ -107,3 +107,27 @@ export function searchCues(cues: SubtitleCue[], query: string, maxResults = 500)
   }
   return out;
 }
+
+/** A cue with optional word timing: media cues (source seconds) or resolved sequence cues (frames). */
+interface TimedCue { start: number; end: number; words?: readonly { start: number; end: number; text: string }[] }
+
+/**
+ * The word being spoken at time `t` (#118): the cue containing `t` (cues sorted by start, as stored) and the word of
+ * that cue whose [start, end) contains it. Null between words, outside every cue, or when the cue has no word timing.
+ * Units follow the cues: seconds for media cues, frames for resolveSubtitleCues output.
+ */
+export function wordAt<C extends TimedCue>(cues: readonly C[], t: number): { cue: C; cueIndex: number; word: NonNullable<C['words']>[number]; wordIndex: number } | null {
+  let lo = 0; let hi = cues.length - 1; let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (cues[mid].start <= t) { found = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  // Cues may overlap: walk back over earlier cues that still contain t.
+  for (let i = found; i >= 0 && i > found - 4; i--) {
+    const cue = cues[i];
+    if (!(t < cue.end) || !cue.words) continue;
+    const wordIndex = cue.words.findIndex((w) => w.start <= t && t < w.end);
+    if (wordIndex >= 0) return { cue, cueIndex: i, word: cue.words[wordIndex] as NonNullable<C['words']>[number], wordIndex };
+  }
+  return null;
+}

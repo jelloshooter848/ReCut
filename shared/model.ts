@@ -302,6 +302,8 @@ export interface SequenceSubtitleCue {
   duration: number;     // frames (authoritative only when no clipId)
   offset: number;       // frames nudge applied on top of derived position
   text: string;
+  /** Per-word timing carried from a media cue, in source seconds like srcStart / srcEnd (#118). */
+  words?: SubtitleWord[];
 }
 
 export interface SequenceSubtitleTrack {
@@ -372,7 +374,17 @@ export interface SceneRecord {
   createdAt: number;
 }
 
-export interface SubtitleCue { id: ID; start: number; end: number; text: string }  // seconds
+/** One word of a transcribed cue, in source seconds (#118). */
+export interface SubtitleWord { start: number; end: number; text: string }
+
+export interface SubtitleCue {
+  id: ID;
+  start: number;  // seconds
+  end: number;    // seconds
+  text: string;
+  /** Per-word timing (Whisper transcripts); the words joined by spaces are `text`. */
+  words?: SubtitleWord[];
+}
 
 export interface SubtitleTrack {
   id: ID;

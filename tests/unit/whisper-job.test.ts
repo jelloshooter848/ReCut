@@ -67,6 +67,7 @@ beforeEach(() => {
   fs.rmSync(path.join(tmp, 'cache'), { recursive: true, force: true });
   delete process.env.FAKE_WHISPER_MODE;
   delete process.env.FAKE_WHISPER_PIDFILE;
+  delete process.env.FAKE_WHISPER_TOKENS;
   process.env.FAKE_WHISPER_LOG = log;
 });
 
@@ -116,6 +117,19 @@ describe.skipIf(!hasFfmpeg)('transcription job (fake engine)', () => {
     expect((again.job.result as TranscribeResult).cached).toBe(true);
     expect((again.job.result as TranscribeResult).cues.map((c) => c.text)).toEqual(r.cues.map((c) => c.text));
     expect(engineRuns()).toHaveLength(1);
+  });
+
+  it('keeps word timing from -ojf tokens, through the cache too (#118)', async () => {
+    process.env.FAKE_WHISPER_TOKENS = '1';
+    const q = new JobQueue({ throttleMs: 0 });
+    const { job } = await run(q, req(), ctx());
+    expect(job.status, job.error).toBe('done');
+    const first = (job.result as TranscribeResult).cues[0];
+    expect(first.text).toBe('Bonjour, ça va ?');
+    expect(first.words?.map((w) => [w.text, w.start])).toEqual([['Bonjour,', 0.1], ['ça', 0.7], ['va ?', 0.9]]);
+    const again = await run(q, req(), ctx());
+    expect((again.job.result as TranscribeResult).cached).toBe(true);
+    expect((again.job.result as TranscribeResult).cues[0].words).toEqual(first.words);
   });
 
   it('a verbatim English request passes the filler prompt to whisper-cli (#117)', async () => {

@@ -683,6 +683,7 @@ function repairSequenceCue(c: Obj): SequenceSubtitleCue | null {
   else if (!isFiniteNum(c.offset) || Math.abs(Math.round(c.offset)) > MAX_TIMELINE_FRAMES) { note(FIELD_RESET); c.offset = 0; }
   else if (Math.round(c.offset) !== c.offset) { note(ROUNDED); c.offset = Math.round(c.offset) + 0; }
   c.text = str(c.text, '');
+  repairWords(c);
   return c as unknown as SequenceSubtitleCue;
 }
 
@@ -996,6 +997,16 @@ function repairScene(s: Obj, id: ID): SceneRecord | null {
   return s as unknown as SceneRecord;
 }
 
+/** Optional per-word timing of a cue (#118): a list of {start, end, text} in source seconds; anything else is dropped. */
+function repairWords(c: Obj): void {
+  if (c.words === undefined) return;
+  const ok = (w: unknown): boolean => isObj(w) && isFiniteNum(w.start) && isFiniteNum(w.end) && Math.abs(w.start) <= MAX_SOURCE_SECONDS
+    && Math.abs(w.end) <= MAX_SOURCE_SECONDS && typeof w.text === 'string';
+  const list = Array.isArray(c.words) ? c.words.filter(ok).map((w) => ({ start: (w as Obj).start, end: (w as Obj).end, text: (w as Obj).text })) : [];
+  if (!Array.isArray(c.words) || list.length !== c.words.length) note('subtitle word timing without a usable time removed');
+  if (list.length) c.words = list; else delete c.words;
+}
+
 function repairSubtitleTrack(t: Obj, id: ID): SubtitleTrack {
   keyedId(t, id);
   t.name = str(t.name, ''); t.language = str(t.language, 'und'); t.origin = str(t.origin, 'srt');
@@ -1009,6 +1020,7 @@ function repairSubtitleTrack(t: Obj, id: ID): SubtitleTrack {
     return ok;
   }).map((c) => {
     c.id = idOr(c.id, () => uid('cue')); c.text = str(c.text, '');
+    repairWords(c);
     return c;
   });
   return t as unknown as SubtitleTrack;
