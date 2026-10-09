@@ -9,7 +9,7 @@ import type { Clip, MediaItem, Sequence } from '../../shared/model';
 import { createSequence } from '../../shared/project';
 import { defaultAudio, defaultTransform } from '../../shared/timeline';
 import { MediaElementPool } from '../../src/playback/elementPool';
-import { PRESENT_HOLD_MS, SCRUB_REST_MS, SequencePlayer } from '../../src/playback/sequencePlayer';
+import { PRESENT_HOLD_MS, SCRUB_REST_MS, SEEK_STALL_MS, SequencePlayer } from '../../src/playback/sequencePlayer';
 
 // ------------------------------------------------------------------ fake DOM
 
@@ -30,9 +30,15 @@ class FakeMedia {
   error = null; parentNode = null;
   /** currentTime sets, and those made while a previous seek was still pending (queued seeks). */
   seeks = 0; queuedSeeks = 0;
+  /**
+   * The pending seek never completes (land() does nothing) until the next one: what Chromium did in the perf bench
+   * (bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md). A new seek restarts the element.
+   */
+  stalled = false;
   private t = 0;
   get currentTime(): number { return this.t; }
   set currentTime(v: number) {
+    this.stalled = false;
     if (this.seeking) this.queuedSeeks++;
     this.t = v; this.seeking = true; this.seeks++;
     if (this.readyState > 1) this.readyState = 1;
@@ -52,7 +58,7 @@ class FakeMedia {
    * seen in Chromium under load: 'seeked' fires before the landed frame reaches the compositor (present() later).
    */
   land(present = true): void {
-    if (!this.attrs.has('src')) return;
+    if (!this.attrs.has('src') || this.stalled) return;
     const was = this.seeking || this.readyState < 2;
     this.seeking = false; this.readyState = 4;
     if (present) this.present();
@@ -440,6 +446,85 @@ describe('SequencePlayer: a paused draw waits until the landed frame is presente
     expect(drawn.length).toBeGreaterThan(0);
     expect(FakeVideoFrame.made).toBe(0);
     player.pause();
+    player.destroy();
+  });
+});
+
+describe('SequencePlayer: a seek that never lands does not freeze the Program monitor', () => {
+  // bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md: in the perf bench two pooled elements stayed
+  // seeking / readyState < 2 for minutes. A scrub round waited for them for ever (no seek for the whole drag, the
+  // monitor frozen on the frame before it), and since an element was never sought while `seeking`, even the update at
+  // rest never restarted them: their layer was not drawn until something else moved them.
+  const scrubFor = (player: SequencePlayer, ms: number, from: number): number => {
+    let f = from;
+    const until = now + ms;
+    while (now < until) { f += 10; player.seek(f); frame(); for (const m of media) if (m !== byFile('C')) m.land(); }
+    return f;
+  };
+
+  it(`a scrub round stops waiting for a stalled seek after ${SEEK_STALL_MS} ms and seeks on to the playhead`, () => {
+    const { player } = setup();
+    const top = byFile('C');
+    player.seek(10); frame();
+    expect(top.seeks).toBe(1);
+    top.stalled = true; // Chromium never finishes this seek
+    let f = scrubFor(player, SEEK_STALL_MS - 50, 10);
+    expect(top.seeks).toBe(1); // a seek that is just slow is not interrupted
+    f = scrubFor(player, 100, f);
+    expect(top.seeks).toBe(2); // sent again, to the latest playhead
+    expect(top.queuedSeeks).toBe(1);
+    expect(drawn).toHaveLength(0); // the stalled round is not drawn: its picture would lack the top layer
+    const sent = top.currentTime;
+    top.land(); // drawn, then sent on to the latest playhead, as after any landed round
+    expect(drawn.map((d) => d.el)).toEqual([top]);
+    expect(drawn[0].t).toBeCloseTo(sent, 9);
+    expect(top.seeks).toBe(3);
+    expect(top.currentTime).toBeCloseTo(target(f), 9);
+    // The scrub goes on as before: one seek per round, each drawn when it lands.
+    for (let i = 0; i < 5; i++) { top.land(); f += 10; player.seek(f); frame(); }
+    top.land();
+    expect(top.seeks).toBe(8);
+    expect(drawn[drawn.length - 1].t).toBeCloseTo(target(f), 9);
+    rest(); landAll(); frame();
+    expect(drawn[drawn.length - 1].t).toBeCloseTo(target(f), 9);
+    player.destroy();
+  });
+
+  it('a seek that stalls while the playhead rests is issued again, and the frame is drawn when it lands', () => {
+    const { player } = setup();
+    const top = byFile('C');
+    player.seek(240); frame();
+    top.stalled = true;
+    rest(); // the update at rest parks the occluded layers and audio; C is still on its stalled seek
+    for (const m of media) if (m !== top) m.land();
+    frame();
+    expect(top.seeks).toBe(1);
+    now += SEEK_STALL_MS; vi.advanceTimersByTime(SEEK_STALL_MS); frame();
+    expect(top.seeks).toBe(2);
+    expect(top.currentTime).toBeCloseTo(target(240), 9);
+    top.land(); frame();
+    expect(drawn[drawn.length - 1].el).toBe(top);
+    expect(drawn[drawn.length - 1].t).toBeCloseTo(target(240), 9);
+    // Nothing left pending: no further seeks.
+    now += 10 * SEEK_STALL_MS; vi.advanceTimersByTime(10 * SEEK_STALL_MS); frame();
+    expect(top.seeks).toBe(2);
+    player.destroy();
+  });
+
+  it('a seek that is slow rather than stalled still lands: each retry waits twice as long', () => {
+    const { player } = setup();
+    const top = byFile('C');
+    player.seek(240); frame();
+    top.stalled = true;
+    rest();
+    for (const m of media) if (m !== top) m.land();
+    now += SEEK_STALL_MS; vi.advanceTimersByTime(SEEK_STALL_MS); frame();
+    expect(top.seeks).toBe(2);
+    // This seek takes 1.5 x SEEK_STALL_MS: it is not restarted (the retry waits 2 x SEEK_STALL_MS) and lands.
+    now += 1.5 * SEEK_STALL_MS; vi.advanceTimersByTime(1.5 * SEEK_STALL_MS); frame();
+    expect(top.seeks).toBe(2);
+    top.land(); frame();
+    expect(drawn[drawn.length - 1].t).toBeCloseTo(target(240), 9);
     player.destroy();
   });
 });
