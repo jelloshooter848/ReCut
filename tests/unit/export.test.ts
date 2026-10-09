@@ -510,7 +510,8 @@ describe('render graph timestamps (docs/attack/media.md M-01..M-04, M-09)', () =
     // linked V+A with the same range share one input (M-09); exact container: no 1 s pre-roll
     expect(g.inputCount).toBe(1);
     const i = g.args.indexOf('-copyts');
-    expect(g.args.slice(i, i + 4)).toEqual(['-copyts', '-start_at_zero', '-ss', '1.939167']);
+    expect(g.args.slice(i, i + 3)).toEqual(['-copyts', '-ss', '1.939167']);
+    expect(g.args).not.toContain('-start_at_zero');
     // 24 fps media in a 24 fps sequence: trim at 2 - 1/48, setpts bias c = 1/48 - 1/48 (+1 µs)
     expect(g.filterGraph).toContain('[0:v:0]trim=start=1.979167:duration=1.270833,settb=AVTB,setpts=PTS-2.000001/TB,fps=24/1:start_time=0');
     expect(g.filterGraph).toMatch(/\[0:1\]atrim=start=2:duration=1\.25,asetpts=PTS-2\/TB,aresample=async=1:first_pts=0/);

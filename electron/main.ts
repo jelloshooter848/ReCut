@@ -29,6 +29,7 @@ import { getWhisperCliPath, whisperCliVersion } from './whisper/engine';
 import { manualRedirectFetch, type NetClientRequest } from './net/electronFetch';
 import { registerUpdateIpc } from './updateIpc';
 import { createQuitFlow } from './quitFlow';
+import { removeStaleChromiumCache } from './chromiumCache';
 import type { UpdateChecker } from './updateCheck';
 import { PRODUCT_NAME } from '../shared/productIdentity';
 import { envVar } from './env';
@@ -49,6 +50,12 @@ const userDataStartup = prepareUserData();
 if (process.argv.includes('--no-sandbox')) app.commandLine.appendSwitch('no-sandbox');
 // HTMLMediaElement.audioTracks, so the preview plays each clip's selected audio stream (the one export renders).
 app.commandLine.appendSwitch('enable-blink-features', 'AudioVideoTracks');
+// No Chromium HTTP cache. Its folder, <userData>/Cache, is the app's default cache folder <userData>/cache on Windows and
+// macOS (case-insensitive), and with the HTTP cache on Chromium empties that folder at every start except its own
+// Cache_Data (bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md; electron/chromiumCache.ts). The app
+// loads only local files and recut-media://, and its downloads and the update check do not use the HTTP cache.
+// Before ready, so no network context is ever created with it.
+app.commandLine.appendSwitch('disable-http-cache');
 if (envVar('DISABLE_GPU') === '1' || smoke) app.disableHardwareAcceleration();
 
 protocol.registerSchemesAsPrivileged([
@@ -410,6 +417,11 @@ function startApp(): void {
       updates = registerUpdateIpc({ userData: ud, broadcast });
 
       const cacheDir = await resolveCacheDir(ud);
+      // Chromium's leftovers in the default cache folder from earlier versions (electron/chromiumCache.ts). Best effort.
+      // `ud` is the folder this session uses, after the user-data migration (electron/userDataStartup.ts).
+      const envCacheDir = envVar('CACHE_DIR')?.trim();
+      const effectiveCacheDir = envCacheDir ? path.resolve(envCacheDir) : cacheDir;
+      void removeStaleChromiumCache({ userData: ud, cacheDir: effectiveCacheDir });
       const ff = resolveFfmpeg();
       try {
         // Downloads (OCR languages, Whisper models) use net.request with manual redirects (electron/net/electronFetch.ts):

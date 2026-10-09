@@ -291,8 +291,8 @@ describe('Collect round trip of a 0.8.0 project (nesting, keyframes, channel sel
       'Media/Title card – Amélie.png',
       'Proxies/Disc 1/title_t00.mkv_540p_all.mp4',
       'Proxies/The Empire Strikes Back (1980).mkv_540p_all.mp4',
-      'Proxies/The Empire Strikes Back (1980).mkv_ch1.ch-FC_v1.m4a',
-      'Proxies/The Empire Strikes Back (1980).mkv_ch1.dm-c-3-s-3_v1.m4a',
+      'Proxies/The Empire Strikes Back (1980).mkv_ch1.ch-FC_v2.m4a',
+      'Proxies/The Empire Strikes Back (1980).mkv_ch1.dm-c-3-s-3_v2.m4a',
       'Proxies/Title card – Amélie.png_still.png',
       'Subtitles/Episode V.en.srt',
       'Subtitles/The Empire Strikes Back (1980).en.srt',
@@ -321,8 +321,8 @@ describe('Collect round trip of a 0.8.0 project (nesting, keyframes, channel sel
     expect(c.media[ids.disc1].proxy.path).toBe(path.join(folder, 'Proxies', 'Disc 1', 'title_t00.mkv_540p_all.mp4'));
     // Channel proxies are proxies: copied with "Include proxies", named after their media and their key.
     expect(c.media[ids.movie].channelProxies).toEqual({
-      '1.ch-FC': { status: 'ready', progress: 1, path: path.join(folder, 'Proxies', 'The Empire Strikes Back (1980).mkv_ch1.ch-FC_v1.m4a') },
-      '1.dm-c-3-s-3': { status: 'ready', progress: 1, path: path.join(folder, 'Proxies', 'The Empire Strikes Back (1980).mkv_ch1.dm-c-3-s-3_v1.m4a') },
+      '1.ch-FC': { status: 'ready', progress: 1, path: path.join(folder, 'Proxies', 'The Empire Strikes Back (1980).mkv_ch1.ch-FC_v2.m4a') },
+      '1.dm-c-3-s-3': { status: 'ready', progress: 1, path: path.join(folder, 'Proxies', 'The Empire Strikes Back (1980).mkv_ch1.dm-c-3-s-3_v2.m4a') },
       '2.ch-FL': { status: 'failed', error: 'Canceled' },
     });
     // The snapshot's own subtitle source was collected too.

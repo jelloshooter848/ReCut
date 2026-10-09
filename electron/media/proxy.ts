@@ -177,16 +177,29 @@ async function stillProxyTarget(req: ProxyRequest, key: string): Promise<string 
 
 // ------------------------------------------------------------------ video / audio
 
-/** Build the ffmpeg argument list for a proxy transcode (exported for inspection/tests). */
+/**
+ * Build the ffmpeg argument list for a proxy transcode (exported for inspection/tests).
+ *
+ * The proxy is 0-based on the container start (`startTime`, the probed format start_time): `-copyts` with
+ * `-itsoffset -startTime`. Not FFmpeg's own rebasing: for MPEG-TS / MPEG-PS it uses the start of the mapped streams,
+ * which moved the proxy when the earliest stream of the file was not mapped (a subtitle or data stream, or an audio
+ * stream left out by a fallback plan). `-fps_mode cfr` keeps what FFmpeg picks for mp4 without `-copyts`.
+ */
 export function buildProxyArgs(req: ProxyRequest, opts: {
   targetHeight: number; hasVideo: boolean; hasAudio: boolean; outPart: string;
   /** Only these audio streams (absolute indexes, in this order); default every audio stream (`-map 0:a?`). */
   audioStreams?: readonly number[];
+  /** The source's container start (MediaProbe.startTime); 0 when unknown. */
+  startTime?: number;
 }): string[] {
-  const args: string[] = ['-i', ffmpegFileArg(req.path)];
+  const st = opts.startTime;
+  const args: string[] = ['-copyts'];
+  if (typeof st === 'number' && Number.isFinite(st) && st > 0) args.push('-itsoffset', `-${Math.round(st * 1e6) / 1e6}`);
+  args.push('-i', ffmpegFileArg(req.path));
   if (opts.hasVideo) {
     args.push(
       '-map', '0:v:0',
+      '-fps_mode', 'cfr',
       '-vf', `scale=-2:${opts.targetHeight}`,
       '-c:v', 'libx264',
       '-preset', 'veryfast',
@@ -294,7 +307,7 @@ export async function runProxy(req: ProxyRequest, ctx: JobRunContext): Promise<P
     }
     try {
       await encodeProxy(req, ctx, out, {
-        targetHeight, hasVideo, hasAudio, duration: probe.duration, audioStreams: fallback ? streams : undefined,
+        targetHeight, hasVideo, hasAudio, duration: probe.duration, audioStreams: fallback ? streams : undefined, startTime: probe.startTime,
         label: fallback ? ` (audio ${streamList(streams)})` : '',
       });
     } catch (e) {
@@ -315,12 +328,12 @@ export async function runProxy(req: ProxyRequest, ctx: JobRunContext): Promise<P
 
 /** One proxy encode to `out` through a per-job `.part` file, renamed on success. */
 async function encodeProxy(req: ProxyRequest, ctx: JobRunContext, out: string, o: {
-  targetHeight: number; hasVideo: boolean; hasAudio: boolean; duration: number; audioStreams?: readonly number[]; label: string;
+  targetHeight: number; hasVideo: boolean; hasAudio: boolean; duration: number; audioStreams?: readonly number[]; label: string; startTime: number;
 }): Promise<void> {
   // Per-job temp name: even if two jobs ever target the same proxy they never share a `.part`.
   const outPart = `${out}.part-${ctx.jobId}`;
   await removeStaleParts(out);
-  const args = buildProxyArgs(req, { targetHeight: o.targetHeight, hasVideo: o.hasVideo, hasAudio: o.hasAudio, outPart, audioStreams: o.audioStreams });
+  const args = buildProxyArgs(req, { targetHeight: o.targetHeight, hasVideo: o.hasVideo, hasAudio: o.hasAudio, outPart, audioStreams: o.audioStreams, startTime: o.startTime });
   ctx.setProgress(0, `${o.hasVideo ? `Encoding ${o.targetHeight}p proxy` : 'Encoding audio proxy'}${o.label}`);
   const run = runFfmpeg(args, {
     duration: o.duration,

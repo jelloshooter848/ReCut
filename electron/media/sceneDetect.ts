@@ -17,8 +17,10 @@ export const DEFAULT_MIN_SCENE_SECONDS = 1.0;
 /**
  * Bump when the detected boundaries for the same file and threshold change, so cached results are recomputed.
  * v2: boundaries come from showinfo's integer `pts` in AV_TIME_BASE units instead of the rounded `pts_time` text.
+ * v3: boundaries are relative to the container start, not to the video stream's start, on MPEG-TS / MPEG-PS too
+ *     (bugs/closed/2026-10-09-ts-late-video-export-early.md).
  */
-export const SCENE_VERSION = 2;
+export const SCENE_VERSION = 3;
 
 /** FFmpeg's AV_TIME_BASE: `settb=AVTB` puts the frames into 1/1000000 s ticks before showinfo prints them. */
 export const AV_TIME_BASE = 1_000_000;
@@ -79,15 +81,26 @@ export async function runSceneDetect(req: SceneDetectRequest, ctx: JobRunContext
     } catch { /* fall through and recompute */ }
   }
 
+  // Boundaries are container-relative source seconds (the preview's and the export's zero). `-copyts` keeps the file's
+  // own timestamps and the probed container start is subtracted here: without it FFmpeg rebases MPEG-TS / MPEG-PS to
+  // the start of the streams the command maps (the video stream alone), so cuts in a file whose video starts after
+  // its audio came out early by that offset.
+  let startTime = 0;
   if (!(duration > 0)) {
     const probe = await probeMedia(req.path);
     duration = probe.duration;
     if (!probe.video) throw new Error('source has no video stream');
+    startTime = probe.startTime;
+  } else {
+    const probe = await probeMedia(req.path).catch(() => undefined);
+    startTime = probe?.startTime ?? 0;
   }
+  const startUs = Number.isFinite(startTime) && startTime > 0 ? Math.round(startTime * AV_TIME_BASE) : 0;
 
   const rawBoundaries: number[] = [];
   const run = runFfmpeg(
     [
+      '-copyts',
       '-i', ffmpegFileArg(req.path),
       '-map', '0:v:0',
       '-an', '-sn', '-dn',
@@ -102,7 +115,7 @@ export async function runSceneDetect(req: SceneDetectRequest, ctx: JobRunContext
       onProgress: (p) => ctx.setProgress(p, `${Math.round(p * 100)}% · ${rawBoundaries.length} cuts`),
       onStderrLine: (line) => {
         const t = parseShowinfoPts(line);
-        if (t !== null) rawBoundaries.push(t);
+        if (t !== null) rawBoundaries.push((Math.round(t * AV_TIME_BASE) - startUs) / AV_TIME_BASE);
       },
     },
   );

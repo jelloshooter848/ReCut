@@ -166,7 +166,7 @@ export interface SourceEndCheck {
 }
 
 /**
- * The streams to check for an export's graphs (one per output file): every media input (`-copyts -start_at_zero [-ss S] -t T -i path`) the
+ * The streams to check for an export's graphs (one per output file): every media input (`-copyts [-ss S] -t T -i path`) the
  * filter graph reads, grouped per file and stream with the furthest point read (S + T - 0.25, the graph's read
  * margin). Stills (`-loop`), inputs without `-t` (chapters, subtitles) and paths that are not a project media item
  * are skipped. A read past the probed duration is already a pre-export warning ("extends past the end of its
