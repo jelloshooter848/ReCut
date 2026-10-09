@@ -2,13 +2,13 @@
  * OCR worker thread (worker_threads entry, bundled by scripts/build-electron.mjs to dist/electron/ocr/worker.js).
  *
  * Modeled on tesseract.js 7.0.0 `src/worker-script/node/index.js`: the same message dispatcher
- * (`tesseract.js/src/worker-script`, bundled in), with ReCut's own adapter:
+ * (`tesseract.js/src/worker-script`, bundled in), with the app's own adapter:
  *  - getCore loads OUR packaged core from `<worker dir>/core` (dist/electron/ocr/core) with a runtime require, not the
  *    tesseract.js-core package (which is not shipped). Relaxed SIMD + LSTM-only when the runtime supports relaxed SIMD,
  *    else plain LSTM-only. (tesseract.js's own Node getCore receives `lstmOnly` where it expects an OEM, so it always
  *    picks a legacy+LSTM core, which is larger and slower.) If the relaxed-SIMD core fails to instantiate it falls
  *    back to the plain one.
- *  - fetch always rejects: language data is only ever read from the local `langPath` (ReCut's tessdata folder).
+ *  - fetch always rejects: language data is only ever read from the local `langPath` (the app's tessdata folder).
  *  - gunzip uses zlib (we load uncompressed `.traineddata`, gzip:false, but gzip input still works).
  *
  * workerData: { coreDir?: string; core?: 'relaxedsimd-lstm' | 'lstm' (force a variant, tests/diagnostics) }

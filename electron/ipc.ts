@@ -29,6 +29,7 @@ import type {
 import { encodeProjectWire, isAutosaveStreamRef, SAVE_STREAM_IPC as IPC_SAVE, type SaveBeginResult } from '../shared/projectWire';
 import * as io from './project/io';
 import * as fsApi from './fs';
+import { legacyPathRoots } from '../shared/legacyPaths';
 
 // ------------------------------------------------------------------
 // Media / jobs / export contract (implemented by electron/media/index.ts)
@@ -159,6 +160,8 @@ export interface IpcDeps {
   /** The renderer chose to stay open (Cancel / failed save). */
   cancelQuit?(): void;
   userData: string;
+  /** Legacy user-data folders other than `userData` (electron/userDataStartup.ts); their cache paths are remapped. */
+  legacyUserData?: string[];
   isDev: boolean;
   /** Called whenever the recent-projects list changes (menu rebuild). */
   onRecentChanged?(): void;
@@ -216,14 +219,16 @@ export function registerIpc(deps: IpcDeps): void {
   // --- app ---
   ipcMain.handle(IPC.appInfo, async (): Promise<AppInfo> => {
     const { ffmpegPath, ffprobePath } = resolveFfmpeg();
+    const cacheDir = await resolveCacheDir(userData);
     return {
       version: app.getVersion(),
       platform: process.platform,
       ffmpegPath,
       ffprobePath,
       ffmpegVersion: await ffmpegVersion(ffmpegPath),
-      cacheDir: await resolveCacheDir(userData),
+      cacheDir,
       userDataDir: userData,
+      legacyPathRoots: legacyPathRoots(deps.legacyUserData ?? [], userData, cacheDir),
       ocrDataDir: ocrDataDir(userData),
       whisperModelsDir: whisperModelsDir(userData),
       homeDir: app.getPath('home'),

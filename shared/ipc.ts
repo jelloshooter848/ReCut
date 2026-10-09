@@ -9,6 +9,8 @@ import type { TranscribeRequest, WhisperEngineInfo, WhisperModelState } from './
 import type { CollectRequest, CollectStartResult, CollectSummary } from './collect';
 import type { ProjectWire } from './projectWire';
 import type { UpdateCheckResult, UpdateCheckSetting, UpdateStatus } from './update';
+import type { PathRoot } from './legacyPaths';
+import { PRODUCT_NAME, envVarName } from './productIdentity';
 
 export const IPC = {
   // app
@@ -95,13 +97,13 @@ export const IPC = {
 
 /** How to fix a missing FFmpeg (shown in the startup banner and in import / export / proxy errors). */
 export const FFMPEG_INSTALL_HELP =
-  'Install FFmpeg (it provides both ffmpeg and ffprobe) and restart ReCut: `sudo apt install ffmpeg` on Debian/Ubuntu, '
-  + '`brew install ffmpeg` on macOS, or `winget install Gyan.FFmpeg` on Windows. Or point ReCut at the binaries with the '
-  + 'RECUT_FFMPEG and RECUT_FFPROBE environment variables. See docs/INSTALL.md.';
+  `Install FFmpeg (it provides both ffmpeg and ffprobe) and restart ${PRODUCT_NAME}: \`sudo apt install ffmpeg\` on Debian/Ubuntu, `
+  + `\`brew install ffmpeg\` on macOS, or \`winget install Gyan.FFmpeg\` on Windows. Or point ${PRODUCT_NAME} at the binaries with the `
+  + `${envVarName('FFMPEG')} and ${envVarName('FFPROBE')} environment variables. See docs/INSTALL.md.`;
 
 /** Clear error for a missing ffmpeg / ffprobe binary. */
 export function ffmpegMissingMessage(binary: 'ffmpeg' | 'ffprobe'): string {
-  return `${binary} was not found, so ReCut cannot ${binary === 'ffprobe' ? 'read media files' : 'process media'}. ${FFMPEG_INSTALL_HELP}`;
+  return `${binary} was not found, so ${PRODUCT_NAME} cannot ${binary === 'ffprobe' ? 'read media files' : 'process media'}. ${FFMPEG_INSTALL_HELP}`;
 }
 
 export interface AppInfo {
@@ -112,6 +114,11 @@ export interface AppInfo {
   ffmpegVersion: string | null;
   cacheDir: string;
   userDataDir: string;
+  /**
+   * Where paths into a legacy user-data folder (and its default cache) are looked for now (shared/legacyPaths.ts):
+   * proxy paths saved before the folder moved. Empty or absent when there is none.
+   */
+  legacyPathRoots?: PathRoot[];
   /** Folder holding the installed OCR language files (`<userData>/ocr/tessdata`). */
   ocrDataDir: string;
   /** Folder holding the installed Whisper models (`<userData>/whisper/models`). */
@@ -249,7 +256,7 @@ export interface RecutApi {
   quitCancel(): Promise<void>;
   openExternal(url: string): Promise<void>;
   showItemInFolder(path: string): Promise<void>;
-  /** The licence files shipped with this build (ReCut, third-party notices, bundled FFmpeg, Electron), in display order. */
+  /** The licence files shipped with this build (the app's own, third-party notices, bundled FFmpeg, Electron), in display order. */
   licenceFiles(): Promise<LicenceFile[]>;
   /** Open one of `licenceFiles()` with the system's default app (or reveal it when nothing can open it). */
   openLicenceFile(id: LicenceFileId): Promise<OpenLicenceResult>;
@@ -373,6 +380,8 @@ declare global {
 }
 
 /** Scheme used for streaming local media into the renderer with range support. */
+// frozen: changing this would break every place that builds or parses these URLs (protocol registration, thumbnails,
+// the smoke test and about 25 test files) with nothing gained: the scheme is invisible to users and never saved.
 export const MEDIA_SCHEME = 'recut-media';
 export function pathToMediaUrl(path: string): string {
   return `${MEDIA_SCHEME}://local/${encodeURIComponent(path)}`;

@@ -17,8 +17,12 @@ import { registerCommand } from '@/keyboard/shortcuts';
 import { toast } from '@/components/ui/toastStore';
 import { confirm, confirmInApp, type ConfirmOptions } from './dialogs/ConfirmDialog';
 import { createAutosaveGate } from './autosaveGate';
+import { PRODUCT_NAME, PROJECT_EXTENSION, projectFileFilters, projectSaveFilters } from '@shared/productIdentity';
 
-export const PROJECT_FILTERS = [{ name: 'ReCut Project', extensions: ['recut'] }];
+/** Open filter: every project extension that opens (productIdentity PROJECT_EXTENSIONS), the primary first. */
+export const PROJECT_FILTERS = projectFileFilters();
+/** Save As filter: the primary extension (a project already saved with another one keeps it). */
+export const PROJECT_SAVE_FILTERS = projectSaveFilters();
 /** Debounce after the last change before an autosave is written. */
 export const AUTOSAVE_DEBOUNCE_MS = 5000;
 const DEFAULT_AUTOSAVE_INTERVAL_SEC = 60;
@@ -73,8 +77,8 @@ export async function requestSaveAs(): Promise<boolean> {
   const st = useStore.getState();
   try {
     const target = await api.saveFile({
-      title: 'Save Project As', filters: PROJECT_FILTERS,
-      defaultPath: st.projectPath ?? `${st.project.name.replace(/[\\/:*?"<>|]+/g, '_') || 'Untitled'}.recut`,
+      title: 'Save Project As', filters: PROJECT_SAVE_FILTERS,
+      defaultPath: st.projectPath ?? `${st.project.name.replace(/[\\/:*?"<>|]+/g, '_') || 'Untitled'}.${PROJECT_EXTENSION}`,
     });
     if (!target) return false;
     adoptFileName(target);
@@ -161,8 +165,8 @@ function syncTitle(): void {
   const seq = activeSequence(st);
   const name = st.project.name || 'Untitled Project';
   useShellStore.getState().setProjectTitle({ projectName: name, sequenceName: seq?.name ?? null, dirty: st.dirty });
-  // "<project>[ *] — ReCut"; the Electron window title follows document.title (main.ts does not override it).
-  if (typeof document !== 'undefined') document.title = `${name}${st.dirty ? ' *' : ''} — ReCut`;
+  // "<project>[ *] — <product name>"; the Electron window title follows document.title (main.ts does not override it).
+  if (typeof document !== 'undefined') document.title = `${name}${st.dirty ? ' *' : ''} — ${PRODUCT_NAME}`;
 }
 
 // ------------------------------------------------------------------
@@ -254,7 +258,7 @@ export function recoveryPrompt(info: RecoveryReply): ConfirmOptions {
   return {
     title: 'Recover unsaved changes?',
     message: `Recover unsaved changes from ${when}?`,
-    detail: `ReCut found an autosave for ${what} that is newer than the last save.${damage}`,
+    detail: `${PRODUCT_NAME} found an autosave for ${what} that is newer than the last save.${damage}`,
     buttons: ['Recover', 'Discard'], defaultId: 0, cancelId: 1, testId: 'recovery-dialog',
     ...(n ? { type: 'warning' as const } : {}),
   };
@@ -298,7 +302,7 @@ async function handleBeforeQuit(): Promise<void> {
   let i = 2;
   try {
     i = await api.message({
-      type: 'question', title: 'Quit ReCut', message: `Save changes to "${st.project.name}" before quitting?`,
+      type: 'question', title: `Quit ${PRODUCT_NAME}`, message: `Save changes to "${st.project.name}" before quitting?`,
       buttons: ['Save', "Don't Save", 'Cancel'], defaultId: 0, cancelId: 2,
     });
   } catch (e) { console.error('[quit] prompt failed', e); }

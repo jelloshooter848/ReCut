@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
+import { envVar } from '../env';
 
 export type OcrCoreVariant = 'relaxedsimd-lstm' | 'lstm';
 
@@ -201,7 +202,7 @@ export async function createOcrPool(opts: OcrPoolOptions): Promise<OcrPool> {
   const size = Math.max(1, Math.floor(opts.size ?? defaultOcrPoolSize()));
   const workerPath = opts.workerPath ?? ocrWorkerPath();
   if (!fs.existsSync(workerPath)) throw new Error(`OCR worker missing: ${workerPath}`);
-  const data = { coreDir: opts.coreDir, core: opts.core, debug: process.env.RECUT_OCR_DEBUG === '1' };
+  const data = { coreDir: opts.coreDir, core: opts.core, debug: envVar('OCR_DEBUG') === '1' };
 
   const threads: OcrThread[] = [];
   const queue: { image: Uint8Array; resolve(r: OcrResult): void; reject(e: Error): void }[] = [];

@@ -177,6 +177,8 @@ export function findConflicts(id: string): { key: string; command: Command }[] {
 }
 
 // ---------------------------------------------------------------- persistence
+// frozen: changing this would reset every user's saved shortcut overrides (the key is read from the browser storage the
+// user-data folder carries along; it is invisible to users).
 const LS_KEY = 'recut.shortcuts.v1';
 const SEP = ' ';
 let persistTimer: number | undefined;

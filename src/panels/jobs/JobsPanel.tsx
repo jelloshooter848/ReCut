@@ -41,6 +41,7 @@ const activeCount = (jobs: JobInfo[]) => jobs.filter((j) => j.status === 'queued
 
 export function JobsPanel(_props: PanelProps) {
   injectStyle('recut-jobs-panel-css', CSS);
+  // frozen: changing the 'recut.jobsPanel.tab' key would reset every user's last Jobs tab (it is invisible to users).
   const [tab, setTab] = useState<TabId>(() => {
     try { return (localStorage.getItem('recut.jobsPanel.tab') as TabId) === 'proxies' ? 'proxies' : 'jobs'; } catch { return 'jobs'; }
   });

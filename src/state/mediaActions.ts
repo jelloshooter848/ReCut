@@ -11,6 +11,8 @@ import {
 } from '../../shared/projectWire';
 import { parseSubtitles } from '../../shared/subtitles';
 import { uid } from '../../shared/ids';
+import { remapLegacyPath, type PathRoot } from '../../shared/legacyPaths';
+import { stripProjectExtension } from '../../shared/productIdentity';
 import { useStore } from './store';
 import { fileNameOf } from './selectors';
 import { classifyPath, importIdentity, sidecarLanguage, LONG_FORM_MOVIE_SEC, type ImportBinKind } from './parseIdentity';
@@ -229,7 +231,37 @@ export async function verifyMediaOnline(mediaIds?: ID[]): Promise<ID[]> {
   return missing;
 }
 
-/** Stat every `ready` proxy; a missing proxy file resets the item to `none` (so it shows as needing a proxy again). */
+const legacyRootsByApi = new WeakMap<RecutApi, Promise<PathRoot[]>>();
+/** Where paths into a legacy user-data folder are looked for now (AppInfo.legacyPathRoots; asked once per bridge). */
+function legacyRoots(api: RecutApi): Promise<PathRoot[]> {
+  let p = legacyRootsByApi.get(api);
+  if (!p) {
+    p = Promise.resolve()
+      .then(() => api.appInfo())
+      .then((i) => (Array.isArray(i?.legacyPathRoots) ? i.legacyPathRoots : []), () => { legacyRootsByApi.delete(api); return []; });
+    legacyRootsByApi.set(api, p);
+  }
+  return p;
+}
+
+/**
+ * A missing cache file (proxy, channel proxy) saved under a legacy user-data folder that has moved (or under its
+ * default cache): the same relative path under the current folder when a file exists there (shared/legacyPaths.ts),
+ * else null.
+ */
+export async function relocatedCachePath(api: RecutApi, p: string): Promise<string | null> {
+  const roots = await legacyRoots(api);
+  if (!roots.length) return null;
+  const candidate = remapLegacyPath(p, roots);
+  if (!candidate || candidate === p) return null;
+  try { return (await api.stat(candidate)).exists ? candidate : null; } catch { return null; }
+}
+
+/**
+ * Stat every `ready` proxy. A missing proxy file saved under a legacy user-data folder is looked for at the same place
+ * under the current one first (relocatedCachePath; the path is updated quietly, like every proxy state write); any
+ * other missing proxy resets the item to `none` (so it shows as needing a proxy again).
+ */
 export async function verifyProxies(mediaIds?: ID[]): Promise<ID[]> {
   const api = recutApi();
   if (!api) return [];
@@ -241,6 +273,11 @@ export async function verifyProxies(mediaIds?: ID[]): Promise<ID[]> {
     let exists = true;
     try { exists = (await api.stat(m.proxy.path)).exists; } catch { /* leave as is */ }
     if (exists) continue;
+    const moved = await relocatedCachePath(api, m.proxy.path);
+    if (moved) {
+      useStore.getState().setProxy(id, { ...m.proxy, path: moved });
+      continue;
+    }
     gone.push(id);
     useStore.getState().setProxy(id, { status: 'none' });
   }
@@ -822,10 +859,10 @@ function autosaveAfterSave(projectId: ID, loadedRevision: number): void {
   afterSaveTimer = setTimeout(fire, AUTOSAVE_AFTER_SAVE_MS);
 }
 
-/** The name a still-untitled project takes from its file (`/a/My Edit.recut` -> `My Edit`). */
+/** The name a still-untitled project takes from its file (`/a/My Edit.recut` -> `My Edit`; any project extension). */
 export const DEFAULT_PROJECT_NAME = 'Untitled Project';
 export function projectNameFromPath(p: string): string {
-  return fileNameOf(p).replace(/\.recut$/i, '').trim();
+  return stripProjectExtension(fileNameOf(p)).trim();
 }
 
 /** Warning text for a load that had to repair damaged data (LoadResult.repaired / preRepairPath). */

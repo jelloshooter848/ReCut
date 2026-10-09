@@ -15,6 +15,8 @@ import { PROJECT_FORMAT_VERSION } from '../../shared/model';
 import type { Clip, Project, Sequence, Track } from '../../shared/model';
 
 const FIXTURE_DIR = path.resolve(__dirname, '../fixtures/projects');
+// frozen: changing this would stop the suite from finding the saved-project fixtures tests/fixtures/projects/*.recut,
+// which are never renamed or regenerated (they are what earlier releases wrote; see that folder's README).
 const FIXTURE_RE = /^recut-(\d+)\.(\d+)\.(\d+)\.recut$/;
 
 const fixtures = fs.readdirSync(FIXTURE_DIR)

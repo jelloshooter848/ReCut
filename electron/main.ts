@@ -1,12 +1,13 @@
 /**
  * Electron main process entry: app lifecycle, the single editor window, menu, protocol, IPC.
  *
- * Env:
+ * Env (read through electron/env.ts, so each is also accepted under every prefix in productIdentity ENV_PREFIXES):
  *  RECUT_DEV_URL   — load the Vite dev server instead of dist/renderer/index.html
- *  RECUT_USER_DATA — override the userData directory (tests)
+ *  RECUT_USER_DATA — override the userData directory (tests; skips the user-data migration)
  *  RECUT_SMOKE=1   — headless smoke test: probe the media protocol, log, quit after 2s
  *  RECUT_DISABLE_GPU=1 — software rendering (xvfb)
  *  RECUT_UPDATE_CHECK=0 / RECUT_UPDATE_URL — update notice (see electron/updateIpc.ts)
+ * Test-only user-data switches: electron/userDataStartup.ts.
  */
 import { app, BrowserWindow, dialog, net, protocol, screen, shell } from 'electron';
 import fs from 'node:fs';
@@ -29,21 +30,26 @@ import { manualRedirectFetch, type NetClientRequest } from './net/electronFetch'
 import { registerUpdateIpc } from './updateIpc';
 import { createQuitFlow } from './quitFlow';
 import type { UpdateChecker } from './updateCheck';
+import { PRODUCT_NAME } from '../shared/productIdentity';
+import { envVar } from './env';
+import { askLegacyInUse, prepareUserData, showMigrationNotice } from './userDataStartup';
 
-const isDev = Boolean(process.env.RECUT_DEV_URL) || !app.isPackaged;
-const smoke = process.env.RECUT_SMOKE === '1';
+const devUrl = envVar('DEV_URL');
+const isDev = Boolean(devUrl) || !app.isPackaged;
+const smoke = envVar('SMOKE') === '1';
 const QUIT_FALLBACK_MS = 3000;
 
 // ------------------------------------------------------------------
 // Pre-ready configuration
 // ------------------------------------------------------------------
 
-app.setName('ReCut'); // before any getPath('userData') so dev and packaged share a location
+// The app name (dev and packaged share one user-data folder), the RECUT_USER_DATA override and the one-time move of a
+// legacy user-data folder: before anything calls getPath('userData') or takes the single-instance lock.
+const userDataStartup = prepareUserData();
 if (process.argv.includes('--no-sandbox')) app.commandLine.appendSwitch('no-sandbox');
 // HTMLMediaElement.audioTracks, so the preview plays each clip's selected audio stream (the one export renders).
 app.commandLine.appendSwitch('enable-blink-features', 'AudioVideoTracks');
-if (process.env.RECUT_DISABLE_GPU === '1' || smoke) app.disableHardwareAcceleration();
-if (process.env.RECUT_USER_DATA) app.setPath('userData', path.resolve(process.env.RECUT_USER_DATA));
+if (envVar('DISABLE_GPU') === '1' || smoke) app.disableHardwareAcceleration();
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -100,9 +106,9 @@ const quitFlow = createQuitFlow({
   focus: () => { if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.focus(); } },
   confirmUnresponsive: async (signal) => {
     const options: Electron.MessageBoxOptions = {
-      type: 'warning', title: 'ReCut is not responding',
-      message: 'ReCut is not responding. Quit anyway?',
-      detail: 'Changes since the last save are lost if you quit now (an autosave, if any, is offered when ReCut starts again). Wait to give it more time.',
+      type: 'warning', title: `${PRODUCT_NAME} is not responding`,
+      message: `${PRODUCT_NAME} is not responding. Quit anyway?`,
+      detail: `Changes since the last save are lost if you quit now (an autosave, if any, is offered when ${PRODUCT_NAME} starts again). Wait to give it more time.`,
       buttons: ['Wait', 'Quit'], defaultId: 0, cancelId: 0, noLink: true, signal,
     };
     const r = win && !win.isDestroyed() ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
@@ -174,7 +180,7 @@ async function createWindow(): Promise<BrowserWindow> {
     minWidth: MIN_W,
     minHeight: MIN_H,
     backgroundColor: '#1e1e1e',
-    title: 'ReCut',
+    title: PRODUCT_NAME,
     show: false,
     autoHideMenuBar: false,
     webPreferences: {
@@ -212,7 +218,7 @@ async function createWindow(): Promise<BrowserWindow> {
   w.webContents.on('responsive', () => quitFlow.rendererResponsive());
 
   // Keep the renderer inside the app: no in-window navigation, external links go to the browser.
-  const allowedOrigin = process.env.RECUT_DEV_URL ? new URL(process.env.RECUT_DEV_URL).origin : null;
+  const allowedOrigin = devUrl ? new URL(devUrl).origin : null;
   w.webContents.on('will-navigate', (e, url) => {
     if (allowedOrigin && url.startsWith(allowedOrigin)) return;
     if (url.startsWith('file:')) return;
@@ -233,8 +239,8 @@ async function createWindow(): Promise<BrowserWindow> {
     }
   });
 
-  if (process.env.RECUT_DEV_URL) {
-    await w.loadURL(process.env.RECUT_DEV_URL);
+  if (devUrl) {
+    await w.loadURL(devUrl);
   } else {
     await w.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
@@ -249,7 +255,7 @@ async function runSmoke(): Promise<void> {
   // Results go to stdout and, when RECUT_SMOKE_OUT is set, to that file (Windows GUI apps have no attached console).
   const lines: string[] = [];
   const log = (line: string) => { lines.push(line); console.log(line); };
-  const target = process.env.RECUT_SMOKE_FILE || (process.platform === 'win32' ? process.execPath : '/usr/bin/ffmpeg');
+  const target = envVar('SMOKE_FILE') || (process.platform === 'win32' ? process.execPath : '/usr/bin/ffmpeg');
   const url = `${MEDIA_SCHEME}://local/${encodeURIComponent(target)}`;
   try {
     const res = await net.fetch(url, { headers: { Range: 'bytes=10-19' } });
@@ -296,7 +302,7 @@ async function runSmoke(): Promise<void> {
   }
   // Speech-to-text: the bundled whisper-cli (resources/whisper) runs and reports its version; no model needed.
   // "whisper engine=FAILED" fails the CI smoke checks (.github/workflows/windows.yml, scripts/windows/install-check.ps1),
-  // which require "whisper engine=<version> ok" from every package. A run from source ("Start ReCut.cmd", npm start)
+  // which require "whisper engine=<version> ok" from every package. A run from source (the Windows launcher script, npm start)
   // has no engine unless scripts/<platform>/get-whisper.* was run, which is not a failure there.
   const whisperBin = getWhisperCliPath();
   if (!whisperBin && !app.isPackaged) {
@@ -316,7 +322,7 @@ async function runSmoke(): Promise<void> {
   } catch (e) {
     log(`smoke: renderer check FAILED: ${e instanceof Error ? e.message : String(e)}`);
   }
-  const out = process.env.RECUT_SMOKE_OUT;
+  const out = envVar('SMOKE_OUT');
   if (out) { try { fs.writeFileSync(out, lines.join('\n') + '\n'); } catch { /* ignore */ } }
   setTimeout(() => requestQuit(true), 1000);
 }
@@ -325,97 +331,119 @@ async function runSmoke(): Promise<void> {
 // App lifecycle
 // ------------------------------------------------------------------
 
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
-  app.quit();
-} else {
-  app.on('second-instance', (_e, argv, workingDirectory) => {
-    const p = projectPathFromArgv(argv.slice(1), workingDirectory || undefined);
-    if (p) openProjectPath(p);
-    else if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.focus(); }
-  });
-
-  app.on('open-file', (e, p) => { e.preventDefault(); openProjectPath(p); }); // macOS
-
-  app.on('before-quit', (e) => {
-    if (quitFlow.confirmed) return;
-    e.preventDefault();
-    requestQuit(false);
-  });
-
-  app.on('will-quit', (e) => {
-    if (windowPrefs?.pending && !boundsFlushWaited) {
-      // The window bounds written on close go through the prefs queue: let that write finish (bounded), then quit.
-      boundsFlushWaited = true;
-      e.preventDefault();
-      void Promise.race([windowPrefs.flush(), new Promise((r) => setTimeout(r, BOUNDS_FLUSH_MS))]).then(() => app.quit());
-      return;
-    }
-    updates?.dispose();
-    void mediaHandlers.shutdown?.();
-  });
-
-  app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') requestQuit(true);
-  });
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0 && app.isReady()) void createWindow();
-  });
-
-  app.on('web-contents-created', (_e, contents) => {
-    contents.on('will-attach-webview', (e) => e.preventDefault());
-  });
-
+if (userDataStartup.outcome.result === 'busy') {
+  // Another launch is moving the user-data folder right now; it opens the window.
+  app.exit(0);
+} else if (userDataStartup.outcome.result === 'legacy-in-use') {
+  // The legacy app still runs on its folder (which this session would share): ask before taking the single-instance
+  // lock, which would otherwise hand this launch over to that app without a word.
   void app.whenReady().then(async () => {
-    registerMediaProtocol();
-
-    const ud = userData();
-    registerIpc({
-      getWindow: () => win,
-      requestQuit,
-      ackQuit,
-      cancelQuit,
-      userData: ud,
-      isDev,
-      onRecentChanged: () => menu?.refresh(),
-    });
-    // Update notice (opt-in daily check of the latest GitHub release; nothing is downloaded): electron/updateIpc.ts.
-    updates = registerUpdateIpc({ userData: ud, broadcast });
-
-    const cacheDir = await resolveCacheDir(ud);
-    const ff = resolveFfmpeg();
-    try {
-      // Downloads (OCR languages, Whisper models) use net.request with manual redirects (electron/net/electronFetch.ts):
-    // net.fetch rejects a manual redirect instead of returning it.
-    const fetch = manualRedirectFetch((o) => net.request(o as Electron.ClientRequestConstructorOptions) as unknown as NetClientRequest);
-    await mediaHandlers.init?.({ userData: ud, cacheDir, ffmpegPath: ff.ffmpegPath, ffprobePath: ff.ffprobePath, broadcast, fetch, packaged: app.isPackaged });
-    } catch (e) {
-      console.error('media init failed:', e);
+    const choice = await askLegacyInUse(userDataStartup);
+    if (choice === 'continue') startApp();
+    else {
+      if (choice === 'restart') app.relaunch();
+      app.exit(0);
     }
-    registerMediaIpc(mediaHandlers);
-    mediaHandlers.onJobsUpdate((jobs: JobInfo[]) => broadcast(IPC.evJobs, jobs));
-
-    let recentCache: string[] = (await io.readPrefs(ud)).recentProjects;
-    const installed = installMenu({
-      send: sendMenu,
-      openProjectPath,
-      getRecent: () => recentCache,
-      requestQuit: () => requestQuit(false),
-      isDev,
-    });
-    menu = {
-      refresh: () => {
-        void io.readPrefs(ud).then((p) => { recentCache = p.recentProjects; installed.refresh(); });
-      },
-    };
-
-    await createWindow();
-
-    if (smoke) void runSmoke();
-    else updates?.scheduleAutoCheck(); // a few seconds after startup, only when the user turned it on
-
   });
+} else {
+  startApp();
+}
+
+function startApp(): void {
+  const gotLock = app.requestSingleInstanceLock();
+  if (!gotLock) {
+    app.quit();
+  } else {
+    app.on('second-instance', (_e, argv, workingDirectory) => {
+      const p = projectPathFromArgv(argv.slice(1), workingDirectory || undefined);
+      if (p) openProjectPath(p);
+      else if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.focus(); }
+    });
+
+    app.on('open-file', (e, p) => { e.preventDefault(); openProjectPath(p); }); // macOS
+
+    app.on('before-quit', (e) => {
+      if (quitFlow.confirmed) return;
+      e.preventDefault();
+      requestQuit(false);
+    });
+
+    app.on('will-quit', (e) => {
+      if (windowPrefs?.pending && !boundsFlushWaited) {
+        // The window bounds written on close go through the prefs queue: let that write finish (bounded), then quit.
+        boundsFlushWaited = true;
+        e.preventDefault();
+        void Promise.race([windowPrefs.flush(), new Promise((r) => setTimeout(r, BOUNDS_FLUSH_MS))]).then(() => app.quit());
+        return;
+      }
+      updates?.dispose();
+      void mediaHandlers.shutdown?.();
+    });
+
+    app.on('window-all-closed', () => {
+      if (process.platform !== 'darwin') requestQuit(true);
+    });
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0 && app.isReady()) void createWindow();
+    });
+
+    app.on('web-contents-created', (_e, contents) => {
+      contents.on('will-attach-webview', (e) => e.preventDefault());
+    });
+
+    void app.whenReady().then(async () => {
+      registerMediaProtocol();
+
+      const ud = userData();
+      registerIpc({
+        getWindow: () => win,
+        requestQuit,
+        ackQuit,
+        cancelQuit,
+        userData: ud,
+        legacyUserData: userDataStartup.legacyDirs,
+        isDev,
+        onRecentChanged: () => menu?.refresh(),
+      });
+      // Update notice (opt-in daily check of the latest GitHub release; nothing is downloaded): electron/updateIpc.ts.
+      updates = registerUpdateIpc({ userData: ud, broadcast });
+
+      const cacheDir = await resolveCacheDir(ud);
+      const ff = resolveFfmpeg();
+      try {
+        // Downloads (OCR languages, Whisper models) use net.request with manual redirects (electron/net/electronFetch.ts):
+      // net.fetch rejects a manual redirect instead of returning it.
+      const fetch = manualRedirectFetch((o) => net.request(o as Electron.ClientRequestConstructorOptions) as unknown as NetClientRequest);
+      await mediaHandlers.init?.({ userData: ud, cacheDir, ffmpegPath: ff.ffmpegPath, ffprobePath: ff.ffprobePath, broadcast, fetch, packaged: app.isPackaged });
+      } catch (e) {
+        console.error('media init failed:', e);
+      }
+      registerMediaIpc(mediaHandlers);
+      mediaHandlers.onJobsUpdate((jobs: JobInfo[]) => broadcast(IPC.evJobs, jobs));
+
+      let recentCache: string[] = (await io.readPrefs(ud)).recentProjects;
+      const installed = installMenu({
+        send: sendMenu,
+        openProjectPath,
+        getRecent: () => recentCache,
+        requestQuit: () => requestQuit(false),
+        isDev,
+      });
+      menu = {
+        refresh: () => {
+          void io.readPrefs(ud).then((p) => { recentCache = p.recentProjects; installed.refresh(); });
+        },
+      };
+
+      const w = await createWindow();
+      void showMigrationNotice(userDataStartup, w).catch((e) => console.warn('user-data notice failed:', e));
+
+      if (smoke) void runSmoke();
+      else updates?.scheduleAutoCheck(); // a few seconds after startup, only when the user turned it on
+
+    });
+  }
 }
 
 process.on('uncaughtException', (err) => {
