@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JobInfo } from '../../shared/model';
-import type { TranscribeRequest, TranscribeResult } from '../../shared/whisper';
+import { WHISPER_VERBATIM_PROMPT, verbatimApplies, type TranscribeRequest, type TranscribeResult } from '../../shared/whisper';
 import { JobQueue } from '../../electron/jobs/jobQueue';
 import { setCacheDir } from '../../electron/media/cache';
 import { getFfmpegPath } from '../../electron/media/ffmpeg';
@@ -118,6 +118,14 @@ describe.skipIf(!hasFfmpeg)('transcription job (fake engine)', () => {
     expect(engineRuns()).toHaveLength(1);
   });
 
+  it('a verbatim English request passes the filler prompt to whisper-cli (#117)', async () => {
+    const q = new JobQueue({ throttleMs: 0 });
+    const { job } = await run(q, req({ language: 'en', verbatim: true }), ctx());
+    expect(job.status, job.error).toBe('done');
+    const [call] = engineRuns();
+    expect(call.args.slice(-2)).toEqual(['--prompt', WHISPER_VERBATIM_PROMPT]);
+  });
+
   it('transcribes long audio in chunks cut at a quiet moment, with the detected language passed on', async () => {
     const q = new JobQueue({ throttleMs: 0 });
     const { job } = await run(q, req({ streamIndex: 0 }), ctx({ chunkSeconds: 4 }));
@@ -206,12 +214,26 @@ describe.skipIf(!hasFfmpeg)('transcription job (fake engine)', () => {
     const b = startTranscribeJob(q, { ...r }, ctx());
     expect(b.id).toBe(a.id);
     expect(startTranscribeJob(q, { ...r, language: 'en' }, ctx()).id).not.toBe(a.id);
+    const enJob = startTranscribeJob(q, { ...r, language: 'en' }, ctx());
+    expect(startTranscribeJob(q, { ...r, language: 'en', verbatim: true }, ctx()).id).not.toBe(enJob.id);
     q.cancelAll();
     await q.waitFor(a.id);
   });
 });
 
 describe('cache key and arguments', () => {
+  it('passes the verbatim prompt for English without translation only (#117)', () => {
+    expect(verbatimApplies({ verbatim: true, language: 'en', translate: false })).toBe(true);
+    expect(verbatimApplies({ verbatim: true, language: 'auto', translate: false })).toBe(false);
+    expect(verbatimApplies({ verbatim: true, language: 'fr', translate: false })).toBe(false);
+    expect(verbatimApplies({ verbatim: true, language: 'en', translate: true })).toBe(false);
+    expect(verbatimApplies({ verbatim: false, language: 'en', translate: false })).toBe(false);
+    const o = { model: 'm.bin', input: 'audio.wav', outBase: 'out', threads: 2, language: 'en', translate: false };
+    expect(whisperArgs(o)).not.toContain('--prompt');
+    const args = whisperArgs({ ...o, prompt: WHISPER_VERBATIM_PROMPT });
+    expect(args.slice(-2)).toEqual(['--prompt', WHISPER_VERBATIM_PROMPT]);
+  });
+
   it('changes with every setting that changes the result', async () => {
     const base = { streamIndex: 1, model: 'small', language: 'auto', translate: false };
     const h = transcriptionSettingsHash(base, 'a'.repeat(64));
@@ -220,6 +242,11 @@ describe('cache key and arguments', () => {
       expect(transcriptionSettingsHash(v, 'a'.repeat(64))).not.toBe(h);
     }
     expect(transcriptionSettingsHash(base, 'b'.repeat(64))).not.toBe(h);
+    // Verbatim changes the key only where it changes the run: English, not translating (#117).
+    const en = { ...base, language: 'en' };
+    expect(transcriptionSettingsHash({ ...en, verbatim: true }, 'a'.repeat(64))).not.toBe(transcriptionSettingsHash(en, 'a'.repeat(64)));
+    expect(transcriptionSettingsHash({ ...base, verbatim: true }, 'a'.repeat(64))).toBe(h);
+    expect(transcriptionSettingsHash({ ...en, translate: true, verbatim: true }, 'a'.repeat(64))).toBe(transcriptionSettingsHash({ ...en, translate: true }, 'a'.repeat(64)));
     const f = path.join(tmp, 'key.bin');
     fs.writeFileSync(f, 'x');
     const k1 = await transcriptionMediaKey(f);
