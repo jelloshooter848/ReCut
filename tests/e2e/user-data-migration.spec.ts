@@ -109,7 +109,11 @@ test('legacy folder only: moved on first start, settings kept, a saved proxy pat
     expect(recent).toEqual([projectFile]);
     // The project's proxy path into the old folder resolves to the moved file, without a "missing" reset.
     const relocated = await r.page.evaluate((p) => (window as unknown as { recut: { relocateLegacyPath(p: string): Promise<string | null> } }).recut.relocateLegacyPath(p), savedProxy);
-    expect(relocated).toBe(path.join(current, 'cache', 'proxies', 'k_540p_all.mp4'));
+    const expectedProxy = path.join(current, 'cache', 'proxies', 'k_540p_all.mp4');
+    const ls = (d: string) => { try { return fs.readdirSync(d).join(', '); } catch (e) { return `(${(e as NodeJS.ErrnoException).code})`; } };
+    const evidence = `expected exists=${fs.existsSync(expectedProxy)}; ${current}: [${ls(current)}]; cache: [${ls(path.join(current, 'cache'))}]; `
+      + `proxies: [${ls(path.join(current, 'cache', 'proxies'))}]; saved=${savedProxy}`;
+    expect(relocated, evidence).toBe(expectedProxy);
     type W = { __recut: { actions: { openProject(p: string): Promise<{ ok: boolean }>; verifyProxies(): Promise<string[]> }; store: { getState(): { project: { media: Record<string, { proxy: { status: string; path?: string } }> } } } } };
     expect((await r.page.evaluate((p) => (window as unknown as W).__recut.actions.openProject(p), projectFile)).ok).toBe(true);
     expect(await r.page.evaluate(() => (window as unknown as W).__recut.actions.verifyProxies())).toEqual([]);

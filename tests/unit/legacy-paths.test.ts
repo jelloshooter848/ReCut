@@ -152,6 +152,26 @@ describe('createLegacyPathRemapper on the real file system', () => {
     expect(viaReal(path.join(link, 'Old', 'cache', 'proxies', 'k.mp4'))).toBe(path.join(real, 'New', 'cache', 'proxies', 'k.mp4'));
   });
 
+  it('folders under os.tmpdir() spelled as it gives them (Windows runner: the 8.3 short name) and in real form', () => {
+    // Laid out like tests/e2e/user-data-migration.spec.ts after the move: the legacy folder is gone.
+    const appData = path.join(tmp, 'real', 'appdata');
+    const legacy = path.join(appData, 'OldAppName');
+    const current = path.join(appData, 'MigrationTestApp');
+    fs.mkdirSync(path.join(current, 'cache', 'proxies'), { recursive: true });
+    const expected = path.join(current, 'cache', 'proxies', 'k_540p_all.mp4');
+    fs.writeFileSync(expected, 'x');
+    const roots = legacyPathRoots([legacy], current, path.join(current, 'cache'));
+    const remap = createLegacyPathRemapper(roots);
+    const realTmp = fs.realpathSync.native(tmp);
+    for (const saved of [path.join(legacy, 'cache', 'proxies', 'k_540p_all.mp4'), path.join(realTmp, 'real', 'appdata', 'OldAppName', 'cache', 'proxies', 'k_540p_all.mp4')]) {
+      const evidence = JSON.stringify({
+        tmpdir: os.tmpdir(), realTmp, saved, canonicalSaved: canonicalPath(saved), expectedExists: fs.existsSync(expected),
+        roots: roots.map((r) => ({ ...r, canonicalFrom: canonicalPath(r.from), canonicalTo: canonicalPath(r.to) })),
+      }, null, 1);
+      expect(remap(saved), evidence).toBe(expected);
+    }
+  });
+
   it('a root that maps onto itself never answers', () => {
     fs.mkdirSync(path.join(tmp, 'Same', 'cache'), { recursive: true });
     fs.writeFileSync(path.join(tmp, 'Same', 'cache', 'k.mp4'), 'x');

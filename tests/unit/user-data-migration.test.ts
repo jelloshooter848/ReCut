@@ -124,7 +124,7 @@ describe('folderHasData', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-udm-data-'));
     try {
       expect(folderHasData(dir)).toBe(false);
-      for (const n of ['Cache', 'GPUCache', 'Crashpad']) fs.mkdirSync(path.join(dir, n));
+      for (const n of ['Code Cache', 'GPUCache', 'Crashpad']) fs.mkdirSync(path.join(dir, n));
       fs.writeFileSync(path.join(dir, MIGRATION_MARKER), '{}');
       expect(folderHasData(dir)).toBe(false);
       fs.writeFileSync(path.join(dir, 'prefs.json'), '{}');

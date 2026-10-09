@@ -35,7 +35,8 @@ export const MIGRATION_MARKER = 'user-data-migration.json';
  * process (singleton locks): not copied, and a folder holding only these counts as empty.
  */
 export const DISPOSABLE_ENTRIES: ReadonlySet<string> = new Set([
-  'Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'GrShaderCache', 'ShaderCache',
+  // Not Chromium's 'Cache': on Windows and macOS (case-insensitive) it is the same folder as the app's own `cache`.
+  'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'GrShaderCache', 'ShaderCache',
   'Crashpad', 'Crash Reports', 'SingletonLock', 'SingletonSocket', 'SingletonCookie', 'lockfile', '.DS_Store',
 ]);
 
