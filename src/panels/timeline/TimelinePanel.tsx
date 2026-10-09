@@ -25,7 +25,7 @@ import { Ruler } from './Ruler';
 import { Playhead } from './Playhead';
 import { useDevicePixelRatio } from './useDevicePixelRatio';
 import { TrackHeader, SubtitleLaneHeader, TranscriptLaneHeader } from './TrackHeader';
-import { transcriptIndex } from '@shared/transcripts';
+import { onScreenTranscript, transcriptIndex } from '@shared/transcripts';
 import { TimelineHeader } from './TimelineHeader';
 import { MarkerEditor, PropertiesPopover, RenameDialog, SpeedDialog, TagsDialog } from './dialogs';
 import { useTimelineDrag, snapTargets, type InteractionCtx } from './interactions';
@@ -145,12 +145,15 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const scroll = seq?.scroll ?? 0;
   const fps = seq?.fps ?? { num: 24000, den: 1001 };
   const scrollPx = scroll * zoom;
-  const hasSubs = (seq?.subtitleTracks.length ?? 0) > 0;
-  // Transcripts (#112): each audio clip's Whisper transcript, read live from its media, in a T lane under its track.
+  // Transcripts (#112): each audio clip's Whisper transcript, read live from its media, in a T lane under its track;
+  // the Subtitles row adds the on-screen transcript (#126), the same list the Program monitor draws.
   const mediaForTranscripts = useStore((s) => s.project.media);
   const mediaSubtitleTracks = useStore((s) => s.project.subtitleTracks);
   const transcripts = useMemo(() => (seq ? transcriptIndex(seq as unknown as Sequence, mediaForTranscripts, mediaSubtitleTracks) : null),
     [seq?.audioTracks, seq?.fps, mediaForTranscripts, mediaSubtitleTracks]); // eslint-disable-line react-hooks/exhaustive-deps
+  const onScreen = useMemo(() => (seq && transcripts ? onScreenTranscript(seq as unknown as Sequence, transcripts) : []),
+    [seq?.videoTracks, seq?.audioTracks, transcripts]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hasSubs = (seq?.subtitleTracks.length ?? 0) > 0 || onScreen.length > 0;
   const transcriptKey = transcripts ? [...transcripts.lanes.keys()].join(',') : '';
   const transcriptTracks = useMemo(() => new Set(transcriptKey ? transcriptKey.split(',') : []), [transcriptKey]);
   const layout: TrackLayout = useMemo(() => layoutTracks(seq?.videoTracks ?? [], seq?.audioTracks ?? [], { subtitleLane: hasSubs, heights: liveHeights, transcripts: transcriptTracks }),
@@ -667,7 +670,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
           <div className="tl-corner"><span>{fpsLabel(fps)} fps</span><span className="grow" /><span>{formatSequenceTimecode(duration, fps)}</span></div>
           <div className="tl-headers-scroll" ref={headersScrollRef}>
             <div className="tl-headers-content" style={{ height: totalH }}>
-              {hasSubs ? <SubtitleLaneHeader height={layout.subtitleLane} count={cues.length} /> : null}
+              {hasSubs ? <SubtitleLaneHeader height={layout.subtitleLane} count={cues.length + onScreen.length} /> : null}
               {layout.transcripts.map((r) => <TranscriptLaneHeader key={`t:${r.trackId}`} top={r.top} height={r.height} number={r.index + 1} count={transcripts?.lanes.get(r.trackId)?.length ?? 0} />)}
               {layout.rows.map((row) => {
                 const track = trackById.get(row.id)!;
@@ -732,6 +735,12 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
                       </div>
                     );
                   }) : null}
+                  {itemsInRange(onScreen, Math.max(0, viewX0 / zoom), viewX1 / zoom, cueStart, cueEnd).map((c) => (
+                    <div key={`os:${c.id}`} className="tl-cue transcript" style={{ left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={c.text} data-onscreen-cue
+                      onPointerDown={(e) => { e.stopPropagation(); if (e.button !== 0) return; const b = contentRef.current!.getBoundingClientRect(); setView({ playhead: xToFrameInt(e.clientX - b.left, zoom, scroll) }); }}>
+                      {c.text}
+                    </div>
+                  ))}
                   {layout.transcripts.map((r) => itemsInRange(transcripts?.lanes.get(r.trackId) ?? [], Math.max(0, viewX0 / zoom), viewX1 / zoom, cueStart, cueEnd).map((c) => (
                     <div key={c.id} className="tl-cue transcript" style={{ top: r.top + 7, left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={c.text} data-transcript-cue
                       onPointerDown={(e) => { e.stopPropagation(); if (e.button !== 0) return; const b = contentRef.current!.getBoundingClientRect(); setView({ playhead: xToFrameInt(e.clientX - b.left, zoom, scroll) }); }}>

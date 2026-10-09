@@ -16,7 +16,7 @@
  * is the caller's responsibility.
  */
 import type { ID, MediaItem, Rational, Sequence, SubtitleTrack, VideoStreamInfo } from '../../shared/model';
-import { onScreenTranscriptAt, transcriptIndex, type TranscriptIndex } from '../../shared/transcripts';
+import { cuesAt, onScreenTranscript, transcriptIndex, type TranscriptCue } from '../../shared/transcripts';
 import { secondsToFramesFloor, framesToSeconds, fpsValue } from '../../shared/time';
 import { sequenceDuration, resolveSubtitleCues, type ResolvedCue } from '../../shared/timeline';
 import { PlaybackClock } from './clock';
@@ -261,7 +261,7 @@ export class SequencePlayer {
   /** Removes this player's listeners from an element (elements outlive a player with a reusable id). */
   private listenerOffs = new Map<HTMLMediaElement, () => void>();
   private subtitleCache = new WeakMap<Sequence, ResolvedCue[]>();
-  private transcriptCache: { seq: Sequence; tracks: Record<ID, SubtitleTrack>; media: Record<ID, MediaItem>; index: TranscriptIndex } | null = null;
+  private transcriptCache: { seq: Sequence; tracks: Record<ID, SubtitleTrack>; media: Record<ID, MediaItem>; cues: TranscriptCue[] } | null = null;
   /** playingKey's subtitle part for (sequence, frame). */
   private subtitleKey: { seq: Sequence | null; frame: number; key: string } = { seq: null, frame: -1, key: '' };
   private frameCbs = new Set<(frame: number) => void>();
@@ -516,22 +516,23 @@ export class SequencePlayer {
       if (c.start > frame) break;
       if (frame < c.end) out.push(c);
     }
-    // The on-screen clip's transcript (#112): live from the media, top visible clip first, falling through.
-    for (const t of onScreenTranscriptAt(this.seq, this.transcripts(), frame)) {
+    // The on-screen clip's transcript (#112): live from the media, top visible clip first, falling through; the same
+    // list the timeline's Subtitles row shows (#126).
+    for (const t of cuesAt(this.transcripts(), frame)) {
       out.push({ id: t.id, trackId: 'transcript', start: t.start, end: t.end, text: t.text, clipId: t.clipId, orphan: false, ...(t.words ? { words: t.words } : {}) });
     }
     return out;
   }
 
-  /** The sequence's transcript index, rebuilt when the sequence, its media or the transcripts change. */
-  private transcripts(): TranscriptIndex {
+  /** The sequence's on-screen transcript, rebuilt when the sequence, its media or the transcripts change. */
+  private transcripts(): TranscriptCue[] {
     const seq = this.seq!;
     const tracks = this.settings.subtitleTracks ?? {};
     const hit = this.transcriptCache;
-    if (hit && hit.seq === seq && hit.tracks === tracks && hit.media === this.media) return hit.index;
-    const index = transcriptIndex(seq, this.media, tracks);
-    this.transcriptCache = { seq, tracks, media: this.media, index };
-    return index;
+    if (hit && hit.seq === seq && hit.tracks === tracks && hit.media === this.media) return hit.cues;
+    const cues = onScreenTranscript(seq, transcriptIndex(seq, this.media, tracks));
+    this.transcriptCache = { seq, tracks, media: this.media, cues };
+    return cues;
   }
 
   getState(): SequencePlayerState {

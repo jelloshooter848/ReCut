@@ -185,7 +185,8 @@ On the timeline, a transcribed clip's words show in a **transcript lane** under 
 **T2** under A2. The lane reads the transcript from the media, so transcribing (or re-transcribing) a clip that is
 already in the sequence shows at once. The Program monitor shows the transcript of the clip whose picture is on
 screen: the top visible video clip, or the next one down when that clip has no transcript (a cutaway over dialogue
-keeps the dialogue's words) or its audio is muted. Imported subtitle files still go to the **Subtitles** row.
+keeps the dialogue's words) or its audio is muted. The **Subtitles** row at the top of the timeline shows that same
+on-screen transcript (green), switching between clips as the edit cuts, next to any imported subtitle files (purple).
 
 Transcribing the same stream again (for example with a bigger model) replaces that track in one undo step; repeating
 the same settings is instant, because results are cached. Whisper is good but not perfect: names, songs, shouting,

@@ -161,3 +161,46 @@ export function withoutCopiedTranscripts(project: Project): Project {
   }
   return changed ? { ...project, sequences } : project;
 }
+
+/**
+ * The on-screen transcript of the whole sequence (#126): what the Subtitles row and the Program monitor show. Which
+ * clip owns the screen only changes at a clip's start or end, so the timeline is cut at every clip edge, each piece
+ * takes its on-screen clip's cues clipped to it (onScreenTranscriptClip), and a cue cut by an edge that does not
+ * change the owner is joined back. Sorted by start; cue ids stay those of the clip cues (a cue split between two
+ * stretches of the same clip keeps one id per piece: `<id>#<n>`).
+ */
+export function onScreenTranscript(seq: Sequence, index: TranscriptIndex): TranscriptCue[] {
+  if (index.byClip.size === 0) return [];
+  const edges = new Set<number>();
+  for (const t of [...seq.videoTracks, ...seq.audioTracks]) for (const c of t.clips) { edges.add(c.start); edges.add(clipEnd(c)); }
+  const cuts = [...edges].sort((a, b) => a - b);
+  const out: TranscriptCue[] = [];
+  const pieces = new Map<string, number>();
+  for (let i = 0; i + 1 < cuts.length; i++) {
+    const from = cuts[i]; const to = cuts[i + 1];
+    const owner = onScreenTranscriptClip(seq, index, from);
+    if (!owner) continue;
+    for (const c of index.byClip.get(owner) ?? []) {
+      if (c.end <= from || c.start >= to) continue;
+      const e = Math.min(to, c.end);
+      const last = out[out.length - 1];
+      const joined = last && last.clipId === c.clipId && last.end === Math.max(from, c.start) && last.id.split('#')[0] === c.id;
+      const s = joined ? last.start : Math.max(from, c.start);
+      const words = c.words?.map((w) => ({ start: Math.max(s, w.start), end: Math.min(e, w.end), text: w.text })).filter((w) => w.end > w.start);
+      if (joined) { last.end = e; if (c.words) last.words = words; continue; }
+      const n = pieces.get(c.id) ?? 0;
+      pieces.set(c.id, n + 1);
+      out.push({ ...c, id: n ? `${c.id}#${n}` : c.id, start: s, end: e, ...(c.words ? { words } : {}) });
+    }
+  }
+  return out;
+}
+
+/** The cues of a sorted cue list that contain `frame` (binary search, then a short walk back for overlaps). */
+export function cuesAt<C extends { start: number; end: number }>(cues: readonly C[], frame: number): C[] {
+  let lo = 0; let hi = cues.length - 1; let found = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (cues[mid].start <= frame) { found = mid; lo = mid + 1; } else hi = mid - 1; }
+  const out: C[] = [];
+  for (let i = found; i >= 0 && i > found - 8; i--) if (frame < cues[i].end) out.unshift(cues[i]);
+  return out;
+}
