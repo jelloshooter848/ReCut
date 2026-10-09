@@ -190,6 +190,12 @@ export interface TranscribeRequest {
  */
 export const WHISPER_VERBATIM_PROMPT = 'Um, so, uh, I- I mean, like, you know, um... Okay, uh, let me, um, let me think. Hmm, yeah, uh-huh.';
 
+/** whisper.cpp's `--dtw` alignment preset of a model (word timing, #118), or null when it has none. */
+export function whisperDtwPreset(modelId: string): string | null {
+  const preset = modelId.replace(/-/g, '.');
+  return ['tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large.v1', 'large.v2', 'large.v3', 'large.v3.turbo'].includes(preset) ? preset : null;
+}
+
 /** The verbatim prompt is English: it is used only for English speech that is not being translated. */
 export function verbatimApplies(req: Pick<TranscribeRequest, 'verbatim' | 'language' | 'translate'>): boolean {
   return Boolean(req.verbatim) && !req.translate && req.language === 'en';

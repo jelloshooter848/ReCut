@@ -1059,7 +1059,7 @@ export const useStore = create<RecutStore>()((set, get) => {
             for (const cue of overlapping) {
               const s = anchor.start + Math.round((cue.start - inS) / speed * seq.fps.num / seq.fps.den);
               const e = anchor.start + Math.round((cue.end - inS) / speed * seq.fps.num / seq.fps.den);
-              target.cues.push({ id: uid('scue'), clipId: anchor.id, srcStart: cue.start, srcEnd: cue.end, start: s, duration: Math.max(1, e - s), offset: 0, text: cue.text });
+              target.cues.push({ id: uid('scue'), clipId: anchor.id, srcStart: cue.start, srcEnd: cue.end, start: s, duration: Math.max(1, e - s), offset: 0, text: cue.text, ...(cue.words ? { words: cue.words } : {}) });
             }
             // Sort the raw items (same stable order) instead of drafting every cue of the track.
             target.cues = [...readItems(target.cues)].sort((a, b) => (a.srcStart ?? a.start) - (b.srcStart ?? b.start));

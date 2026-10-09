@@ -21,9 +21,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { JobInfo, SubtitleCue } from '@shared/model';
+import type { JobInfo, SubtitleCue, SubtitleWord } from '@shared/model';
 import { uid } from '@shared/ids';
-import { WHISPER_ENGINE_VERSION, WHISPER_VERBATIM_PROMPT, verbatimApplies, whisperLanguage, type TranscribeRequest, type TranscribeResult } from '@shared/whisper';
+import { WHISPER_ENGINE_VERSION, WHISPER_VERBATIM_PROMPT, verbatimApplies, whisperDtwPreset, whisperLanguage, type TranscribeRequest, type TranscribeResult } from '@shared/whisper';
 import type { JobQueue, JobRunContext } from '../jobs/jobQueue';
 import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
 import { cacheKeyForPath, cacheSubdir, fileExists, removeQuietly } from '../media/cache';
@@ -36,7 +36,7 @@ import { parseProgressLine, parseSegmentLine, parseWhisperJson, segmentsToCues }
 import { CHUNK_SECONDS, planChunks, readWavInfo, writeWavChunk } from './wav';
 
 /** Bump when a change to extraction / chunking / clean-up changes the text or timing of a result. */
-export const WHISPER_PIPELINE_VERSION = 2;
+export const WHISPER_PIPELINE_VERSION = 3;
 /** Share of the progress bar for the audio extraction. */
 const EXTRACT_SHARE = 0.1;
 
@@ -87,6 +87,11 @@ function isCue(v: unknown): v is SubtitleCue {
   return typeof c.text === 'string' && Number.isFinite(c.start) && Number.isFinite(c.end);
 }
 
+function validWords(v: unknown): v is SubtitleWord[] {
+  return Array.isArray(v) && v.length > 0 && v.every((w) => w && typeof w === 'object' && typeof (w as SubtitleWord).text === 'string'
+    && Number.isFinite((w as SubtitleWord).start) && Number.isFinite((w as SubtitleWord).end));
+}
+
 async function readCache(file: string, req: TranscribeRequest): Promise<TranscribeResult | null> {
   try {
     const raw = JSON.parse(await fsp.readFile(file, 'utf8')) as Partial<TranscribeResult>;
@@ -95,7 +100,7 @@ async function readCache(file: string, req: TranscribeRequest): Promise<Transcri
       mediaId: req.mediaId, streamIndex: req.streamIndex, model: req.model, translate: Boolean(req.translate),
       language: raw.language, spokenLanguage: typeof raw.spokenLanguage === 'string' ? raw.spokenLanguage : raw.language,
       // Fresh cue ids: a second transcription of the same stream must not share ids with the first track.
-      cues: raw.cues.map((c) => ({ id: uid('cue'), start: c.start, end: c.end, text: c.text })),
+      cues: raw.cues.map((c) => ({ id: uid('cue'), start: c.start, end: c.end, text: c.text, ...(validWords(c.words) ? { words: c.words } : {}) })),
       duration: typeof raw.duration === 'number' ? raw.duration : 0,
       cached: true,
     };
@@ -125,10 +130,13 @@ export function engineFileArg(p: string, from: string): string {
   return rel && !path.isAbsolute(rel) && /^[\x20-\x7e]+$/.test(rel) ? rel : p;
 }
 
-/** whisper-cli arguments for one chunk. */
-export function whisperArgs(o: { model: string; input: string; outBase: string; threads: number; language: string; translate: boolean; prompt?: string }): string[] {
-  return ['-m', o.model, '-f', o.input, '-of', o.outBase, '-oj', '-pp', '-t', String(o.threads), '-l', o.language, ...(o.translate ? ['-tr'] : []),
-    ...(o.prompt ? ['--prompt', o.prompt] : [])];
+/**
+ * whisper-cli arguments for one chunk. `-ojf` writes the JSON result with tokens (word timing, #118); `dtw` is the
+ * model's alignment preset (whisperDtwPreset), which needs flash attention off (`-nfa`) to take effect.
+ */
+export function whisperArgs(o: { model: string; input: string; outBase: string; threads: number; language: string; translate: boolean; prompt?: string; dtw?: string | null }): string[] {
+  return ['-m', o.model, '-f', o.input, '-of', o.outBase, '-ojf', '-pp', '-t', String(o.threads), '-l', o.language, ...(o.translate ? ['-tr'] : []),
+    ...(o.dtw ? ['--dtw', o.dtw, '-nfa'] : []), ...(o.prompt ? ['--prompt', o.prompt] : [])];
 }
 
 interface EngineRun { segmentsEnd: number; stderrTail: string[] }
@@ -229,6 +237,7 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
     const cues: SubtitleCue[] = [];
     let spoken = req.language === 'auto' ? (model.englishOnly ? 'en' : null) : req.language;
     const prompt = verbatimApplies(req) ? WHISPER_VERBATIM_PROMPT : undefined;
+    const dtw = whisperDtwPreset(req.model);
     jc.setProgress(EXTRACT_SHARE, total > 0 ? 'Transcribing…' : 'No audio');
 
     // 3. Transcribe each chunk.
@@ -247,7 +256,7 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
       const outBase = 'out';
       await removeQuietly(path.join(tmp, `${outBase}.json`));
       const lang = spoken ?? 'auto';
-      await runEngine(bin, [...(ctx.enginePrefixArgs ?? []), ...whisperArgs({ model: modelArg, input, outBase, threads, language: lang, translate, prompt })], tmp, seconds, jc,
+      await runEngine(bin, [...(ctx.enginePrefixArgs ?? []), ...whisperArgs({ model: modelArg, input, outBase, threads, language: lang, translate, prompt, dtw })], tmp, seconds, jc,
         (f) => jc.setProgress(base + share * f, `Transcribing${label}… ${Math.round((start / info.sampleRate + f * seconds) / 60)} of ${Math.max(1, Math.round(total / 60))} min`),
         (child) => ctx.onEngine?.(child, tmp));
       if (jc.signal.aborted) throw canceled();

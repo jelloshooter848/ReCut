@@ -4,6 +4,7 @@
  *  - "ok" (default): prints progress (stderr) and two segment lines per input (stdout), writes `<-of>.json` with two
  *    segments (one with a raw tab and non-ASCII text, as whisper-cli really writes them) and `result.language` from
  *    FAKE_WHISPER_LANG (default "fr"), unless `-l` names one.
+ *    With FAKE_WHISPER_TOKENS=1 the first segment also has `-ojf` tokens with `t_dtw` times (word timing, #118).
  *  - "hang": writes its pid to FAKE_WHISPER_PIDFILE and waits forever (cancel tests).
  *  - "fail": prints an error and exits with code 3.
  * Every run appends its arguments (one JSON line) to FAKE_WHISPER_LOG when set.
@@ -42,7 +43,16 @@ if (mode === 'hang') {
 \t\t{
 \t\t\t"timestamps": { "from": "00:00:00,000", "to": "00:00:01,000" },
 \t\t\t"offsets": { "from": 0, "to": ${half} },
-\t\t\t"text": " Bonjour,\tça va ?"
+\t\t\t"text": " Bonjour,\tça va ?"${process.env.FAKE_WHISPER_TOKENS ? `,
+\t\t\t"tokens": [
+\t\t\t\t{ "text": "[_BEG_]", "offsets": { "from": 0, "to": 0 }, "t_dtw": -1 },
+\t\t\t\t{ "text": " Bonjour", "offsets": { "from": 0, "to": 400 }, "t_dtw": 10 },
+\t\t\t\t{ "text": ",", "offsets": { "from": 400, "to": 450 }, "t_dtw": 45 },
+\t\t\t\t{ "text": " ça", "offsets": { "from": 450, "to": 600 }, "t_dtw": 70 },
+\t\t\t\t{ "text": " va", "offsets": { "from": 600, "to": 800 }, "t_dtw": 90 },
+\t\t\t\t{ "text": " ?", "offsets": { "from": 800, "to": 900 }, "t_dtw": 110 },
+\t\t\t\t{ "text": "[_TT_50]", "offsets": { "from": 900, "to": 900 }, "t_dtw": -1 }
+\t\t\t]` : ''}
 \t\t},
 \t\t{
 \t\t\t"offsets": { "from": ${half}, "to": ${end} },
