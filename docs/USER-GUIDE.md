@@ -455,8 +455,9 @@ Saga Fan Cut/
    `C:\Videos`). Optionally adjust Video (frame size, frame rate, and the codec settings of the format), Audio
    (codec or bit depth, Stereo or **5.1 Surround** when a source has 6+ channels, sample rate; AC-3 offers 32, 44.1
    and 48 kHz only) and **Range** (Entire sequence or In to Out).
-4. **Subtitles:** **Burn in** renders them into the picture, on exactly the frames where the Program monitor shows
-   them. **Sidecar** writes a `.srt` next to the exported file. Burn-in is off for the audio-only formats (there is
+4. **Subtitles:** **Include transcripts as subtitles** (off by default) adds the on-screen transcript, what the
+   Subtitles row and Program monitor show, as a subtitle track named "Transcript". **Burn in** renders the subtitles
+   into the picture, on exactly the frames where the Program monitor shows them. **Sidecar** writes a `.srt` next to the exported file. Burn-in is off for the audio-only formats (there is
    no picture); the sidecar still works. An **MKV** can also carry the subtitle tracks as soft subtitles that viewers
    switch on and off (see **Subtitle tracks (MKV)** below).
 5. The **Checks** list blocks the export with a reason when something is wrong (an empty sequence, offline or missing

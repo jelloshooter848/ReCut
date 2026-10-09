@@ -533,6 +533,8 @@ export interface ExportSettings {
   audioOutputs?: ExportAudioOutput[];
   /** MKV: sequence subtitle tracks muxed as soft subtitle streams, in order; absent or empty = none. */
   subtitleOutputs?: ExportSubtitleOutput[];
+  /** Include the on-screen transcript (#127) as a subtitle track named "Transcript"; absent = off. */
+  includeTranscripts?: boolean;
 }
 
 /** Export file formats (§6, §7). */

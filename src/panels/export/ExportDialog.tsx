@@ -15,7 +15,7 @@ import { Button, Dialog, NumberField, ProgressBar, Select, Slider, TextField, To
 import { toast } from '@/components/ui/toastStore';
 import { confirm } from '@/app/dialogs/ConfirmDialog';
 import { injectStyle } from './injectStyle';
-import { buildExportRequest } from './request';
+import { buildExportRequest, transcriptExportTrack } from './request';
 import {
   AC3_SAMPLE_RATES, CRF_MAX, CRF_MIN, CUSTOM, ENCODER_PRESETS, MAX_DIMENSION, MIN_DIMENSION, applyPreset, checklistBlocks, crfLabel,
   effectiveExportFps, estimateEtaSeconds, estimateFileSize, exportChecklist, exportOutputFrames, exportRange, formatBytes,
@@ -179,8 +179,14 @@ export function ExportDialog() {
     setCommand(null); setCommandError(null);
   }, []);
 
+  // Transcripts (#127): the on-screen transcript can be exported as a "Transcript" subtitle track. The settings view
+  // works on the sequence with that track added (burn-in, sidecar, MKV tracks and Checks all see it).
+  const transcriptTrack = useMemo(() => (open && seq ? transcriptExportTrack({ media, subtitleTracks, sequences }, seq) : null), [open, seq, media, subtitleTracks, sequences]);
+  const exportSeq = useMemo(() => (seq && settings?.includeTranscripts && transcriptTrack ? { ...seq, subtitleTracks: [...seq.subtitleTracks, transcriptTrack] } : seq),
+    [seq, settings?.includeTranscripts, transcriptTrack]);
+
   if (!open) return null;
-  if (!seq || !settings) {
+  if (!seq || !exportSeq || !settings) {
     return (
       <Dialog open title="Export" onClose={onClose} width={420} footer={<Button onClick={onClose}>Close</Button>}>
         <div className="text-dim">Open or create a sequence to export.</div>
@@ -200,7 +206,7 @@ export function ExportDialog() {
 
   return (
     <SettingsView
-      seq={seq} settings={settings} media={media} projectUsesProxies={projectUsesProxies} sequences={sequences} update={update}
+      seq={exportSeq} hasTranscripts={transcriptTrack !== null} settings={settings} media={media} projectUsesProxies={projectUsesProxies} sequences={sequences} update={update}
       onShowTarget={(t) => onShowTarget(seq.id, t)}
       command={command} commandError={commandError} starting={starting} startError={startError}
       onShowCommand={async () => {
@@ -262,6 +268,8 @@ function buildRequest(seq: Sequence, project: Parameters<typeof buildExportReque
 
 interface SettingsViewProps {
   seq: Sequence;
+  /** The sequence has a transcript that "Include transcripts" can add (#127). */
+  hasTranscripts: boolean;
   settings: ExportSettings;
   media: ExportRequest['media'];
   projectUsesProxies: boolean;
@@ -280,7 +288,7 @@ interface SettingsViewProps {
 }
 
 function SettingsView(p: SettingsViewProps) {
-  const { seq, settings, media, update } = p;
+  const { seq, settings, media, update, hasTranscripts } = p;
   const presets = useMemo(() => presetsFor(seq), [seq]);
   const [chosenPreset, setChosenPreset] = useState<string | undefined>(undefined);
   const presetName = presetNameFor(settings, presets, chosenPreset);
@@ -565,6 +573,14 @@ function SettingsView(p: SettingsViewProps) {
 
           <section className="xd-section">
             <h4>Subtitles</h4>
+            <div className="xd-row">
+              <label>Transcripts</label>
+              <div className="ctl">
+                <Toggle checked={!!settings.includeTranscripts && hasTranscripts} disabled={!hasTranscripts} onChange={(v) => update({ includeTranscripts: v })}
+                  label={<span className="text-sm">Include transcripts as subtitles</span>}
+                  title={hasTranscripts ? 'Adds the on-screen transcript (what the Subtitles row and Program monitor show) as a subtitle track named "Transcript"' : 'No clip in this sequence has a transcript'} />
+              </div>
+            </div>
             <div className="xd-row">
               <label>Burn in</label>
               <div className="ctl">
