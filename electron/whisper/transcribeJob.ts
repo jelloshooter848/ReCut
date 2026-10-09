@@ -36,7 +36,7 @@ import { parseProgressLine, parseSegmentLine, parseWhisperJson, segmentsToCues }
 import { CHUNK_SECONDS, planChunks, readWavInfo, writeWavChunk } from './wav';
 
 /** Bump when a change to extraction / chunking / clean-up changes the text or timing of a result. */
-export const WHISPER_PIPELINE_VERSION = 3;
+export const WHISPER_PIPELINE_VERSION = 4;
 /** Share of the progress bar for the audio extraction. */
 const EXTRACT_SHARE = 0.1;
 

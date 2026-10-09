@@ -4,7 +4,7 @@
  * sequence and resolveSubtitleCues (in frames). wordAt finds the word spoken at a time.
  */
 import { describe, it, expect } from 'vitest';
-import { CUE_MAX_CHARS, parseWhisperJson, segmentsToCues, splitWords, tokensToWords } from '../../electron/whisper/output';
+import { CUE_LINGER_SECONDS, CUE_MAX_CHARS, lingerCues, parseWhisperJson, segmentsToCues, splitWords, tokensToWords } from '../../electron/whisper/output';
 import { whisperArgs } from '../../electron/whisper/transcribeJob';
 import { whisperDtwPreset } from '../../shared/whisper';
 import { wordAt } from '../../shared/subtitles';
@@ -80,6 +80,21 @@ describe('parseWhisperJson + segmentsToCues', () => {
     const cues = segmentsToCues([{ start: 0, end: 5, text: ' One long line without tokens.' }]);
     expect(cues).toHaveLength(1);
     expect(cues[0].words).toBeUndefined();
+  });
+});
+
+describe('lingerCues (#119: text stays through a pause)', () => {
+  const cue = (start: number, end: number, words = true) => ({ id: `c${start}`, start, end, text: 'x', ...(words ? { words: [{ start, end, text: 'x' }] } : {}) });
+  it('keeps a word-timed cue up to CUE_LINGER_SECONDS after its last word, never into the next cue or past the limit', () => {
+    const cues = lingerCues([cue(0, 1), cue(1.3, 2), cue(5, 6), cue(6.5, 7)], 7.4);
+    expect(cues.map((c) => c.end)).toEqual([1.3, 2 + CUE_LINGER_SECONDS, 6.5, 7.4]);
+    for (let i = 0; i + 1 < cues.length; i++) expect(cues[i].end).toBeLessThanOrEqual(cues[i + 1].start);
+  });
+  it('leaves cues without word timing alone, and the words keep their own times', () => {
+    const [plain, timed] = lingerCues([cue(0, 1, false), cue(3, 4)]);
+    expect(plain.end).toBe(1);
+    expect(timed.end).toBe(4 + CUE_LINGER_SECONDS);
+    expect(timed.words![0].end).toBe(4);
   });
 });
 
