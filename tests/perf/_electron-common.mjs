@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { launchEnv } from './_launch-env.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const SCRATCH = process.env.RECUT_PERF_SCRATCH || path.join(os.tmpdir(), 'recut-perf');
@@ -19,6 +20,8 @@ export const LONG = process.env.RECUT_PERF_LONG_FILE || '';
 export const r2 = (v, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
 export const sleep = (t) => new Promise((r) => setTimeout(r, t));
 export const stats = (xs) => { const s = [...xs].sort((a, b) => a - b); const q = (p) => s[Math.min(s.length - 1, Math.floor(p * (s.length - 1)))] ?? 0; return { median: r2(q(0.5)), p95: r2(q(0.95)), max: r2(s[s.length - 1] ?? 0), mean: r2(s.reduce((a, b) => a + b, 0) / Math.max(1, s.length)) }; };
+
+export { launchEnv } from './_launch-env.mjs';
 
 /**
  * `app.evaluate(fn, arg)` for the Electron main process that cannot fail with "Resulting promise was garbage
@@ -133,7 +136,7 @@ export async function launchAndBuild({ width = 1900, height = 1050, tag = 'elect
   process.on('exit', () => { if (process.env.RECUT_PERF_KEEP !== '1') { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* best effort */ } } });
   const userData = path.join(tmp, 'userData'); const cacheDir = path.join(tmp, 'cache');
   fs.mkdirSync(userData, { recursive: true }); fs.mkdirSync(cacheDir, { recursive: true });
-  const app = await electron.launch({ args: [path.join(ROOT, 'dist/electron/main.js'), '--no-sandbox'], cwd: ROOT, env: { ...process.env, RECUT_USER_DATA: userData, RECUT_CACHE_DIR: cacheDir, RECUT_DISABLE_GPU: '1' }, timeout: 90_000 });
+  const app = await electron.launch({ args: [path.join(ROOT, 'dist/electron/main.js'), '--no-sandbox'], cwd: ROOT, env: launchEnv({ RECUT_USER_DATA: userData, RECUT_CACHE_DIR: cacheDir, RECUT_DISABLE_GPU: '1' }), timeout: 90_000 });
   const page = await app.firstWindow();
   page.on('pageerror', (e) => console.log('[renderer:pageerror]', e.message));
   page.on('console', (m) => { if (m.type() === 'error') console.log('[renderer:error]', m.text().slice(0, 300)); });
