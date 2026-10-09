@@ -18,22 +18,27 @@ import { USER_DATA_DIR_NAME } from '../../shared/productIdentity';
 const NEW_NAME = 'MigrationTestApp';
 const MARKER = 'user-data-migration.json';
 
-interface Run { app: ElectronApplication; page: Page; out: () => string }
+interface Run { app: ElectronApplication; page: Page; notices: () => string }
 
 function baseEnv(appData: string, extra: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('RECUT_')) env[k] = v;
-  return { ...env, RECUT_DISABLE_GPU: '1', RECUT_UPDATE_CHECK: '0', RECUT_TEST_APP_DATA: appData, RECUT_TEST_MIGRATION_DIALOG: 'ok', ...extra };
+  return {
+    ...env, RECUT_DISABLE_GPU: '1', RECUT_UPDATE_CHECK: '0', RECUT_TEST_APP_DATA: appData, RECUT_TEST_MIGRATION_DIALOG: 'ok',
+    RECUT_TEST_MIGRATION_LOG: noticeLog(appData), ...extra,
+  };
 }
+
+/** Where the scripted notices of a run go (next to, not inside, the app-data folder). */
+const noticeLog = (appData: string) => `${appData}-notices.log`;
+const readNotices = (appData: string) => { try { return fs.readFileSync(noticeLog(appData), 'utf8'); } catch { return ''; } };
 
 async function launch(appData: string, extra: Record<string, string>): Promise<Run> {
   const app = await electron.launch({ args: [path.join(ROOT, 'dist/electron/main.js'), '--no-sandbox'], cwd: ROOT, env: baseEnv(appData, extra) });
-  let out = '';
-  app.process().stdout?.on('data', (d) => { out += String(d); });
   const page = await app.firstWindow();
   await page.waitForSelector('#root .layout', { timeout: 60_000 });
   await page.waitForFunction(() => Boolean((window as unknown as { __recut?: unknown }).__recut));
-  return { app, page, out: () => out };
+  return { app, page, notices: () => readNotices(appData) };
 }
 
 async function close(r: Run): Promise<void> {
@@ -125,7 +130,7 @@ test('both folders hold data: neither is touched, the new one is used, a one-tim
   const r = await launch(appData, { RECUT_TEST_APP_NAME: NEW_NAME, RECUT_TEST_LEGACY_USER_DATA: legacy });
   try {
     expect(await userDataOf(r)).toBe(current);
-    await expect.poll(() => r.out()).toContain('user-data notice: Your earlier settings were left where they are');
+    await expect.poll(() => r.notices()).toContain('user-data notice: Your earlier settings were left where they are');
     expect(fs.readFileSync(path.join(legacy, 'prefs.json'), 'utf8')).toBe(legacyPrefs);
     expect(fs.existsSync(path.join(legacy, 'whisper', 'models', 'ggml-fake.bin'))).toBe(true);
     expect(fs.existsSync(path.join(current, 'whisper'))).toBe(false);
@@ -187,11 +192,9 @@ test.describe('the legacy app is running', () => {
     const env = baseEnv(appData, { RECUT_TEST_APP_NAME: NEW_NAME, RECUT_TEST_LEGACY_USER_DATA: legacy, RECUT_TEST_MIGRATION_DIALOG: 'quit' });
     const electronBin = require('electron') as unknown as string;
     const child = spawn(electronBin, [path.join(ROOT, 'dist/electron/main.js'), '--no-sandbox'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    child.stdout?.on('data', (d) => { out += String(d); });
     const code = await new Promise<number | null>((resolve) => child.on('exit', (c) => resolve(c)));
     expect(code).toBe(0);
-    expect(out).toContain(`user-data notice: Quit ${path.basename(legacy)}, then click Restart`);
+    expect(readNotices(appData)).toContain(`user-data notice: Quit ${path.basename(legacy)}, then click Restart`);
     expect(fs.existsSync(path.join(legacy, 'whisper', 'models', 'ggml-fake.bin'))).toBe(true);
     expect(fs.existsSync(path.join(legacy, 'prefs.json'))).toBe(true);
     expect(fs.existsSync(path.join(current, 'prefs.json'))).toBe(false);

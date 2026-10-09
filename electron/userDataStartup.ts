@@ -11,9 +11,11 @@
  *    `<app data>/<LEGACY_USER_DATA_DIR_NAMES>`;
  *  - `<prefix>TEST_MIGRATION_FORCE_COPY=1`: act as if renaming the legacy folder failed (EXDEV);
  *  - `<prefix>TEST_MIGRATION_DIALOG=restart|continue|quit`: answer the "legacy app is running" question without a
- *    native dialog; notices are then printed (`user-data notice: …`) instead of shown.
+ *    native dialog; notices are then printed (`user-data notice: …`) instead of shown, and also appended to the file
+ *    `<prefix>TEST_MIGRATION_LOG` names (stdout is not always readable from a Windows GUI app).
  */
 import { app, dialog, type BrowserWindow } from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import { LEGACY_USER_DATA_DIR_NAMES, PRODUCT_NAME, USER_DATA_DIR_NAME } from '../shared/productIdentity';
 import { envVar } from './env';
@@ -58,7 +60,10 @@ const scripted = (): string | undefined => testSwitch('TEST_MIGRATION_DIALOG');
 async function show(box: Box, win?: BrowserWindow | null): Promise<number> {
   const answer = scripted();
   if (answer !== undefined) {
-    console.log(`user-data notice: ${box.message} | ${box.detail}`);
+    const line = `user-data notice: ${box.message} | ${box.detail}`;
+    console.log(line);
+    const log = testSwitch('TEST_MIGRATION_LOG');
+    if (log) { try { fs.appendFileSync(log, `${line}\n`); } catch { /* tests only */ } }
     const i = box.buttons.findIndex((b) => b.toLowerCase().startsWith(answer.toLowerCase()));
     return i >= 0 ? i : box.defaultId;
   }
