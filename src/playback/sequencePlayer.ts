@@ -23,6 +23,7 @@ import { MediaElementPool, poolKey } from './elementPool';
 import { mixesWith, planFrame, type FramePlan, type LayerPlan, type AudioPlan, type MissingMedia } from './planner';
 import { clampElementTime, toElementTime } from './mediaSource';
 import { selectAudioTrack } from './audioTracks';
+import { SUBTITLE_MAX_WIDTH, wrapSubtitleText } from './subtitleWrap';
 import { pathToMediaUrl } from '../../shared/ipc';
 import { videoDisplaySize } from '../../shared/media';
 
@@ -1230,12 +1231,13 @@ export class SequencePlayer {
   private drawSubtitleOverlay(ctx: CanvasRenderingContext2D, seq: Sequence, frame: number): void {
     const cues = this.getSubtitleAt(frame);
     if (!cues.length) return;
-    const lines = cues.flatMap((c) => c.text.split(/\r?\n/)).filter((l) => l.length > 0);
-    if (!lines.length) return;
     const size = Math.round(seq.height * 0.052);
     ctx.save();
     ctx.globalAlpha = 1;
     ctx.font = `600 ${size}px system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif`;
+    const maxWidth = seq.width * SUBTITLE_MAX_WIDTH;
+    const lines = cues.flatMap((c) => wrapSubtitleText(c.text, maxWidth, (t) => ctx.measureText(t).width));
+    if (!lines.length) { ctx.restore(); return; }
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     ctx.lineJoin = 'round';
