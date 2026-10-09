@@ -61,7 +61,34 @@ function randomToken(): string {
  * Creates a new empty render temp next to the output with O_EXCL (never an existing file, symlink or hard link)
  * and returns its path and identity. ffmpeg then writes into this file (it is the only file at that name).
  */
-function reserveRenderTemp(outputPath: string): { path: string; id: string | undefined } {
+/** What identifies a reserved render file: its `dev:ino` key, and its device and creation time (#133). */
+export interface RenderFileStamp { id: string | undefined; dev?: bigint; birthNs?: bigint }
+
+function renderFileStamp(p: string): RenderFileStamp {
+  let st: fs.BigIntStats | undefined;
+  try { st = fs.lstatSync(p, { bigint: true, throwIfNoEntry: false }); } catch { st = undefined; }
+  return { id: identityKey(p), ...(st ? { dev: st.dev, birthNs: st.birthtimeNs } : {}) };
+}
+
+/**
+ * Whether `now` (the render file after ffmpeg wrote it) is still the file reserved as `reserved`. The same `dev:ino`
+ * says so. Where a file system has no stable inode numbers (exFAT, FAT: macOS gives an empty file a made-up number
+ * that changes once it has data, #133) the same device and creation time do, for a regular file (never a symlink).
+ */
+export function sameRenderFile(reserved: RenderFileStamp, now: { id: string | undefined; dev?: bigint; birthNs?: bigint; isFile: boolean } | null): boolean {
+  if (!now) return false;
+  if (reserved.id !== undefined && now.id === reserved.id) return true;
+  return now.isFile && reserved.dev !== undefined && now.dev === reserved.dev
+    && reserved.birthNs !== undefined && reserved.birthNs > 0n && now.birthNs === reserved.birthNs;
+}
+
+function currentRenderFile(p: string): Parameters<typeof sameRenderFile>[1] {
+  let st: fs.BigIntStats | undefined;
+  try { st = fs.lstatSync(p, { bigint: true, throwIfNoEntry: false }); } catch { return null; }
+  return st ? { id: identityKey(p), dev: st.dev, birthNs: st.birthtimeNs, isFile: st.isFile() } : null;
+}
+
+function reserveRenderTemp(outputPath: string): { path: string; stamp: RenderFileStamp } {
   for (let attempt = 0; ; attempt++) {
     const p = exportPartPath(outputPath, randomToken());
     let fd: number;
@@ -72,7 +99,7 @@ function reserveRenderTemp(outputPath: string): { path: string; id: string | und
       throw e;
     }
     fs.closeSync(fd);
-    return { path: p, id: identityKey(p) };
+    return { path: p, stamp: renderFileStamp(p) };
   }
 }
 
@@ -268,7 +295,7 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
   const subtitleFilePath = path.join(tmpDir, 'subtitles.srt');
   const chaptersFilePath = path.join(tmpDir, 'chapters.txt');
   /** Reserved render temps not moved onto their output yet (deleted on failure). */
-  const parts: { path: string; id: string | undefined; outputPath: string }[] = [];
+  const parts: { path: string; stamp: RenderFileStamp; outputPath: string }[] = [];
   let sidecarTemp: string | null = null;
   try {
     if (signal?.aborted) throw new Error('Export canceled');
@@ -289,7 +316,7 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
       const graph = graphs[i];
       const file = outputs.files[i];
       const reserved = reserveRenderTemp(graph.outputPath);
-      parts.push({ path: reserved.path, id: reserved.id, outputPath: graph.outputPath });
+      parts.push({ path: reserved.path, stamp: reserved.stamp, outputPath: graph.outputPath });
       const fileProgress: ExportProgress | undefined = n > 1 && onProgress
         ? (p, msg) => onProgress((i + p) / n, `${file.label ?? `File ${i + 1}`} (${i + 1}/${n}): ${msg ?? ''}`.trim())
         : onProgress;
@@ -303,7 +330,7 @@ export async function runExport(req: ExportRequest, onProgress?: ExportProgress,
     // ffmpeg wrote into the files reserved above; never move anything else onto an output.
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i];
-      if (exportStatPath(part.path)?.id !== part.id) {
+      if (!sameRenderFile(part.stamp, currentRenderFile(part.path))) {
         parts.splice(i, 1);
         throw new Error(`The render file "${part.path}" was replaced by another file during the export. It was left untouched; export again.`);
       }
