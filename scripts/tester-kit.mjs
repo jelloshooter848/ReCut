@@ -192,7 +192,9 @@ function encodeFilms(src) {
     const v = probe(input).streams.find((s) => s.codec_type === 'video');
     // 720p: 1280 wide (Elephants Dream is published at 1024x576 at most on download.blender.org, so it is upscaled).
     const scale = v.width !== 1280 ? ['scale=w=1280:h=-2:flags=lanczos'] : [];
-    const args = ['-i', input, '-map', '0:v:0', '-map', '0:a:0', '-vf', [...scale, 'format=yuv420p'].join(','),
+    // A source whose timestamps wander (Elephants Dream) becomes constant frame rate, so ReCut does not flag it as VFR.
+    const cfr = v.avg_frame_rate !== v.r_frame_rate ? ['-fps_mode', 'cfr', '-r', v.r_frame_rate] : [];
+    const args = ['-i', input, '-map', '0:v:0', '-map', '0:a:0', ...cfr, '-vf', [...scale, 'format=yuv420p'].join(','),
       ...X264(23, ['-maxrate', `${f.maxrate}k`, '-bufsize', `${2 * f.maxrate}k`, '-profile:v', 'high', '-g', '48']),
       ...AAC(128), ...CLEAN, '-movflags', '+faststart'];
     const stamp = sha(JSON.stringify([fs.statSync(input).size, args.slice(2), synthetic]));
@@ -395,9 +397,12 @@ async function build() {
   const frames = {};
   for (const f of FILMS) frames[f.key] = frameStats(L, enc[f.key]); // the work copy: its cache file stays out of the kit
   const body = (f) => ({ from: f.dur * 0.06, to: f.dur * 0.8 });
+  // A well-exposed moment in the middle of a real shot between `from` and `to` (not a flash, a fade or a white frame).
   const brightAt = (f, from, to) => {
-    const c = frames[f.key].filter((s) => s.t >= from && s.t <= to).sort((a, b) => b.yavg - a.yavg)[0];
-    return c ? c.t : (from + to) / 2;
+    const shots = L.pickShots(frames[f.key], { from, to, n: 5, minLen: synthetic ? 2 : 2.5, minLuma: synthetic ? 10 : 60, maxLuma: 180 });
+    if (!shots.length) throw new Error(`${f.title}: no well-exposed shot between ${from.toFixed(0)} and ${to.toFixed(0)} s`);
+    const [a, b] = shots[Math.floor(shots.length / 2)];
+    return +((a + b) / 2).toFixed(3);
   };
 
   const tosMkvLen = synthetic ? 40 : 50;
@@ -719,7 +724,7 @@ async function build() {
     films: FILMS.map((f) => ({
       key: f.key, title: f.title, year: f.year, file: film[f.key].file, subtitles: film[f.key].subtitles,
       characters: f.characters, location: f.location,
-      shots: L.pickShots(frames[f.key], { ...body(film[f.key]), n: 4, minLen: synthetic ? 2 : 2.5, maxLen: 3.5, minLuma: synthetic ? 10 : 35 }),
+      shots: L.pickShots(frames[f.key], { ...body(film[f.key]), n: 4, minLen: synthetic ? 2 : 2.5, maxLen: synthetic ? 3.5 : 4.5, minLuma: synthetic ? 10 : 35 }),
       lines: f.key === 'tos' ? lines(film.tos, 3) : f.key === 'sintel' ? lines(film.sintel, 2) : [],
     })),
   };
@@ -832,7 +837,7 @@ async function validate(L) {
       want(Number(n) === e.frames, `${n} frames, want ${e.frames}`);
     }
     if (e.minDuration) want(r.duration >= e.minDuration, `${r.duration} s, want at least ${e.minDuration}`);
-    if (r.path.startsWith('franchise/')) want(v[0]?.codec_name === 'h264' && a[0]?.codec_name === 'aac' && v[0]?.width <= 1280, 'franchise film is not 720p H.264 / AAC');
+    if (r.path.startsWith('franchise/')) want(v[0]?.codec_name === 'h264' && a[0]?.codec_name === 'aac' && v[0]?.width === 1280 && !rp.video?.isVfr, 'franchise film is not 720p constant-frame-rate H.264 / AAC');
     if (!still && rp.audio?.length && rp.audio.some((x) => !x.channels)) problems.push(`${r.path}: ReCut sees an audio stream without channels`);
     // Decode the whole file once: no decode errors anywhere (the two-hour file only for its first and last minute).
     const decodeArgs = e.minDuration ? ['-t', '60', '-i', abs] : ['-i', abs];

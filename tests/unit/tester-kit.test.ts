@@ -93,6 +93,10 @@ describe('tester kit: shots for the trailer', () => {
     }
     expect(shots[0][0]).toBeLessThan(shots[2][0]);
   });
+  it('leaves out washed-out shots', () => {
+    const bright = stats().map((f) => (f.t >= 6 && f.t < 12 ? { ...f, yavg: 250 } : f));
+    for (const [a] of pickShots(bright, { from: 0, to: 60, n: 10, maxLuma: 200 })) expect(a >= 6 && a < 12).toBe(false);
+  });
   it('returns every usable shot when there are fewer than asked', () => {
     expect(pickShots(stats(), { from: 0, to: 13, n: 5 })).toHaveLength(2);
   });

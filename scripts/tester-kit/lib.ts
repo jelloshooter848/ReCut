@@ -103,10 +103,10 @@ export interface FrameStat { t: number; scene: number; yavg: number }
 /**
  * Shots of a film from per-frame scene scores and mean luma: cuts where the scene score passes `threshold`, shots of
  * at least `minLen` seconds inside [from, to], `n` of them spread evenly, each trimmed to at most `maxLen` seconds
- * around its middle and kept only when it is not dark (mean luma at least `minLuma` over the kept part).
+ * around its middle and kept only when it is neither dark nor washed out (mean luma within [`minLuma`, `maxLuma`]).
  */
-export function pickShots(stats: FrameStat[], opts: { from: number; to: number; n: number; minLen?: number; maxLen?: number; threshold?: number; minLuma?: number }): [number, number][] {
-  const minLen = opts.minLen ?? 2.5, maxLen = opts.maxLen ?? 3.5, threshold = opts.threshold ?? 0.35, minLuma = opts.minLuma ?? 40;
+export function pickShots(stats: FrameStat[], opts: { from: number; to: number; n: number; minLen?: number; maxLen?: number; threshold?: number; minLuma?: number; maxLuma?: number }): [number, number][] {
+  const minLen = opts.minLen ?? 2.5, maxLen = opts.maxLen ?? 3.5, threshold = opts.threshold ?? 0.35, minLuma = opts.minLuma ?? 40, maxLuma = opts.maxLuma ?? 255;
   const frames = stats.filter((s) => s.t >= opts.from && s.t <= opts.to).sort((a, b) => a.t - b.t);
   if (!frames.length) return [];
   const cuts = [opts.from, ...frames.filter((f) => f.scene >= threshold).map((f) => f.t), opts.to];
@@ -118,7 +118,7 @@ export function pickShots(stats: FrameStat[], opts: { from: number; to: number; 
     const a = round3(mid - half), b = round3(mid + half);
     const inside = frames.filter((f) => f.t >= a && f.t <= b);
     const luma = inside.length ? inside.reduce((n, f) => n + f.yavg, 0) / inside.length : 0;
-    if (luma >= minLuma) shots.push({ a, b, luma });
+    if (luma >= minLuma && luma <= maxLuma) shots.push({ a, b, luma });
   }
   if (shots.length <= opts.n) return shots.map((s) => [s.a, s.b]);
   const out: [number, number][] = [];
