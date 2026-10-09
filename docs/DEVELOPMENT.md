@@ -63,9 +63,10 @@ Path aliases: `@shared/*` → `shared/`, `@/*` → `src/` (in `vite.config.ts` a
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | Builds main/preload with esbuild, starts the Vite dev server on :5173, launches Electron with `RECUT_DEV_URL`. The renderer hot-reloads. Restart to pick up main-process changes. |
+| `npm run setup` | `scripts/setup-dev.mjs`: when missing, downloads FFmpeg into `resources/ffmpeg/` (skipped when `ffmpeg` and `ffprobe` are on `PATH` or `RECUT_FFMPEG` is set) and compiles the speech-to-text engine into `resources/whisper/` (skipped with a note when cmake is missing), using the `scripts/<os>/get-*` scripts below. A step that fails does not stop the app. `npm run dev` and `npm start` run it first; `RECUT_SKIP_SETUP=1` skips it. |
+| `npm run dev` | Runs `npm run setup`'s checks, builds main/preload with esbuild, starts the Vite dev server on :5173, launches Electron with `RECUT_DEV_URL`. The renderer hot-reloads. Restart to pick up main-process changes. |
 | `npm run build` | `vite build` → `dist/renderer` and `scripts/build-electron.mjs` → `dist/electron`. |
-| `npm start` | Build, then `electron .` |
+| `npm start` | Setup (as `npm run setup`), build, then `electron .` |
 | `npm run typecheck` | `tsc --noEmit` for the renderer/shared project and for the electron project. |
 | `npm test` | Vitest over `tests/unit/**/*.test.ts` (node environment). Some tests run real FFmpeg. |
 | `npm run test:watch` | Vitest in watch mode. |
