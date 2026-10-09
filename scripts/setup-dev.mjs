@@ -75,7 +75,19 @@ function setupWhisper() {
     log('Skipping the speech-to-text engine: it needs cmake (or make) and a C++ compiler. Install them, then run: npm run setup');
     return;
   }
+  if (win && !(onPath('cmake') && hasVisualStudioCpp())) {
+    log('Skipping the speech-to-text engine: it needs cmake and Visual Studio 2022 or newer with the "Desktop development with C++" workload. Install them, then run: npm run setup');
+    return;
+  }
   run('whisper', 'the speech-to-text engine (whisper.cpp, a few minutes)', 'npm run setup');
+}
+
+/** A Visual Studio with the C++ x64 tools, found with vswhere as scripts/windows/get-whisper.ps1 finds it. */
+function hasVisualStudioCpp() {
+  const vswhere = path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Microsoft Visual Studio', 'Installer', 'vswhere.exe');
+  if (!existsSync(vswhere)) return false;
+  const r = spawnSync(vswhere, ['-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'], { encoding: 'utf8' });
+  return r.status === 0 && r.stdout.trim() !== '';
 }
 
 if (process.env.RECUT_SKIP_SETUP) {
