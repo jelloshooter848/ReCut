@@ -173,7 +173,8 @@ Apple Silicon runner (the Intel one under Rosetta 2). Builds of unreleased commi
 
 Requires Node.js 20+ (22 recommended) and FFmpeg 6+ (`ffmpeg` and `ffprobe` on `PATH`, or set `RECUT_FFMPEG` /
 `RECUT_FFPROBE`). ReCut shows a banner at startup when it cannot find them. See [docs/INSTALL.md](docs/INSTALL.md),
-which also explains how to bundle FFmpeg into a package.
+which also explains how to bundle FFmpeg into a package. For the full development setup (including the optional
+speech-to-text engine), tests and conventions, see [Development setup in CONTRIBUTING.md](CONTRIBUTING.md#development-setup).
 
 ```bash
 git clone <this repo> ReCut && cd ReCut
@@ -194,7 +195,8 @@ The [User Guide](docs/USER-GUIDE.md) walks through a complete fan edit.
 
 ## Testing unreleased changes
 
-To try what is on `main` (or a pull request) before it is released, run it from a clone as in the quick start:
+To try what is on `main` (or a pull request) before it is released, run it from a clone as in the quick start
+(first-time setup is in [CONTRIBUTING.md](CONTRIBUTING.md#development-setup)):
 
 ```bash
 git checkout main && git pull       # or: gh pr checkout <number>
