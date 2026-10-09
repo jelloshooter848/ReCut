@@ -112,7 +112,7 @@ flowchart LR
 | `linkSync.ts` | Linked-clip sync offsets (`linkedSyncOffsets`), used by the timeline's out-of-sync badge and the Export dialog's warning. |
 | `pathKey.ts` | Lexical `path.resolve` + case folding for the renderer's early "is this a project source?" check (subtitle export). The main process repeats the check with realpath and inode (`electron/pathSafety.ts`). |
 | `productIdentity.ts` | The one module that names the product: display name, executable and release file names, repository slug, project extensions, user-data folder names, environment-variable prefixes, appId and the pinned NSIS GUID. See [Product identity and user data](#product-identity-and-user-data). |
-| `legacyPaths.ts` | Remaps cache paths saved under a legacy user-data folder to the current one (`verifyProxies`, the channel-proxy check). |
+| `legacyPaths.ts` | The roots for remapping cache paths saved under a legacy user-data folder (matched in `electron/legacyPathRemap.ts`). |
 | `subtitles.ts`, `ipc.ts`, `ids.ts`, `peaks.ts` | SRT / VTT parse + serialize, the IPC contract and `recut-media://` helpers, ids, waveform peaks. |
 
 ## Renderer
@@ -388,9 +388,11 @@ Project panel, recent list, command line and second instance, OS file associatio
   the legacy folder. A `cacheDir` preference inside the legacy folder is rewritten to the same place in the new one.
 - Nothing in the legacy folder is deleted on a failure path: the session falls back to it, the user is told once, and
   the next launch tries again. `<new>.migration-lock` keeps two simultaneous launches from both migrating.
-- Projects store absolute proxy paths into the cache. `AppInfo.legacyPathRoots` tells the renderer where paths under
-  a legacy folder (and its `cache`) live now, and `verifyProxies` and the channel-proxy check try the remapped path
-  before calling a proxy missing.
+- Projects store absolute proxy paths into the cache. `verifyProxies` and the channel-proxy check ask the main
+  process (`fs:relocateLegacyPath`, `electron/legacyPathRemap.ts`) for a missing path under a legacy folder (or its
+  `cache`) before calling it missing. Paths are compared in their real form: resolved, separators normalised, the
+  existing part through realpath (macOS `/var` and `/private/var`, Windows 8.3 short names), case-folded on Windows
+  and macOS.
 
 Test-only switches (honoured only by an unpackaged app): `RECUT_TEST_APP_DATA`, `RECUT_TEST_APP_NAME`,
 `RECUT_TEST_LEGACY_USER_DATA`, `RECUT_TEST_MIGRATION_FORCE_COPY`, `RECUT_TEST_MIGRATION_DIALOG`

@@ -30,6 +30,7 @@ import { encodeProjectWire, isAutosaveStreamRef, SAVE_STREAM_IPC as IPC_SAVE, ty
 import * as io from './project/io';
 import * as fsApi from './fs';
 import { legacyPathRoots } from '../shared/legacyPaths';
+import { createLegacyPathRemapper } from './legacyPathRemap';
 
 // ------------------------------------------------------------------
 // Media / jobs / export contract (implemented by electron/media/index.ts)
@@ -219,16 +220,14 @@ export function registerIpc(deps: IpcDeps): void {
   // --- app ---
   ipcMain.handle(IPC.appInfo, async (): Promise<AppInfo> => {
     const { ffmpegPath, ffprobePath } = resolveFfmpeg();
-    const cacheDir = await resolveCacheDir(userData);
     return {
       version: app.getVersion(),
       platform: process.platform,
       ffmpegPath,
       ffprobePath,
       ffmpegVersion: await ffmpegVersion(ffmpegPath),
-      cacheDir,
+      cacheDir: await resolveCacheDir(userData),
       userDataDir: userData,
-      legacyPathRoots: legacyPathRoots(deps.legacyUserData ?? [], userData, cacheDir),
       ocrDataDir: ocrDataDir(userData),
       whisperModelsDir: whisperModelsDir(userData),
       homeDir: app.getPath('home'),
@@ -447,6 +446,15 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.subtitlesExport, (_e, p: unknown, content: unknown, protectedPaths: unknown) =>
     fsApi.writeSubtitleFile(p as string, content as string, protectedPaths as string[]));
   ipcMain.handle(IPC.fsListDir, (_e, p: string) => fsApi.listDir(assertString(p, 'path')));
+  // Built once (the cache folder is resolved from prefs): no legacy folder, no remapping.
+  let remap: Promise<(p: string) => string | null> | null = null;
+  ipcMain.handle(IPC.fsRelocateLegacyPath, async (_e, p: string) => {
+    assertString(p, 'path');
+    const legacy = deps.legacyUserData ?? [];
+    if (!legacy.length) return null;
+    remap ??= resolveCacheDir(userData).then((cacheDir) => createLegacyPathRemapper(legacyPathRoots(legacy, userData, cacheDir)));
+    return (await remap)(p);
+  });
   ipcMain.handle(IPC.fsScanForRelink, (_e, req: RelinkScanRequest) => fsApi.scanForRelink(req));
 
   // --- media url (pure; preload also computes this synchronously) ---

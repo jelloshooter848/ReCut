@@ -9,7 +9,6 @@ import type { TranscribeRequest, WhisperEngineInfo, WhisperModelState } from './
 import type { CollectRequest, CollectStartResult, CollectSummary } from './collect';
 import type { ProjectWire } from './projectWire';
 import type { UpdateCheckResult, UpdateCheckSetting, UpdateStatus } from './update';
-import type { PathRoot } from './legacyPaths';
 import { PRODUCT_NAME, envVarName } from './productIdentity';
 
 export const IPC = {
@@ -46,6 +45,8 @@ export const IPC = {
   subtitlesExport: 'subtitles:export',
   fsScanForRelink: 'fs:scanForRelink',
   fsListDir: 'fs:listDir',
+  /** A missing cache path under a legacy user-data folder, found under the current one (electron/legacyPathRemap.ts). */
+  fsRelocateLegacyPath: 'fs:relocateLegacyPath',
   // media
   mediaProbe: 'media:probe',
   mediaThumbnail: 'media:thumbnail',
@@ -114,11 +115,6 @@ export interface AppInfo {
   ffmpegVersion: string | null;
   cacheDir: string;
   userDataDir: string;
-  /**
-   * Where paths into a legacy user-data folder (and its default cache) are looked for now (shared/legacyPaths.ts):
-   * proxy paths saved before the folder moved. Empty or absent when there is none.
-   */
-  legacyPathRoots?: PathRoot[];
   /** Folder holding the installed OCR language files (`<userData>/ocr/tessdata`). */
   ocrDataDir: string;
   /** Folder holding the installed Whisper models (`<userData>/whisper/models`). */
@@ -300,6 +296,12 @@ export interface RecutApi {
    */
   exportSubtitleFile(path: string, content: string, protectedPaths: string[]): Promise<SubtitleWriteResult>;
   listDir(path: string): Promise<{ name: string; path: string; isDirectory: boolean; size: number }[]>;
+  /**
+   * A missing cache file (proxy, channel proxy) saved under a legacy user-data folder that has moved: the same relative
+   * path under the current folder when a file exists there, else null (electron/legacyPathRemap.ts). Optional: older
+   * bridges and test doubles lack it.
+   */
+  relocateLegacyPath?(path: string): Promise<string | null>;
   scanForRelink(req: RelinkScanRequest): Promise<RelinkCandidate[]>;
 
   probe(path: string): Promise<MediaProbe>;

@@ -11,7 +11,6 @@ import {
 } from '../../shared/projectWire';
 import { parseSubtitles } from '../../shared/subtitles';
 import { uid } from '../../shared/ids';
-import { remapLegacyPath, type PathRoot } from '../../shared/legacyPaths';
 import { stripProjectExtension } from '../../shared/productIdentity';
 import { useStore } from './store';
 import { fileNameOf } from './selectors';
@@ -231,30 +230,17 @@ export async function verifyMediaOnline(mediaIds?: ID[]): Promise<ID[]> {
   return missing;
 }
 
-const legacyRootsByApi = new WeakMap<RecutApi, Promise<PathRoot[]>>();
-/** Where paths into a legacy user-data folder are looked for now (AppInfo.legacyPathRoots; asked once per bridge). */
-function legacyRoots(api: RecutApi): Promise<PathRoot[]> {
-  let p = legacyRootsByApi.get(api);
-  if (!p) {
-    p = Promise.resolve()
-      .then(() => api.appInfo())
-      .then((i) => (Array.isArray(i?.legacyPathRoots) ? i.legacyPathRoots : []), () => { legacyRootsByApi.delete(api); return []; });
-    legacyRootsByApi.set(api, p);
-  }
-  return p;
-}
-
 /**
  * A missing cache file (proxy, channel proxy) saved under a legacy user-data folder that has moved (or under its
- * default cache): the same relative path under the current folder when a file exists there (shared/legacyPaths.ts),
- * else null.
+ * default cache): the same relative path under the current folder when a file exists there, else null. The main
+ * process compares the paths in their real form (electron/legacyPathRemap.ts).
  */
 export async function relocatedCachePath(api: RecutApi, p: string): Promise<string | null> {
-  const roots = await legacyRoots(api);
-  if (!roots.length) return null;
-  const candidate = remapLegacyPath(p, roots);
-  if (!candidate || candidate === p) return null;
-  try { return (await api.stat(candidate)).exists ? candidate : null; } catch { return null; }
+  if (typeof api.relocateLegacyPath !== 'function') return null;
+  try {
+    const moved = await api.relocateLegacyPath(p);
+    return typeof moved === 'string' && moved && moved !== p ? moved : null;
+  } catch { return null; }
 }
 
 /**

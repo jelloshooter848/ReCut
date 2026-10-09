@@ -78,14 +78,21 @@ test('the shipped names are equal: nothing is moved or written', async () => {
 });
 
 test('legacy folder only: moved on first start, settings kept, a saved proxy path remapped', async () => {
-  const appData = path.join(tmp, 'appdata');
+  // The app sees the folders through a symlink, the project names them by their real path (as macOS's /var vs
+  // /private/var, or a Windows 8.3 short name vs the long one): the remap compares real paths. Windows: no symlink.
+  const realRoot = path.join(tmp, 'real');
+  fs.mkdirSync(realRoot);
+  let root = realRoot;
+  if (process.platform !== 'win32') { root = path.join(tmp, 'alias'); fs.symlinkSync(realRoot, root); }
+  const appData = path.join(root, 'appdata');
   const legacy = path.join(appData, 'OldAppName');
   const current = path.join(appData, NEW_NAME);
   // A saved project whose media proxy points into the legacy folder's cache.
   const media = path.join(tmp, 'clip.mp4');
   fs.writeFileSync(media, Buffer.alloc(16));
   const project = createProject('Moved');
-  const item = { ...createMediaItem(media, 'clip.mp4'), id: 'm1', proxy: { status: 'ready' as const, path: path.join(legacy, 'cache', 'proxies', 'k_540p_all.mp4'), progress: 1 } };
+  const savedProxy = path.join(realRoot, 'appdata', 'OldAppName', 'cache', 'proxies', 'k_540p_all.mp4');
+  const item = { ...createMediaItem(media, 'clip.mp4'), id: 'm1', proxy: { status: 'ready' as const, path: savedProxy, progress: 1 } };
   project.media[item.id] = item;
   const projectFile = path.join(tmp, 'moved.recut');
   fs.writeFileSync(projectFile, serializeProject(project));
@@ -101,8 +108,8 @@ test('legacy folder only: moved on first start, settings kept, a saved proxy pat
     const recent = await r.page.evaluate(() => (window as unknown as { recut: { recentProjects(): Promise<string[]> } }).recut.recentProjects());
     expect(recent).toEqual([projectFile]);
     // The project's proxy path into the old folder resolves to the moved file, without a "missing" reset.
-    const info = await r.page.evaluate(() => (window as unknown as { recut: { appInfo(): Promise<{ legacyPathRoots?: unknown[] }> } }).recut.appInfo());
-    expect(info.legacyPathRoots?.length).toBeGreaterThan(0);
+    const relocated = await r.page.evaluate((p) => (window as unknown as { recut: { relocateLegacyPath(p: string): Promise<string | null> } }).recut.relocateLegacyPath(p), savedProxy);
+    expect(relocated).toBe(path.join(current, 'cache', 'proxies', 'k_540p_all.mp4'));
     type W = { __recut: { actions: { openProject(p: string): Promise<{ ok: boolean }>; verifyProxies(): Promise<string[]> }; store: { getState(): { project: { media: Record<string, { proxy: { status: string; path?: string } }> } } } } };
     expect((await r.page.evaluate((p) => (window as unknown as W).__recut.actions.openProject(p), projectFile)).ok).toBe(true);
     expect(await r.page.evaluate(() => (window as unknown as W).__recut.actions.verifyProxies())).toEqual([]);

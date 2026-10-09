@@ -1,12 +1,12 @@
 /**
- * Remapping absolute paths that point into a legacy user-data folder.
+ * The roots for remapping absolute paths that point into a legacy user-data folder.
  *
  * Projects store absolute paths into the cache (MediaItem.proxy.path, channelProxies[*].path), by default under
- * `<userData>/cache`. When the user-data folder moved (electron/userDataMigration.ts), or the cache now lives
- * elsewhere, such a path no longer exists; the same file is usually at the same relative path under the current
- * root. The main process reports the roots (AppInfo.legacyPathRoots) and the renderer's proxy checks
- * (src/state/mediaActions.ts verifyProxies, src/app/channelProxies.ts) try the remapped path before calling a file
- * missing.
+ * `<userData>/cache`. When the user-data folder moved (electron/userDataMigration.ts), such a path no longer exists;
+ * the same file is usually at the same relative path under the current folder. The main process matches paths
+ * against these roots in their real form (electron/legacyPathRemap.ts, IPC `fs:relocateLegacyPath`), and the
+ * renderer's proxy checks (src/state/mediaActions.ts verifyProxies, src/app/channelProxies.ts) ask it before calling
+ * a file missing.
  *
  * Pure: no DOM, no Node. Paths may be Windows or POSIX paths whatever the platform running this code.
  */
@@ -41,29 +41,4 @@ function samePath(a: string, b: string): boolean {
   const win = isWindowsPath(a) || isWindowsPath(b);
   const norm = (p: string) => { const t = trimSep(win ? p.replace(/\//g, '\\') : p); return win ? t.toLowerCase() : t; };
   return norm(a) === norm(b);
-}
-
-/**
- * `p` moved from the first (longest) root it lies under to that root's target, or null when it lies under none.
- * Windows paths compare case-insensitively and with either separator; the result uses the target's separator.
- */
-export function remapLegacyPath(p: string, roots: readonly PathRoot[]): string | null {
-  if (typeof p !== 'string' || !p) return null;
-  const sorted = [...roots].sort((a, b) => b.from.length - a.from.length);
-  for (const r of sorted) {
-    if (!r.from || !r.to) continue;
-    const win = isWindowsPath(r.from);
-    const from = trimSep(win ? r.from.replace(/\//g, '\\') : r.from);
-    const cand = win ? p.replace(/\//g, '\\') : p;
-    const prefix = from + (win ? '\\' : '/');
-    const hit = win ? cand.toLowerCase().startsWith(prefix.toLowerCase()) : cand.startsWith(prefix);
-    if (!hit) continue;
-    const rest = cand.slice(prefix.length);
-    if (!rest) continue;
-    const toSep = isWindowsPath(r.to) ? '\\' : '/';
-    const parts = rest.split(/[\\/]+/).filter(Boolean);
-    if (parts.some((x) => x === '..')) continue;
-    return `${trimSep(r.to)}${toSep}${parts.join(toSep)}`;
-  }
-  return null;
 }
