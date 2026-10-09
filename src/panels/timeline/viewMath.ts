@@ -229,7 +229,7 @@ export const TRACK_DIVIDER_PX = 6;
 export const SUBTITLE_LANE_PX = 32;
 export const TRANSCRIPT_LANE_PX = 32;
 /** A collapsed transcript lane: a thin row with a line where it has text (#132). */
-export const TRANSCRIPT_COLLAPSED_PX = 12;
+export const TRANSCRIPT_COLLAPSED_PX = 18;
 export const MIN_TRACK_HEIGHT = 24;
 export const MAX_TRACK_HEIGHT = 240;
 
