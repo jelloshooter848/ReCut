@@ -27,7 +27,7 @@ import {
   MIN_CLIP_FRAMES, allTracks, clipEnd, clipSourceOut, findClip, maxDurationFrom, findTrack, linkedClips, makeClip, placeClips,
   razorAt, removeClips as tlRemoveClips, rippleDeleteClips, rippleDeleteDisabledClips, removableDisabledClipIds, liftRange, extractRange, trimStart, trimEnd,
   rippleTrimStart, rippleTrimEnd, rollEdit as tlRollEdit, slipClip, slideClip, moveClips as tlMoveClips, readItems, clipsWithIds,
-  addTransition as tlAddTransition, removeTransition as tlRemoveTransition, addTrack as tlAddTrack,
+  addTransition as tlAddTransition, removeTransition as tlRemoveTransition, addTrack as tlAddTrack, trackForDrop,
   removeTrack as tlRemoveTrack, reconcileTransitions, reconcileAll, rippleShift, addMarker as tlAddMarker,
   followClipMarkers, transitionLimit, setClipAudioStream as tlSetClipAudioStream, type NewClipSpec, type MediaDurationLookup,
   setClipChannelSelection as tlSetClipChannelSelection, addChannelClip,
@@ -1006,8 +1006,10 @@ export const useStore = create<RecutStore>()((set, get) => {
           const patched = tracks.find((t) => t.patched && !t.locked);
           return patched ?? (explicit ? tracks.find((t) => !t.locked) : undefined);
         };
-        const vTrack = includeVideo ? pick(seq.videoTracks, o.videoTrackId, o.includeVideo === true) : undefined;
-        const aTrack = includeAudio ? pick(seq.audioTracks, o.audioTrackId, o.includeAudio === true) : undefined;
+        const vTrack = !includeVideo ? undefined : !o.videoTrackId && o.videoTrackIndex !== undefined ? trackForDrop(seq, 'video', o.videoTrackIndex)
+          : pick(seq.videoTracks, o.videoTrackId, o.includeVideo === true);
+        const aTrack = !includeAudio ? undefined : !o.audioTrackId && o.audioTrackIndex !== undefined ? trackForDrop(seq, 'audio', o.audioTrackIndex)
+          : pick(seq.audioTracks, o.audioTrackId, o.includeAudio === true);
         if (!vTrack && !aTrack) {
           if ((includeVideo && o.includeVideo === undefined && !o.videoTrackId) || (includeAudio && o.includeAudio === undefined && !o.audioTrackId)) unpatched = true;
           return;
@@ -1805,11 +1807,12 @@ export const useStore = create<RecutStore>()((set, get) => {
       /** Places the nested clips of the child in `seq`; their ids, or [] when nothing was placed. */
       const nestInto = (seq: Sequence): ID[] => {
         const clips = nestedClipsFor(seq, p.sequences[childId], frame);
-        const pick = (tracks: Track[], id: ID | undefined) => (id ? tracks.find((t) => t.id === id) : undefined)
+        const pick = (tracks: Track[], id: ID | undefined, kind: 'video' | 'audio', index: number | undefined) => (id ? tracks.find((t) => t.id === id) : undefined)
+          ?? (index !== undefined ? trackForDrop(seq, kind, index) : undefined)
           ?? tracks.find((t) => t.patched && !t.locked) ?? tracks.find((t) => !t.locked);
         const placements: { trackId: ID; clip: Clip }[] = [];
         for (const c of clips) {
-          const t = c.kind === 'video' ? pick(seq.videoTracks, opts.videoTrackId) : pick(seq.audioTracks, opts.audioTrackId);
+          const t = c.kind === 'video' ? pick(seq.videoTracks, opts.videoTrackId, 'video', opts.videoTrackIndex) : pick(seq.audioTracks, opts.audioTrackId, 'audio', opts.audioTrackIndex);
           if (t) placements.push({ trackId: t.id, clip: c });
         }
         return placements.length && placeClips(seq, placements, opts.mode ?? 'overwrite') ? placements.map((x) => x.clip.id) : [];

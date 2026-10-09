@@ -33,6 +33,9 @@ export interface SourceEditRequest {
   at?: number;
   videoTrackId?: ID;
   audioTrackId?: ID;
+  /** Drag and drop: the other kind goes on its track at the drop row's index (#120). */
+  videoTrackIndex?: number;
+  audioTrackIndex?: number;
   includeVideo?: boolean;
   includeAudio?: boolean;
   extra?: InsertFromSourceOptions['extra'];
@@ -118,7 +121,7 @@ function runEdit(seqId: ID, req: SourceEditRequest): InsertSourceResult {
   if (!r.ok) return fail(r.reason, 'info');
   const ids = st.insertFromSource(seqId, {
     mediaId: m.id, in: r.inS, out: r.outS, atFrame: r.atFrame, mode: req.mode,
-    videoTrackId: req.videoTrackId, audioTrackId: req.audioTrackId, includeVideo: req.includeVideo, includeAudio: req.includeAudio, extra: req.extra,
+    videoTrackId: req.videoTrackId, audioTrackId: req.audioTrackId, videoTrackIndex: req.videoTrackIndex, audioTrackIndex: req.audioTrackIndex, includeVideo: req.includeVideo, includeAudio: req.includeAudio, extra: req.extra,
   });
   if (ids.length === 0) return fail(`${req.mode === 'insert' ? 'Insert' : 'Overwrite'} failed — target tracks may be locked`, 'error');
   const after = useStore.getState().project.sequences[seqId];
