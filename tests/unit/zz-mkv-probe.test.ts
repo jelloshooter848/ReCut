@@ -196,11 +196,11 @@ const RANGE_SAMPLES = 192000;
 
 
 import crypto from 'node:crypto';
-// TEMPORARY DIAGNOSTIC (not for merge): distribution of the downmix tone level across repeated exports.
-const BIG = process.platform === 'darwin';
-const N = Number(process.env.PROBE_N || (BIG ? 50 : 3));
+// TEMPORARY DIAGNOSTIC v2 (not for merge): the downmix export under heavy contention, verbose FFmpeg logs on outliers.
+const STRESS = process.platform === 'darwin' && process.arch === 'arm64' && (process.env.MAC_ARCH === 'x64' || process.env.PROBE_FORCE === '1');
+const N = Number(process.env.PROBE_N || (STRESS ? 60 : 2));
+const P = Number(process.env.PROBE_P || (STRESS ? 6 : 2));
 const md5 = (d: Float32Array) => crypto.createHash('md5').update(Buffer.from(d.buffer, d.byteOffset, d.byteLength)).digest('hex').slice(0, 8);
-/** Amplitude and phase (deg) of `freq` over consecutive 50 ms windows (22 cycles of 440 Hz). */
 function windows(d: { data: Float32Array; channels: number }, freq: number, ch = 0): string {
   const out: string[] = []; const W = 2400; const frames = d.data.length / d.channels;
   for (let s = 0; s + W <= frames; s += W) {
@@ -210,69 +210,59 @@ function windows(d: { data: Float32Array; channels: number }, freq: number, ch =
   }
   return out.join(' ');
 }
-async function measure(file: string) {
-  const s51 = await samples(file, 0), st = await samples(file, 1);
-  return { s51, st, row: [tone(st, 440, 48000, 144000).toPrecision(8), tone(st, 440, 48000, 144000, 1).toPrecision(8), tone(st, 660, 48000, 144000).toPrecision(8),
-    tone(s51, 440, 48000, 144000).toPrecision(8), tone(s51, 660, 48000, 144000).toPrecision(8), st.data.length / 2, s51.data.length / 6, md5(st.data), md5(s51.data)].join('\t') };
-}
-describe('PROBE downmix distribution', () => {
-  it('repeated exports', async () => {
+describe('PROBE2 downmix under contention', () => {
+  it('repeated concurrent exports', async () => {
     const s = sequence();
     s.audioTracks[2].muted = true;
-    const rows: string[] = [];
-    const firstSeen = new Map<string, string>();
-    const note = async (variant: string, k: number, file: string, stderr = '') => {
-      const m = await measure(file);
-      rows.push(`${variant}\t${k}\t${m.row}`);
-      const key = m.row.split('\t').slice(0, 1).join('');
-      if (!firstSeen.has(`${variant}`)) firstSeen.set(variant, key);
-      if (firstSeen.get(variant) !== key || k === 0) {
-        rows.push(`#WIN ${variant} ${k} stL440 ${windows(m.st, 440)}`);
-        rows.push(`#WIN ${variant} ${k} 51FL440 ${windows(m.s51, 440)}`);
-        rows.push(`#WIN ${variant} ${k} stL660 ${windows(m.st, 660)}`);
-        if (stderr) rows.push(`#ERR ${variant} ${k} ${stderr.replace(/\n/g, ' | ')}`);
-      }
-    };
+    const mk = () => req(s, { audioOutputs: audioOutputPreset('surroundStereo', s), rangeMode: 'inOut' });
     let base: string[] = [];
+    const first = await runExport(mk(), undefined, undefined, { chunked: false, onSpawn: (c: any) => { base = c.spawnargs.slice(); } });
+    fs.rmSync(first.outputPath);
+    const { buildRenderGraph } = await import('../../electron/export/renderGraph');
     const graph = path.join(dir, 'probe-graph.txt');
+    fs.writeFileSync(graph, buildRenderGraph(mk()).filterGraph);
+    const fi = base.findIndex((a) => a === '-/filter_complex' || a === '-filter_complex_script');
+    base[fi + 1] = graph;
+    const bin = base[0];
+    const ci = base.indexOf('ffmetadata');
+    const core = base.slice(1).filter((a, i, all) => !(a === '-progress' || all[i - 1] === '-progress'))
+      .filter((_, i, all) => true);
+    const ci2 = core.indexOf('ffmetadata');
+    const args0 = core.filter((_, i) => !(i >= ci2 - 1 && i <= ci2 + 2)).map((a, i, all) => (all[i - 1] === '-map_chapters' ? '-1' : all[i - 1] === '-loglevel' ? 'verbose' : a));
+    void ci;
+    const counts = new Map<string, number>();
+    const rows: string[] = [];
+    let total = 0;
     for (let k = 0; k < N; k++) {
-      // A: the exporter as is, three at once (contention).
-      const spawned: string[][] = [[], [], []];
-      const rs = await Promise.all([0, 1, 2].map((j) => runExport(req(s, { audioOutputs: audioOutputPreset('surroundStereo', s), rangeMode: 'inOut' }), undefined, undefined,
-        { chunked: false, onSpawn: (c: any) => { spawned[j] = c.spawnargs.slice(); } })));
-      base = spawned[0];
-      const r = rs[0];
-      if (k === 0) {
-        fs.copyFileSync(r.outputPath, path.join(dir, 'probe-first.mkv'));
-        rows.push(`#ARGS ${JSON.stringify(base)}`);
-        // the filter script was deleted with the export temp dir: rebuild it
-        const { buildRenderGraph } = await import('../../electron/export/renderGraph');
-        fs.writeFileSync(graph, buildRenderGraph(req(s, { audioOutputs: audioOutputPreset('surroundStereo', s), rangeMode: 'inOut' })).filterGraph);
-      }
-      { const fi = base.findIndex((a) => a === '-/filter_complex' || a === '-filter_complex_script'); base[fi + 1] = graph; }
-      for (let j = 0; j < 3; j++) { await note(`A${j}-export`, k, rs[j].outputPath); fs.rmSync(rs[j].outputPath); }
-      const bin = base[0];
-      const core0 = base.slice(1).filter((a, i, all) => !(a === '-progress' || all[i - 1] === '-progress'));
-      // The chapters file went with the export temp dir: drop that input (chapters do not matter here).
-      const ci = core0.indexOf('ffmetadata');
-      const core = core0.filter((_, i) => !(i >= ci - 1 && i <= ci + 2)).map((a, i, all) => (all[i - 1] === '-map_chapters' ? '-1' : a));
-      const run = async (variant: string, args: string[]) => {
-        const out = path.join(dir, `probe-${variant}.mkv`);
-        args[args.length - 1] = out;
+      const jobs = Array.from({ length: P }, async (_, j) => {
+        const out = path.join(dir, `p2-${j}.mkv`);
+        const args = args0.slice(); args[args.length - 1] = out;
         let stderr = '';
-        try { stderr = (await exec(bin, args, { maxBuffer: 64 * 1024 * 1024 })).stderr; } catch (e: any) { stderr = "FAILED " + String(e?.stderr ?? e); console.log("PROBE-FAIL", variant, JSON.stringify(args), stderr); }
-        await note(variant, k, out, stderr);
-      };
-      // B: no output -t (no encoder sync queue).
-      const tIdx = core.lastIndexOf('-t');
-      await run('B-no-t', core.filter((_, i) => i !== tIdx && i !== tIdx + 1));
-      // C: single-threaded decoders and filters.
-      await run('C-threads1', ['-filter_threads', '1', '-filter_complex_threads', '1', ...core.flatMap((a) => (a === '-i' ? ['-threads', '1', a] : [a]))]);
-      // D: the measurement alone (decode the first file again).
-      await note('D-redecode', k, path.join(dir, 'probe-first.mkv'));
+        try { stderr = (await exec(bin, args, { maxBuffer: 64 * 1024 * 1024 })).stderr; } catch (e: any) { stderr = 'FAILED ' + String(e?.stderr ?? e); }
+        return { out, stderr, via: 'exec' };
+      });
+      // One through the exporter itself as well.
+      jobs.push(runExport(mk(), undefined, undefined, { chunked: false }).then((r) => ({ out: r.outputPath, stderr: '', via: 'runExport' })));
+      const done = await Promise.all(jobs);
+      for (const d of done) {
+        total++;
+        let key: string; let st: any = null; let s51: any = null;
+        try {
+          s51 = await samples(d.out, 0); st = await samples(d.out, 1);
+          key = [tone(st, 440, 48000, 144000).toPrecision(8), tone(st, 660, 48000, 144000).toPrecision(8), tone(s51, 440, 48000, 144000).toPrecision(8), st.data.length / 2, s51.data.length / 6, md5(st.data), md5(s51.data)].join(' ');
+        } catch (e) { key = 'MEASURE-FAILED ' + String(e); }
+        const seen = counts.get(key) ?? 0;
+        counts.set(key, seen + 1);
+        if (seen === 0) {
+          rows.push(`NEW k=${k} via=${d.via} ${key}`);
+          if (st) { rows.push(`WIN stL440 ${windows(st, 440)}`); rows.push(`WIN 51FL440 ${windows(s51, 440)}`); rows.push(`WIN stL660 ${windows(st, 660)}`); }
+          rows.push(`ERR ${d.stderr.split('\n').filter((l) => !/^\s*$/.test(l)).slice(0, 400).join(' | ')}`);
+        }
+        fs.rmSync(d.out, { force: true });
+      }
     }
-    const { stdout: ver } = await exec(base[0], ['-version']).catch(() => ({ stdout: '?' }));
-    console.log(`PROBE ffmpeg: ${ver.split('\n')[0]}\nPROBE variant\tk\tst440L\tst440R\tst660L\ts51_440FL\ts51_660FL\tstLen\ts51Len\tstMd5\ts51Md5\n` + rows.map((r) => 'PROBE ' + r).join('\n'));
-    const tsv = process.env.PROBE_OUT; if (tsv) fs.writeFileSync(tsv, rows.join('\n') + '\n');
+    const { stdout: ver } = await exec(bin, ['-version']).catch(() => ({ stdout: '?' }));
+    console.log(`PROBE2 ffmpeg=${ver.split('\n')[0]} arch=${process.env.MAC_ARCH ?? process.arch} exports=${total}\n` +
+      [...counts].map(([k, n]) => `PROBE2 COUNT ${n} ${k}`).join('\n') + '\n' + rows.map((r) => 'PROBE2 ' + r).join('\n'));
   }, 3600000);
 });
