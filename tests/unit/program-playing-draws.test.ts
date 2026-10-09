@@ -12,6 +12,7 @@ import { createSequence } from '../../shared/project';
 import { defaultAudio, defaultTransform } from '../../shared/timeline';
 import { MediaElementPool } from '../../src/playback/elementPool';
 import { SequencePlayer } from '../../src/playback/sequencePlayer';
+import { SUBTITLE_HIGHLIGHT } from '../../src/playback/subtitleWrap';
 
 class FakeVideo {
   constructor(public tag: 'video' | 'audio' = 'video') {}
@@ -41,6 +42,8 @@ class FakeVideo {
 let videos: FakeVideo[] = [];
 let drawn: FakeVideo[] = [];
 let texts: string[] = [];
+/** fillText calls as `<fillStyle>|<text>` (karaoke highlight, #119). */
+let styled: string[] = [];
 let rafs: (() => void)[] = [];
 let now = 1000;
 const runRaf = () => { const cbs = rafs; rafs = []; for (const cb of cbs) cb(); };
@@ -49,10 +52,11 @@ const runRaf = () => { const cbs = rafs; rafs = []; for (const cb of cbs) cb(); 
 const CHAR_PX = 40;
 
 function fakeCanvas(): HTMLCanvasElement {
+  const state: Record<string | symbol, unknown> = {};
   const ctx = new Proxy({}, {
-    get: (_t, k) => (k === 'drawImage' ? (el: FakeVideo) => { drawn.push(el); } : k === 'fillText' ? (t: string) => { texts.push(t); }
-      : k === 'measureText' ? (t: string) => ({ width: t.length * CHAR_PX }) : () => {}),
-    set: () => true,
+    get: (_t, k) => (k === 'drawImage' ? (el: FakeVideo) => { drawn.push(el); } : k === 'fillText' ? (t: string) => { texts.push(t); styled.push(`${String(state.fillStyle)}|${t}`); }
+      : k === 'measureText' ? (t: string) => ({ width: t.length * CHAR_PX }) : k in state ? state[k] : () => {}),
+    set: (_t, k, v) => { state[k] = v; return true; },
   });
   return { width: 0, height: 0, getContext: () => ctx } as unknown as HTMLCanvasElement;
 }
@@ -163,6 +167,40 @@ describe('SequencePlayer draws while playing', () => {
     expect(drawn).toHaveLength(1);
     nextFrame();                       // 16: the cue goes
     expect(drawn).toHaveLength(2);
+    player.destroy();
+  });
+
+  it('highlights the word being spoken, repainting only when it changes (#119)', () => {
+    const media = { ...MEDIA, S: { ...mediaItem('S'), probe: { ...mediaItem('S').probe!, video: { ...mediaItem('S').probe!.video!, fps: { num: 1, den: 1 }, avgFps: { num: 1, den: 1 } } } } };
+    const s = createSequence('x', FPS, 1920, 1080);
+    s.videoTracks[0].clips.push(clip('v1', 'S', 0, 240, 2.1));
+    // Source 2.1 s is frame 0: the cue runs frames 12-36, "one" from frame 12, "two" from frame 18.
+    s.subtitleTracks.push({ id: 'st', name: 'EN', language: 'en', enabled: true, cues: [{
+      id: 'c1', clipId: 'v1', srcStart: 2.6, srcEnd: 3.6, start: 12, duration: 24, offset: 0, text: 'one two',
+      words: [{ start: 2.6, end: 2.85, text: 'one' }, { start: 2.85, end: 3.6, text: 'two' }],
+    }] });
+    const player = new SequencePlayer(fakeCanvas(), new MediaElementPool(8), undefined, { id: 'program' });
+    player.setSequence(s, media, SETTINGS);
+    player.renderFrame(10); for (const v of videos) v.land(); player.renderFrame(10);
+    runRaf(); player.play(); runRaf();
+    drawn = []; styled = [];
+    nextFrame();                                   // 11: no cue
+    expect(drawn).toHaveLength(0);
+    nextFrame();                                   // 12: the cue appears, "one" lit
+    expect(drawn).toHaveLength(1);
+    expect(styled).toEqual([`${SUBTITLE_HIGHLIGHT}|one`, '#fff| two']);
+    styled = [];
+    for (let f = 13; f < 18; f++) nextFrame();     // same word: no repaint
+    expect(drawn).toHaveLength(1);
+    nextFrame();                                   // 18: "two" lit
+    expect(drawn).toHaveLength(2);
+    expect(styled).toEqual(['#fff|one', `${SUBTITLE_HIGHLIGHT}| two`]);
+    // Highlighting off (ProjectSettings.highlightSpokenWords): one repaint, every word white, no repaint per word.
+    styled = [];
+    player.setHighlightWords(false);
+    nextFrame();
+    expect(drawn).toHaveLength(3);
+    expect(styled).toEqual(['#fff|one', '#fff| two']);
     player.destroy();
   });
 

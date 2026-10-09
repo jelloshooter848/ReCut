@@ -23,3 +23,31 @@ export function wrapSubtitleText(text: string, maxWidth: number, measure: (s: st
   }
   return out;
 }
+
+/** Colour of the word being spoken (karaoke highlight, #119), in the Source and Program monitors alike. */
+export const SUBTITLE_HIGHLIGHT = '#ffd84d';
+
+/**
+ * The word to highlight at time `t` (#119): the last word that has started, so the highlight moves word by word and
+ * stays on a word through the short pause after it; -1 before the first word. `words` are in cue order; times are in
+ * any unit (seconds in the Source monitor, frames in the Program monitor) as long as `t` uses the same one.
+ */
+export function activeWordIndex(words: readonly { start: number }[] | undefined, t: number): number {
+  if (!words) return -1;
+  let i = -1;
+  while (i + 1 < words.length && words[i + 1].start <= t) i++;
+  return i;
+}
+
+/** wrapSubtitleText for a cue's words: the lines as lists of word indices, so each word can be drawn on its own. */
+export function wrapWords(words: readonly string[], maxWidth: number, measure: (s: string) => number): number[][] {
+  const lines: number[][] = [];
+  let line: number[] = [];
+  let text = '';
+  words.forEach((w, i) => {
+    const next = text ? `${text} ${w}` : w;
+    if (line.length && measure(next) > maxWidth) { lines.push(line); line = [i]; text = w; } else { line.push(i); text = next; }
+  });
+  if (line.length) lines.push(line);
+  return lines;
+}

@@ -166,7 +166,8 @@ export function isNonSpeech(text: string): boolean {
  * non-speech segments are dropped; text is trimmed with inner runs of whitespace collapsed (line breaks kept).
  * A segment that repeats the previous one's text and is zero-length or starts before that one ends is a Whisper
  * echo, not speech, and is dropped (#117: `[03:22.160 --> 03:22.160]` repeating the line before it).
- * A segment with words becomes short cues of a few words each (splitWords, #118), each word keeping its timing.
+ * A segment with words becomes short cues of a few words each (splitWords, #118), each word keeping its timing; such a
+ * cue stays up to CUE_LINGER_SECONDS after its last word, never into the next cue or past the chunk (lingerCues).
  */
 export function segmentsToCues(segments: readonly WhisperSegment[], offset = 0, length = Infinity): SubtitleCue[] {
   const cues: SubtitleCue[] = [];
@@ -202,6 +203,23 @@ export function segmentsToCues(segments: readonly WhisperSegment[], offset = 0, 
     }
     cues.push({ id: uid('cue'), start: round3(offset + a), end: round3(offset + b), text });
   }
+  return lingerCues(cues, offset + length);
+}
+
+/** How long a word-timed cue stays on screen after its last word when nothing follows at once (#119). */
+export const CUE_LINGER_SECONDS = 1;
+
+/**
+ * Keep each word-timed cue on screen up to CUE_LINGER_SECONDS after its last word, so it doesn't vanish the moment
+ * the speaker pauses; never into the next cue, never past `limit`. Cues without words (whole segments) keep their end.
+ */
+export function lingerCues(cues: SubtitleCue[], limit = Infinity): SubtitleCue[] {
+  cues.forEach((c, i) => {
+    if (!c.words?.length) return;
+    const next = cues[i + 1]?.start ?? Infinity;
+    const end = Math.min(c.end + CUE_LINGER_SECONDS, Math.max(c.end, next), Math.max(c.end, limit));
+    c.end = round3(end);
+  });
   return cues;
 }
 

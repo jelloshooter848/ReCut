@@ -224,7 +224,7 @@ export interface TrackRow { id: string; kind: 'video' | 'audio'; top: number; he
 export interface TrackLayout { rows: TrackRow[]; total: number; dividerTop: number; subtitleLane: number }
 
 export const TRACK_DIVIDER_PX = 6;
-export const SUBTITLE_LANE_PX = 18;
+export const SUBTITLE_LANE_PX = 32;
 export const MIN_TRACK_HEIGHT = 24;
 export const MAX_TRACK_HEIGHT = 240;
 

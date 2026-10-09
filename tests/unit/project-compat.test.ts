@@ -187,6 +187,7 @@ describe('saved-project fixtures', () => {
       expect(project.settings).toEqual({
         useProxies: false, proxyHeight: 720, autosaveIntervalSec: 120, carrySubtitles: false, sceneThreshold: 0.42,
         playbackResolution: '1/2', snapping: false, defaultTransitionFrames: 12, showSourceTimecodeOnClips: true,
+        highlightSpokenWords: true, // added after these releases: the default (#119)
       });
     });
 

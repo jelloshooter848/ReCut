@@ -42,6 +42,7 @@ export function defaultSettings(): ProjectSettings {
     snapping: true,
     defaultTransitionFrames: 24,
     showSourceTimecodeOnClips: false,
+    highlightSpokenWords: true,
   };
 }
 
