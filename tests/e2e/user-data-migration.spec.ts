@@ -41,6 +41,17 @@ async function launch(appData: string, extra: Record<string, string>): Promise<R
   return { app, page, notices: () => readNotices(appData) };
 }
 
+/** Start and quit the app once on `userData` (RECUT_USER_DATA: no migration), as an earlier version would have. */
+async function runOnce(userData: string): Promise<void> {
+  fs.mkdirSync(userData, { recursive: true });
+  const env = baseEnv(path.dirname(userData), { RECUT_USER_DATA: userData });
+  const app = await electron.launch({ args: [path.join(ROOT, 'dist/electron/main.js'), '--no-sandbox'], cwd: ROOT, env });
+  const page = await app.firstWindow();
+  await page.waitForSelector('#root .layout', { timeout: 60_000 });
+  await discardChangesOnQuit(app);
+  await app.close();
+}
+
 async function close(r: Run): Promise<void> {
   await discardChangesOnQuit(r.app);
   await r.app.close();
@@ -49,8 +60,14 @@ async function close(r: Run): Promise<void> {
 const userDataOf = (r: Run) => r.app.evaluate(({ app }) => app.getPath('userData'));
 const marker = (dir: string) => JSON.parse(fs.readFileSync(path.join(dir, MARKER), 'utf8')) as { result: string; from: string | null };
 
-/** A legacy profile: prefs (recent project, skipped version), a "model", layout storage, an untitled autosave, a proxy. */
+/**
+ * A legacy profile: prefs (recent project, skipped version), a "model", layout storage, an untitled autosave, a proxy.
+ * `cache/Cache_Data` is there as in every real profile on Windows and macOS: their file systems are case-insensitive,
+ * so the app's `cache` folder is Chromium's HTTP cache folder `Cache`, and Chromium clears a `Cache` folder that has
+ * no `Cache_Data` at startup, proxies included (bugs/open/2026-10-09-default-cache-dir-is-chromium-http-cache.md).
+ */
 function seedLegacy(dir: string, recentProject: string): void {
+  fs.mkdirSync(path.join(dir, 'cache', 'Cache_Data'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'whisper', 'models'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'autosave'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'cache', 'proxies'), { recursive: true });
@@ -96,6 +113,8 @@ test('legacy folder only: moved on first start, settings kept, a saved proxy pat
   project.media[item.id] = item;
   const projectFile = path.join(tmp, 'moved.recut');
   fs.writeFileSync(projectFile, serializeProject(project));
+  // A profile an earlier version really ran on (Chromium's own folders, a valid HTTP cache), then its data.
+  await runOnce(legacy);
   seedLegacy(legacy, projectFile);
 
   const r = await launch(appData, { RECUT_TEST_APP_NAME: NEW_NAME, RECUT_TEST_LEGACY_USER_DATA: legacy });
