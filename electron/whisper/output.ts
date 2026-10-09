@@ -123,14 +123,20 @@ export function isNonSpeech(text: string): boolean {
  * Segments of one chunk → cues in source seconds. `offset` is the chunk's start in the source; `length` its length
  * (times past it are clamped). Times are clamped to the chunk, swapped when reversed and given a minimum length;
  * non-speech segments are dropped; text is trimmed with inner runs of whitespace collapsed (line breaks kept).
+ * A segment that repeats the previous one's text and is zero-length or starts before that one ends is a Whisper
+ * echo, not speech, and is dropped (#117: `[03:22.160 --> 03:22.160]` repeating the line before it).
  */
 export function segmentsToCues(segments: readonly WhisperSegment[], offset = 0, length = Infinity): SubtitleCue[] {
   const cues: SubtitleCue[] = [];
   const MIN = 0.05;
+  let prev: { text: string; end: number } | null = null;
   for (const s of segments) {
     if (!Number.isFinite(s.start) || !Number.isFinite(s.end)) continue;
     const text = s.text.replace(/\r\n?/g, '\n').split('\n').map((l) => l.replace(/[ \t ]+/g, ' ').trim()).filter(Boolean).join('\n');
     if (isNonSpeech(text)) continue;
+    const echo = prev !== null && text === prev.text && (s.end <= s.start || Math.min(s.start, s.end) < prev.end);
+    prev = { text, end: Math.max(s.start, s.end) };
+    if (echo) continue;
     let a = Math.min(s.start, s.end);
     let b = Math.max(s.start, s.end);
     a = Math.max(0, Math.min(a, length));

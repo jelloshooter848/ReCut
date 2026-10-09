@@ -102,6 +102,17 @@ describe('segmentsToCues', () => {
     for (const c of cues) expect(c.end).toBeGreaterThan(c.start);
   });
 
+  it('drops a Whisper echo of the previous line, keeps a real repeat (#117)', () => {
+    const cues = segmentsToCues([
+      { start: 199.28, end: 202.16, text: ' Um, I was trying to keep this pretty thin.' },
+      { start: 202.16, end: 202.16, text: ' Um, I was trying to keep this pretty thin.' }, // zero-length echo
+      { start: 203, end: 205, text: ' Yeah.' },
+      { start: 204, end: 206, text: ' Yeah.' },                                       // starts before the last one ends
+      { start: 210, end: 211, text: ' Yeah.' },                                       // said again later: kept
+    ]);
+    expect(cues.map((c) => [c.start, c.text])).toEqual([[199.28, 'Um, I was trying to keep this pretty thin.'], [203, 'Yeah.'], [210, 'Yeah.']]);
+  });
+
   it('knows non-speech text', () => {
     for (const t of ['', '  ', '[BLANK_AUDIO]', '[ blank_audio ]', '...', '♪', '- -']) expect(isNonSpeech(t)).toBe(true);
     for (const t of ['a', 'Ça', '日本', '7', '(laughs)', '[Music] yes']) expect(isNonSpeech(t)).toBe(false);

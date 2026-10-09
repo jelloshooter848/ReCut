@@ -23,7 +23,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { JobInfo, SubtitleCue } from '@shared/model';
 import { uid } from '@shared/ids';
-import { WHISPER_ENGINE_VERSION, whisperLanguage, type TranscribeRequest, type TranscribeResult } from '@shared/whisper';
+import { WHISPER_ENGINE_VERSION, WHISPER_VERBATIM_PROMPT, verbatimApplies, whisperLanguage, type TranscribeRequest, type TranscribeResult } from '@shared/whisper';
 import type { JobQueue, JobRunContext } from '../jobs/jobQueue';
 import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
 import { cacheKeyForPath, cacheSubdir, fileExists, removeQuietly } from '../media/cache';
@@ -36,7 +36,7 @@ import { parseProgressLine, parseSegmentLine, parseWhisperJson, segmentsToCues }
 import { CHUNK_SECONDS, planChunks, readWavInfo, writeWavChunk } from './wav';
 
 /** Bump when a change to extraction / chunking / clean-up changes the text or timing of a result. */
-export const WHISPER_PIPELINE_VERSION = 1;
+export const WHISPER_PIPELINE_VERSION = 2;
 /** Share of the progress bar for the audio extraction. */
 const EXTRACT_SHARE = 0.1;
 
@@ -68,16 +68,16 @@ export function transcriptionMediaKey(mediaPath: string): Promise<string> {
 }
 
 /** Settings part of the cache key: everything besides the media that changes the result. */
-export function transcriptionSettingsHash(req: Pick<TranscribeRequest, 'streamIndex' | 'model' | 'language' | 'translate'>, modelSha256: string): string {
+export function transcriptionSettingsHash(req: Pick<TranscribeRequest, 'streamIndex' | 'model' | 'language' | 'translate' | 'verbatim'>, modelSha256: string): string {
   const parts = {
     v: WHISPER_PIPELINE_VERSION, engine: WHISPER_ENGINE_VERSION, stream: req.streamIndex, model: req.model, sha: modelSha256,
-    language: req.language, translate: Boolean(req.translate),
+    language: req.language, translate: Boolean(req.translate), verbatim: verbatimApplies(req),
   };
   return crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 16);
 }
 
 /** Cache file of one transcription result. */
-export function transcriptionCachePath(fileKey: string, req: Pick<TranscribeRequest, 'streamIndex' | 'model' | 'language' | 'translate'>, modelSha256: string): string {
+export function transcriptionCachePath(fileKey: string, req: Pick<TranscribeRequest, 'streamIndex' | 'model' | 'language' | 'translate' | 'verbatim'>, modelSha256: string): string {
   return path.join(cacheSubdir('whisper'), `${fileKey}_s${req.streamIndex}_${req.model}-${transcriptionSettingsHash(req, modelSha256)}.json`);
 }
 
@@ -126,8 +126,9 @@ export function engineFileArg(p: string, from: string): string {
 }
 
 /** whisper-cli arguments for one chunk. */
-export function whisperArgs(o: { model: string; input: string; outBase: string; threads: number; language: string; translate: boolean }): string[] {
-  return ['-m', o.model, '-f', o.input, '-of', o.outBase, '-oj', '-pp', '-t', String(o.threads), '-l', o.language, ...(o.translate ? ['-tr'] : [])];
+export function whisperArgs(o: { model: string; input: string; outBase: string; threads: number; language: string; translate: boolean; prompt?: string }): string[] {
+  return ['-m', o.model, '-f', o.input, '-of', o.outBase, '-oj', '-pp', '-t', String(o.threads), '-l', o.language, ...(o.translate ? ['-tr'] : []),
+    ...(o.prompt ? ['--prompt', o.prompt] : [])];
 }
 
 interface EngineRun { segmentsEnd: number; stderrTail: string[] }
@@ -227,6 +228,7 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
     const modelArg = engineFileArg(verified.path, tmp);
     const cues: SubtitleCue[] = [];
     let spoken = req.language === 'auto' ? (model.englishOnly ? 'en' : null) : req.language;
+    const prompt = verbatimApplies(req) ? WHISPER_VERBATIM_PROMPT : undefined;
     jc.setProgress(EXTRACT_SHARE, total > 0 ? 'Transcribing…' : 'No audio');
 
     // 3. Transcribe each chunk.
@@ -245,7 +247,7 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
       const outBase = 'out';
       await removeQuietly(path.join(tmp, `${outBase}.json`));
       const lang = spoken ?? 'auto';
-      await runEngine(bin, [...(ctx.enginePrefixArgs ?? []), ...whisperArgs({ model: modelArg, input, outBase, threads, language: lang, translate })], tmp, seconds, jc,
+      await runEngine(bin, [...(ctx.enginePrefixArgs ?? []), ...whisperArgs({ model: modelArg, input, outBase, threads, language: lang, translate, prompt })], tmp, seconds, jc,
         (f) => jc.setProgress(base + share * f, `Transcribing${label}… ${Math.round((start / info.sampleRate + f * seconds) / 60)} of ${Math.max(1, Math.round(total / 60))} min`),
         (child) => ctx.onEngine?.(child, tmp));
       if (jc.signal.aborted) throw canceled();
@@ -273,7 +275,7 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
   }
 }
 
-/** In-flight transcription per path|stream|model|language|translate (dedupe). */
+/** In-flight transcription per path|stream|model|language|translate|verbatim (dedupe). */
 const inFlightTranscribe: InFlight = new WeakMap();
 
 /** Job title: "Transcribe film.mkv #1 (Whisper Small)". */
@@ -287,7 +289,7 @@ export function transcribeJobTitle(req: TranscribeRequest): string {
  * or running, that job is returned. Its result is a TranscribeResult.
  */
 export function startTranscribeJob(queue: JobQueue, req: TranscribeRequest, ctx: TranscribeJobContext): JobInfo {
-  const key = `${req.path}|${req.streamIndex}|${req.model}|${req.language}|${req.translate ? 1 : 0}`;
+  const key = `${req.path}|${req.streamIndex}|${req.model}|${req.language}|${req.translate ? 1 : 0}|${verbatimApplies(req) ? 1 : 0}`;
   const existing = inFlightJob(queue, inFlightTranscribe, key);
   if (existing) return existing;
   const job = queue.add<TranscribeResult>({
