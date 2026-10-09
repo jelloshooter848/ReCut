@@ -149,7 +149,7 @@ describe('words in the project', () => {
     expect(normalizeProjectWithReport(p).project.settings.highlightSpokenWords).toBe(true);
   });
 
-  it('are copied into the sequence with the clip and resolved to frames', () => {
+  it('are copied into the sequence with the clip (a non-Whisper track) and resolved to frames', () => {
     resetStore();
     const S = useStore.getState;
     const FPS = { num: 25, den: 1 };
@@ -160,8 +160,9 @@ describe('words in the project', () => {
         audio: [{ index: 1, codec: 'aac', channels: 2, layout: 'stereo', sampleRate: 48000 }] },
     };
     S().addMedia([media]);
-    S().putWhisperSubtitleTrack({
-      id: 'w', name: 'English (Whisper Small)', language: 'eng', mediaId: media.id, origin: 'whisper', streamIndex: 1,
+    // Whisper tracks are no longer copied (they show live in T lanes, #112); a word-timed track of another origin is.
+    S().addMediaSubtitleTrack({
+      id: 'w', name: 'English', language: 'eng', mediaId: media.id, origin: 'manual',
       cues: [{ id: 'c1', start: 10, end: 11, text: 'Hello there', words: [{ start: 10, end: 10.4, text: 'Hello' }, { start: 10.5, end: 11, text: 'there' }] }],
     });
     const seq = createSequence('S', FPS);

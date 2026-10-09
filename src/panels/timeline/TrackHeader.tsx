@@ -141,3 +141,12 @@ export function SubtitleLaneHeader({ height, count }: { height: number; count: n
     </div>
   );
 }
+
+/** Header of a transcript lane (#112): "T1" under A1, with the number of transcript cues on it. */
+export function TranscriptLaneHeader({ top, height, number, count }: { top: number; height: number; number: number; count: number }) {
+  return (
+    <div className="tl-th-sub tl-th-t" style={{ top, height }} title={`Transcript of the clips on A${number} (from their media; transcribe a clip to fill it)`} data-transcript-lane={number}>
+      <span className="tl-th-t-name">T{number}</span><span>Transcript</span><span className="text-faint">{count}</span>
+    </div>
+  );
+}
