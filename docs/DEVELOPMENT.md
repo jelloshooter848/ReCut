@@ -157,7 +157,11 @@ Every budgeted row has a tier. The owner decided this policy on 6 October 2026:
   For a guardrail of the count / structural class (see [metric classes](#calibration-and-the-reference-machine)) whose
   baseline median is 0, the ratio rule leaves no room: 1 would fail. A median of up to 1 passes; 2 or more (also a
   median of 1.5) still fails as a regression. `pool: media elements (<video> + <audio>) created during 10 s
-  playback` measures 1 now and then on unchanged code. Every other row is unchanged: time, rate and long-task rows with a baseline of 0, and
+  playback` used to read 0–2 on unchanged code: the first playback creates the (file, slot) pairs that the earlier
+  scrub rows happened to leave out of the pool. Since 9 October 2026 the row counts a replay of the same 10 s (the
+  first playback, with its fps and long-task gates, runs unchanged before it), which starts with exactly the
+  elements playback needs, so it reads 0 on unchanged code
+  (`bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md`). Every other row is unchanged: time, rate and long-task rows with a baseline of 0, and
   count rows with a non-zero baseline (1 → 2 still fails), keep the ratio rule; the row's own budget still applies.
 - **Nothing is deleted or loosened.** Re-scoping a row's tier is the only mechanism. Diagnostic rows (and
   `reference` guardrails) keep their old threshold in the row, shown as a reference, so history stays comparable.

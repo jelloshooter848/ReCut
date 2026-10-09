@@ -100,6 +100,15 @@ export const KEYFRAME_RAMP_SEC = 0.05;
  * layout) still updates.
  */
 export const PRESENT_HOLD_MS = 250;
+/**
+ * A paused seek that has not landed after this long (ms) is issued again, and a scrub round stops waiting for it.
+ * Chromium can leave a paused element's seek pending for good (`seeking` true, readyState HAVE_METADATA, no
+ * 'seeked'): see bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md. Only a new seek restarts it.
+ * Each retry of the same element waits twice as long as the one before (up to SEEK_STALL_MAX_MS), so a seek that is
+ * just slow (a long-GOP original on a busy machine) still lands instead of being restarted forever.
+ */
+export const SEEK_STALL_MS = 1000;
+export const SEEK_STALL_MAX_MS = 16000;
 
 /**
  * Media time (seconds) of the frame a drawImage of `el` would paint right now, or null when it cannot be told
@@ -156,7 +165,8 @@ interface Slot<E extends HTMLMediaElement = HTMLMediaElement> {
 /**
  * One scrub step in flight: the frame and plan whose visible layers were sent seeking. Nothing new is sought until
  * every one of `els` has landed; then the plan is drawn (unless the data changed meanwhile) and the next round
- * starts at the latest playhead.
+ * starts at the latest playhead. A round whose seek has stalled (seekStalled) is dropped undrawn instead, and the
+ * next round seeks again.
  */
 interface ScrubRound {
   frame: number;
@@ -214,6 +224,14 @@ export class SequencePlayer {
   /** performance.now() when the current paused draw was first held (framesShown false); -1 when none is held. */
   private heldSince = -1;
   private holdTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Re-checks the paused elements once a pending seek may have stalled (armStallCheck). */
+  private stallTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Per element: since when (performance.now()) its pending seek or load has been waited for, and how long it may
+   * take before it counts as stalled (seekStalled). Kept per element, not per slot: a reused element can still be on
+   * a seek issued for the previous clip.
+   */
+  private pendingSince = new WeakMap<HTMLMediaElement, { at: number; stallMs: number }>();
   /** The playhead came to rest: run one full (non-scrub) update. */
   private restPending = false;
   /** An element event (seeked / loadeddata) arrived while paused: re-check the elements on the next tick. */
@@ -506,6 +524,7 @@ export class SequencePlayer {
     if (this.rafId !== null) { cancelAnimationFrame(this.rafId); this.rafId = null; }
     if (this.restTimer !== null) { clearTimeout(this.restTimer); this.restTimer = null; }
     if (this.holdTimer !== null) { clearTimeout(this.holdTimer); this.holdTimer = null; }
+    if (this.stallTimer !== null) { clearTimeout(this.stallTimer); this.stallTimer = null; }
     this.round = null;
     this.pauseAllElements();
     for (const [clipId, slot] of this.activeVideo) this.releaseSlot(this.activeVideo, clipId, slot);
@@ -597,6 +616,29 @@ export class SequencePlayer {
     this.updateVideoElements(plan);
     this.updateAudio(plan);
     this.paintIfChanged(plan, frame);
+    this.armStallCheck();
+  }
+
+  /**
+   * While paused, come back when the earliest pending seek may have stalled: the full update then issues it again
+   * (syncElement). Nothing else would: a stalled element fires no event, and a resting playhead asks for no tick.
+   */
+  private armStallCheck(): void {
+    if (this.stallTimer !== null) return;
+    let due = Infinity;
+    const now = performance.now();
+    for (const slot of [...this.activeVideo.values(), ...this.activeAudio.values()]) {
+      this.seekStalled(slot.el, now); // starts the clock of an element seen in flight for the first time
+      const p = this.pendingSince.get(slot.el);
+      if (p && this.seekInFlight(slot.el)) due = Math.min(due, p.at + p.stallMs);
+    }
+    if (due === Infinity) return;
+    this.stallTimer = setTimeout(() => {
+      this.stallTimer = null;
+      if (this.destroyed || this.playing) return;
+      this.mediaDirty = true;
+      this.requestTick();
+    }, Math.max(0, due - performance.now()) + 1);
   }
 
   /**
@@ -604,13 +646,18 @@ export class SequencePlayer {
    * (the playhead just moves on); once they have all landed, that round's frame is drawn and the visible layers are
    * sought to the latest playhead. Only layers composited at the playhead are touched: occluded video layers and the
    * (silent while paused) audio wait for the playhead to rest, when pausedTick parks them.
+   *
+   * A round never waits for ever: once one of its seeks has stalled (seekStalled), the round is dropped without a draw
+   * (its picture would lack that layer) and the next one seeks again, the stalled element included.
    */
   private scrubTick(frame: number): void {
     const r = this.round;
     if (r) {
-      if (r.els.some((el) => this.seekInFlight(el))) return;
+      const now = performance.now();
+      const pending = r.els.filter((el) => this.seekInFlight(el));
+      if (pending.length && !pending.some((el) => this.seekStalled(el, now))) return;
       this.round = null;
-      if (r.version === this.version && this.syncVisible(r.plan, r.visible, false).ready) this.paintIfChanged(r.plan, r.frame);
+      if (!pending.length && r.version === this.version && this.syncVisible(r.plan, r.visible, false).ready) this.paintIfChanged(r.plan, r.frame);
     }
     const seq = this.seq!;
     const plan = planFrame(seq, this.media, frame, this.settings.useProxies);
@@ -634,6 +681,29 @@ export class SequencePlayer {
   private seekInFlight(el: HTMLMediaElement): boolean {
     if (el.error || !el.getAttribute('src')) return false;
     return el.seeking || el.readyState < 2;
+  }
+
+  /**
+   * `el` has been seeking (or loading) for longer than it may (SEEK_STALL_MS, doubled per retry), counted from the
+   * last seek this player issued on it, or from the first time this player saw it in flight.
+   */
+  private seekStalled(el: HTMLMediaElement, now: number): boolean {
+    if (!this.seekInFlight(el)) return false;
+    const p = this.pendingSince.get(el);
+    if (!p) { this.pendingSince.set(el, { at: now, stallMs: SEEK_STALL_MS }); return false; }
+    return now - p.at >= p.stallMs;
+  }
+
+  /**
+   * Seek a lent element to `target` and start its stall clock (seekStalled). A seek issued because the previous one
+   * stalled may stay pending twice as long as that one; any other seek starts again from SEEK_STALL_MS.
+   */
+  private seekSlot(slot: Slot, target: number, now: number): void {
+    const p = this.pendingSince.get(slot.el);
+    const stallMs = p && this.seekStalled(slot.el, now) ? Math.min(SEEK_STALL_MAX_MS, p.stallMs * 2) : SEEK_STALL_MS;
+    slot.el.currentTime = target;
+    slot.sought = true;
+    this.pendingSince.set(slot.el, { at: now, stallMs });
   }
 
   /**
@@ -661,11 +731,13 @@ export class SequencePlayer {
 
   /**
    * Bring the visible video layers of `plan` to their frame-centered source time (with `seek`; never behind a pending
-   * seek) and update their settled flags. `ready`: every visible layer has landed and can be drawn.
+   * seek, unless that seek has stalled) and update their settled flags. `ready`: every visible layer has landed and
+   * can be drawn.
    */
   private syncVisible(plan: FramePlan, visible: Set<LayerPlan>, seek: boolean): { ready: boolean; els: HTMLVideoElement[] } {
     let ready = true;
     const els: HTMLVideoElement[] = [];
+    const now = performance.now();
     for (const layer of plan.layers) {
       if (!visible.has(layer)) continue;
       if (layer.isImage) { const im = getStillImage(layer.path); if (!im.img.complete && !im.error) ready = false; continue; }
@@ -676,7 +748,7 @@ export class SequencePlayer {
       const fps = fpsValue(layer.mediaFps);
       const target = this.clampToMedia(el, layer.sourceTime + 0.5 / fps, layer.timeOffset);
       const tol = 1 / (2 * fps);
-      if (seek && !el.seeking && Math.abs(el.currentTime - target) > tol) { el.currentTime = target; slot.sought = true; }
+      if (seek && ((!el.seeking && Math.abs(el.currentTime - target) > tol) || this.seekStalled(el, now))) this.seekSlot(slot, target, now);
       if (!slot.settled && !el.seeking && el.readyState >= 2 && (slot.sought || Math.abs(el.currentTime - target) <= tol)) slot.settled = true;
       if (el.seeking || !slot.settled || el.readyState < 2) ready = false;
       els.push(el);
@@ -874,14 +946,16 @@ export class SequencePlayer {
    * Keep a lent element at its clip's source time (native playback at forward rates <= MAX_NATIVE_RATE, parked and
    * seeked otherwise). The slot is settled once the element has data at that time: it is within `tol`, or the seek
    * issued since it was lent has completed (an element clamps a seek past its end, so it may never come within `tol`).
+   * Not playing natively, a seek that has stalled (seekStalled) is issued again.
    */
   private syncElement(slot: Slot, target: number, speed: number, native: boolean, tol: number): void {
     const el = slot.el;
+    const now = performance.now();
     if (native) {
       const wanted = Math.max(0.0625, Math.min(16, speed * this.rate));
       if (Math.abs(el.playbackRate - wanted) > 1e-3) el.playbackRate = wanted;
     } else if (!el.paused) el.pause();
-    if (Math.abs(el.currentTime - target) > tol && !el.seeking) { el.currentTime = target; slot.sought = true; }
+    if ((Math.abs(el.currentTime - target) > tol && !el.seeking) || (!native && this.seekStalled(el, now))) this.seekSlot(slot, target, now);
     if (native && el.paused) void el.play().catch(() => {});
     if (!slot.settled && !el.seeking && el.readyState >= 2 && (slot.sought || Math.abs(el.currentTime - target) <= tol)) slot.settled = true;
   }
@@ -930,8 +1004,7 @@ export class SequencePlayer {
         // Silent until it has landed on the new track: seek now (select -> seek -> play is the clean order).
         slot.settled = false;
         if (!slot.el.paused) slot.el.pause();
-        slot.el.currentTime = target;
-        slot.sought = true;
+        this.seekSlot(slot, target, performance.now());
       }
       // Scrubbing / reverse / fast shuttle (not native): silent, but keep the element parked near the frame.
       this.syncElement(slot, target, a.speed, native, native ? DRIFT_TOLERANCE : 0.25);

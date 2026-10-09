@@ -237,7 +237,7 @@ with the budget in brackets.
 | main filmstrip 48 frames cold (guardrail, ≤ 3,000 ms) | 3,036 | 2,859 | (node) | (node) | — | — | Pre-existing: the baseline median is 2,984 ms, over budget in 1 of its 2 seed runs; `electron/media/thumbs.ts` is unchanged since 0.7.0. Open: `bugs/open/2026-10-09-perf-filmstrip-cold-borderline.md` |
 | autosave round trip while playing (guardrail, ≤ 500 ms) | 574 | 658 | 764, 611, 617 | 618, 657, 569 | 274 | 231 | Bench artifact; fixed below |
 | store insertFromSource overwrite (p95) (guardrail, regression) | 1.65 ms | 6.58 ms | (node) | (node) | — | — | Noise: R2's node suite ran at load 22; two more store-only runs gave 1.90 and 1.45 ms (baseline 1.45) |
-| pool: media elements created during 10 s playback (guardrail, count, baseline 0) | 1 | 2 | 2, 2, 2 | 1, 2, 1 | 2 | 0 | Not a 0.8.0 change: the row reads 0–2 on every build since the seed (1 and 2 on 7 October code equal to the baseline's playback code); the seed's 0 / 0 was the low end. The A/B calls it `same`. Open: `bugs/open/2026-10-09-perf-pool-elements-created-during-playback.md` |
+| pool: media elements created during 10 s playback (guardrail, count, baseline 0) | 1 | 2 | 2, 2, 2 | 1, 2, 1 | 2 | 0 | Not a 0.8.0 change: the row reads 0–2 on every build since the seed (1 and 2 on 7 October code equal to the baseline's playback code); the seed's 0 / 0 was the low end. The A/B calls it `same`. Fixed in the bench on 9 October (see "Program scrub stall and pool row" below) |
 
 **The four rows that missed on a loaded run earlier today** (load 4.1) all pass on quiet runs:
 
@@ -325,18 +325,85 @@ Each run has a timing pass and a counting pass.
 **`npm run perf:check -- --runs 2` after the fix.**
 - Gates: **98 of 98 PASS** in both runs, with raw verdicts (the host calibrated within ±10 %).
 - Guardrails: 132 of 134.
-  - The pool row read 2 and 2: open, `bugs/open/2026-10-09-perf-pool-elements-created-during-playback.md`.
+  - The pool row read 2 and 2: fixed below, `bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md`.
   - `filmstrip 48 frames warm` read 5.6 and 13.8 ms against 5.2 ms. It is noise: the node suite is unchanged, and
     three locked reruns read 4.35, 4.73 and 3.65 ms.
 - `filmstrip 48 frames cold` passed at 2,528 and 2,706 ms but stays borderline:
   `bugs/open/2026-10-09-perf-filmstrip-cold-borderline.md`.
 
 **Side finding.** In 1 of 11 runs (possibly 2) the Program monitor issued no seeks during the whole scrub:
-`bugs/open/2026-10-09-program-scrub-stalls-on-unready-element.md`.
+`bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md` (fixed below).
 
 The same artifact applies to every Playwright-launched suite (e2e, attack). They check correctness, not timing, and
 are unchanged. Perf results recorded before this fix on a disk-backed `/tmp` include the writeback noise. Mostly the
 page-flip and decode-heavy rows were affected.
+
+### Program scrub stall and pool row (9 October 2026)
+
+Two open items from the run above. Records: `bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md`
+(app fix) and `bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md` (bench fix).
+
+**Program monitor scrub stall (app).**
+- **The bug.** `SequencePlayer` waited for a media element's seek without limit, and it never issued a seek again
+  on an element that reported `seeking`. If Chromium left one paused seek pending, the Program monitor stopped
+  following every scrub with that element in view. That covered the drag and the update at rest, until playback.
+  In bench run s3 the same 2 elements stayed in flight through 5 scrub rows and their rests: 0 seeks in 3 timing
+  passes.
+- **The fix** (`src/playback/sequencePlayer.ts`).
+  - A paused seek still pending after `SEEK_STALL_MS` (1 s) is issued again. Each retry of the same element may
+    take twice as long (up to 16 s), so a slow seek still lands.
+  - A scrub round with a stalled seek is dropped undrawn, and the next round seeks to the latest playhead.
+  - At rest, a timer re-checks at the earliest stall deadline.
+  - Normal scrubbing is unchanged: one seek per element per round, never queued behind a pending seek that has not
+    stalled.
+- **Tests.** Regression tests in `tests/unit/program-scrub.test.ts` (deterministic, fake elements) and in
+  `tests/e2e/program.spec.ts` (the real app, with a stalled seek simulated). Both fail on 2494b6e.
+- **Not found: what makes Chromium leave the seek pending.** 16 more instrumented bench runs logged element state
+  and media-internals before every scrub row; none stalled (1 or 2 in 27 runs overall). Synthetic seek storms in a
+  bare Electron page (up to 16 elements, `file://` and the app's protocol, element churn, long-GOP 1080p) never
+  left a seek pending either. Under load, 12 concurrent 1080p prerolls took 3–10 s per seek, which is why retries
+  back off instead of restarting a slow seek every second.
+
+**Pool row (bench).** `media elements (<video> + <audio>) created during 10 s playback @ 1 px/frame` (guardrail, count,
+baseline 0) read 0–2.
+- **Why.** The row counted creations during the first playback of frames 0–275. Its starting pool is whatever the
+  scrub rows left in the 16 slots: the 2,500-clip sequence has 7 files, and its cross-fades need a second element of
+  a file. Instrumented runs: 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 1, 0, 1, 2, 2, 2.
+  - Every creation was an `<audio>` element made by `updateAudio → assignSlots → acquire`, for a (file, slot) pair the
+    pool did not hold. Every eviction was of an element no clip in the range uses.
+  - A replay of the same 10 s created 0 in every trial: no thrashing, no churn, just first use.
+- **The fix** (`tests/perf/electron-perf.mjs`).
+  - The first playback still runs exactly as before. Its gates (`program fps`, `long tasks @ 1 px/frame timeline`)
+    are measured on it.
+  - Then the same 10 s is replayed from frame 0 (`playFor(…, { record: false })`), and the pool row counts that
+    replay. The first playback's count goes in the note.
+  - The pool then holds exactly what the range needs, so a correct player reads 0, and churn still shows in full.
+  - Row name, budget, tier, baseline and the zero-baseline tolerance are unchanged.
+
+**`npm run perf:check -- --runs 2`, twice** (this branch; heavy and perf locks held, each set started at a load of
+1.0 or less):
+
+| | Run set 1 (03:12 UTC) | Run set 2 (03:40 UTC) | Both sets, `--from` over the 4 runs |
+|---|---|---|---|
+| Calibration (js / ffmpeg / render) | ×0.81 / ×0.96 / ×0.93 | ×0.85 / ×0.92 / ×0.91 | ×0.85 / ×0.94 / ×0.91 |
+| Gates | 98 / 98 PASS | 98 / 98 PASS | 98 / 98 PASS |
+| Guardrails, normalized | 131 / 134 | 133 / 134 | **134 / 134** |
+| Guardrails, raw on this host | 134 / 134 | 134 / 134 | 134 / 134 |
+| Exit | FAIL | FAIL | **PASS** |
+| Pool row (replay) | 0, 0 (first playback: 1, 1) | 0, 0 | 0 [4/4] |
+| Long tasks during scrub multi-hour @ 1 px/frame | 0, 0 | 0, 0 | 0 |
+| filmstrip 48 frames cold (node) | 2,787 ms | 2,571 ms | PASS |
+
+Each `--runs 2` set failed one to three guardrails only after normalization. Each time it was different node-suite
+microbenchmark rows of a few milliseconds:
+- Set 1: `project: search keystroke -> rows rebuilt (max)` 12.1 ms against a budget of 16 (raw 9.9), and
+  `buildRenderGraph @ 500 / 1000 clips` ×1.61 / ×1.53 against the baseline (raw ×1.31 / ×1.25).
+- Set 2: `transcript: keystroke search cost (max)` ×1.60 (raw 8.5 ms, spread 5.0–12.0).
+
+This branch does not touch the code these rows measure: `src/panels`, `shared/` and the export graph. They pass raw
+in every run. They fail only when the host's js calibration came out at ×0.81–0.85, which divides their times by
+that factor. The median over all 4 runs (`perf-check.mjs --from`, the documented way to aggregate runs) passes every
+gate and guardrail.
 
 ## How to run
 

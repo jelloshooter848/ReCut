@@ -186,6 +186,12 @@ SyncGroup: two SequencePlayers on one clock with a frame offset (Compare)
   the previous frame. A paused draw first asks each painted element which frame it holds (`new VideoFrame(el)`, the
   frame drawImage would paint) and keeps the last picture while that is not the frame at its `currentTime`, for at
   most 250 ms (`PRESENT_HOLD_MS`); the video-frame callback draws it once presented. Playback never makes this check.
+- Scrubbing (paused, playhead moving) works in **rounds**: only the visible layers are sought, nothing is sought behind
+  a pending seek, and a round is drawn once all its seeks have landed. A seek still pending after `SEEK_STALL_MS`
+  (1 s) counts as stalled: its round is dropped undrawn and the next round seeks that element again, each retry
+  allowed twice as long as the last (up to 16 s) so slow seeks still land. At rest a timer re-checks at the earliest
+  stall deadline, because Chromium can leave a paused seek pending for good
+  (`bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md`).
 - The Program monitor's "Offline / Needs proxy / Can't play" chips come from the planner's `missing` list.
 
 ### Data flow: an insert edit

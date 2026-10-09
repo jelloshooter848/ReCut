@@ -376,4 +376,75 @@ test.describe('Program Monitor', () => {
       await page.evaluate(() => (window as unknown as { __restoreCreateElement(): void }).__restoreCreateElement());
     }
   });
+
+  test('a seek that never completes does not freeze the monitor: it is issued again', async () => {
+    // bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md: Chromium left a pooled element's paused seek
+    // pending for good (seeking, readyState HAVE_METADATA). The player waited for it for ever: no seek for the rest
+    // of the scrub, and not even at rest. Here the first seek of the drag is made to look stalled (the element's
+    // `seeking` / `readyState` report it in flight until the app seeks it again; the real seek underneath is normal).
+    const { page } = launched;
+    test.setTimeout(90_000);
+    const { seqId } = await twoClipProject(launched);
+    const signature = () => page.evaluate((sel) => {
+      const c = document.querySelector(sel) as HTMLCanvasElement;
+      const w = c.width, h = c.height;
+      const d = c.getContext('2d')!.getImageData(0, 0, w, h).data;
+      const out: number[] = [];
+      for (let gy = 0; gy < 8; gy++) for (let gx = 0; gx < 8; gx++) {
+        let s = 0, n = 0;
+        for (let y = Math.floor(gy * h / 8); y < Math.floor((gy + 1) * h / 8); y += 3) for (let x = Math.floor(gx * w / 8); x < Math.floor((gx + 1) * w / 8); x += 3) {
+          const i = (y * w + x) * 4; s += d[i] + d[i + 1] + d[i + 2]; n++;
+        }
+        out.push(Math.round(s / Math.max(1, n) / 3));
+      }
+      return out.join(',');
+    }, CANVAS);
+    const settleAt = async (frame: number): Promise<string> => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await page.evaluate(({ seqId, frame }) => { (window as any).__recut.store.getState().setView(seqId, { playhead: frame }); }, { seqId, frame });
+      let prev = '';
+      let sig = '';
+      await expect.poll(async () => { prev = sig; await page.waitForTimeout(250); sig = await signature(); return sig === prev && sig.split(',').some((v) => Number(v) > 20); }, { timeout: 20_000, intervals: [0] }).toBe(true);
+      return sig;
+    };
+    const at70 = await settleAt(70);
+    await settleAt(10);
+    await page.evaluate(() => {
+      const P = HTMLMediaElement.prototype;
+      const ct = Object.getOwnPropertyDescriptor(P, 'currentTime')!;
+      const sk = Object.getOwnPropertyDescriptor(P, 'seeking')!;
+      const rs = Object.getOwnPropertyDescriptor(P, 'readyState')!;
+      const S = { armed: true, stalled: null as HTMLMediaElement | null, resought: 0 };
+      Object.defineProperty(P, 'currentTime', { configurable: true, get() { return ct.get!.call(this); }, set(v: number) {
+        if (S.stalled === this) { S.stalled = null; S.resought++; } else if (S.armed && this instanceof HTMLVideoElement) { S.armed = false; S.stalled = this; }
+        ct.set!.call(this, v);
+      } });
+      Object.defineProperty(P, 'seeking', { configurable: true, get() { return S.stalled === this || sk.get!.call(this); } });
+      Object.defineProperty(P, 'readyState', { configurable: true, get() { return S.stalled === this ? 1 : rs.get!.call(this); } });
+      const w = window as unknown as { __stallFake: typeof S; __restoreStallFake(): void };
+      w.__stallFake = S;
+      w.__restoreStallFake = () => { Object.defineProperty(P, 'currentTime', ct); Object.defineProperty(P, 'seeking', sk); Object.defineProperty(P, 'readyState', rs); };
+    });
+    try {
+      // A 2.5 s drag over the two clips, one playhead move per display frame (as a mouse drag does).
+      await page.evaluate(async (seqId) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const st = (window as any).__recut.store;
+        const t0 = performance.now();
+        let f = 10;
+        await new Promise<void>((done) => {
+          const tick = () => { if (performance.now() - t0 > 2500) return done(); f = f >= 90 ? 10 : f + 2; st.getState().setView(seqId, { playhead: f }); requestAnimationFrame(tick); };
+          requestAnimationFrame(tick);
+        });
+      }, seqId);
+      const S = await page.evaluate(() => { const { armed, stalled, resought } = (window as unknown as { __stallFake: { armed: boolean; stalled: unknown; resought: number } }).__stallFake; return { armed, stalled: stalled !== null, resought }; });
+      expect(S.armed).toBe(false); // the drag did seek the Program element, and that seek stalled
+      expect(S.resought).toBe(1); // the player gave up on it during the drag and sought the element again
+      expect(S.stalled).toBe(false);
+      // At rest the monitor shows the playhead frame, as it does without a stall.
+      expect(await settleAt(70)).toBe(at70);
+    } finally {
+      await page.evaluate(() => (window as unknown as { __restoreStallFake(): void }).__restoreStallFake());
+    }
+  });
 });

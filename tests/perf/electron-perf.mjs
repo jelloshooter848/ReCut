@@ -582,7 +582,8 @@ console.log('\n--- panels ---');
 console.log('\n--- playback ---');
 await clickTab('timeline');
 await setView({ zoom: 1, scroll: 0, playhead: 0 });
-const playFor = async (label, seconds, before, seqId = SEQ, section = 'playback') => {
+// `record: false` plays the same way but records no rows (the replay of the pool row below).
+const playFor = async (label, seconds, before, seqId = SEQ, section = 'playback', { record = true } = {}) => {
   await page.evaluate(() => { const c = document.querySelector('[data-testid="program-canvas"]'); c?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); document.querySelector('[data-testid="program-panel"]')?.focus(); });
   await sleep(300);
   await page.evaluate((id) => window.__recut.store.getState().setView(id, { playhead: 0 }), seqId);
@@ -603,6 +604,7 @@ const playFor = async (label, seconds, before, seqId = SEQ, section = 'playback'
     return { fps: updates / (el / 1000), rafs: rafs / (el / 1000), perSec, playing, frame: last };
   }, { id: seqId, seconds });
   const long = await lt(t0);
+  if (!record) return out;
   rec(section, `program fps ${label} (store playhead updates/s over ${seconds} s)`, r2(out.fps, 1), 'fps', '>= 23', out.fps >= 23, `rAF ${r2(out.rafs, 1)}/s, per-second ${out.perSec.join(',')}; playing=${out.playing}`);
   rec(section, `long tasks ${label}`, long.length, '', '<= 2', long.length <= 2, ltSummary(long), ltRow(long));
   return out;
@@ -614,7 +616,7 @@ const poolState = () => page.evaluate(() => { const v = window.__perf.videos; re
   // count them here so the rows below cover every media element the player creates.
   await page.evaluate(() => { const d = (window.__perfD = { audioEls: 0 }); const ce = document.createElement; document.createElement = function (tag, o) { if (String(tag).toLowerCase() === 'audio') d.audioEls++; return ce.call(this, tag, o); }; });
   const mediaEls = async () => { const p = await poolState(); return { ...p, media: p.created + (await page.evaluate(() => window.__perfD.audioEls)) }; };
-  const pd0 = await mediaEls();
+  const pdFirst = await mediaEls();
   // ---- [playback resources, Phase 1 D] end ----
   await playFor('@ 1 px/frame timeline', 10);
   let p = await poolState();
@@ -622,8 +624,15 @@ const poolState = () => page.evaluate(() => { const v = window.__perf.videos; re
   // The Program player lends pooled elements per (file, kind, slot) (src/playback/sequencePlayer.ts): 10 s of playback
   // can at most fill the shared pool once (MediaElementPool(16), src/app/media.ts), so more creations than its
   // capacity mean per-clip / per-frame churn (7,471 here before the fix).
+  // Counted over a replay of the same 10 s from frame 0, so the pool's starting state is defined: it holds what the
+  // playback above used (bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md). The first playback
+  // creates the (file, slot) pairs that the scrub rows happened to evict, 0–2 depending on run timing; those are
+  // first uses, not churn. A replay of a correct player creates none. The rows above (fps, long tasks) still measure
+  // the first playback, unchanged.
+  const pd0 = await mediaEls();
+  await playFor('@ 1 px/frame timeline (replay for the pool row)', 10, undefined, SEQ, 'playback', { record: false });
   const pd1 = await mediaEls();
-  rec('pool', 'media elements (<video> + <audio>) created during 10 s playback @ 1 px/frame', pd1.media - pd0.media, '', '<= 16 (pool capacity)', pd1.media - pd0.media <= 16, `total created ${pd1.media}`, GUARDRAIL);
+  rec('pool', 'media elements (<video> + <audio>) created during 10 s playback @ 1 px/frame', pd1.media - pd0.media, '', '<= 16 (pool capacity)', pd1.media - pd0.media <= 16, `replay; the first playback created ${pd0.media - pdFirst.media}; total created ${pd1.media}`, GUARDRAIL);
   // ---- [playback resources, Phase 1 D] end ----
   rec('pool', 'video elements created / live(src) / playing / in DOM after 10 s playback', `${p.created} / ${p.live} / ${p.playing} / ${p.inDom}`, '', 'live <= 16', p.live <= 16, undefined, GUARDRAIL);
   rec('audio', 'AudioContexts / gains / mediaElementSources / connects / disconnects', `${p.audio.contexts} / ${p.audio.gains} / ${p.audio.sources} / ${p.audio.connects} / ${p.audio.disconnects}`, '');
