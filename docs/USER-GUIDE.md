@@ -457,7 +457,9 @@ Saga Fan Cut/
    and 48 kHz only) and **Range** (Entire sequence or In to Out).
 4. **Subtitles:** **Include transcripts as subtitles** (off by default) adds the on-screen transcript, what the
    Subtitles row and Program monitor show, as a subtitle track named "Transcript". **Burn in** renders the subtitles
-   into the picture, on exactly the frames where the Program monitor shows them. **Sidecar** writes a `.srt` next to the exported file. Burn-in is off for the audio-only formats (there is
+   into the picture, on exactly the frames where the Program monitor shows them. With transcripts included,
+   **Highlight the spoken word** (it follows the timeline's highlighter until you change it) burns in the word being
+   spoken in yellow, as the monitors show it; the sidecar and MKV subtitle tracks stay plain text. **Sidecar** writes a `.srt` next to the exported file. Burn-in is off for the audio-only formats (there is
    no picture); the sidecar still works. An **MKV** can also carry the subtitle tracks as soft subtitles that viewers
    switch on and off (see **Subtitle tracks (MKV)** below).
 5. The **Checks** list blocks the export with a reason when something is wrong (an empty sequence, offline or missing

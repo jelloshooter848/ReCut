@@ -213,7 +213,8 @@ export interface ExportRequest {
   media: Record<ID, MediaItem>;
   settings: ExportSettings;
   /** Sequence subtitle cues, already resolved to seconds. */
-  subtitles?: { start: number; end: number; text: string }[];
+  /** Burn-in / sidecar cues in seconds; `words` (seconds) lets burn-in highlight the spoken word (#134). */
+  subtitles?: { start: number; end: number; text: string; words?: { start: number; end: number; text: string }[] }[];
   /**
    * The sequence's subtitle tracks one by one (cues resolved to seconds), for soft subtitle streams
    * (`settings.subtitleOutputs`, MKV). Hidden (disabled) tracks are included: the settings choose.
