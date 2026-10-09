@@ -129,7 +129,7 @@ export function onScreenTranscriptAt(seq: Sequence, index: TranscriptIndex, fram
 }
 
 /**
- * `project` without the Whisper cues that older ReCut builds copied into sequence subtitle tracks (#112): a
+ * `project` without the Whisper cues that older builds copied into sequence subtitle tracks (#112): a
  * clip-attached cue is dropped when the clip's media has a Whisper cue with the same text starting at the same source
  * time; a sequence subtitle track left empty is dropped unless it lists source files. Imported or edited cues stay.
  * Returns `project` itself when nothing changes.
