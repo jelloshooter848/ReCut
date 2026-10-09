@@ -144,7 +144,8 @@ jobs:
             '666685daa9064a5a59144e47bddd2d570bbdda199df6e4e39f3273e479ab1f4b  tos-de.srt' \
             'f12c070e295b38cfc94ebd61ac3357c3bac82d1015985f1e8da93a4c6496c46d  sintel.mkv' \
             '777f238aed789a0e3a25f8ba156fae182c11a61568c1aa87b7a8bc3b15807785  sintel-me.flac' \
-            '45c8bafeb9a53df7f491198d2e71529701bcf1cd51805782089fac1d32869f9b  bbb.mov' > ../kit-sources.sha256
+            '45c8bafeb9a53df7f491198d2e71529701bcf1cd51805782089fac1d32869f9b  bbb.mov' \
+            'a462c56d921fb24bbdde02470b34ee4ca8e866bde938090791e13207db39136c  ed.mov' > ../kit-sources.sha256
           sha256sum -c ../kit-sources.sha256 || { echo '::error::a source file differs from the pinned SHA-256'; ok=1; }
           for f in tos.mov sintel.mkv bbb.mov ed.mov sintel-me.flac; do
             [ -s "$f" ] && { echo "== $f"; ffprobe -v error -show_entries format=duration,bit_rate:stream=index,codec_name,width,height,r_frame_rate,channels,channel_layout:stream_tags=language,title -of compact "$f"; }
@@ -178,6 +179,19 @@ jobs:
         with:
           path: ${{ env.WORK }}/films
           key: tester-kit-films-${{ github.run_id }}
+
+      # For a look at the result without downloading it: the zip's listing, the manifest, the docs and a few probes.
+      - name: Show the kit
+        run: |
+          k="build/tester-kit/ReCut-Tester-Kit-$KIT_VERSION"
+          unzip -l "build/tester-kit/ReCut-Tester-Kit-$KIT_VERSION.zip"
+          for f in MANIFEST.txt README-FIRST.txt TRY-THIS.md REPORTING.md CREDITS.txt trouble/TROUBLE.txt; do echo "===== $f"; sed 's/\r$//' "$k/$f"; done
+          for f in "formats/Tears of Steel - 3 audio tracks, 2 subtitles, chapters.mkv" "formats/Sintel - phone clip, VFR, rotated.mp4" "franchise/Sintel (2010).mp4"; do
+            echo "===== $f"; ffprobe -v error -show_entries stream=index,codec_name,width,height,r_frame_rate,avg_frame_rate,channel_layout:stream_tags=language,title:stream_side_data=rotation -of compact "$k/$f"
+          done
+          echo '===== franchise/Sintel (2010).en.srt (start)'; head -n 16 "$k/franchise/Sintel (2010).en.srt" | sed 's/\r$//'
+          echo '===== projects/Open Movie Trailer.recut (sequences)'
+          node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); for (const q of Object.values(p.sequences)) console.log(q.name, q.fps.num+"/"+q.fps.den, q.width+"x"+q.height, "V:"+q.videoTracks.map(t=>t.clips.length).join("/"), "A:"+q.audioTracks.map(t=>t.clips.length).join("/"), "markers:"+q.markers.length, "subs:"+q.subtitleTracks.map(t=>t.name+"("+t.cues.length+")").join(",")); console.log("media:", Object.values(p.media).map(m=>m.name+" "+(m.fileSize??m.probe?.size)).join(" | "))' "$k/projects/Open Movie Trailer.recut"
 
       - name: Summary
         if: always()
