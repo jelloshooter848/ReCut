@@ -822,7 +822,9 @@ async function validate(L) {
     if (e.pixFmt) want(v[0]?.pix_fmt === e.pixFmt, `pixel format ${v[0]?.pix_fmt}, want ${e.pixFmt}`);
     if (e.width) want(rp.video?.width === e.width && rp.video?.height === e.height, `ReCut sees ${rp.video?.width}x${rp.video?.height}, want ${e.width}x${e.height}`);
     if (e.vfr) want(rp.video?.isVfr === true, 'ReCut does not see a variable frame rate');
-    if (e.rotation) want(rp.video?.rotation === e.rotation && rp.video?.width === 720 && rp.video?.height === 1280, `ReCut sees rotation ${rp.video?.rotation} and ${rp.video?.width}x${rp.video?.height}, want ${e.rotation} and 720x1280`);
+    // A quarter turn either way (FFmpeg and ReCut count the angle in opposite directions); that it shows upright is
+    // checked by the PSNR test where the clip is made.
+    if (e.rotation) want([90, 270].includes(rp.video?.rotation) && rp.video?.width === 720 && rp.video?.height === 1280, `ReCut sees rotation ${rp.video?.rotation} and ${rp.video?.width}x${rp.video?.height}, want a quarter turn and 720x1280`);
     if (e.fps) want(v[0]?.r_frame_rate === (e.fps.includes('/') ? e.fps : `${e.fps}/1`), `frame rate ${v[0]?.r_frame_rate}, want ${e.fps}`);
     if (e.timecode) want(JSON.stringify(p).includes(e.timecode), `no timecode ${e.timecode}`);
     if (e.frames) {
