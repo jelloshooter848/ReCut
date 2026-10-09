@@ -545,12 +545,14 @@ async function build() {
       const psnr = (turn) => {
         const stats = path.join(work, 'phone', `psnr-${turn ? 'turned' : 'upright'}.log`);
         fs.rmSync(stats, { force: true });
-        const r = spawnSync(FFMPEG, ['-hide_banner', '-nostdin', '-ss', '1', '-i', K(rel), '-ss', String(at + 1), '-i', sintel.source, '-filter_complex',
+        const r = spawnSync(FFMPEG, ['-hide_banner', '-nostdin', '-ss', '1', '-t', '1', '-i', K(rel), '-ss', String(at + 1), '-t', '1', '-i', sintel.source, '-filter_complex',
           `[0:v]scale=360:640,format=yuv420p[x];[1:v]crop=ih*9/16:ih${turn ? ',transpose=1,transpose=1' : ''},scale=360:640,format=yuv420p[y];[x][y]psnr=stats_file=${stats.replace(/\\/g, '/').replace(/:/g, '\\:')}[out]`,
-          '-map', '[out]', '-frames:v', '1', '-an', '-f', 'null', '-'], { encoding: 'utf8' });
-        const m = fs.existsSync(stats) ? /psnr_avg:([0-9.]+|inf)/.exec(fs.readFileSync(stats, 'utf8')) : null;
-        if (r.status !== 0 || !m) throw new Error(`orientation check failed: ${r.stderr.slice(-800)}`);
-        return m[1] === 'inf' ? 99 : Number(m[1]);
+          '-map', '[out]', '-an', '-f', 'null', '-'], { encoding: 'utf8' });
+        // The per-frame values from the stats file, else the summary line FFmpeg logs; averaged over about a second.
+        const text = `${fs.existsSync(stats) ? fs.readFileSync(stats, 'utf8') : ''}\n${r.stderr}`;
+        const vals = [...text.matchAll(/(?:psnr_avg|average):([0-9.]+|inf)/g)].map((m) => (m[1] === 'inf' ? 99 : Number(m[1])));
+        if (r.status !== 0 || !vals.length) throw new Error(`orientation check failed: ${r.stderr.slice(-800)}`);
+        return vals.reduce((n, v) => n + v, 0) / vals.length;
       };
       const upright = psnr(false), turned = psnr(true);
       log(`phone clip orientation: PSNR ${upright.toFixed(1)} dB upright vs ${turned.toFixed(1)} dB upside down`);
