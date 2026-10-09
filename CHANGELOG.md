@@ -5,17 +5,6 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
-## [Unreleased]
-
-### Fixed
-
-- **Windows and macOS: the cache was emptied at every start.** Proxies, thumbnails, waveforms, scene detection, OCR
-  and transcription results in the default cache folder were deleted each time ReCut started, so they had to be made
-  again (and proxies were reported missing). The default cache folder was the same folder as the built-in browser's
-  web cache, which clears it on startup. ReCut no longer uses that web cache, and removes what it left in the cache
-  folder once. Linux and custom cache folders were not affected
-  ([report](bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md)).
-
 ## [0.8.1] - 2026-10-09
 
 Bug fixes, chiefly for installing transcription models, which failed for every model in 0.8.0. Project files stay

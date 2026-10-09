@@ -120,7 +120,7 @@ Recommendation when filing: option 1. It was taken (see Resolution).
 |---|---|
 | Closed by / date | Claude (cache-collision fix agent), 2026-10-09 |
 | Fix | commit acf32aa on branch `claude/fix-chromium-cache-collision` |
-| Files changed | `electron/main.ts`, `electron/chromiumCache.ts` (new), `tests/e2e/default-cache.spec.ts` (new), `tests/unit/chromium-cache.test.ts` (new), `CHANGELOG.md`, this report |
+| Files changed | `electron/main.ts`, `electron/chromiumCache.ts` (new), `tests/e2e/default-cache.spec.ts` (new), `tests/unit/chromium-cache.test.ts` (new), this report |
 | Regression test | `tests/e2e/default-cache.spec.ts` (3 tests); `tests/unit/chromium-cache.test.ts` (8 tests) |
 
 ### Root cause
