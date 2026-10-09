@@ -6,8 +6,7 @@ export default defineConfig({
   timeout: 120_000,
   workers: 1,
   retries: 0,
-  // TEMP diagnostic (removed before merge): failures as GitHub annotations.
-  reporter: process.env.CI ? [['list'], ['github']] : 'list',
+  reporter: 'list',
   expect: { timeout: 20_000 },
   outputDir: path.resolve(__dirname, '../../test-results'),
 });
