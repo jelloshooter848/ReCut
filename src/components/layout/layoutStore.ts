@@ -27,6 +27,8 @@ export interface WorkspaceLayout {
   sizes: LayoutSizes;
 }
 
+// frozen: changing this would reset every user's saved panel layout (the key is read from the browser storage the
+// user-data folder carries along; it is invisible to users).
 export const STORAGE_KEY = 'recut.layout.v1';
 export const MIN_COL_W = 200;
 export const MIN_SPLIT = 0.12;

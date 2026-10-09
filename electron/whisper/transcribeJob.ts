@@ -34,6 +34,7 @@ import { getWhisperCliPath, killTree, whisperThreads } from './engine';
 import { findWhisperModel, verifyModel } from './models';
 import { parseProgressLine, parseSegmentLine, parseWhisperJson, segmentsToCues } from './output';
 import { CHUNK_SECONDS, planChunks, readWavInfo, writeWavChunk } from './wav';
+import { PRODUCT_NAME } from '../../shared/productIdentity';
 
 /** Bump when a change to extraction / chunking / clean-up changes the text or timing of a result. */
 export const WHISPER_PIPELINE_VERSION = 1;
@@ -186,7 +187,7 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
   if (!verified.ok) throw new Error(verified.error);
   if (jc.signal.aborted) throw canceled();
   const bin = ctx.enginePath === undefined ? getWhisperCliPath() : ctx.enginePath;
-  if (!bin) throw new Error('The speech-to-text engine (whisper-cli) is not included in this build of ReCut.');
+  if (!bin) throw new Error(`The speech-to-text engine (whisper-cli) is not included in this build of ${PRODUCT_NAME}.`);
 
   const fileKey = await transcriptionMediaKey(req.path);
   const cacheFile = transcriptionCachePath(fileKey, req, model.sha256);

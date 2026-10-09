@@ -83,10 +83,12 @@ The media attack suite, the QA repro suite, the acceptance gauntlet and the perf
 about 25 minutes on a quiet machine) are described in [DEVELOPMENT › Test suites](docs/DEVELOPMENT.md#test-suites).
 You don't need them for most changes; a maintainer will ask if a change could affect them.
 
-CI (`.github/workflows/windows.yml`) runs on every push to `main` that changes more than Markdown and `docs/`: it
-typechecks, runs the unit and end-to-end suites on Windows, macOS and Linux, and builds and smoke-tests the Windows
-installer, the Linux AppImage and both macOS dmgs. It does not run automatically on pull requests, so your local
-results matter; a maintainer can start it on a branch.
+CI (`.github/workflows/windows.yml`) runs on every push to `main` or `dev` and on every pull request into `dev`,
+`devDavid` or `devJames` that changes more than Markdown and `docs/`: it typechecks, runs the unit and end-to-end
+suites on Windows, macOS and Linux, and builds and smoke-tests the Windows installer, the Linux AppImage and both macOS
+dmgs. A pull request run is a test build: it never publishes anything. A new push to the pull request's branch
+cancels the older run. It takes a while, so run the checks locally first; a maintainer can also start it by hand on a
+branch.
 
 ## Code conventions
 
@@ -110,19 +112,53 @@ These matter more than style, and reviewers will ask about them. The full list i
 
 ## Branches and pull requests
 
-- Fork the repository (or, with write access, push a branch), branch from `main`, and open the PR against `main`.
-  Use a short descriptive branch name, for example `fix-collect-fat32-message`.
-- Keep a PR to one change. Explain **what** and **why**, and how you tested it (commands and results). Link the issue
-  it closes (`Closes #123`).
-- A bug fix comes with a **regression test** that fails before the fix. Never weaken, skip or delete an existing test
-  to get green; if an assertion encoded the bug, change it and say so.
-- Update the docs your change affects: the [User Guide](docs/USER-GUIDE.md), [FORMATS](docs/FORMATS.md),
-  [SHORTCUTS](docs/SHORTCUTS.md), and [LIMITATIONS](docs/LIMITATIONS.md) (remove an item your change fixes, add one
-  for a new limitation).
-- A PR that completes a [Roadmap](docs/ROADMAP.md) entry updates [docs/ROADMAP.md](docs/ROADMAP.md) in the same PR:
-  the entry's **Status** line and its row in the Progress table.
-- **Feature and bug PRs never change the version.** Don't touch `version` in `package.json` or `package-lock.json`.
-  Only a release PR changes it ([docs/RELEASING.md](docs/RELEASING.md)).
+| Branch | What it holds | Who writes to it |
+|---|---|---|
+| `main` | Released code only: it moves only when a release or a hotfix is merged. | The owner merges PRs from `dev` (releases) and hotfix PRs. |
+| `dev` | The shared integration branch: everything that is finished and reviewed. | The owner merges PRs into it. Nobody pushes to it. |
+| `devDavid`, `devJames` | Each person's long-lived branch: David's (the owner) and James's. | Their owner, through PRs from task branches. |
+| task branches (`fix-…`, `claude/…`) | One task: one fix, or one slice of a feature. | Whoever does the task. |
+
+The flow:
+
+1. **Start every session by merging `dev` into your personal branch** (`git fetch origin`, then
+   `git merge origin/dev` on `devDavid` or `devJames`).
+2. **Branch each task from your personal branch** and open its PR back into your personal branch. Use a short
+   descriptive name, for example `fix-collect-fat32-message`. Agents work the same way, on `claude/…` branches: one
+   task per branch and one PR, never several tasks stacked on one branch.
+3. **Open a PR from your personal branch into `dev` every 1–2 days, or as soon as one change is finished.** One change
+   per PR (a fix, or one slice of a feature), small enough to review. The point is to find conflicts with the other
+   person's work within a day or two, not after a week. Before opening it, merge `dev` into your branch again and get
+   CI green.
+4. **Large features go in slices.** Each slice is its own PR into `dev`; a slice that leaves the feature half-done
+   goes behind a setting, so `dev` always works.
+5. **Releases** are a release-prep PR into `dev`, then one PR from `dev` into `main`; a **hotfix** branches from `main`
+   and PRs into `main`, and `main` is then merged into `dev`. See [docs/RELEASING.md](docs/RELEASING.md).
+
+Only the owner merges into `dev` and `main`. James and his bot push only to `devJames` and their own task branches,
+and open PRs. Nobody pushes to `dev` or `main` directly, and nobody pushes to another person's branch.
+
+A daily overlap check (run by the owner's coordinating session) test-merges `dev`, `devDavid`, `devJames` and the open
+PR branches and reports where they touch the same code.
+
+**Outside contributors:** fork the repository, branch from `dev`, and open the PR against `dev`. Never target `main`.
+
+Before you open a PR into `dev`, check:
+
+- [ ] `dev` is merged into your branch, and CI on the PR is green (`npm run typecheck` and `npm test` locally first).
+- [ ] The PR is **one change**: one fix or one feature slice, small enough to review in one sitting. A half-done
+      feature is behind a setting.
+- [ ] It says **what** and **why**, how you tested it (commands and results), and links the issue it closes
+      (`Closes #123`).
+- [ ] A bug fix comes with a **regression test** that fails before the fix. Never weaken, skip or delete an existing
+      test to get green; if an assertion encoded the bug, change it and say so.
+- [ ] The docs your change affects are updated: the [User Guide](docs/USER-GUIDE.md), [FORMATS](docs/FORMATS.md),
+      [SHORTCUTS](docs/SHORTCUTS.md), and [LIMITATIONS](docs/LIMITATIONS.md) (remove an item your change fixes, add
+      one for a new limitation).
+- [ ] If it completes a [Roadmap](docs/ROADMAP.md) entry, it updates [docs/ROADMAP.md](docs/ROADMAP.md): the entry's
+      **Status** line and its row in the Progress table.
+- [ ] It does **not** change the version. Feature and bug PRs never touch `version` in `package.json` or
+      `package-lock.json`; only a release-prep PR changes it ([docs/RELEASING.md](docs/RELEASING.md)).
 
 ### The changelog
 
@@ -167,8 +203,8 @@ AI coding agents (Claude, via Claude Code) working on tasks the owner defines. T
 in what order; the [Roadmap](docs/ROADMAP.md) records those decisions.
 
 <!-- OWNER: describe how you review changes -->
-Changes reach `main` through pull requests that the owner merges. CI runs the unit and end-to-end suites on Windows,
-macOS and Linux.
+Changes reach `dev`, and from there `main`, through pull requests that the owner merges. CI runs the unit and
+end-to-end suites on Windows, macOS and Linux.
 
 Because of how it is built, ReCut leans on automated checks: release builds are installed or launched and
 smoke-tested on all three systems before anything is published, media "attack" suites measure exported frames and

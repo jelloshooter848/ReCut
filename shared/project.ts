@@ -6,6 +6,7 @@ import type {
   DetectedScene,
 } from './model';
 import { uid } from './ids';
+import { PRODUCT_NAME } from './productIdentity';
 import { makeTrack, defaultTransform, defaultAudio, reconcileTransitions, SPEED_PERCENT_MIN, SPEED_PERCENT_MAX } from './timeline';
 import { isValidFps, parseFps } from './time';
 import { saneSar } from './media';
@@ -22,8 +23,8 @@ import {
 export const DEFAULT_SEQUENCE_FPS: Readonly<Rational> = Object.freeze({ num: 24000, den: 1001 });
 
 /**
- * The project cannot be opened by this build: it was saved by a newer ReCut (`reason: 'newer'`), or its
- * formatVersion is missing / not a positive integer (`reason: 'notProject'`: not a ReCut project). This is a
+ * The project cannot be opened by this build: it was saved by a newer version (`reason: 'newer'`), or its
+ * formatVersion is missing / not a positive integer (`reason: 'notProject'`: not a project file). This is a
  * refusal, not damage: the loader reports it and never substitutes a backup. Every other error out of
  * normalizeProject means the content is damaged.
  */
@@ -119,7 +120,7 @@ export function createMediaItem(path: string, name: string): MediaItem {
 /**
  * Validate + migrate a parsed project JSON, and say what had to be repaired.
  *
- * - Throws ProjectIncompatibleError when formatVersion is missing / not a positive integer (not a ReCut project)
+ * - Throws ProjectIncompatibleError when formatVersion is missing / not a positive integer (not a project file)
  *   or newer than this build reads.
  * - Throws a plain Error for damage it cannot repair without losing work: a top-level collection holding user
  *   work (media / sequences / scenes / subtitleTracks) that is present but not an object (the loader then
@@ -161,11 +162,11 @@ function normalizeInner(raw: unknown): Project {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Project file is not a JSON object');
   const p = raw as Obj;
   const fv = p.formatVersion;
-  if (fv === undefined || fv === null) throw new ProjectIncompatibleError('Missing formatVersion; not a ReCut project', 'notProject');
+  if (fv === undefined || fv === null) throw new ProjectIncompatibleError(`Missing formatVersion; not a ${PRODUCT_NAME} project`, 'notProject');
   if (typeof fv !== 'number' || !Number.isInteger(fv) || fv < 1) {
-    throw new ProjectIncompatibleError(`Invalid formatVersion ${describeValue(fv)}; not a ReCut project`, 'notProject');
+    throw new ProjectIncompatibleError(`Invalid formatVersion ${describeValue(fv)}; not a ${PRODUCT_NAME} project`, 'notProject');
   }
-  if (fv > PROJECT_FORMAT_VERSION) throw new ProjectIncompatibleError(`Project was saved by a newer ReCut (format ${fv}); this build reads ${PROJECT_FORMAT_VERSION}`, 'newer');
+  if (fv > PROJECT_FORMAT_VERSION) throw new ProjectIncompatibleError(`Project was saved by a newer ${PRODUCT_NAME} (format ${fv}); this build reads ${PROJECT_FORMAT_VERSION}`, 'newer');
   note(`value nested more than ${MAX_PROJECT_DEPTH} levels deep removed`, pruneDeepValues(p));
   const base = createProject(str(p.name, 'Untitled Project'));
   const out = {

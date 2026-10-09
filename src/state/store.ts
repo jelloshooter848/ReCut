@@ -1,5 +1,5 @@
 /**
- * ReCut renderer store: a single zustand store holding the Project plus editor UI state, with an
+ * Renderer store: a single zustand store holding the Project plus editor UI state, with an
  * immer-based undo/redo model.
  *
  *  - Every project change goes through `commit(label, recipe)` (undoable) or `setView` / `setActiveSequence`

@@ -170,7 +170,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "ReCut",
       "runAfterFinish": true,
-      "artifactName": "ReCut-Setup-${version}.${ext}"
+      "artifactName": "ReCut-Setup-${version}.${ext}",
+      "guid": "71b5ac76-3d71-54f8-ab45-e7992d0fc22e"
     },
     "portable": {
       "artifactName": "ReCut-Portable-${version}.${ext}"

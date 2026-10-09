@@ -1,16 +1,18 @@
 /**
- * The bundled speech-to-text engine: where `whisper-cli` is, its version, how ReCut runs it and how a run is
+ * The bundled speech-to-text engine: where `whisper-cli` is, its version, how the app runs it and how a run is
  * stopped. No Electron import (unit-testable).
  *
  * Resolution order: env RECUT_WHISPER_CLI (tests, developers), then the bundled `<resources>/whisper/whisper-cli(.exe)`
  * (electron-builder extraResources, built by scripts/<platform>/get-whisper.*), then `resources/whisper` next to the
- * executable or in the working directory (development). The engine is never looked up on PATH: ReCut runs only the
+ * executable or in the working directory (development). The engine is never looked up on PATH: the app runs only the
  * build it ships.
  */
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { envVar } from '../env';
+import { PRODUCT_NAME } from '../../shared/productIdentity';
 
 export const WHISPER_CLI_NAME = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli';
 
@@ -40,7 +42,7 @@ export function whisperBundledDirs(): string[] {
 /** Path of whisper-cli, or null when this build has none. Cached; `resetWhisperCliPath()` re-resolves. */
 export function getWhisperCliPath(): string | null {
   if (resolved !== undefined) return resolved;
-  const env = process.env.RECUT_WHISPER_CLI;
+  const env = envVar('WHISPER_CLI');
   let found: string | null = null;
   if (env && isExecutable(env)) found = env;
   if (!found) {
@@ -63,7 +65,7 @@ export function parseWhisperVersion(out: string): string | null {
 
 /** Run `whisper-cli --version` (no model needed). Rejects with a readable error when it does not run. */
 export function whisperCliVersion(bin = getWhisperCliPath()): Promise<string> {
-  if (!bin) return Promise.reject(new Error('The speech-to-text engine (whisper-cli) is not included in this build of ReCut.'));
+  if (!bin) return Promise.reject(new Error(`The speech-to-text engine (whisper-cli) is not included in this build of ${PRODUCT_NAME}.`));
   return new Promise((resolve, reject) => {
     execFile(bin, ['--version'], { timeout: 20_000, windowsHide: true, cwd: path.dirname(bin) }, (err, stdout, stderr) => {
       const v = parseWhisperVersion(`${stdout}\n${stderr}`);
