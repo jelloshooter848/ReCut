@@ -281,8 +281,8 @@ frame by construction, and the unit and real-FFmpeg tests compare nested timelin
 - **Editor frame choice:** the monitors seek to `sourceTime + 0.5 / mediaFps` and show the frame covering it, i.e.
   media frame `floor(t × mediaFps + 0.5)`.
 - **Frame-exact export** (`docs/export-pipeline.md`):
-  - Each clip segment is cut in the graph from **absolute source timestamps** (`-copyts -start_at_zero`, `trim` on
-    source seconds). `-ss` is only a decode shortcut with a small pre-roll.
+  - Each clip segment is cut in the graph from **absolute source timestamps** (`-copyts`, `trim` on
+    source seconds less the probed container start). `-ss` is only a decode shortcut with a small pre-roll.
   - `settb=AVTB` + `setpts` keep sub-frame phase, so `fps` picks the same frame the editor shows, also for off-grid
     in-points, mixed rates and VFR.
   - `tpad` + `trim=end_frame=N` make every segment exactly N frames. Tracks are re-stamped with

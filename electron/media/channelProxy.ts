@@ -8,7 +8,9 @@
  * stereo export renders. Stereo AAC in an audio-only mp4: `proxies/<key>_ch<stream>.<selection>_v<N>.m4a`.
  *
  * The file is 0-based on the container start like the media proxies: a stream that starts late is padded with silence
- * (`aresample=async=1:first_pts=0` on container-relative timestamps), so source time t plays at element time t.
+ * (`aresample=async=1:first_pts=0` on container-relative timestamps), so source time t plays at element time t. The
+ * input is read with `-copyts` and the probed container start is subtracted in the filter: FFmpeg's own zero for
+ * MPEG-TS / MPEG-PS is the start of the mapped streams (this one stream), which dropped a late stream's lead.
  * Written to a per-job `.part` file and renamed on success; one job per output at a time (in-flight de-duplication).
  */
 import fsp from 'node:fs/promises';
@@ -38,13 +40,18 @@ export function channelProxyOutputPath(fileKey: string, selKey: string): string 
   return path.join(cacheSubdir('proxies'), `${fileKey}_ch${selKey}_v${CHANNEL_PROXY_VERSION}.m4a`);
 }
 
-/** ffmpeg arguments of a channel proxy: stream `stream` of `src` through `pan`, stereo AAC, padded to the container start. */
-export function buildChannelProxyArgs(src: string, stream: number, pan: string, outPart: string): string[] {
+/**
+ * ffmpeg arguments of a channel proxy: stream `stream` of `src` through `pan`, stereo AAC, padded to the container
+ * start `startTime` (the probed format start_time, MediaProbe.startTime).
+ */
+export function buildChannelProxyArgs(src: string, stream: number, pan: string, outPart: string, startTime = 0): string[] {
+  const rebase = Number.isFinite(startTime) && startTime > 0 ? `asetpts=PTS-${Math.round(startTime * 1e6) / 1e6}/TB,` : '';
   return [
+    '-copyts',
     '-i', ffmpegFileArg(src),
     '-map', `0:${stream}`,
     '-vn', '-sn', '-dn',
-    '-af', `${pan},aresample=async=1:first_pts=0`,
+    '-af', `${rebase}${pan},aresample=async=1:first_pts=0`,
     '-c:a', 'aac', '-b:a', CHANNEL_PROXY_BITRATE, '-ac', '2',
     '-map_metadata', '-1', '-map_chapters', '-1',
     '-movflags', '+faststart',
@@ -98,7 +105,7 @@ export async function runChannelProxy(req: ChannelProxyRequest, ctx: JobRunConte
   const outPart = `${out}.part-${ctx.jobId}`;
   await removeStaleParts(out);
   ctx.setProgress(0, `Encoding ${channelSelectionLabel(req.selection)}`);
-  const run = runFfmpeg(buildChannelProxyArgs(req.path, req.stream, pan, outPart), {
+  const run = runFfmpeg(buildChannelProxyArgs(req.path, req.stream, pan, outPart, probe.startTime), {
     duration: probe.duration > 0 ? probe.duration : undefined,
     signal: ctx.signal,
     onProgress: (p, info) => ctx.setProgress(p, `${Math.round(p * 100)}%${info.speed ? ` (${info.speed.toFixed(1)}x)` : ''}`),

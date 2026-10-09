@@ -210,11 +210,20 @@ export function thumbScaleFilter(width: number): string {
   return `scale=w='max(2,trunc(iw*sar/2)*2)':h=ih,setsar=1,scale=${width}:-2,setsar=1`;
 }
 
-/** One ffmpeg invocation: seek to `time`, grab one frame, write JPEG to `out` (via .part). `signal` kills it. */
+/**
+ * One ffmpeg invocation: seek to `time`, grab one frame, write JPEG to `out` (via .part). `signal` kills it.
+ *
+ * `-copyts`: FFmpeg drops the frames decoded before the `-ss` point by comparing them with the seek time on the
+ * container's timeline. Without `-copyts`, FFmpeg 6.1 rebases an MPEG-TS / MPEG-PS input to the start of the mapped
+ * streams instead (the video alone), and when the video does not start with the file (audio first, as usual) that
+ * comparison let the frame before the seek point through: the thumbnail was one frame early. (8.1 and 9.0 got it
+ * right without `-copyts`; the bundled builds were not affected, so THUMB_VERSION did not change.)
+ */
 async function extractOne(file: string, time: number, width: number, out: string, signal?: AbortSignal): Promise<boolean> {
   const part = `${out}.part`;
   const seek = frameSeekTime(time, await frameGrid(file));
   const args = [
+    '-copyts',
     '-ss', fmtSeconds(seek),
     '-i', ffmpegFileArg(file),
     '-an', '-sn', '-dn',
@@ -393,7 +402,7 @@ async function extractBatch(file: string, width: number, batch: [string, number]
     try { await extractWithFallback(file, t, width, out, signal); } catch { /* resolved later by getThumbnail */ }
     return;
   }
-  const args: string[] = [];
+  const args: string[] = ['-copyts']; // as in extractOne
   const grid = await frameGrid(file);
   for (const [, t] of batch) args.push('-ss', fmtSeconds(frameSeekTime(t, grid)), '-i', ffmpegFileArg(file));
   batch.forEach(([out], idx) => {

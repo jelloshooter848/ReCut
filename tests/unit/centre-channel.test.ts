@@ -464,11 +464,11 @@ describe('preview: channel proxies', () => {
   it('the channel proxy job: the stream through the export\'s stereo pan, padded to the container start', () => {
     const args = buildChannelProxyArgs('/media/film.mkv', 1, 'pan=stereo|c0=0.707107*c2|c1=0.707107*c2', '/cache/p.m4a.part-1');
     expect(args).toEqual([
-      '-i', 'file:/media/film.mkv', '-map', '0:1', '-vn', '-sn', '-dn',
+      '-copyts', '-i', 'file:/media/film.mkv', '-map', '0:1', '-vn', '-sn', '-dn',
       '-af', 'pan=stereo|c0=0.707107*c2|c1=0.707107*c2,aresample=async=1:first_pts=0',
       '-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-map_metadata', '-1', '-map_chapters', '-1', '-movflags', '+faststart',
       '-f', 'mp4', 'file:/cache/p.m4a.part-1',
     ]);
-    expect(channelProxyOutputPath('abc', '1.ch-FC')).toMatch(/[\\/]proxies[\\/]abc_ch1\.ch-FC_v1\.m4a$/);
+    expect(channelProxyOutputPath('abc', '1.ch-FC')).toMatch(/[\\/]proxies[\\/]abc_ch1\.ch-FC_v2\.m4a$/);
   });
 });
