@@ -34,7 +34,7 @@ import { whisperLanguage, whisperModel, whisperTrackName, type TranscribeResult 
 import type { CollectResult } from '@shared/collect';
 
 interface ProxyResultLike { path: string; width?: number; height?: number; cached?: boolean; audioStreams?: number[] }
-interface ExportResultLike { outputPath?: string; sidecarPath?: string; warnings?: string[] }
+interface ExportResultLike { outputPath?: string; sidecarPath?: string; warnings?: string[]; sourceWarnings?: string[] }
 
 const handled = new Set<string>();
 const baseName = (p: string) => p.split(/[\\/]/).pop() ?? p;
@@ -127,7 +127,12 @@ function routeExport(job: JobInfo): void {
   if (job.status === 'done') {
     const out = r?.outputPath;
     toast('ok', out ? `Export finished: ${baseName(out)}` : 'Export finished', 8000);
-    if (r?.warnings?.length) toast('warn', `Export warnings: ${r.warnings[0]}${r.warnings.length > 1 ? ` (+${r.warnings.length - 1})` : ''}`);
+    // A source FFmpeg could not read in full (electron/export/ffmpegWarnings.ts) comes first and stays up longer:
+    // part of the file is silent or frozen. Its text already starts "Export finished, but ...".
+    const src = r?.sourceWarnings?.length ? r.sourceWarnings[0] : undefined;
+    const more = (r?.warnings?.length ?? 0) > 1 ? ` (+${r!.warnings!.length - 1} more)` : '';
+    if (src) toast('warn', `${src}${more}`, 15000);
+    else if (r?.warnings?.length) toast('warn', `Export warnings: ${r.warnings[0]}${r.warnings.length > 1 ? ` (+${r.warnings.length - 1})` : ''}`);
   } else if (job.status === 'failed') {
     toast('error', `Export failed: ${job.error ?? 'unknown error'}`);
   } else {

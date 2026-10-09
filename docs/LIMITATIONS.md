@@ -196,6 +196,13 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   48 kHz). Clips without keyframes export exactly as before.
 - **Pre-export warnings** (Export dialog › Checks) do not cover abrupt level jumps at cuts or subtitle timing drift:
   both need an analysis pass over the media.
+- **Damaged source warnings** (after the export) see only what FFmpeg reports and where a file's data ends. Damage
+  that decodes without an FFmpeg message (garbled pictures, clicks) is not reported, and a file that ends less than
+  half a second early is not reported either (normal files have streams that end a few frames apart). The end check
+  reads a few seconds of each source near the furthest point the export uses (no decoding, usually well under a
+  second in all); when that part has no data it scans the whole stream, at most 30 seconds per stream. With several
+  files of the same container and codec in one export, FFmpeg's message cannot always be tied to one file, and the
+  warning lists the candidates.
 - **AC-3 audio** is limited to 32, 44.1 and 48 kHz (the FFmpeg encoder's rates). 96 kHz is available with AAC only.
 - **Output names are compared case-insensitively on every platform.** An export (video, sidecar `.srt`, or a
   Subtitles panel SRT/VTT export) whose path differs from a project source file only in letter case is refused,
