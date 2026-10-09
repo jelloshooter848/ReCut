@@ -196,6 +196,12 @@ describe('Windows workflow: dev branch, pull requests and concurrency', () => {
   it('a fork pull request (no secrets) makes an ad-hoc signed test build instead of failing', () => {
     // Without secrets every HAVE_* is 'false' and the empty secrets count as unset: no "only some set" failure.
     expect(macos).toMatch(/if \[ "\$have" -eq 0 \]; then\n\s+echo 'No macOS signing secrets: building an ad-hoc signed test build/);
+    // electron-builder skips every macOS signature (ad-hoc too) on a pull request build unless CSC_FOR_PULL_REQUEST is
+    // true; then the "Code signature" step fails. The dmg step sets it for both paths, signed and ad-hoc.
+    const pkgStep = /- name: Package the dmg\n\s+env:\n((?:\s{10}[A-Z_]+: .*\n)+)/.exec(macos)?.[1];
+    expect(pkgStep).toBeDefined();
+    expect(pkgStep).toMatch(/^\s+CSC_FOR_PULL_REQUEST: 'true'$/m);
+    expect(code(workflow).match(/CSC_FOR_PULL_REQUEST/g)).toHaveLength(1);
     // A run that is not a release never checks for missing secrets.
     expect(macos).toMatch(/if \[ "\$release" != true \]; then\n(?:.*\n)\s+exit 0\n\s+fi\n\s+missing=''/);
   });

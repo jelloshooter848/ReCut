@@ -940,8 +940,14 @@ jobs:
           echo 'signed=true' >> "$GITHUB_OUTPUT"
           echo "key_path=$key" >> "$GITHUB_OUTPUT"
 
+      # CSC_FOR_PULL_REQUEST: electron-builder skips all macOS code signing, ad-hoc included, when it detects a pull
+      # request build (GITHUB_BASE_REF is set on pull_request events), leaving only the linker's signatures, which
+      # fail the "Code signature" step. With it, a pull request run signs exactly like a push: Developer ID and
+      # notarized when the secrets are set (branches of this repository), ad-hoc otherwise (forks, which get no
+      # secrets; the ad-hoc path below also unsets them). No effect on push and manual runs.
       - name: Package the dmg
         env:
+          CSC_FOR_PULL_REQUEST: 'true'
           SIGNED: ${{ steps.sign.outputs.signed }}
           CSC_LINK: ${{ steps.sign.outputs.signed == 'true' && secrets.CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ steps.sign.outputs.signed == 'true' && secrets.CSC_KEY_PASSWORD || '' }}
