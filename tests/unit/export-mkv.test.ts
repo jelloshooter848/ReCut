@@ -175,6 +175,49 @@ function tone(d: { data: Float32Array; channels: number }, freq: number, from: n
   return (s1 * s1 + s2 * s2 - c * s1 * s2) / (n * n);
 }
 
+/**
+ * The level (tone() units) of each source tone in the "5.1 + stereo downmix" outputs, from first principles. Every
+ * source is FFmpeg's `sine` at its default amplitude 1/8, made stereo with `-ac 2`: L = R = 1/8 / √2 = 0.0884
+ * (-21.1 dBFS). The export renders each track at the widest output layout (stereo -> 5.1 puts L in FL, R in FR) and
+ * the stereo output takes FFmpeg's default 5.1 -> stereo matrix (L = FL + 0.707 C + 0.707 BL, not normalised for
+ * float), so each tone reaches FL of the 5.1 track and L of the stereo track at the source level: 0.0884² / 4 =
+ * 1.953e-3. Measured over 1-3 s: 1.9418e-3 (FFmpeg 8.1.3 Linux) to 1.9460e-3 (FFmpeg 6.1.1), 1.9458e-3 on macOS x64
+ * (Rosetta 2) and arm64, byte-identical audio in every run on a platform: AC-3 / AAC cost < 0.05 dB per segment
+ * (bugs/closed/2026-10-09-mkv-downmix-tone-level-ci-failure.md).
+ */
+const DOWNMIX_TONE = (1 / 8 / Math.SQRT2) ** 2 / 4;
+/**
+ * Allowed deviation of each 250 ms segment from DOWNMIX_TONE: ±1 dB. Coding noise moves a segment by < 0.1 dB; a
+ * wrong matrix moves the whole window by ≥ 3 dB (centre / surround gain on FL, or a normalised matrix: -7.7 dB), and a
+ * source cut short or a gap drops its segments by tens of dB. The former one-sided `> 1e-3` over the whole window
+ * allowed -2.9 dB, any gain increase and up to 28 % of the window without the tone.
+ */
+const DOWNMIX_TOL_DB = 1;
+const DOWNMIX_SEGMENT = 12000; // 250 ms: whole cycles of 440 Hz (110) and 660 Hz (165), so tone() is exact per segment
+const DOWNMIX_WINDOW = [48000, 144000] as const; // 1-3 s of the range: A1 (440 Hz) covers 0-3.5 s, A2 (660 Hz) 0.5-4 s
+type Pcm = { data: Float32Array; channels: number };
+/** dB against DOWNMIX_TONE of `freq` in channel `ch`, per 250 ms segment of the window. */
+function segmentDb(d: Pcm, freq: number, ch: number): number[] {
+  const out: number[] = [];
+  for (let s = DOWNMIX_WINDOW[0]; s < DOWNMIX_WINDOW[1]; s += DOWNMIX_SEGMENT) out.push(10 * Math.log10(tone(d, freq, s, s + DOWNMIX_SEGMENT, ch) / DOWNMIX_TONE));
+  return out;
+}
+const DOWNMIX_CHECKS = (st: Pcm, s51: Pcm) => [
+  { name: 'stereo L', d: st, ch: 0 }, { name: 'stereo R', d: st, ch: 1 }, { name: '5.1 FL', d: s51, ch: 0 }, { name: '5.1 FR', d: s51, ch: 1 },
+].flatMap((c) => [440, 660].map((freq) => ({ ...c, freq, db: segmentDb(c.d, freq, c.ch) })));
+const segStart = (i: number) => (DOWNMIX_WINDOW[0] + i * DOWNMIX_SEGMENT) / SR;
+/** Every segment of the downmix (and of the 5.1 mix it comes from) more than DOWNMIX_TOL_DB off the expected level. */
+function downmixLevelIssues(st: Pcm, s51: Pcm): string[] {
+  return DOWNMIX_CHECKS(st, s51).flatMap((c) => c.db.flatMap((db, i) => (Math.abs(db) <= DOWNMIX_TOL_DB ? [] : [
+    `${c.name} ${c.freq} Hz at ${segStart(i).toFixed(2)}-${(segStart(i) + DOWNMIX_SEGMENT / SR).toFixed(2)} s: ${db.toFixed(2)} dB (allowed ±${DOWNMIX_TOL_DB} dB)`,
+  ])));
+}
+/** All segment levels (dB against DOWNMIX_TONE), for the failure message. */
+function downmixLevelProfile(st: Pcm, s51: Pcm): string {
+  return `segments from ${segStart(0)} s, ${DOWNMIX_SEGMENT / SR * 1000} ms each:\n` + DOWNMIX_CHECKS(st, s51)
+    .map((c) => `  ${c.name} ${c.freq} Hz: ${c.db.map((db) => db.toFixed(2)).join(' ')}`).join('\n');
+}
+
 async function frameCount(file: string): Promise<number> {
   const j = await probeJson(file, ['-count_frames', '-select_streams', 'v:0']);
   return Number(j.streams[0].nb_read_frames);
@@ -271,7 +314,9 @@ describe('MKV packaging export', () => {
   it('5.1 + stereo downmix preset: AC-3 5.1 and AAC stereo of the same mix', async () => {
     const s = sequence();
     s.audioTracks[2].muted = true; // the commentary is not in the mix
-    const r = await runExport(req(s, { audioOutputs: audioOutputPreset('surroundStereo', s), rangeMode: 'inOut' }), undefined, undefined, NO_CHUNKS);
+    let stderr = ''; // the exporter keeps FFmpeg's warnings and errors only when FFmpeg fails: kept here for the message
+    const r = await runExport(req(s, { audioOutputs: audioOutputPreset('surroundStereo', s), rangeMode: 'inOut' }), undefined, undefined,
+      { ...NO_CHUNKS, onSpawn: (c) => { c.stderr?.on('data', (b) => { stderr += String(b); }); } });
     const j = await probeJson(r.outputPath);
     const a = j.streams.filter((x: any) => x.codec_type === 'audio');
     // 'und' is written as the Matroska language and read back as no language tag.
@@ -283,8 +328,10 @@ describe('MKV packaging export', () => {
     const s51 = await samples(r.outputPath, 0), st = await samples(r.outputPath, 1);
     expect(Math.abs(s51.data.length / 6 - RANGE_SAMPLES)).toBeLessThanOrEqual(2048);
     expect(Math.abs(st.data.length / 2 - RANGE_SAMPLES)).toBeLessThanOrEqual(2048);
-    // The downmix carries the same sources (440 / 660 Hz), not the muted commentary.
-    expect(tone(st, 440, 48000, 144000)).toBeGreaterThan(1e-3);
+    // The downmix carries the same sources (440 / 660 Hz) at the level the 5.1 -> stereo matrix gives, all through the
+    // window, and not the muted commentary. A failure lists every segment of both tracks and FFmpeg's stderr.
+    const issues = downmixLevelIssues(st, s51);
+    expect(issues, `${issues.join('\n')}\n${downmixLevelProfile(st, s51)}\nFFmpeg stderr: ${stderr.trim() || '(empty)'}`).toEqual([]);
     expect(tone(st, 880, 48000, 144000)).toBeLessThan(1e-6);
     expect(await frameCount(r.outputPath)).toBe(RANGE_FRAMES);
   }, 120000);
