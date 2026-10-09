@@ -46,7 +46,9 @@ describe('Windows workflow: no dev prereleases', () => {
   const installer = code(job('installer'));
 
   it('the publish job runs only for a real release and only after every gate passed', () => {
-    expect(jobIf(publish)).toBe("needs.installer.outputs.release == 'true'");
+    expect(jobIf(publish)).toBe(
+      "github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && needs.installer.outputs.release == 'true'",
+    );
     expect(publish).toMatch(/^ {4}needs: \[installer, tests, e2e, launcher, linux, macos, macos-e2e\]$/m);
     // No status function: the implicit success() keeps a red, cancelled or skipped gate from publishing.
     expect(publish).not.toMatch(/always\(\)|failure\(\)|cancelled\(\)/);
@@ -75,7 +77,7 @@ describe('Windows workflow: no dev prereleases', () => {
     expect(installer).toContain("$release = 'false'; $auto = 'false'");
     expect(installer.match(/\$release = 'true'/g)).toHaveLength(2);
     expect(installer).toMatch(/\$release = 'true'; \$auto = 'true'/);
-    expect(installer).toMatch(/if \(\$env:REF_TYPE -eq 'tag'\)[\s\S]*?\$release = 'true'\n\s+\} elseif/);
+    expect(installer).toMatch(/if \(\$env:EVENT_NAME -eq 'push' -and \$env:REF_TYPE -eq 'tag'\)[\s\S]*?\$release = 'true'\n\s+\} elseif/);
   });
 
   it('every run keeps the installers as the ReCut-windows artifact, and a test build says where to find them', () => {
@@ -95,6 +97,137 @@ describe('Windows workflow: no dev prereleases', () => {
     expect(all).not.toContain('-dev.');
     expect(all).not.toMatch(/dev_(tag|name|notes)|dev-notes\.md/);
     expect(all).not.toMatch(/continue-on-error/);
+  });
+});
+
+// The dev-branch workflow (owner's decision, 9 October 2026; CONTRIBUTING.md "Branches and pull requests",
+// docs/RELEASING.md): main holds released code only, dev is the integration branch, devDavid and devJames are personal
+// branches. Pushes to main and dev and pull requests into dev, devDavid and devJames run the workflow; only a push to
+// main or of a v tag can publish; only pull_request runs are ever cancelled by a newer run.
+describe('Windows workflow: dev branch, pull requests and concurrency', () => {
+  const header = workflow.slice(0, workflow.indexOf('\njobs:\n'));
+  const publish = code(job('publish'));
+  const installer = code(job('installer'));
+  const macos = code(job('macos'));
+
+  /** The `key: value` lines directly under `  <event>:` in the `on:` block. */
+  function trigger(event: string): Record<string, string> {
+    const on = /^on:\n((?: {2}.*\n)+)/m.exec(header)?.[1];
+    expect(on, 'on:').toBeDefined();
+    const block = new RegExp(`^ {2}${event}:\\n((?: {4}.*\\n)*)`, 'm').exec(on!)?.[1];
+    expect(block, event).toBeDefined();
+    const out: Record<string, string> = {};
+    for (const m of block!.matchAll(/^ {4}([a-z-]+): (.+)$/gm)) out[m[1]] = m[2];
+    return out;
+  }
+  const list = (v: string | undefined) => [...(v ?? '').matchAll(/'([^']+)'|([^\s,[\]']+)/g)].map((m) => m[1] ?? m[2]);
+
+  /**
+   * Evaluates a GitHub Actions expression made only of ==, !=, &&, ||, parentheses, string literals, startsWith()
+   * and format() over the given context values (enough for the if: and concurrency expressions checked here).
+   */
+  function evaluate(expr: string, ctx: Record<string, string | number>): unknown {
+    const names = Object.keys(ctx).sort((a, b) => b.length - a.length);
+    let js = expr.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
+    for (const n of names) js = js.split(n).join(`ctx[${JSON.stringify(n)}]`);
+    expect(js.replace(/ctx\["[^"]+"\]/g, ''), `unknown identifier in: ${expr}`).not.toMatch(/\b(github|needs|inputs|steps|secrets)\./);
+    const fn = new Function('ctx', 'startsWith', 'format', `return (${js});`);
+    return fn(
+      ctx,
+      (s: string, p: string) => String(s).startsWith(p),
+      (f: string, ...a: unknown[]) => f.replace(/\{(\d+)\}/g, (_, i) => String(a[Number(i)])),
+    );
+  }
+
+  it('runs on pushes to main and dev, release tags, pull requests into dev / devDavid / devJames, and by hand', () => {
+    const push = trigger('push');
+    expect(list(push.branches)).toEqual(['main', 'dev']);
+    expect(list(push.tags)).toEqual(['v[0-9]+.[0-9]+.[0-9]+', 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+']);
+    expect(list(push['paths-ignore'])).toEqual(['**/*.md', 'docs/**']);
+    const pr = trigger('pull_request');
+    expect(list(pr.branches)).toEqual(['dev', 'devDavid', 'devJames']);
+    expect(list(pr.types)).toEqual(['opened', 'synchronize', 'reopened', 'ready_for_review']);
+    expect(pr['paths-ignore']).toBe(push['paths-ignore']);
+    // Never pull_request_target: it would run with secrets and a writable token in the base repository's context.
+    expect(header).not.toMatch(/pull_request_target|workflow_run/);
+    expect(header).toMatch(/^ {2}workflow_dispatch:\n {4}inputs:\n {6}installer_stress:\n/m);
+    // The CI bring-up branch is gone; main is not a pull_request base (releases arrive as a dev -> main PR whose
+    // tree dev's push run has built).
+    expect(header).not.toMatch(/^ {4}branches: .*claude\/build-recut/m);
+    expect(list(pr.branches)).not.toContain('main');
+  });
+
+  it('publishing is impossible on a pull_request run, a dev push or a manual run', () => {
+    const cond = jobIf(publish)!;
+    const run = (event: string, ref: string, release = 'true') =>
+      evaluate(cond, { 'github.event_name': event, 'github.ref': ref, 'needs.installer.outputs.release': release });
+    expect(run('push', 'refs/heads/main')).toBe(true);
+    expect(run('push', 'refs/tags/v1.0.0')).toBe(true);
+    expect(run('push', 'refs/tags/v1.0.0-rc.1')).toBe(true);
+    expect(run('push', 'refs/heads/main', 'false')).toBe(false);
+    // Even with a (wrong) release output of 'true':
+    for (const [event, ref] of [
+      ['pull_request', 'refs/pull/7/merge'],
+      ['pull_request', 'refs/heads/main'],
+      ['push', 'refs/heads/dev'],
+      ['push', 'refs/heads/devDavid'],
+      ['workflow_dispatch', 'refs/heads/main'],
+      ['workflow_dispatch', 'refs/tags/v1.0.0'],
+    ]) {
+      expect(run(event, ref), `${event} ${ref}`).toBe(false);
+    }
+    // The installer job's release decision needs a push as well: a tag push, or a push to main.
+    expect(installer).toContain("if ($env:EVENT_NAME -eq 'push' -and $env:REF_TYPE -eq 'tag') {");
+    expect(installer).toContain("} elseif ($env:EVENT_NAME -eq 'push' -and $env:REF -eq 'refs/heads/main') {");
+    expect(installer).not.toMatch(/refs\/heads\/dev|pull_request/);
+    // So does the macos job's (which decides whether a release must be signed).
+    expect(macos).toContain('if [ "$EVENT_NAME" = push ] && [ "$REF_TYPE" = tag ]; then');
+    expect(macos).toContain('elif [ "$EVENT_NAME" = push ] && [ "$REF" = refs/heads/main ] && [ "$section" = true ]; then');
+  });
+
+  it('runs only with a read-only token, except the publish job', () => {
+    expect(header).toMatch(/^permissions:\n {2}contents: read\n/m);
+    expect(code(header)).not.toMatch(/: write/);
+    expect(publish).toMatch(/^ {4}permissions:\n {6}contents: write\n/m);
+    // No other job asks for more.
+    expect(code(workflow).match(/^\s+[a-z-]+: write$/gm)).toEqual(['      contents: write']);
+  });
+
+  it('a fork pull request (no secrets) makes an ad-hoc signed test build instead of failing', () => {
+    // Without secrets every HAVE_* is 'false' and the empty secrets count as unset: no "only some set" failure.
+    expect(macos).toMatch(/if \[ "\$have" -eq 0 \]; then\n\s+echo 'No macOS signing secrets: building an ad-hoc signed test build/);
+    // A run that is not a release never checks for missing secrets.
+    expect(macos).toMatch(/if \[ "\$release" != true \]; then\n(?:.*\n)\s+exit 0\n\s+fi\n\s+missing=''/);
+  });
+
+  it('cancels a superseded run only for pull requests, never on main, a tag or dev', () => {
+    const group = /^concurrency:\n {2}group: (.+)\n {2}cancel-in-progress: (.+)$/m.exec(header);
+    expect(group).not.toBeNull();
+    const [, groupExpr, cancelExpr] = group!;
+    const ctx = (event: string, ref: string, pr: number | string = '') => ({
+      'github.event_name': event,
+      'github.ref': ref,
+      'github.event.pull_request.number': pr,
+    });
+    const cancels = (event: string, ref: string, pr?: number) => evaluate(cancelExpr, ctx(event, ref, pr));
+    const groupOf = (event: string, ref: string, pr?: number) =>
+      evaluate(groupExpr.replace(/^windows-\$\{\{\s*(.*?)\s*\}\}$/, "'windows-' + ($1)"), ctx(event, ref, pr));
+    for (const [event, ref] of [
+      ['push', 'refs/heads/main'],
+      ['push', 'refs/tags/v1.0.0'],
+      ['push', 'refs/tags/v1.0.0-rc.1'],
+      ['push', 'refs/heads/dev'],
+      ['workflow_dispatch', 'refs/heads/main'],
+      ['workflow_dispatch', 'refs/heads/claude/some-task'],
+    ]) {
+      expect(cancels(event, ref), `${event} ${ref}`).toBe(false);
+    }
+    expect(cancels('pull_request', 'refs/pull/12/merge', 12)).toBe(true);
+    // One group per pull request, separate from every branch's and tag's group.
+    expect(groupOf('pull_request', 'refs/pull/12/merge', 12)).toBe('windows-pr-12');
+    expect(groupOf('push', 'refs/heads/main')).toBe('windows-refs/heads/main');
+    expect(groupOf('push', 'refs/tags/v1.0.0')).toBe('windows-refs/tags/v1.0.0');
+    expect(groupOf('push', 'refs/heads/dev')).toBe('windows-refs/heads/dev');
   });
 });
 
@@ -299,7 +432,7 @@ describe('Windows workflow: the macOS dmg gate', () => {
     const rel = /- name: Release run\? \(a release must be signed\)\n\s+id: rel\n([\s\S]*?)\n\n/.exec(macos)?.[1];
     expect(rel).toBeDefined();
     expect(macos.indexOf('- name: Release run?')).toBeLessThan(macos.indexOf('npm ci'));
-    expect(rel).toContain('if [ "$REF_TYPE" = tag ]; then\n            release=true');
+    expect(rel).toContain('if [ "$EVENT_NAME" = push ] && [ "$REF_TYPE" = tag ]; then\n            release=true');
     expect(rel).toContain('elif [ "$EVENT_NAME" = push ] && [ "$REF" = refs/heads/main ] && [ "$section" = true ]; then');
     expect(rel).toContain('git ls-remote --exit-code --tags origin "refs/tags/v$v" || rc=$?');
     expect(rel).toMatch(/if \[ "\$rc" -eq 2 \]; then\n\s+release=true\n\s+elif \[ "\$rc" -ne 0 \]; then\n\s+echo "::error::git ls-remote failed/);
@@ -662,7 +795,7 @@ describe('Windows workflow: release candidates', () => {
     const rel = /- name: Release run\? \(a release must be signed\)\n\s+id: rel\n([\s\S]*?)\n\n/.exec(macos)?.[1];
     expect(rel).toBeDefined();
     // Any tag push that starts the workflow (vX.Y.Z or vX.Y.Z-rc.N) is a release run.
-    expect(rel).toContain('if [ "$REF_TYPE" = tag ]; then\n            release=true');
+    expect(rel).toContain('if [ "$EVENT_NAME" = push ] && [ "$REF_TYPE" = tag ]; then\n            release=true');
     // On main: run the step's own changelog check with a candidate version.
     const script = /node -e '\n([\s\S]*?)\n\s*'\)/.exec(rel!)?.[1];
     expect(script).toBeDefined();

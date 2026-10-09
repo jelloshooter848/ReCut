@@ -19,6 +19,7 @@ ReCut is an Electron + React + TypeScript non-linear video editor for fan edits.
 - Bugs are filed and closed as Markdown files under `bugs/` (see `bugs/README.md`, copy `bugs/TEMPLATE.md`).
 - A PR that completes a roadmap entry updates `docs/ROADMAP.md` in the same PR: the entry's **Status** line and its row in the Progress table.
 - Versioning and releases: see docs/RELEASING.md. Feature and bug PRs never change the version.
+- Branches (CONTRIBUTING.md "Branches and pull requests"): branch from the personal branch you're working for (`devDavid` or `devJames`), or `dev` if told, and PR back into it. One task per branch, one PR. Never target `main` except for a release or hotfix. Don't push to `dev`, `main` or the other person's branch. Merge `dev` into your branch before opening a PR into `dev`.
 
 ## Commands
 - `npm run dev` — vite + electron. `npm run build` — build both. `npm run typecheck`, `npm test`, `npm run test:e2e`.
