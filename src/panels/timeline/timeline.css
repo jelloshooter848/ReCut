@@ -101,6 +101,11 @@
 .tl-layer { position: absolute; top: 0; left: 0; height: 100%; will-change: transform; }
 .tl-track-clips { position: absolute; left: 0; }
 .tl-sub-lane { position: absolute; left: 0; right: 0; top: 0; background: #202026; border-bottom: 1px solid var(--bg-0); }
+/* Transcript lanes (#112): T1 under A1, ... */
+.tl-t-lane { position: absolute; left: 0; right: 0; background: #1d2022; border-bottom: 1px solid var(--bg-0); }
+.tl-cue.transcript { background: var(--clip-audio, #2f7a55); }
+.tl-th-t { border-top: 1px solid var(--bg-0); }
+.tl-th-t-name { font-family: var(--font-mono); font-weight: 700; font-size: 9px; color: var(--text-dim); background: var(--bg-4); border: 1px solid var(--border); border-radius: 2px; padding: 0 4px; line-height: 14px; }
 .tl-cue {
   position: absolute; top: 7px; height: 18px; background: var(--clip-title); border: 1px solid rgba(0,0,0,0.5); border-radius: 2px;
   font-size: 10px; line-height: 16px; padding: 0 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #fff; cursor: pointer;

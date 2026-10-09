@@ -204,6 +204,23 @@ describe('SequencePlayer draws while playing', () => {
     player.destroy();
   });
 
+  it('draws the on-screen clip\'s transcript live from its media (#112)', () => {
+    const m = { ...mediaItem('S'), subtitleTrackIds: ['w'] };
+    const s = createSequence('x', FPS, 1920, 1080);
+    s.videoTracks[0].clips.push({ ...clip('v1', 'S', 0, 240, 2), linkId: 'L' });
+    s.audioTracks[0].clips.push({ ...clip('a1', 'S', 0, 240, 2), kind: 'audio', linkId: 'L', audioStream: m.probe!.audio[0]?.index });
+    const subtitleTracks = { w: { id: 'w', name: 'English (Whisper)', language: 'eng', mediaId: 'S', origin: 'whisper', streamIndex: m.probe!.audio[0]?.index,
+      cues: [{ id: 'c', start: 3, end: 4, text: 'live words' }] } };
+    const player = new SequencePlayer(fakeCanvas(), new MediaElementPool(8), undefined, { id: 'program' });
+    player.setSequence(s, { ...MEDIA, S: m }, { ...SETTINGS, subtitleTracks });
+    // Source 3 s is 1 s into the clip (source in 2 s): frames 24-48 at 24 fps.
+    expect(player.getSubtitleAt(23)).toEqual([]);
+    expect(player.getSubtitleAt(30).map((c) => c.text)).toEqual(['live words']);
+    player.setSequence(s, { ...MEDIA, S: m }, SETTINGS);
+    expect(player.getSubtitleAt(30)).toEqual([]);
+    player.destroy();
+  });
+
   it('wraps a long cue onto lines that fit the frame (#114)', () => {
     const s = createSequence('x', FPS, 1920, 1080);
     s.videoTracks[0].clips.push(clip('v1', 'S', 0, 240, 2.1));

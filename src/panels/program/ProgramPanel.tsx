@@ -207,6 +207,7 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
     let lastFlat: Sequence | null = null;
     let lastMedia: Record<ID, MediaItem> | null = null;
     let lastSettings: StoreState['project']['settings'] | null = null;
+    let lastTracks: StoreState['project']['subtitleTracks'] | null = null;
 
     const apply = (s: StoreState) => {
       const seq = activeSequence(s);
@@ -218,10 +219,10 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
       // changes the flattened sequence without changing this one.
       const flat = flattenSequence(seq, s.project.sequences, media);
       const nestChanged = flat !== lastFlat && (flat !== seq || lastFlat !== lastSeq);
-      const changed = switched || nestChanged || (lastSeq !== seq && !sameRenderContent(lastSeq!, seq)) || media !== lastMedia || settings !== lastSettings;
+      const changed = switched || nestChanged || (lastSeq !== seq && !sameRenderContent(lastSeq!, seq)) || media !== lastMedia || settings !== lastSettings || s.project.subtitleTracks !== lastTracks;
       if (changed) {
         if (switched && player.isPlaying) player.pause();
-        player.setSequence(flat, media, { useProxies: settings.useProxies, playbackResolution: settings.playbackResolution });
+        player.setSequence(flat, media, { useProxies: settings.useProxies, playbackResolution: settings.playbackResolution, subtitleTracks: s.project.subtitleTracks });
         if (switched) { player.seek(seq.view.playhead); frameSig.set(player.currentFrame(), true); }
         else if (!player.isPlaying) player.renderFrame(seq.view.playhead);
         scheduleStatus();
@@ -233,7 +234,7 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
         player.seek(seq.view.playhead);
         frameSig.set(player.currentFrame(), true);
       }
-      lastSeq = seq; lastFlat = flat; lastMedia = media; lastSettings = settings;
+      lastSeq = seq; lastFlat = flat; lastMedia = media; lastSettings = settings; lastTracks = s.project.subtitleTracks;
     };
     apply(useStore.getState());
     const unsubStore = useStore.subscribe(apply);

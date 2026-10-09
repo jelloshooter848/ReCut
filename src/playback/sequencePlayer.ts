@@ -15,7 +15,8 @@
  * The canvas internal resolution is the sequence size scaled by `playbackResolution`; CSS sizing
  * is the caller's responsibility.
  */
-import type { ID, MediaItem, Rational, Sequence, VideoStreamInfo } from '../../shared/model';
+import type { ID, MediaItem, Rational, Sequence, SubtitleTrack, VideoStreamInfo } from '../../shared/model';
+import { onScreenTranscriptAt, transcriptIndex, type TranscriptIndex } from '../../shared/transcripts';
 import { secondsToFramesFloor, framesToSeconds, fpsValue } from '../../shared/time';
 import { sequenceDuration, resolveSubtitleCues, type ResolvedCue } from '../../shared/timeline';
 import { PlaybackClock } from './clock';
@@ -68,6 +69,8 @@ export function forgetStillImage(path: string): void { imageCache.delete(path); 
 export interface SequencePlayerSettings {
   useProxies: boolean;
   playbackResolution: 'full' | '1/2' | '1/4';
+  /** The project's media subtitle tracks: Whisper transcripts are drawn live from them (#112). */
+  subtitleTracks?: Record<ID, SubtitleTrack>;
 }
 
 export interface SequencePlayerOptions {
@@ -258,6 +261,7 @@ export class SequencePlayer {
   /** Removes this player's listeners from an element (elements outlive a player with a reusable id). */
   private listenerOffs = new Map<HTMLMediaElement, () => void>();
   private subtitleCache = new WeakMap<Sequence, ResolvedCue[]>();
+  private transcriptCache: { seq: Sequence; tracks: Record<ID, SubtitleTrack>; media: Record<ID, MediaItem>; index: TranscriptIndex } | null = null;
   /** playingKey's subtitle part for (sequence, frame). */
   private subtitleKey: { seq: Sequence | null; frame: number; key: string } = { seq: null, frame: -1, key: '' };
   private frameCbs = new Set<(frame: number) => void>();
@@ -316,6 +320,7 @@ export class SequencePlayer {
     this.settings = settings;
     this.fps = seq.fps;
     this.durationFrames = sequenceDuration(seq);
+    this.subtitleKey.frame = NaN; // the cues on screen may have changed (a new transcript) on the same frame
     if (fpsChanged || resChanged || sizeChanged) this.resizeCanvas();
     this.invalidate(); // force re-plan + redraw
     this.requestTick();
@@ -511,7 +516,22 @@ export class SequencePlayer {
       if (c.start > frame) break;
       if (frame < c.end) out.push(c);
     }
+    // The on-screen clip's transcript (#112): live from the media, top visible clip first, falling through.
+    for (const t of onScreenTranscriptAt(this.seq, this.transcripts(), frame)) {
+      out.push({ id: t.id, trackId: 'transcript', start: t.start, end: t.end, text: t.text, clipId: t.clipId, orphan: false, ...(t.words ? { words: t.words } : {}) });
+    }
     return out;
+  }
+
+  /** The sequence's transcript index, rebuilt when the sequence, its media or the transcripts change. */
+  private transcripts(): TranscriptIndex {
+    const seq = this.seq!;
+    const tracks = this.settings.subtitleTracks ?? {};
+    const hit = this.transcriptCache;
+    if (hit && hit.seq === seq && hit.tracks === tracks && hit.media === this.media) return hit.index;
+    const index = transcriptIndex(seq, this.media, tracks);
+    this.transcriptCache = { seq, tracks, media: this.media, index };
+    return index;
   }
 
   getState(): SequencePlayerState {

@@ -181,6 +181,12 @@ search use. It runs on your computer: **nothing is uploaded, and transcribing ne
 A Whisper transcript is split into short lines of a few words, each word with its own timing: the Source and
 Program monitors show the line being spoken and highlight each word as it is said.
 
+On the timeline, a transcribed clip's words show in a **transcript lane** under its audio track: **T1** under A1,
+**T2** under A2. The lane reads the transcript from the media, so transcribing (or re-transcribing) a clip that is
+already in the sequence shows at once. The Program monitor shows the transcript of the clip whose picture is on
+screen: the top visible video clip, or the next one down when that clip has no transcript (a cutaway over dialogue
+keeps the dialogue's words) or its audio is muted. Imported subtitle files still go to the **Subtitles** row.
+
 Transcribing the same stream again (for example with a bigger model) replaces that track in one undo step; repeating
 the same settings is instant, because results are cached. Whisper is good but not perfect: names, songs, shouting,
 overlapping voices and quiet lines can be misheard or missed, and it does not say who is speaking. See

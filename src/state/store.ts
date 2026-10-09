@@ -15,6 +15,7 @@ import type {
   Bin, Clip, DetectedScene, ID, Marker, MediaItem, MediaKind, MediaProbe, Project, ProxyInfo, SceneRecord, Sequence,
   SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock, SubtitleTrack, Track, Transition, TransitionType, TagVocabulary, SequenceView,
 } from '../../shared/model';
+import { withoutCopiedTranscripts } from '../../shared/transcripts';
 import { uid } from '../../shared/ids';
 import { fpsEquals, isValidFps, secondsToFrames } from '../../shared/time';
 import { createProject, createSequence, LiveView } from '../../shared/project';
@@ -596,8 +597,10 @@ export const useStore = create<RecutStore>()((set, get) => {
         transaction: null, ui: resetSelectionUi(s.ui), playback: { playing: false, rate: 1 },
       }));
     },
-    loadProjectData(project, path) {
+    loadProjectData(loaded, path) {
       relinkAwaitingProbe.clear();
+      // Whisper transcripts now show live in T lanes (#112): drop the copies older builds put in subtitle tracks.
+      const project = withoutCopiedTranscripts(loaded);
       set((s) => ({
         project, projectPath: path, dirty: false, revision: s.revision + 1, loadedRevision: s.revision + 1,
         history: emptyHistory(s.history.limit), transaction: null,
@@ -1039,7 +1042,8 @@ export const useStore = create<RecutStore>()((set, get) => {
         if (d.settings.carrySubtitles && anchor) {
           for (const tid of media.subtitleTrackIds) {
             const st = d.subtitleTracks[tid];
-            if (!st) continue;
+            // Whisper transcripts are not copied: they show live in the clip's T lane (#112).
+            if (!st || st.origin === 'whisper') continue;
             const overlapping = readItems(st.cues).filter((c) => c.end > inS && c.start < outS); // read only: no drafts
             if (overlapping.length === 0) continue;
             // Tracks are named by language; untagged ('und') tracks take the media track's name (e.g. the SRT base name).
