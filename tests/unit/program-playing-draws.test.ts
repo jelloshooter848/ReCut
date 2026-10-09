@@ -45,9 +45,13 @@ let rafs: (() => void)[] = [];
 let now = 1000;
 const runRaf = () => { const cbs = rafs; rafs = []; for (const cb of cbs) cb(); };
 
+/** Width of one character in the fake canvas's measureText. */
+const CHAR_PX = 40;
+
 function fakeCanvas(): HTMLCanvasElement {
   const ctx = new Proxy({}, {
-    get: (_t, k) => (k === 'drawImage' ? (el: FakeVideo) => { drawn.push(el); } : k === 'fillText' ? (t: string) => { texts.push(t); } : () => {}),
+    get: (_t, k) => (k === 'drawImage' ? (el: FakeVideo) => { drawn.push(el); } : k === 'fillText' ? (t: string) => { texts.push(t); }
+      : k === 'measureText' ? (t: string) => ({ width: t.length * CHAR_PX }) : () => {}),
     set: () => true,
   });
   return { width: 0, height: 0, getContext: () => ctx } as unknown as HTMLCanvasElement;
@@ -159,6 +163,22 @@ describe('SequencePlayer draws while playing', () => {
     expect(drawn).toHaveLength(1);
     nextFrame();                       // 16: the cue goes
     expect(drawn).toHaveLength(2);
+    player.destroy();
+  });
+
+  it('wraps a long cue onto lines that fit the frame (#114)', () => {
+    const s = createSequence('x', FPS, 1920, 1080);
+    s.videoTracks[0].clips.push(clip('v1', 'S', 0, 240, 2.1));
+    const text = 'So you remember it used to be well if you saw the first video you remember it was mounted to a piece of plywood';
+    s.subtitleTracks.push({ id: 'st', name: 'EN', language: 'en', enabled: true, cues: [{ id: 'c1', start: 0, duration: 100, offset: 0, text }] });
+    const player = new SequencePlayer(fakeCanvas(), new MediaElementPool(8), undefined, { id: 'program' });
+    player.setSequence(s, MEDIA, SETTINGS);
+    texts = [];
+    player.renderFrame(10); for (const v of videos) v.land(); player.renderFrame(10);
+    const lines = [...new Set(texts)].reverse(); // drawn bottom line first
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.join(' ')).toBe(text);
+    for (const l of lines) expect(l.length * CHAR_PX).toBeLessThanOrEqual(1920 * 0.84);
     player.destroy();
   });
 });
