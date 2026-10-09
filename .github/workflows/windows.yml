@@ -58,9 +58,12 @@ name: Windows build
 #     pre-release and NOT Latest (prerelease == 'true'); the files and the gates are the same.
 #   - push of a tag v<MAJOR.MINOR.PATCH> or v<MAJOR.MINOR.PATCH>-rc.<N> (optional manual fallback): the same
 #     release. The tag must equal "v" + package.json version, and CHANGELOG.md must have a "## [<version>]" section, or the run fails in seconds.
-#   - anything else (push to main when v<v> is already tagged or has no changelog section, other branches,
-#     workflow_dispatch): test build. The publish job is skipped; the installers are only the run's ReCut-windows
-#     artifact, and the installer job's summary says where to download them.
+#   - anything else (push to main when v<v> is already tagged or has no changelog section, a push to dev or another
+#     branch, a pull request, workflow_dispatch): test build. The publish job is skipped; the installers are only the
+#     run's ReCut-windows artifact, and the installer job's summary says where to download them.
+#   Only a push event can release: the "Release metadata" and "Release run?" steps check github.event_name == 'push'
+#   before looking at the ref, and the publish job's if: requires a push to main or of a v tag as well as release ==
+#   'true'. A pull_request run (whatever its base or head branch) and a push to dev are always test builds.
 #   Just before publishing, the publish job re-checks that an automatic release's v<v> is still untagged (someone may
 #   have pushed the tag while this run was building). If it is tagged, the job logs a warning that v<v> is already
 #   released, publishes nothing and succeeds.
@@ -75,10 +78,24 @@ name: Windows build
 #   - paths-ignore applies to branch pushes only: GitHub does not evaluate path filters for tag pushes, so a release
 #     tag on a commit that changed only CHANGELOG.md / docs still builds. A push to main that changes only *.md /
 #     docs/** does not run at all, so it cannot release; a release PR always changes package.json, so it does.
+#   - Branches (docs/RELEASING.md, CONTRIBUTING.md "Branches and pull requests"): main holds released code only, dev
+#     is the integration branch, devDavid and devJames are personal branches, and task branches PR into those.
+#     Pushes to main and dev run the workflow (dev: a test build). Pull requests into dev, devDavid and devJames run
+#     it too (test builds), with the same paths-ignore as pushes, so a docs-only PR does not run. Pushes to the
+#     personal and task branches do not run it: their PRs do. (claude/build-recut, the branch CI was first set up on, was
+#     dropped from the push trigger on 9 October 2026: merged into main, no runs since 7 October.)
+#   - Pull requests from forks get no secrets and a read-only GITHUB_TOKEN from GitHub: the macos job sees no signing
+#     secrets and makes an ad-hoc signed test build, as any test build without them does, and nothing fails for lack
+#     of them. Pull requests from branches of this repository get the secrets, as pushes and manual runs do, and
+#     sign their test builds the same way (docs/MACOS-SIGNING.md).
 on:
   push:
-    branches: [claude/build-recut, main]
+    branches: [main, dev]
     tags: ['v[0-9]+.[0-9]+.[0-9]+', 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+']
+    paths-ignore: ['**/*.md', 'docs/**']
+  pull_request:
+    branches: [dev, devDavid, devJames]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore: ['**/*.md', 'docs/**']
   workflow_dispatch:
     inputs:
@@ -87,18 +104,22 @@ on:
         type: boolean
         default: false
 
+# Read-only for every job (checkout, git ls-remote, caches and artifacts need no more). Only the publish job, which
+# runs only for a release, asks for contents: write (it creates the tag and the release). A pull_request run never
+# gets a writable token from this file; a fork's pull_request run gets a read-only one from GitHub regardless.
 permissions:
-  contents: write
+  contents: read
 
-# One run per ref at a time. Other branches cancel a superseded run. Runs on main are never cancelled by a newer
-# push: they queue, because a main run may be the one publishing a release, and cancelling it (two quick merges)
-# would drop the release or let it race the next run. Queueing also serialises the "is v<v> already tagged?" check,
-# so the second run sees the tag the first one created and makes a test build. (GitHub keeps at most one pending
-# run per group: a newer push replaces a still-pending one. If that drops a not-yet-started release run, the newer
-# run releases instead, since v<v> is still untagged and its package.json/CHANGELOG.md still carry v<v>.)
+# One run per pull request, and one per ref for everything else. Only pull_request runs cancel a superseded run (a
+# new push to the PR's branch makes the older run pointless). Runs on main, on a tag, on dev and manual runs are never
+# cancelled: they queue, because a main or tag run may be the one publishing a release, and cancelling it (two quick
+# merges) would drop the release or let it race the next run. Queueing also serialises the "is v<v> already tagged?"
+# check, so the second run sees the tag the first one created and makes a test build. (GitHub keeps at most one
+# pending run per group: a newer push replaces a still-pending one. If that drops a not-yet-started release run, the
+# newer run releases instead, since v<v> is still untagged and its package.json/CHANGELOG.md still carry v<v>.)
 concurrency:
-  group: windows-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: windows-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   installer:
@@ -195,7 +216,9 @@ jobs:
           # ReCut-windows artifact.
           $tag = ''; $name = "ReCut $v test build (run $env:RUN_NUMBER)"; $body = $null; $release = 'false'; $auto = 'false'
 
-          if ($env:REF_TYPE -eq 'tag') {
+          # Only a push can release (a tag push or a push to main). A pull_request run, a push to dev or any other
+          # branch and a manual run stay test builds, whatever their ref looks like.
+          if ($env:EVENT_NAME -eq 'push' -and $env:REF_TYPE -eq 'tag') {
             # Manual fallback: a pushed tag vX.Y.Z must match package.json and have a changelog section.
             if ($env:REF_NAME -cne "v$v") {
               Write-Host "::error::Tag '$env:REF_NAME' does not match package.json version '$v' (expected tag 'v$v'). Tag the merge commit of the release PR that bumped package.json, or fix the version in a new release PR. See docs/RELEASING.md."
@@ -739,8 +762,10 @@ jobs:
   # in its first steps unless all five secrets are set, and later unless the app was Developer ID signed, notarized
   # and stapled. Only test builds may be ad-hoc signed. If the two decisions ever differ because v<version> was tagged
   # between them, the publish job's final tag re-check publishes nothing (the tag then exists).
-  # Secrets are only ever passed through env and never printed. GitHub does not give secrets to pull requests from
-  # forks, and this workflow does not run on pull requests at all. The same five secrets sign both dmgs.
+  # Secrets are only ever passed through env and never printed. The same five secrets sign both dmgs. A pull_request
+  # run is never a release (the "Release run?" step requires a push). GitHub gives no secrets to pull requests from
+  # forks: every HAVE_* is 'false', so such a run is an ad-hoc signed test build and does not fail for lack of them.
+  # A pull request from a branch of this repository gets the secrets and signs its test build like a push does.
   macos:
     name: macOS ${{ matrix.arch }} dmg + smoke test
     runs-on: macos-14
@@ -807,7 +832,8 @@ jobs:
             console.log(v + " " + found);
           ') || { echo '::error::could not read the version from package.json or CHANGELOG.md'; exit 1; }
           release=false
-          if [ "$REF_TYPE" = tag ]; then
+          # Only a push can release (a tag push or a push to main); a pull_request run is always a test build.
+          if [ "$EVENT_NAME" = push ] && [ "$REF_TYPE" = tag ]; then
             release=true
           elif [ "$EVENT_NAME" = push ] && [ "$REF" = refs/heads/main ] && [ "$section" = true ]; then
             rc=0
@@ -933,8 +959,14 @@ jobs:
           echo 'signed=true' >> "$GITHUB_OUTPUT"
           echo "key_path=$key" >> "$GITHUB_OUTPUT"
 
+      # CSC_FOR_PULL_REQUEST: electron-builder skips all macOS code signing, ad-hoc included, when it detects a pull
+      # request build (GITHUB_BASE_REF is set on pull_request events), leaving only the linker's signatures, which
+      # fail the "Code signature" step. With it, a pull request run signs exactly like a push: Developer ID and
+      # notarized when the secrets are set (branches of this repository), ad-hoc otherwise (forks, which get no
+      # secrets; the ad-hoc path below also unsets them). No effect on push and manual runs.
       - name: Package the dmg
         env:
+          CSC_FOR_PULL_REQUEST: 'true'
           SIGNED: ${{ steps.sign.outputs.signed }}
           CSC_LINK: ${{ steps.sign.outputs.signed == 'true' && secrets.CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ steps.sign.outputs.signed == 'true' && secrets.CSC_KEY_PASSWORD || '' }}
@@ -1218,11 +1250,12 @@ jobs:
   # always()/failure()/cancelled() in its if:, so the implicit success() applies: if installer, tests, e2e, launcher,
   # linux, either macos leg or macos-e2e failed, was cancelled or was skipped, this job is skipped and nothing is
   # published (no release, no tag). On a release run a macos leg succeeds only with a Developer ID signed, notarized
-  # and stapled app, so both dmgs attached here are signed.
+  # and stapled app, so both dmgs attached here are signed. The if: also requires a push to main or of a v tag, so
+  # even a wrong release output could not publish from a pull_request run, a dev push or a manual run.
   publish:
     name: Publish GitHub Release
     needs: [installer, tests, e2e, launcher, linux, macos, macos-e2e]
-    if: needs.installer.outputs.release == 'true'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && needs.installer.outputs.release == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     permissions:

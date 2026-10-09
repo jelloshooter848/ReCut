@@ -152,7 +152,8 @@ on every push.
   or run it with `--appimage-extract-and-run`. See [docs/INSTALL.md](docs/INSTALL.md#linux-in-one-step).
 - **From source:** see the quick start below.
 
-The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow on every push.
+The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow on every push to `main` and `dev` and
+on every pull request into `dev`.
 
 ## macOS (Apple Silicon and Intel): download and run
 
@@ -164,9 +165,10 @@ The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow 
   needed. On Intel Macs speech-to-text runs on the CPU only (no Metal), so it is slower; Intel support may be retired
   after 1.0. See [docs/INSTALL.md](docs/INSTALL.md#macos).
 
-Both dmgs are built, signed, notarized and launched from the mounted dmg by the same workflow on every push, on an
-Apple Silicon runner (the Intel one under Rosetta 2). Builds of unreleased commits are the **ReCut-macos-arm64** and
-**ReCut-macos-x64** artifacts of a CI run (Actions › Windows build › the run › Artifacts); see
+Both dmgs are built, signed, notarized and launched from the mounted dmg by the same workflow on every push to `main`
+and `dev` and on every pull request into `dev`, on an Apple Silicon runner (the Intel one under Rosetta 2). The newest
+unreleased code is on the `dev` branch: its builds are the **ReCut-macos-arm64** and **ReCut-macos-x64** artifacts of
+the latest green `dev` run (Actions › Windows build › filter by branch `dev` › the run › Artifacts); see
 [macOS test builds](docs/INSTALL.md#macos-test-builds).
 
 ## Quick start (from source, any OS)
