@@ -143,6 +143,12 @@ describe('words in the project', () => {
     expect(repairs.join(' ')).toMatch(/word timing/);
   });
 
+  it('highlighting the spoken word is on by default, also for projects saved before the setting existed', () => {
+    const p = JSON.parse(serializeProject(createProject('Old')));
+    delete p.settings.highlightSpokenWords;
+    expect(normalizeProjectWithReport(p).project.settings.highlightSpokenWords).toBe(true);
+  });
+
   it('are copied into the sequence with the clip and resolved to frames', () => {
     resetStore();
     const S = useStore.getState;

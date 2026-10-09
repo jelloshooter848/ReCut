@@ -421,6 +421,8 @@ export interface ProjectSettings {
   snapping: boolean;
   defaultTransitionFrames: number;
   showSourceTimecodeOnClips: boolean;
+  /** Highlight the word being spoken in word-timed subtitles, in the Source and Program monitors (#119). */
+  highlightSpokenWords: boolean;
 }
 
 export interface Project {

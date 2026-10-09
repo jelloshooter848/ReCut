@@ -116,7 +116,8 @@ export function SourcePanel({ focused, active }: PanelProps) {
     return out.sort((a, b) => a.start - b.start);
   }, [media, subtitleTracks]);
   const currentCue = useMemo(() => cues.find((c) => c.start <= time && time < c.end) ?? null, [cues, time]);
-  const activeWord = activeWordIndex(currentCue?.words, time);
+  const highlightWords = useStore((s) => s.project.settings.highlightSpokenWords);
+  const activeWord = highlightWords ? activeWordIndex(currentCue?.words, time) : -1;
 
   // ------------------------------------------------------------- refs shared with the transport / callbacks
   const live = useRef({ inPoint, outPoint, duration, fps, loop, isImage, mediaId: media?.id ?? null, playRange: null as { in: number; out: number } | null });

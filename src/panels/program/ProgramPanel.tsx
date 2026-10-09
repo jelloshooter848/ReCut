@@ -201,6 +201,7 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
     const player = new SequencePlayer(canvas, getPool(), getAudioContext() ?? undefined, { id: 'program' });
     playerRef.current = player;
     player.setMasterVolume(prefs.muted ? 0 : prefs.volume);
+    player.setHighlightWords(useStore.getState().project.settings.highlightSpokenWords);
 
     let lastSeq: Sequence | null = null;
     let lastFlat: Sequence | null = null;
@@ -285,6 +286,8 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
     else p.setLoopRange(0, null);
   }, [loopOn, inPoint, outPoint, seqId]);
   useEffect(() => { playerRef.current?.setDrawSubtitles(subtitles); }, [subtitles]);
+  const highlightWords = useStore((s) => s.project.settings.highlightSpokenWords);
+  useEffect(() => { playerRef.current?.setHighlightWords(highlightWords); }, [highlightWords]);
   useEffect(() => { prefs.volume = volume; prefs.muted = muted; playerRef.current?.setMasterVolume(muted ? 0 : volume); }, [volume, muted]);
 
   // ---- letterbox the canvas into the black area (object-fit: contain, computed so overlays can align) ----

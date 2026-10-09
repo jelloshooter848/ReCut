@@ -263,6 +263,7 @@ export class SequencePlayer {
   private frameCbs = new Set<(frame: number) => void>();
   private stateCbs = new Set<(s: SequencePlayerState) => void>();
   private drawSubtitles: boolean;
+  private highlightWords = true;
   private readonly id: string;
   private destroyed = false;
   private offPoolRelease: (() => void) | null = null;
@@ -450,6 +451,11 @@ export class SequencePlayer {
   }
 
   setDrawSubtitles(on: boolean): void { this.drawSubtitles = on; this.invalidate(); this.requestTick(); }
+  /** Highlight the word being spoken in word-timed subtitles (#119; ProjectSettings.highlightSpokenWords). */
+  setHighlightWords(on: boolean): void {
+    if (on === this.highlightWords) return;
+    this.highlightWords = on; this.subtitleKey.frame = NaN; this.invalidate(); this.requestTick();
+  }
 
   /** Synchronously seek to `frame`, update every element (as at rest, not as a scrub step) and draw once. */
   renderFrame(frame: number): void {
@@ -837,7 +843,7 @@ export class SequencePlayer {
     }
     if (this.drawSubtitles) {
       const sk = this.subtitleKey; // the cue scan runs once per timeline frame, not on every rAF tick
-      if (sk.seq !== this.seq || sk.frame !== frame) { sk.seq = this.seq; sk.frame = frame; sk.key = this.getSubtitleAt(frame).map((c) => `|s${c.id}w${activeWordIndex(c.words, frame)}`).join(''); }
+      if (sk.seq !== this.seq || sk.frame !== frame) { sk.seq = this.seq; sk.frame = frame; sk.key = this.getSubtitleAt(frame).map((c) => `|s${c.id}w${this.highlightWords ? activeWordIndex(c.words, frame) : -1}`).join(''); }
       key += sk.key;
     }
     return key;
@@ -1242,7 +1248,7 @@ export class SequencePlayer {
     const lines: [string, boolean][][] = [];
     for (const c of cues) {
       if (c.words?.length) {
-        const active = activeWordIndex(c.words, frame);
+        const active = this.highlightWords ? activeWordIndex(c.words, frame) : -1;
         const texts = c.words.map((w) => w.text);
         for (const line of wrapWords(texts, maxWidth, measure)) lines.push(line.map((i, k) => [k ? ` ${texts[i]}` : texts[i], i === active]));
       } else {

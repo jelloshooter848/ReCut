@@ -195,6 +195,12 @@ describe('SequencePlayer draws while playing', () => {
     nextFrame();                                   // 18: "two" lit
     expect(drawn).toHaveLength(2);
     expect(styled).toEqual(['#fff|one', `${SUBTITLE_HIGHLIGHT}| two`]);
+    // Highlighting off (ProjectSettings.highlightSpokenWords): one repaint, every word white, no repaint per word.
+    styled = [];
+    player.setHighlightWords(false);
+    nextFrame();
+    expect(drawn).toHaveLength(3);
+    expect(styled).toEqual(['#fff|one', '#fff| two']);
     player.destroy();
   });
 
