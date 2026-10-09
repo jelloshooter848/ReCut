@@ -18,6 +18,12 @@ The version lives in `package.json` (and `package-lock.json`). The app reads it 
 `shared/model.ts`, read and migrated in `shared/project.ts`) changes only when the file format changes, never because
 the app version changed. A format change is a MINOR bump at least, and the changelog says so.
 
+### Exceptions
+
+- **0.8.1** (owner's decision, 9 October 2026): shipped as a PATCH although it includes the nested-sequence size
+  limit of PR #94 (a **Changed** item), because 0.8.0 had been out for one day and the Whisper download fix (#102)
+  had to ship.
+
 ## Who changes the version
 
 Only a **release PR** changes the version. Feature and bug PRs never touch `package.json` `version`,

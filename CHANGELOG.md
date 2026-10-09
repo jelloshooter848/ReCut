@@ -5,6 +5,75 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
+## [0.8.1] - 2026-10-09
+
+Bug fixes, chiefly for installing transcription models, which failed for every model in 0.8.0. Project files stay
+`formatVersion` 1.
+
+### Changed
+
+This change ships in a patch release by the maintainer's decision, because 0.8.0 had been out for one day.
+
+- **Nested sequences are limited to 1,000 tracks or 50,000 clips once flattened.** Nesting, pasting, Make Compound
+  Clip and Break Apart refuse edits past the limit, and a project past it opens with the nested clips past it made
+  offline (listed in the repair warning; the original is kept as `.pre-repair`). This fixes projects that stalled or
+  crashed preview and export, but it also cuts very large projects that 0.8.0 still played. See
+  [LIMITATIONS](docs/LIMITATIONS.md#editing-and-effects).
+
+### Fixed
+
+- **Installing a Whisper model failed for every model, on every platform** (File › Transcription Models… ›
+  Install; GitHub issue #102): Hugging Face now hands downloads to storage hosts such as `us.aws.cdn.hf.co`, which
+  ReCut refused. Its storage hosts under `huggingface.co` and `hf.co` are now accepted, and every model is still
+  checked against its fixed SHA-256. A download that receives nothing for 60 seconds now stops with "the download
+  stalled" (**Resume** continues it), and a failed download names the host or the HTTP error
+  ([report](bugs/closed/2026-10-09-whisper-model-download-redirect.md)).
+- Nested sequences nested on several tracks at every level could make preview and export stall, or fail outright
+  ([report](bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md)). Make Compound Clip now also respects the
+  8-level nesting limit.
+- Quitting could get stuck, so ReCut had to be killed, if its window crashed or stopped responding during the quit
+  ([report](bugs/closed/2026-10-08-quit-stuck-after-renderer-dies.md)).
+- A finished background job (a proxy, scene detection, channel preview audio) marked a saved project as changed, so
+  quitting asked to save although nothing had changed
+  ([report](bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md)).
+- File › Collect Project… with **Include proxies** did not copy the preview audio of channel selections (an
+  extracted centre channel, a downmix), so the copy still pointed at the original computer
+  ([report](bugs/closed/2026-10-08-collect-skips-channel-proxies.md)); with **Include subtitle files** it skipped
+  subtitle files that only a sequence snapshot still names
+  ([report](bugs/closed/2026-10-08-collect-skips-snapshot-subtitle-sources.md)).
+- The Program monitor could keep showing the frame from before a fast scrub over a long sequence until the playhead
+  rested ([report](bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md)).
+- A damaged or hand-edited project file could freeze the app when a clip was selected: the audio stream details
+  stored in it were not checked on load
+  ([report](bugs/closed/2026-10-08-stored-probe-audio-streams-not-repaired.md)).
+- The export warning for a channel selection on a stream whose 5.1 layout was guessed contradicted itself ("the
+  stream (5.1) has no Centre (FC) channel")
+  ([report](bugs/closed/2026-10-08-channel-warning-names-guessed-layout.md)).
+- File › Import Media… (Ctrl+I) did not offer many formats that the Project panel's Import… accepts (TIFF, HEIC,
+  AVIF, PSD, MTS, 3GP, Opus, DTS and others) ([report](bugs/closed/2026-10-08-import-menu-stale-file-filter.md)).
+- Sequence Settings… could change the frame rate of a sequence that already had clips, silently re-timing every
+  clip. The frame rate is now fixed once a sequence has clips, as the Inspector said
+  ([report](bugs/closed/2026-10-08-sequence-settings-fps-retimes-clips.md)).
+
+### Development
+
+- The Linux and macOS CI jobs check the real Hugging Face download redirects against the app's download policy, so
+  a storage move on their side fails CI before it reaches users.
+- Release candidates (`1.0.0-rc.N`) can be published as pre-releases. The update check tells someone running a
+  candidate about a later candidate or the final release, and still never offers a candidate to a stable version.
+- Performance gate re-run on 0.8.0; the flaky multi-hour scrub gate and the pool-element row are fixed in the bench
+  ([report](bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md)). Attack suites re-run with hostile
+  cases for the 0.8.0 features; Collect round trips cover 0.8.0 content.
+- CONTRIBUTING, a Code of Conduct and GitHub issue forms; README and docs checked against the app.
+- A saved-project fixture for 0.8.1 (`tests/fixtures/projects/recut-0.8.1.recut`).
+- No new npm dependencies.
+
+### Known issues
+
+- Unchanged from 0.8.0: the Intel dmg is tested only under Rosetta 2
+  ([LIMITATIONS](docs/LIMITATIONS.md#platform-and-packaging)), unsigned Windows builds (SmartScreen), NSIS 3.0.4
+  (CVE-2025-43715, only when an installer runs as SYSTEM).
+
 ## [0.8.0] - 2026-10-08
 
 Every feature planned for 1.0 ([Road to 1.0](docs/ROADMAP.md#road-to-10)), in one release: local speech-to-text,
