@@ -103,7 +103,13 @@
 .tl-sub-lane { position: absolute; left: 0; right: 0; top: 0; background: #202026; border-bottom: 1px solid var(--bg-0); }
 /* Transcript lanes (#112): T1 under A1, ... */
 .tl-t-lane { position: absolute; left: 0; right: 0; background: #1d2022; border-bottom: 1px solid var(--bg-0); }
-.tl-cue.transcript { background: var(--clip-audio, #2f7a55); }
+.tl-cue.transcript { background: var(--clip-transcript); }
+/* A collapsed transcript lane: a thin line wherever it has text (#132). */
+.tl-cue-line { position: absolute; height: 3px; border-radius: 1px; background: var(--clip-transcript); }
+.tl-th-t-toggle { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; padding: 0; border: 0; background: none; color: var(--text-dim); cursor: pointer; flex: none; }
+.tl-th-t-toggle:hover { color: var(--text-bright); }
+.tl-th-t-toggle > svg { width: 11px; height: 11px; }
+.tl-th-t.collapsed .tl-th-t-name { line-height: 9px; font-size: 8px; }
 .tl-th-t { border-top: 1px solid var(--bg-0); }
 .tl-th-t-name { font-family: var(--font-mono); font-weight: 700; font-size: 9px; color: var(--text-dim); background: var(--bg-4); border: 1px solid var(--border); border-radius: 2px; padding: 0 4px; line-height: 14px; }
 .tl-cue {

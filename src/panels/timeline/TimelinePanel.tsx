@@ -156,8 +156,9 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const hasSubs = (seq?.subtitleTracks.length ?? 0) > 0 || onScreen.length > 0;
   const transcriptKey = transcripts ? [...transcripts.lanes.keys()].join(',') : '';
   const transcriptTracks = useMemo(() => new Set(transcriptKey ? transcriptKey.split(',') : []), [transcriptKey]);
-  const layout: TrackLayout = useMemo(() => layoutTracks(seq?.videoTracks ?? [], seq?.audioTracks ?? [], { subtitleLane: hasSubs, heights: liveHeights, transcripts: transcriptTracks }),
-    [seq?.videoTracks, seq?.audioTracks, hasSubs, liveHeights, transcriptTracks]);
+  const collapsedTranscripts = useTimelineUi((s) => s.collapsedTranscripts);
+  const layout: TrackLayout = useMemo(() => layoutTracks(seq?.videoTracks ?? [], seq?.audioTracks ?? [], { subtitleLane: hasSubs, heights: liveHeights, transcripts: transcriptTracks, collapsedTranscripts }),
+    [seq?.videoTracks, seq?.audioTracks, hasSubs, liveHeights, transcriptTracks, collapsedTranscripts]);
   const duration = useMemo(() => (seq ? sequenceDuration(seq as unknown as Sequence) : 0), [seq?.videoTracks, seq?.audioTracks]); // eslint-disable-line react-hooks/exhaustive-deps
   const visible = width / zoom;
   const contentFrames = scrollContentFrames(duration, scroll, visible);
@@ -671,7 +672,8 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
           <div className="tl-headers-scroll" ref={headersScrollRef}>
             <div className="tl-headers-content" style={{ height: totalH }}>
               {hasSubs ? <SubtitleLaneHeader height={layout.subtitleLane} count={cues.length + onScreen.length} /> : null}
-              {layout.transcripts.map((r) => <TranscriptLaneHeader key={`t:${r.trackId}`} top={r.top} height={r.height} number={r.index + 1} count={transcripts?.lanes.get(r.trackId)?.length ?? 0} />)}
+              {layout.transcripts.map((r) => <TranscriptLaneHeader key={`t:${r.trackId}`} top={r.top} height={r.height} number={r.index + 1} count={transcripts?.lanes.get(r.trackId)?.length ?? 0}
+                collapsed={r.collapsed} onToggle={() => useTimelineUi.getState().toggleTranscriptCollapsed(r.trackId)} />)}
               {layout.rows.map((row) => {
                 const track = trackById.get(row.id)!;
                 return <TrackHeader key={row.id} seqId={seqId} track={track} top={row.top} height={row.height} number={row.index + 1}
@@ -741,8 +743,9 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
                       {c.text}
                     </div>
                   ))}
-                  {layout.transcripts.map((r) => itemsInRange(transcripts?.lanes.get(r.trackId) ?? [], Math.max(0, viewX0 / zoom), viewX1 / zoom, cueStart, cueEnd).map((c) => (
-                    <div key={c.id} className="tl-cue transcript" style={{ top: r.top + 7, left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={c.text} data-transcript-cue
+                  {layout.transcripts.map((r) => itemsInRange(transcripts?.lanes.get(r.trackId) ?? [], Math.max(0, viewX0 / zoom), viewX1 / zoom, cueStart, cueEnd).map((c) => (r.collapsed
+                    ? <div key={c.id} className="tl-cue-line" style={{ top: r.top + (r.height - 3) / 2, left: c.start * zoom, width: Math.max(2, (c.end - c.start) * zoom) }} title={c.text} />
+                    : <div key={c.id} className="tl-cue transcript" style={{ top: r.top + 7, left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={c.text} data-transcript-cue
                       onPointerDown={(e) => { e.stopPropagation(); if (e.button !== 0) return; const b = contentRef.current!.getBoundingClientRect(); setView({ playhead: xToFrameInt(e.clientX - b.left, zoom, scroll) }); }}>
                       {c.text}
                     </div>

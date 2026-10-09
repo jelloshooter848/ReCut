@@ -8,7 +8,7 @@ import { defaultAudio, defaultTransform } from '../../shared/timeline';
 import {
   clipTranscriptCues, clipTranscriptTrack, cuesAt, onScreenTranscript, onScreenTranscriptAt, onScreenTranscriptClip, transcriptIndex, withoutCopiedTranscripts,
 } from '../../shared/transcripts';
-import { layoutTracks, TRANSCRIPT_LANE_PX } from '../../src/panels/timeline/viewMath';
+import { layoutTracks, TRANSCRIPT_COLLAPSED_PX, TRANSCRIPT_LANE_PX } from '../../src/panels/timeline/viewMath';
 import { useStore, resetStore } from '../../src/state/store';
 import type { Clip, MediaItem, Sequence, SubtitleTrack } from '../../shared/model';
 
@@ -211,8 +211,17 @@ describe('timeline layout', () => {
     const l = layoutTracks(V, A, { transcripts: new Set(['a1']) });
     const a1 = l.rows.find((r) => r.id === 'a1')!;
     const a2 = l.rows.find((r) => r.id === 'a2')!;
-    expect(l.transcripts).toEqual([{ trackId: 'a1', index: 0, top: a1.top + 40, height: TRANSCRIPT_LANE_PX }]);
+    expect(l.transcripts).toEqual([{ trackId: 'a1', index: 0, top: a1.top + 40, height: TRANSCRIPT_LANE_PX, collapsed: false }]);
     expect(a2.top).toBe(a1.top + 40 + TRANSCRIPT_LANE_PX);
     expect(l.total).toBe(a2.top + 40);
+  });
+
+  it('a collapsed T lane is a thin row (#132)', () => {
+    const V = [{ id: 'v1', height: 60, kind: 'video' as const }];
+    const A = [{ id: 'a1', height: 40, kind: 'audio' as const }, { id: 'a2', height: 40, kind: 'audio' as const }];
+    const l = layoutTracks(V, A, { transcripts: new Set(['a1']), collapsedTranscripts: { a1: true } });
+    const a1 = l.rows.find((r) => r.id === 'a1')!;
+    expect(l.transcripts[0]).toMatchObject({ height: TRANSCRIPT_COLLAPSED_PX, collapsed: true });
+    expect(l.rows.find((r) => r.id === 'a2')!.top).toBe(a1.top + 40 + TRANSCRIPT_COLLAPSED_PX);
   });
 });
