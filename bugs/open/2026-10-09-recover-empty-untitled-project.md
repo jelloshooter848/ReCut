@@ -34,10 +34,6 @@ opening the chosen one. A user who changed nothing should not be asked to recove
 - Step 4: "Save changes to "Untitled Project"…?" (Save / Don't Save / Cancel) before the chosen project opens.
 
 ### Evidence
-Screenshot of the prompt at step 2:
-
-![Recover unsaved changes? prompt over a blank project](../images/2026-10-09-recover-empty-untitled-project.webp)
-
 The autosave on disk after these steps, `~/Library/Application Support/ReCut/autosave/untitled.recut.autosave`
 (2686 bytes), is an empty project:
 
