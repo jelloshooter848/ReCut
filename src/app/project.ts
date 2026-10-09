@@ -10,6 +10,7 @@ import {
   setAutosaveRequester, verifyMediaOnline,
 } from '@/state/mediaActions';
 import { activeSequence } from '@/state/selectors';
+import { projectHasUserWork } from '@shared/project';
 import type { RecoveryReply } from '@shared/ipc';
 import { useShellStore } from './shellStore';
 import { setBeforeQuitHandler, setOpenProjectPathHandler } from './bootstrap';
@@ -102,7 +103,7 @@ async function saveBeforeClose(): Promise<boolean> {
  */
 export async function confirmDiscardIfDirty(): Promise<boolean> {
   const st = useStore.getState();
-  if (!st.dirty) return true;
+  if (!st.dirty || !worthSaving()) return true;
   const i = await confirm({
     type: 'question', title: 'Unsaved changes',
     message: `Save changes to "${st.project.name}"?`,
@@ -209,6 +210,12 @@ function cancelIdle(): void {
   gate.reset();
 }
 
+/** False for an untitled project without user work (#111): closing it asks nothing (its autosave is dropped at the next launch). */
+function worthSaving(): boolean {
+  const st = useStore.getState();
+  return st.projectPath !== null || projectHasUserWork(st.project);
+}
+
 async function runAutosave(force = false): Promise<void> {
   if (autosaveInFlight) return;
   const st = useStore.getState();
@@ -294,7 +301,7 @@ async function handleBeforeQuit(): Promise<void> {
   // Tell main we are alive and handling the request: it drops its hung-renderer fallback timer.
   try { await api.quitAck?.(); } catch { /* older main: falls back to its timer */ }
   const st = useStore.getState();
-  if (!st.dirty) { await api.quit(true); return; }
+  if (!st.dirty || !worthSaving()) { await api.quit(true); return; }
   let i = 2;
   try {
     i = await api.message({
