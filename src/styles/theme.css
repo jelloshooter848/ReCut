@@ -26,6 +26,8 @@
   --clip-audio: #3f7a5a;
   --clip-audio-bright: #53997a;
   --clip-title: #7a5a8a;
+  /* Transcript cues on the timeline (T lanes, the on-screen transcript in the Subtitles row, #132). */
+  --clip-transcript: #8a3b4c;
   --clip-adjust: #8a6a3b;
 
   --label-violet: #8e6cf0;

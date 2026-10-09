@@ -222,12 +222,14 @@ export function snapThresholdFrames(zoom: number, px = SNAP_PX): number { return
 export interface TrackLayoutInput { id: string; height: number; kind: 'video' | 'audio' }
 export interface TrackRow { id: string; kind: 'video' | 'audio'; top: number; height: number; /** index within its kind list (0 = V1/A1) */ index: number }
 /** A transcript lane (T1, T2, ...) under the audio track `trackId` (#112); not a track row: no drops, no hit-testing. */
-export interface TranscriptRow { trackId: string; /** index of its audio track (0 = A1 → T1) */ index: number; top: number; height: number }
+export interface TranscriptRow { trackId: string; /** index of its audio track (0 = A1 → T1) */ index: number; top: number; height: number; collapsed: boolean }
 export interface TrackLayout { rows: TrackRow[]; total: number; dividerTop: number; subtitleLane: number; transcripts: TranscriptRow[] }
 
 export const TRACK_DIVIDER_PX = 6;
 export const SUBTITLE_LANE_PX = 32;
 export const TRANSCRIPT_LANE_PX = 32;
+/** A collapsed transcript lane: a thin row with a line where it has text (#132). */
+export const TRANSCRIPT_COLLAPSED_PX = 12;
 export const MIN_TRACK_HEIGHT = 24;
 export const MAX_TRACK_HEIGHT = 240;
 
@@ -247,7 +249,7 @@ export function dropTracks(row: Pick<TrackRow, 'id' | 'kind' | 'index'> | null |
  */
 export function layoutTracks(
   video: TrackLayoutInput[], audio: TrackLayoutInput[],
-  opts: { subtitleLane?: boolean; heights?: Record<string, number>; divider?: number; transcripts?: ReadonlySet<string> } = {},
+  opts: { subtitleLane?: boolean; heights?: Record<string, number>; divider?: number; transcripts?: ReadonlySet<string>; collapsedTranscripts?: Readonly<Record<string, true>> } = {},
 ): TrackLayout {
   const divider = opts.divider ?? TRACK_DIVIDER_PX;
   const lane = opts.subtitleLane ? SUBTITLE_LANE_PX : 0;
@@ -264,7 +266,11 @@ export function layoutTracks(
   const transcripts: TranscriptRow[] = [];
   audio.forEach((t, i) => {
     rows.push({ id: t.id, kind: 'audio', top: y, height: h(t), index: i }); y += h(t);
-    if (opts.transcripts?.has(t.id)) { transcripts.push({ trackId: t.id, index: i, top: y, height: TRANSCRIPT_LANE_PX }); y += TRANSCRIPT_LANE_PX; }
+    if (opts.transcripts?.has(t.id)) {
+      const collapsed = !!opts.collapsedTranscripts?.[t.id];
+      const height = collapsed ? TRANSCRIPT_COLLAPSED_PX : TRANSCRIPT_LANE_PX;
+      transcripts.push({ trackId: t.id, index: i, top: y, height, collapsed }); y += height;
+    }
   });
   return { rows, total: y, dividerTop, subtitleLane: lane, transcripts };
 }

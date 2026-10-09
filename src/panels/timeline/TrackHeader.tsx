@@ -1,5 +1,5 @@
 import React, { memo, useEffect, useRef, useState } from 'react';
-import { Captions, Eye, EyeOff, Highlighter, Lock, LockOpen } from 'lucide-react';
+import { Captions, ChevronDown, ChevronRight, Eye, EyeOff, Highlighter, Lock, LockOpen } from 'lucide-react';
 import type { Track } from '@shared/model';
 import { useStore } from '@/state';
 import { NumberField } from '@/components/ui/NumberField';
@@ -142,11 +142,18 @@ export function SubtitleLaneHeader({ height, count }: { height: number; count: n
   );
 }
 
-/** Header of a transcript lane (#112): "T1" under A1, with the number of transcript cues on it. */
-export function TranscriptLaneHeader({ top, height, number, count }: { top: number; height: number; number: number; count: number }) {
+/** Header of a transcript lane (#112): "T1" under A1, with the number of cues; the chevron collapses it (#132). */
+export function TranscriptLaneHeader({ top, height, number, count, collapsed, onToggle }: {
+  top: number; height: number; number: number; count: number; collapsed: boolean; onToggle(): void;
+}) {
   return (
-    <div className="tl-th-sub tl-th-t" style={{ top, height }} title={`Transcript of the clips on A${number} (from their media; transcribe a clip to fill it)`} data-transcript-lane={number}>
-      <span className="tl-th-t-name">T{number}</span><span>Transcript</span><span className="text-faint">{count}</span>
+    <div className={['tl-th-sub', 'tl-th-t', collapsed ? 'collapsed' : ''].join(' ')} style={{ top, height }}
+      title={`Transcript of the clips on A${number} (from their media; transcribe a clip to fill it)`} data-transcript-lane={number}>
+      <button type="button" className="tl-th-t-toggle" onClick={onToggle} aria-expanded={!collapsed} data-transcript-toggle
+        title={collapsed ? `Expand T${number}` : `Collapse T${number} to a line`}>
+        {collapsed ? <ChevronRight /> : <ChevronDown />}
+      </button>
+      <span className="tl-th-t-name">T{number}</span>{collapsed ? null : <><span>Transcript</span><span className="text-faint">{count}</span></>}
     </div>
   );
 }
