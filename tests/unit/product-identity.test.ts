@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   ENV_PREFIXES, LEGACY_ENV_PREFIXES, LEGACY_PROJECT_EXTENSIONS, LEGACY_REPO_SLUGS, PRODUCT_NAME, PROJECT_EXTENSION, PROJECT_EXTENSIONS,
   PROJECT_FILE_TYPE_NAME, REPO_SLUG, isProjectFilePath, projectFileFilters, projectSaveFilters, readPrefixedEnv, stripProjectExtension,
@@ -47,7 +48,7 @@ describe('project extensions', () => {
       expect(isProjectPath(`/p/x.${e}`)).toBe(true);
       expect(ensureProjectExt(`/p/x.${e}`)).toBe(`/p/x.${e}`);
       expect(projectPathFromArgv(['/opt/app', '--flag', `/p/x.${e}`])).toBe(path.resolve(`/p/x.${e}`));
-      expect(projectPathFromArgv([`file:///p/y.${e}`])).toBe(path.resolve(`/p/y.${e}`));
+      expect(projectPathFromArgv([pathToFileURL(path.resolve(`/p/y.${e}`)).href])).toBe(path.resolve(`/p/y.${e}`));
     }
     expect(ensureProjectExt('/p/x')).toBe(`/p/x.${PROJECT_EXTENSION}`);
     expect(projectPathFromArgv(['/opt/app', '/p/movie.mp4'])).toBeNull();

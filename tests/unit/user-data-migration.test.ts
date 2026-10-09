@@ -74,19 +74,38 @@ describe('isSameFolder', () => {
   });
 });
 
+/** fs whose readlinkSync of `<dir>/SingletonLock` returns `target` (or fails as missing when null). */
+function fakeSingletonLock(dir: string, target: string | null): typeof fs {
+  return {
+    ...fs,
+    readlinkSync: ((p: fs.PathLike) => {
+      if (path.resolve(String(p)) === path.resolve(dir, 'SingletonLock')) {
+        if (target === null) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+        return target;
+      }
+      return fs.readlinkSync(p);
+    }) as typeof fs.readlinkSync,
+  };
+}
+
 describe('isFolderInUse', () => {
   let dir: string;
   beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-udm-lock-')); });
   afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
   it('POSIX: a SingletonLock naming a live process on this host is held; a dead one or another format is not', () => {
-    fs.symlinkSync(`myhost-${process.pid}`, path.join(dir, 'SingletonLock'));
-    expect(isFolderInUse(dir, { platform: 'linux', hostname: 'myhost' })).toBe(true);
-    expect(isFolderInUse(dir, { platform: 'linux', hostname: 'myhost', isPidAlive: () => false })).toBe(false);
+    const lockFs = (target: string | null) => fakeSingletonLock(dir, target);
+    expect(isFolderInUse(dir, { platform: 'linux', hostname: 'myhost', fs: lockFs(`myhost-${process.pid}`) })).toBe(true);
+    expect(isFolderInUse(dir, { platform: 'linux', hostname: 'myhost', isPidAlive: () => false, fs: lockFs(`myhost-${process.pid}`) })).toBe(false);
     // Another machine may be using a shared home folder: held.
-    expect(isFolderInUse(dir, { platform: 'linux', hostname: 'otherhost', isPidAlive: () => false })).toBe(true);
-    fs.unlinkSync(path.join(dir, 'SingletonLock'));
-    expect(isFolderInUse(dir, { platform: 'darwin', hostname: 'myhost' })).toBe(false);
+    expect(isFolderInUse(dir, { platform: 'linux', hostname: 'otherhost', isPidAlive: () => false, fs: lockFs(`myhost-${process.pid}`) })).toBe(true);
+    expect(isFolderInUse(dir, { platform: 'darwin', hostname: 'myhost', fs: lockFs('garbage') })).toBe(false);
+    expect(isFolderInUse(dir, { platform: 'darwin', hostname: 'myhost', fs: lockFs(null) })).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('POSIX: reads a real SingletonLock symlink', () => {
+    fs.symlinkSync(`${os.hostname()}-${process.pid}`, path.join(dir, 'SingletonLock'));
+    expect(isFolderInUse(dir, { platform: process.platform })).toBe(true);
   });
 
   it('Windows: a lockfile that cannot be opened for writing is held', () => {
@@ -216,8 +235,7 @@ describe('migrateUserData', () => {
 
   it('legacy app running: nothing moves, this session uses the legacy folder, no marker', () => {
     seedLegacy();
-    fs.symlinkSync(`${os.hostname()}-${process.pid}`, path.join(legacy, 'SingletonLock'));
-    const out = migrateUserData(opts({ platform: 'linux', isPidAlive: () => true }));
+    const out = migrateUserData(opts({ platform: 'linux', hostname: 'h', isPidAlive: () => true, fs: fakeSingletonLock(legacy, 'h-4242') }));
     expect(out).toMatchObject({ result: 'legacy-in-use', userData: legacy, legacy });
     expect(fs.existsSync(path.join(legacy, 'prefs.json'))).toBe(true);
     expect(fs.existsSync(current)).toBe(false);
