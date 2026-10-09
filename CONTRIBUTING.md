@@ -20,9 +20,19 @@ and paste `ffprobe` output for the original file instead.
 
 ## Development setup
 
-You need **Node.js 20 or 22** (developed on 22) and **FFmpeg 6 or newer** with libx264 (`ffmpeg` and `ffprobe` on
-`PATH`, or set `RECUT_FFMPEG` / `RECUT_FFPROBE`). [docs/INSTALL.md](docs/INSTALL.md#prerequisites) lists the
-prerequisites and how to install FFmpeg on each OS.
+You need **Node.js 20 or 22** (developed on 22). For speech-to-text you also need **cmake** and a C++ compiler
+(macOS: Xcode command line tools and `brew install cmake`; Linux: `cmake` and `g++`; Windows: Visual Studio with the C++
+workload).
+
+`npm run dev` and `npm start` first run `scripts/setup-dev.mjs` (also `npm run setup`), which gets what the release
+builds bundle when it is missing:
+- **FFmpeg** into `resources/ffmpeg/` (`scripts/<os>/get-ffmpeg.*`), unless `ffmpeg` and `ffprobe` are on `PATH` or
+  `RECUT_FFMPEG` is set. [docs/INSTALL.md](docs/INSTALL.md#prerequisites) explains the FFmpeg requirements.
+- **The speech-to-text engine** (whisper.cpp) compiled into `resources/whisper/` (`scripts/<os>/get-whisper.*`), a few
+  minutes the first time. Without cmake it is skipped with a note; ReCut then says the engine is not included and the
+  engine tests are skipped.
+
+Both folders are git-ignored, and later runs skip whatever is already there. Set `RECUT_SKIP_SETUP=1` to skip setup.
 
 ```bash
 git clone https://github.com/jelloshooter848/ReCut.git
@@ -39,10 +49,6 @@ To try things without your own media, generate synthetic, copyright-free test fi
 ```bash
 scripts/make-test-media.sh ./test-media      # add "short" for 4 s scenes
 ```
-
-Speech-to-text needs the whisper.cpp engine compiled into `resources/whisper/` (`scripts/linux/get-whisper.sh`,
-`scripts/mac/get-whisper.sh` or `scripts/windows/get-whisper.ps1`; needs cmake and a C++ compiler). You don't need it
-for most work: without it the app says the engine is not included and the engine tests are skipped.
 
 For isolated runs (so you don't touch your own preferences or cache), set `RECUT_USER_DATA` and `RECUT_CACHE_DIR` to
 temporary folders.

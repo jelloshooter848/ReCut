@@ -163,6 +163,10 @@ npm install
 npm run dev        # development: Vite dev server + Electron, renderer hot reload
 ```
 
+The first `npm run dev` or `npm start` downloads FFmpeg into `resources/ffmpeg/` (unless it is on `PATH`) and compiles
+the speech-to-text engine into `resources/whisper/` when cmake is installed (`scripts/setup-dev.mjs`; run it again with
+`npm run setup`, skip it with `RECUT_SKIP_SETUP=1`). See [CONTRIBUTING.md](../CONTRIBUTING.md#development-setup).
+
 Production build and launch:
 
 ```bash
