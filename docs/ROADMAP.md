@@ -28,6 +28,8 @@ in every release PR (docs/RELEASING.md).
 | 11 | Keyframes, first version (position, scale, opacity, volume; linear and ease) | Done | 0.8.0 |
 | 8 | Nested sequences and compound clips | Done | 0.8.0 |
 | 10, 12–15, 17, 18 | Everything else | Not started; planned after 1.0 ([After 1.0](#after-10)) | — |
+| 20 | Disc file import: unencrypted DVD-Video (VOB / VIDEO_TS) and Blu-ray (BDMV) folders and files | Not started; file-level parity planned before 1.0, titles and playlists after 1.0 | — |
+| 21 | Plug-in / extension interface | Not started; planned after 1.0 ([After 1.0](#after-10)) | — |
 
 Work outside the numbered entries is listed in [CHANGELOG](../CHANGELOG.md), for example the release gate (0.4.0),
 the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
@@ -53,6 +55,7 @@ at franchise scale), on Windows, Linux and macOS. It is not feature parity with 
 | 0.7.0 | Collect Project, the moved-media cache fix, the project compatibility promise and the update notice (all of 0.10.0, shipped early) | §16 (done), 0.10.0 (done) |
 | 0.8.0 | Everything else for 1.0, in one release (owner's decision, 7 October 2026: "don't hold anything"): the official macOS release (Apple Silicon and Intel dmgs, signed and notarised), Delivery 1 (intermediates and audio), Delivery 2 (MKV packaging), local transcription (Whisper), nested sequences and compound clips, keyframes (first version) | §19 macOS part, §6 and the centre-channel utility from §9, §7, §5, §8, §11 (all done) |
 | 0.10.0 | Portability and trust (done early, in 0.7.0) | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/closed/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
+| before 1.0.0-rc.1 | Disc file import, file-level parity (owner's decision, 9 October 2026; moves to 1.1 if it threatens the release candidates) | §20 file-level part |
 | 1.0.0-rc.N | Feature freeze, release candidates | see below |
 | 1.0.0 | Stable release | |
 
@@ -125,6 +128,8 @@ not a promise, as for the Road to 1.0.
 | 1.6.0 | GPU picture | §13 and the titles generator (§18) on one WebGL compositor; §14 (hardware encoders for proxies and export, WebCodecs decode) |
 | 2.0.0 | Cloud-free collaboration | §17. It needs the first change to the project format (`formatVersion` 2: relative media roots, sidecar files), which the compatibility promise ties to a MAJOR release |
 | any | Linux packages | More package formats (Flatpak, .deb) when asked for (§19) |
+| not scheduled | Disc titles and playlists (added 9 October 2026) | §20 follow-up: title and chapter choice from IFO / MPLS, joined VOBs and m2ts clips, multi-angle and branching titles |
+| not scheduled | Plug-in / extension interface (added 9 October 2026) | §21 |
 
 ## 1. Performance at franchise scale
 
@@ -530,6 +535,86 @@ account can provide.
 **Done when:** 0.6.1 publishes a Linux AppImage with bundled FFmpeg and its licence files, gated by a blocking Linux
 CI job; 0.7.0 publishes a macOS .dmg with bundled arm64 FFmpeg, signed and notarized (or labelled a test build with
 first-launch instructions until it is), with the macOS job blocking once the platform is official.
+
+## 20. Disc file import (DVD-Video and Blu-ray folders and files)
+
+**Why:** fan edits start from DVDs and Blu-rays, and many editors keep them as unencrypted DVD-Video (VOB / VIDEO_TS)
+and Blu-ray (BDMV) folders and files. ReCut opens the Blu-ray stream files today (`m2ts` / `mts` are in the Import
+dialog's Video list), but `vob` is in no import list (`VIDEO_EXTS`, `src/state/parseIdentity.ts`), so the dialog shows
+VOBs only under **All files**; `.IFO` / `.BUP` files dropped with them become items with an **Error** badge (FFprobe
+refuses them); and there is no folder import that finds the media inside `VIDEO_TS` or `BDMV`.
+**ReCut never decrypts discs.** It reads only unencrypted DVD-Video (VOB / VIDEO_TS) and Blu-ray (BDMV) folders and
+files that the bundled FFmpeg already opens, as the README's Legal section says.
+**Parity** means a disc file behaves as an MPEG-TS / M2TS file does today: import (Import dialog, drag and drop, folder
+import), probe, preview through the automatic proxy (Chromium decodes none of MPEG-2, VC-1, AC-3, DTS or LPCM), scene
+detection, every audio stream, VobSub and PGS read with OCR (§4), frame-accurate export, Collect Project and Relink.
+**Measured (9 October 2026)** against the bundled FFmpeg builds (configuration and component lists of all three:
+Windows gyan.dev 9.0.2 essentials, Linux BtbN 9.0.2, macOS jellyfin-ffmpeg 8.1.3; ReCut's probe, proxy, scene, OCR
+and export code run with BtbN 9.0.2 and with jellyfin-ffmpeg 8.1.3's Linux build) on generated media: a VOB with
+MPEG-2, 5.1 and stereo AC-3 and VobSub; the same title split as a disc splits it (`VTS_01_1.VOB` / `VTS_01_2.VOB`, at
+a 2048-byte pack boundary inside a GOP); a VOB of two separately authored cells; a `BDMV/STREAM/00001.m2ts` with
+H.264, AC-3, LPCM and PGS; a `VIDEO_TS` with IFO / BUP files.
+- Every build has the `mpeg` and `mpegts` demuxers and the MPEG-2, VC-1, AC-3, E-AC-3, DTS, TrueHD, LPCM, VobSub and
+  PGS decoders. The title readers do not: the `dvdvideo` demuxer (libdvdnav / libdvdread) is only in the Linux build,
+  the `bluray:` protocol (libbluray) only in the Linux and macOS builds.
+- A whole-title VOB and the m2ts work with no new code: probe (every stream, 8:9 pixel aspect), proxy with every
+  audio stream, the same scene cuts and exported frames as an MKV remux of the same streams, and VobSub / PGS events on
+  their authored times.
+- What breaks: (1) a file that starts inside a GOP (`VTS_01_2.VOB`, a cut m2ts) has video that starts after the
+  container start, and a clip whose video gets its own FFmpeg input exports its picture that much early (21 frames on
+  the VOB, 5 on the m2ts). Today's `.ts` files have the same bug (video 0.5 s after audio: 12 frames early when the
+  video has its own input, exact when linked picture and sound share one, exact in an MKV remux), so it is fixed
+  first. (2) The default probe window misses a VobSub stream whose first subtitle comes late in the file. (3) A VOB
+  whose timestamps restart probes as 20 s of its 60 s and exports black past those 20 s. (4) Every disc names its
+  pieces `VTS_01_1.VOB`, `VTS_01_2.VOB`, … and full pieces are usually the same size, so Relink › **Search
+  folder…** (name + size) cannot tell two discs apart.
+**Plan, before 1.0 (file-level parity, one slice):** `vob` in the import lists and `docs/FORMATS.md`; **Import
+Folder…** and dropping a folder, which walk it (the Relink folder walk in `electron/fs.ts`) and import the title VOBs
+of a `VIDEO_TS` (`VTS_nn_1.VOB` onwards, not the menu VOBs) and the `BDMV/STREAM` m2ts files (not `BACKUP`), named
+after the disc folder; `.IFO`, `.BUP`, `.mpls` and `.clpi` skipped with one message; fixes (1) to (4): the probed
+container start passed to FFmpeg for MPEG-TS / PS inputs, a wider probe window for both, a warning for timestamp
+restarts (Media Inspector, Export checks), Relink preferring the candidate under the same disc folder; tests on
+generated media and an e2e folder import. The shipped FFmpeg builds only, no native library, no new npm dependency.
+About the size of the stills work (#42: 22 files, about 1,500 lines with tests); smaller than MKV packaging (#70).
+**After 1.0 (follow-up):** title and chapter choice from IFO / MPLS; a title's VOBs or a playlist's m2ts clips joined
+into one media item (each later VOB starts inside a GOP, so its first part-second has no picture: 0.87 s in the
+test); remuxing files with timestamp restarts; multi-angle and seamless-branching titles, which need the disc's
+navigation data. FFmpeg's title readers would need other builds on Windows and macOS, so this means IFO / MPLS readers
+of ReCut's own and a media item that spans files (Collect, Relink, the cache key and the probe all change).
+**Done when:** VOBs and BDMV m2ts files, imported one by one or as a disc folder, pass the parity list above on
+Windows, Linux and macOS with the bundled FFmpeg.
+**Status: planned (before 1.0, the owner's decision of 9 October 2026: before 1.0 if file-level parity is not too much
+work, which the measurement above shows); not started.** If it threatens the release candidates it moves to 1.1.
+
+## 21. Plug-in / extension interface
+
+**Why:** some tools help a few editors but do not belong in ReCut itself: an importer or exporter for a niche format,
+a house naming scheme, a batch job, a panel for one workflow. A defined interface lets people build and share them
+as add-ons without forking ReCut, and keeps the core small.
+**Why deferred:** an interface is a promise. It should expose store actions and job kinds that have settled (after
+1.0 and its first milestones), and it needs a permission model before code from outside the project runs.
+**Plan:** a versioned add-on API.
+- **What an add-on can add:** menu commands (with shortcuts), panels registered like the built-in ones
+  (`registerPanel`), import and export steps (a file type that becomes media, a format the Export dialog offers), and
+  background jobs in the jobs queue with progress and Cancel.
+- **Project access through store actions only:** an add-on reads the project and changes it only by calling the
+  store's actions (`src/state/store.ts`), the ones the UI calls; it never mutates the project. Each change is an undo
+  step, and save, autosave, recovery and the project compatibility promise keep working.
+- **Install, enable, disable:** add-ons are installed from a local folder or file into ReCut's user-data folder,
+  listed with name, version and permissions, enabled or disabled one by one, and removed. A project that used a
+  disabled or removed add-on still opens.
+- **Local, with shown permissions:** add-ons run locally, isolated from ReCut's own code, with no network access.
+  Each declares what it needs (read the project, change it, files the user picks, FFmpeg through the jobs queue);
+  ReCut shows that before enabling it and grants nothing else.
+- **Stability:** the API has its own version (SemVer). An add-on states the range it needs and ReCut refuses one it
+  cannot serve, with a clear message. Within a major version the API only grows; removals wait for the next major
+  and are announced in the CHANGELOG.
+- **The core stays complete:** every built-in feature works with no add-ons installed, and an add-on that fails is
+  disabled with a message instead of breaking the app.
+**Done when:** an example add-on adds a command, a panel, an export step and a job, changes the project through store
+actions with undo, and installs, enables, disables and uninstalls cleanly on Windows, Linux and macOS; ReCut with no
+add-ons passes the same suites as before.
+**Status: planned (after 1.0); not started.**
 
 ## Ordering decisions
 
