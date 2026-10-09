@@ -97,6 +97,12 @@ describe('createLegacyPathRemapper: macOS (symlinked temp folder, case-insensiti
       { platform: 'darwin', realpath, exists: (p) => { try { return fsys.has(realpath(p)); } catch { return false; } } });
     expect(viaVar(`${real}/appdata/Old/cache/proxies/k.mp4`)).toBe('/var/folders/xy/T/run/appdata/New/cache/proxies/k.mp4');
   });
+  it('a root that maps onto itself never answers, whichever spelling the path uses', () => {
+    const same = `${real}/appdata/New`;
+    const remap = createLegacyPathRemapper([{ from: same, to: same }], { platform: 'darwin', realpath, exists: fsys.has });
+    expect(remap('/var/folders/xy/T/run/appdata/New/cache/proxies/k.mp4')).toBeNull();
+    expect(remap(`${same}/cache/proxies/k.mp4`)).toBeNull();
+  });
   it('letter case is ignored on macOS', () => {
     const remap = createLegacyPathRemapper(
       legacyPathRoots([`${real}/appdata/Old`], `${real}/appdata/New`, `${real}/appdata/New/cache`), { platform: 'darwin', realpath, exists: fsys.has });

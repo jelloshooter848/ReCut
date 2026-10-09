@@ -59,6 +59,7 @@ export function createLegacyPathRemapper(roots: readonly PathRoot[], env: RemapE
   return (p: string) => {
     if (typeof p !== 'string' || !p) return null;
     const pForms = forms(p).map((f) => ({ raw: f, key: fold(f) }));
+    const pReal = fold(canonicalPath(p, env));
     for (const r of sorted) {
       for (const from of r.froms) {
         const prefix = from.key.endsWith(P.sep) ? from.key : from.key + P.sep;
@@ -67,7 +68,7 @@ export function createLegacyPathRemapper(roots: readonly PathRoot[], env: RemapE
           const rel = pf.raw.slice(prefix.length);
           if (!rel) continue;
           const candidate = P.join(r.to, rel);
-          if (fold(canonicalPath(candidate, env)) === pf.key) continue; // the root maps onto itself
+          if (fold(canonicalPath(candidate, env)) === pReal) continue; // the root maps onto itself (compared as real paths)
           if (exists(candidate)) return candidate;
         }
       }
