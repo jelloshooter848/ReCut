@@ -28,6 +28,7 @@ import { getWhisperCliPath, whisperCliVersion } from './whisper/engine';
 import { manualRedirectFetch, type NetClientRequest } from './net/electronFetch';
 import { registerUpdateIpc } from './updateIpc';
 import { createQuitFlow } from './quitFlow';
+import { removeStaleChromiumCache } from './chromiumCache';
 import type { UpdateChecker } from './updateCheck';
 
 const isDev = Boolean(process.env.RECUT_DEV_URL) || !app.isPackaged;
@@ -42,6 +43,11 @@ app.setName('ReCut'); // before any getPath('userData') so dev and packaged shar
 if (process.argv.includes('--no-sandbox')) app.commandLine.appendSwitch('no-sandbox');
 // HTMLMediaElement.audioTracks, so the preview plays each clip's selected audio stream (the one export renders).
 app.commandLine.appendSwitch('enable-blink-features', 'AudioVideoTracks');
+// No Chromium HTTP cache. Its folder, <userData>/Cache, is the app's default cache folder <userData>/cache on Windows and
+// macOS (case-insensitive), and with the HTTP cache on Chromium empties that folder at every start except its own
+// Cache_Data (bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md; electron/chromiumCache.ts). The app
+// loads only local files and recut-media://, and its downloads and the update check do not use the HTTP cache.
+app.commandLine.appendSwitch('disable-http-cache');
 if (process.env.RECUT_DISABLE_GPU === '1' || smoke) app.disableHardwareAcceleration();
 if (process.env.RECUT_USER_DATA) app.setPath('userData', path.resolve(process.env.RECUT_USER_DATA));
 
@@ -384,6 +390,9 @@ if (!gotLock) {
     updates = registerUpdateIpc({ userData: ud, broadcast });
 
     const cacheDir = await resolveCacheDir(ud);
+    // Chromium's leftovers in the default cache folder from earlier versions (electron/chromiumCache.ts). Best effort.
+    const effectiveCacheDir = process.env.RECUT_CACHE_DIR?.trim() ? path.resolve(process.env.RECUT_CACHE_DIR) : cacheDir;
+    void removeStaleChromiumCache({ userData: ud, cacheDir: effectiveCacheDir });
     const ff = resolveFfmpeg();
     try {
       // Downloads (OCR languages, Whisper models) use net.request with manual redirects (electron/net/electronFetch.ts):
