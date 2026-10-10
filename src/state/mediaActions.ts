@@ -248,6 +248,38 @@ export async function relocatedCachePath(api: RecutApi, p: string): Promise<stri
  * under the current one first (relocatedCachePath; the path is updated quietly, like every proxy state write); any
  * other missing proxy resets the item to `none` (so it shows as needing a proxy again).
  */
+/**
+ * After a project is opened: give back the proxies it lost (#136). A proxy that finished after the last save is not in
+ * the file (proxy status is not an edit and does not make the project dirty), and queued / running proxies load as
+ * 'none'; the finished file is still in the content-keyed cache. For every media that needs a proxy to preview and has
+ * none, look one up (RecutApi.lookupProxy: never renders) and mark it ready. Returns the media ids restored.
+ */
+export async function restoreCachedProxies(mediaIds?: ID[]): Promise<ID[]> {
+  const api = recutApi();
+  if (!api?.lookupProxy) return [];
+  const { media, settings } = useStore.getState().project;
+  const todo = (mediaIds ?? Object.keys(media)).filter((id) => {
+    const m = media[id];
+    return !!m && m.proxy.status === 'none' && mediaNeedsProxyForPreview(m);
+  });
+  const restored: ID[] = [];
+  const worker = async () => {
+    for (let id = todo.shift(); id !== undefined; id = todo.shift()) {
+      const m = useStore.getState().project.media[id];
+      if (!m || m.proxy.status !== 'none') continue;
+      let hit: Awaited<ReturnType<RecutApi['lookupProxy']>> = null;
+      try { hit = await api.lookupProxy({ mediaId: id, path: m.path, height: settings.proxyHeight }); } catch { hit = null; }
+      // Still 'none' (a job may have started meanwhile): mark the cached proxy ready.
+      if (!hit || useStore.getState().project.media[id]?.proxy.status !== 'none') continue;
+      useStore.getState().setProxy(id, { status: 'ready', path: hit.path, progress: 1, width: hit.width, height: hit.height, audioStreams: [...hit.audioStreams] });
+      restored.push(id);
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  if (restored.length) say('info', `${plural(restored.length, 'proxy', 'proxies')} restored from the cache`);
+  return restored;
+}
+
 export async function verifyProxies(mediaIds?: ID[]): Promise<ID[]> {
   const api = recutApi();
   if (!api) return [];

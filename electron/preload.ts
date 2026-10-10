@@ -83,6 +83,7 @@ const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
   cancelThumbnails: (requestIds: string[]) => ipcRenderer.invoke(IPC.mediaThumbCancel, requestIds),
   waveform: (path: string, mediaId?: ID, streamIndex?: number) => ipcRenderer.invoke(IPC.mediaWaveform, path, mediaId, streamIndex),
   startProxy: (req: ProxyRequest) => ipcRenderer.invoke(IPC.mediaProxyStart, req),
+  lookupProxy: (req: ProxyRequest) => ipcRenderer.invoke(IPC.mediaProxyLookup, req),
   startChannelProxy: (req: ChannelProxyRequest) => ipcRenderer.invoke(IPC.mediaChannelProxyStart, req),
   startSceneDetect: (req: SceneDetectRequest) => ipcRenderer.invoke(IPC.mediaSceneDetectStart, req),
   extractSubtitles: (path: string, streamIndex: number) => ipcRenderer.invoke(IPC.mediaExtractSubtitles, path, streamIndex),
