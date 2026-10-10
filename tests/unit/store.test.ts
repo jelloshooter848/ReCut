@@ -257,11 +257,33 @@ describe('media', () => {
     expect(S().canRedo()).toBe(false);
   });
 
+  it('batch: several commits are one undo step (#143)', () => {
+    const past = S().history.past.length;
+    S().batch('Rename twice', () => { S().renameProject('A'); S().renameProject('B'); S().batch('inner', () => S().renameProject('C')); });
+    expect(S().project.name).toBe('C');
+    expect(S().history.past.length).toBe(past + 1);
+    expect(getUndoLabels().undo).toBe('Rename twice');
+    S().undo();
+    expect(S().project.name).not.toMatch(/^[ABC]$/);
+    S().batch('Nothing', () => {});
+    expect(S().history.past.length).toBe(past);
+  });
+
+  it('a selection of detected shots survives other edits (#143)', () => {
+    S().setDetectedScenes(media.id, [10, 20], 100);
+    const ids = S().project.media[media.id].detectedScenes.map((x) => x.id);
+    S().selectScenes(ids, 'set');
+    S().renameProject('Other edit');
+    expect(S().ui.selectedSceneIds).toEqual(ids);
+    S().deleteDetectedScene(media.id, ids[0]);
+    expect(S().ui.selectedSceneIds).toEqual(ids.slice(1));
+  });
+
   it('detected scenes: build, merge, split, delete', () => {
     S().setDetectedScenes(media.id, [10, 20, 30], 100);
     let sc = S().project.media[media.id].detectedScenes;
     expect(sc.map((s) => [s.start, s.end])).toEqual([[0, 10], [10, 20], [20, 30], [30, 100]]);
-    expect(sc[0].name).toBe('Scene 001');
+    expect(sc[0].name).toBe('Shot 001');
     S().mergeDetectedScenes(media.id, [sc[1].id, sc[2].id]);
     sc = S().project.media[media.id].detectedScenes;
     expect(sc.map((s) => [s.start, s.end])).toEqual([[0, 10], [10, 30], [30, 100]]);

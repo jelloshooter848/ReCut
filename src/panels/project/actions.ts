@@ -4,7 +4,8 @@
 import type { DetectedScene, ID, MediaItem, MediaProbe, SceneRecord } from '@shared/model';
 import type { FileFilter } from '@shared/ipc';
 import { uid } from '@shared/ids';
-import { allTracks, clipSourceOut } from '@shared/timeline';
+import { allTracks, clipEnd, clipSourceOut, findClip } from '@shared/timeline';
+import { secondsToFrames } from '@shared/time';
 import { AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS } from '@/state/parseIdentity';
 import { toast } from '@/components/ui/toastStore';
 import { invalidateMediaPath } from '@/app/media';
@@ -118,6 +119,78 @@ export function insertAtPlayhead(mediaId: ID, mode: 'insert' | 'overwrite', rang
   if (!range && (dur === undefined || !Number.isFinite(dur) || dur <= 0)) { toast('warn', 'Media has no duration yet (still probing?)'); return; }
   const ids = st.insertFromSource(seq.id, { mediaId, in: range?.in ?? 0, out: range?.out ?? dur!, atFrame: seq.view.playhead, mode });
   if (!ids.length) toast('warn', 'Nothing inserted (tracks locked?)');
+}
+
+/** A source range to place on the timeline (a detected shot). */
+export interface RangeToInsert { mediaId: ID; in: number; out: number }
+
+/**
+ * Insert / overwrite several ranges back to back at the playhead, in the order given, as one undo step (#143).
+ * Leaves the playhead after the last placed clip. Returns how many ranges were placed.
+ */
+export function insertRangesAtPlayhead(ranges: RangeToInsert[], mode: 'insert' | 'overwrite', label = mode === 'insert' ? 'Insert shots' : 'Overwrite shots'): number {
+  const st = useStore.getState();
+  const seq = activeSequence(st);
+  if (!seq) { toast('warn', 'No active sequence'); return 0; }
+  let at = seq.view.playhead;
+  let placed = 0;
+  st.batch(label, () => {
+    for (const r of ranges) {
+      if (!useStore.getState().project.media[r.mediaId]) continue;
+      const ids = useStore.getState().insertFromSource(seq.id, { mediaId: r.mediaId, in: r.in, out: r.out, atFrame: at, mode });
+      if (!ids.length) continue;
+      placed++;
+      // Advance by what was actually placed (inserts are capped at the media end).
+      const now = useStore.getState().project.sequences[seq.id];
+      let end = -Infinity;
+      if (now) for (const id of ids) { const loc = findClip(now, id); if (loc) end = Math.max(end, clipEnd(loc.clip)); }
+      at = Number.isFinite(end) ? end : at + Math.max(1, secondsToFrames(r.out - r.in, seq.fps));
+    }
+  });
+  if (placed) useStore.getState().setView(seq.id, { playhead: at });
+  else if (ranges.length) toast('warn', 'Nothing inserted (tracks locked?)');
+  return placed;
+}
+
+/** Every detected shot of a media item, in source order, back to back at the playhead (one undo step). */
+export function insertAllShots(mediaId: ID, mode: 'insert' | 'overwrite'): number {
+  const m = useStore.getState().project.media[mediaId];
+  if (!m || !m.detectedScenes.length) { toast('info', 'No detected shots'); return 0; }
+  const shots = [...m.detectedScenes].sort((a, b) => a.start - b.start);
+  return insertRangesAtPlayhead(shots.map((s) => ({ mediaId, in: s.start, out: s.end })), mode, mode === 'insert' ? 'Insert all shots' : 'Overwrite all shots');
+}
+
+/**
+ * Shots of one media item whose indices are consecutive in its shot list, in that order; null if the ids span
+ * several media items, include unknown ids, or skip a shot.
+ */
+export function contiguousShots(media: MediaItem, shotIds: ID[]): DetectedScene[] | null {
+  const want = new Set(shotIds);
+  const idx = media.detectedScenes.map((s, i) => (want.has(s.id) ? i : -1)).filter((i) => i >= 0);
+  if (idx.length !== want.size || idx.length === 0) return null;
+  for (let i = 1; i < idx.length; i++) if (idx[i] !== idx[i - 1] + 1) return null;
+  return idx.map((i) => media.detectedScenes[i]);
+}
+
+/** Next free default scene name in the Scene library: "Scene 01", "Scene 02", … */
+export function nextSceneName(): string {
+  const names = new Set(Object.values(useStore.getState().project.scenes).map((s) => s.name));
+  for (let n = 1; ; n++) { const name = `Scene ${String(n).padStart(2, '0')}`; if (!names.has(name)) return name; }
+}
+
+/** Make one Scene library record covering contiguous shots of a media item (#143). Returns its id, or null. */
+export function makeSceneFromShots(mediaId: ID, shotIds: ID[], name: string): ID | null {
+  const m = useStore.getState().project.media[mediaId];
+  const shots = m ? contiguousShots(m, shotIds) : null;
+  if (!m || !shots) { toast('warn', 'Select shots that follow each other in one clip'); return null; }
+  const rec: SceneRecord = {
+    id: uid('scn'), name, mediaId, in: shots[0].start, out: shots[shots.length - 1].end,
+    characters: [...new Set(shots.flatMap((s) => s.characters))], location: '', arc: '', tags: [...new Set(shots.flatMap((s) => s.tags))],
+    notes: '', rating: 0, color: '#4d7cfe', createdAt: Date.now(),
+  };
+  useStore.getState().addScene(rec);
+  toast('ok', `Scene "${name}" made from ${shots.length} shot${shots.length === 1 ? '' : 's'}`);
+  return rec.id;
 }
 
 // ---------------------------------------------------------------- removal
@@ -251,7 +324,7 @@ export async function detectScenes(mediaIds: ID[], threshold?: number): Promise<
   for (const id of mediaIds) {
     const m = useStore.getState().project.media[id];
     if (!m || m.offline || m.kind !== 'video') continue;
-    try { await startSceneDetect(id, threshold); } catch (e) { useStore.getState().setSceneDetectStatus(id, 'failed'); toast('error', `Scene detection failed to start: ${e instanceof Error ? e.message : String(e)}`); }
+    try { await startSceneDetect(id, threshold); } catch (e) { useStore.getState().setSceneDetectStatus(id, 'failed'); toast('error', `Shot detection failed to start: ${e instanceof Error ? e.message : String(e)}`); }
   }
 }
 
@@ -263,12 +336,12 @@ export function addSceneToLibrary(media: MediaItem, scene: DetectedScene): void 
     characters: [...scene.characters], location: '', arc: '', tags: [...scene.tags], notes: '', rating: 0, color: '#4d7cfe', createdAt: Date.now(),
   };
   useStore.getState().addScene(rec);
-  toast('ok', `Added "${scene.name}" to the scene library`);
+  toast('ok', `Added "${scene.name}" to the Scene library`);
 }
 
 export function mergeWithNext(media: MediaItem, sceneId: ID): void {
   const i = media.detectedScenes.findIndex((s) => s.id === sceneId);
   const next = media.detectedScenes[i + 1];
-  if (i < 0 || !next) { toast('info', 'No following scene to merge with'); return; }
+  if (i < 0 || !next) { toast('info', 'No following shot to merge with'); return; }
   useStore.getState().mergeDetectedScenes(media.id, [sceneId, next.id]);
 }

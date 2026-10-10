@@ -39,7 +39,7 @@ export function InfoFooter({ mediaId, sequenceId, open, onToggle }: InfoFooterPr
       if (!p.browserPlayable) { const pl = previewPlaybackLabel(m); rows.push({ k: 'Playback', v: pl.direct ? pl.text : mediaNeedsProxyForPreview(m) && !isStillImage(m) ? (previewReason(m) ?? 'Not directly decodable — needs a proxy') : pl.text, cls: pl.direct ? undefined : 'warn' }); }
     }
     if (m.proxy.status !== 'none') rows.push({ k: 'Proxy', v: m.proxy.status === 'ready' ? `${m.proxy.path ?? ''}${m.proxy.width ? ` (${m.proxy.width}×${m.proxy.height})` : ''}` : m.proxy.status === 'failed' ? `failed: ${m.proxy.error ?? ''}` : m.proxy.status, cls: m.proxy.status === 'failed' ? 'danger' : m.proxy.status === 'ready' ? 'wrap' : undefined });
-    if (m.detectedScenes.length) rows.push({ k: 'Scenes', v: `${m.detectedScenes.length} detected` });
+    if (m.detectedScenes.length) rows.push({ k: 'Shots', v: `${m.detectedScenes.length} detected` });
     if (m.subtitleTrackIds.length) rows.push({ k: 'Subtitles', v: `${m.subtitleTrackIds.length} track${m.subtitleTrackIds.length === 1 ? '' : 's'}` });
     if (m.tags.length) rows.push({ k: 'Tags', v: m.tags.join(', ') });
     rows.push({ k: 'Added', v: dateLabel(m.addedAt) });

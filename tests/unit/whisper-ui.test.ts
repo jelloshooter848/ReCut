@@ -132,7 +132,7 @@ describe('Local Whisper provider and menus', () => {
     const a = mediaWith(AUDIO, 'a.mkv');
     const silent = mediaWith([], 'silent.mkv');
     S().addMedia([a, silent]);
-    const env = { selectedMedia: [a.id], openPanelDialog: () => undefined, startRename: () => undefined, expandScenes: () => undefined, newBin: () => undefined };
+    const env = { selectedMedia: [a.id], selectedShots: [], openPanelDialog: () => undefined, startRename: () => undefined, expandScenes: () => undefined, newBin: () => undefined };
     const item = mediaMenu(a, env).find((i) => i.label === 'Transcribe with Whisper…')!;
     expect(item.disabled).toBe(false);
     item.onSelect!();

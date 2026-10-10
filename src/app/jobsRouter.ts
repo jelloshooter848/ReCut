@@ -100,7 +100,7 @@ function routeSceneDetect(job: JobInfo): void {
       if (!claim(job)) return;
       const r = (job.result ?? null) as SceneDetectResult | null;
       if (!r || !Array.isArray(r.boundaries)) {
-        if (media.sceneDetectStatus !== 'failed') { st.setSceneDetectStatus(media.id, 'failed'); toast('error', `Scene detection returned no result for ${media.name}`); }
+        if (media.sceneDetectStatus !== 'failed') { st.setSceneDetectStatus(media.id, 'failed'); toast('error', `Shot detection returned no result for ${media.name}`); }
         return;
       }
       if (media.sceneDetectStatus === 'done' && media.detectedScenes.length > 0) return; // already applied
@@ -112,7 +112,7 @@ function routeSceneDetect(job: JobInfo): void {
       if (!claim(job)) return;
       if (media.sceneDetectStatus === 'failed') return;
       st.setSceneDetectStatus(media.id, 'failed');
-      toast('error', `Scene detection failed for ${media.name}: ${job.error ?? 'unknown error'}`);
+      toast('error', `Shot detection failed for ${media.name}: ${job.error ?? 'unknown error'}`);
       break;
     case 'canceled':
       if (!claim(job)) return;

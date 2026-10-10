@@ -95,15 +95,24 @@ automatically, whatever **Use proxies** says, usually in seconds to a minute; un
 the Program monitor and the **Needs proxy** chip says "preview audio … in progress". The Inspector's **Preview** row
 shows its state, with **Rebuild** if it failed.
 
-## 3. Detect scenes
+## 3. Detect shots
 
-1. Right-click a video › **Detect Scenes…**. Set the **Threshold** (higher means fewer, stronger cuts) and click
-   **Detect**. The Media Inspector › **Detect** button and Jobs › Proxies › **Detect scenes: selected** / **All
-   without scenes** do the same.
-2. Detected scenes appear under the media row in the Project panel. Right-click a scene to **Load in Source**,
-   **Insert at Playhead**, **Rename**, **Merge with Next**, **Split at Source Time…**, **Tag…**, **Add to Library**
-   or **Delete Scene**.
-3. In the Source monitor, **↑ / ↓** jump between scene boundaries.
+A **shot** runs from one cut to the next. Shots are grouped into **scenes** (the Scenes panel), and scenes into
+sequences.
+
+1. Right-click a video › **Detect Shots…**. Set the **Threshold** (higher means fewer, stronger cuts) and click
+   **Detect**. The Media Inspector › **Detect** button and Jobs › Proxies › **Detect shots: selected** / **All
+   without shots** do the same.
+2. Detected shots appear under the media row in the Project panel. Right-click a shot to **Load in Source**,
+   **Insert at Playhead**, **Make Scene from Shot…**, **Merge with Next**, **Split at Source Time…**, **Rename**,
+   **Tag…**, **Add to Scene Library** or **Delete Shot**.
+3. Select several shots (Shift-click a range, Ctrl/Cmd-click to add) and right-click to act on all of them:
+   **Insert N Shots at Playhead** places them back to back in order, **Make Scene from N Shots…** makes one scene
+   covering them, and **Merge N Shots** joins them (shots that follow each other in one clip). Dragging a selection to
+   the timeline places all of it. Each of these is one undo step.
+4. Right-click the video › **Insert All Shots at Playhead** puts every shot on the timeline in order, as separate
+   clips: a starting point for a recut.
+5. In the Source monitor, **↑ / ↓** jump between shot boundaries.
 
 ## 4. Import subtitles
 
@@ -208,7 +217,8 @@ overlapping voices and quiet lines can be misheard or missed, and it does not sa
 Scenes in the library are reusable, tagged source ranges.
 
 - From the Source monitor: mark I/O, then **Make Subclip → Library**.
-- From detected scenes: the Scenes panel's **Import as records** banner, or right-click a scene › **Add to Library**.
+- From detected shots: select shots in the Project panel › **Make Scene from Shots…**, the Scenes panel's **Import as
+  records** banner (one scene per shot), or right-click a shot › **Add to Scene Library**.
 - From the timeline: right-click a clip › **Add to Scene Library**.
 - In the **Scenes** panel (Shift+7), you can also use **From Source In/Out** or **From clip**. Edit name, characters,
   location, arc, tags, rating, colour and notes. Filter, sort (Name, Rating, Created, Duration, Source), group

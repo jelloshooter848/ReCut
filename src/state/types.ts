@@ -146,6 +146,8 @@ export interface StoreActions {
   canRedo(): boolean;
   clearHistory(): void;
   setView(seqId: ID, patch: ViewPatch): void;
+  /** Run `fn`; every commit inside it becomes one undo step named `label` (#143). Nested batches join the outer one. */
+  batch<T>(label: string, fn: () => T): T;
   beginTransaction(): void;
   updateTransient(recipe: Recipe): void;
   endTransaction(label: string): boolean;

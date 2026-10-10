@@ -162,7 +162,10 @@ function pruneUi(project: Project, ui: UIState): UIState {
     if (kept.length !== ui.selectedMediaIds.length) next = { ...next, selectedMediaIds: kept };
   }
   if (ui.selectedSceneIds.length) {
-    const kept = ui.selectedSceneIds.filter((id) => project.scenes[id]);
+    // The selection holds Scene library ids and detected shot ids (dsc_…, under media.detectedScenes) (#143).
+    const shotIds = new Set<ID>();
+    for (const m of Object.values(project.media)) for (const sc of m.detectedScenes) shotIds.add(sc.id);
+    const kept = ui.selectedSceneIds.filter((id) => project.scenes[id] || shotIds.has(id));
     if (kept.length !== ui.selectedSceneIds.length) next = { ...next, selectedSceneIds: kept };
   }
   if (ui.selectedBinId && !project.bins[ui.selectedBinId]) next = { ...next, selectedBinId: null };
@@ -405,6 +408,9 @@ export const useStore = create<RecutStore>()((set, get) => {
     });
   };
 
+  /** Open batch (store.batch): commits inside it share one undo step, pushed when the outermost batch ends. */
+  let openBatch: { snapshot: Project } | null = null;
+
   /** `followMarkers: false` for recipes that replace a sequence wholesale (its markers are already right). */
   const commit = (label: string, recipe: Recipe, opts: { followMarkers?: boolean } = {}): boolean => {
     settleProjectFreeze();
@@ -412,6 +418,10 @@ export const useStore = create<RecutStore>()((set, get) => {
     const produced = produce(prev, recipe);
     if (produced === prev) return false;
     const next = stamp(prev, produced, opts.followMarkers ?? true);
+    if (openBatch) {
+      set((s) => ({ project: next, dirty: true, revision: s.revision + 1, ui: pruneUi(next, s.ui) }));
+      return true;
+    }
     set((s) => ({ project: next, dirty: true, revision: s.revision + 1, history: pushHistory(s.history, prev, label), ui: pruneUi(next, s.ui) }));
     return true;
   };
@@ -561,6 +571,16 @@ export const useStore = create<RecutStore>()((set, get) => {
         seq.view = new LiveView(nv);
       });
       if (next !== prev) set((s) => ({ project: next, viewTick: s.viewTick + 1 }));
+    },
+
+    batch(label, fn) {
+      if (openBatch) return fn();
+      openBatch = { snapshot: get().project };
+      try { return fn(); } finally {
+        const { snapshot } = openBatch;
+        openBatch = null;
+        if (get().project !== snapshot) set((s) => ({ history: pushHistory(s.history, snapshot, label) }));
+      }
     },
 
     beginTransaction() {
@@ -776,7 +796,7 @@ export const useStore = create<RecutStore>()((set, get) => {
         const scenes: DetectedScene[] = [];
         for (let i = 0; i < edges.length - 1; i++) {
           if (edges[i + 1] - edges[i] <= 0) continue;
-          scenes.push({ id: uid('dsc'), start: edges[i], end: edges[i + 1], name: `Scene ${String(scenes.length + 1).padStart(3, '0')}`, tags: [], characters: [] });
+          scenes.push({ id: uid('dsc'), start: edges[i], end: edges[i + 1], name: `Shot ${String(scenes.length + 1).padStart(3, '0')}`, tags: [], characters: [] });
         }
         m.detectedScenes = scenes;
         m.sceneDetectStatus = 'done';
