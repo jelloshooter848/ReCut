@@ -19,7 +19,7 @@ test.describe('seek while playing', () => {
     const { app, page, tmp } = launched;
     await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setSize(1400, 900); w.center(); });
     const [mediaId] = await importMedia(page, [path.join(makeTestMedia(tmp, 'short'), MEDIA.movie1)]);
-    const ZOOM = 2;
+    const ZOOM = 1; // frame 200 at 200 px: inside the ruler on a 1024 x 768 screen (the Windows runner), where it is ~380 px wide
     await page.evaluate(({ mediaId, ZOOM }) => {
       const st = (window as unknown as { __recut: { store: { getState(): Record<string, (...a: unknown[]) => unknown> & { project: { activeSequenceId: string } } } } }).__recut.store.getState();
       const seqId = st.project.activeSequenceId;
@@ -35,6 +35,7 @@ test.describe('seek while playing', () => {
     // Click frame 200 on the ruler while playing.
     const r = (await page.locator('.tl-ruler').boundingBox())!;
     const target = 200;
+    expect(target * ZOOM).toBeLessThan(r.width - 10);
     await page.mouse.click(r.x + target * ZOOM, r.y + 10);
 
     // The playhead jumps there (not back to where the player was), and playback goes on from it.
