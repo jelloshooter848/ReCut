@@ -43,6 +43,9 @@ export function mediaMenu(m: MediaItem, env: MenuEnv): MenuItem[] {
       label: 'Insert All Shots at Playhead', disabled: m.offline || !hasSeq, title: `Places all ${m.detectedScenes.length} shots back to back, in order`,
       onSelect: () => { insertAllShots(m.id, 'insert'); },
     }, {
+      label: 'Suggest Scenes…', disabled: m.offline, title: 'Proposes groups of shots as scenes (speech, picture and sound across each cut) for you to review',
+      onSelect: () => env.openPanelDialog({ type: 'suggestScenes', mediaId: m.id }),
+    }, {
       label: 'Name Shots from Transcript', title: 'Names each shot from the first words spoken in it (Whisper transcript or subtitles)',
       onSelect: () => { nameShotsFromTranscript(m.id); },
     }] : []),

@@ -7,6 +7,7 @@ import { formatClock } from '@shared/time';
 import { parseEpisodeInfo } from './parseIdentity';
 import { detectScenes, makeSceneFromShots, nextSceneName } from './actions';
 import { NamePromptDialog } from '@/panels/scenes/NamePromptDialog';
+import { SuggestScenesDialog } from './SuggestScenesDialog';
 
 /** Partial identity update; store.updateMedia merges over the current identity and clears fields set to undefined. */
 function patchIdentity(id: ID, patch: Partial<MediaItem['identity']>): void {
@@ -20,6 +21,7 @@ export type PanelDialog =
   | { type: 'split'; mediaId: ID; sceneId: ID }
   | { type: 'detect'; ids: ID[] }
   | { type: 'makeScene'; mediaId: ID; shotIds: ID[] }
+  | { type: 'suggestScenes'; mediaId: ID }
   | null;
 
 // ---------------------------------------------------------------- Organize as Series
@@ -191,6 +193,7 @@ export function PanelDialogs({ dialog, onClose }: { dialog: PanelDialog; onClose
     return dialog.type === 'series' ? <OrganizeSeriesDialog items={items} onClose={onClose} /> : <CollectionDialog items={items} onClose={onClose} />;
   }
   if (dialog.type === 'detect') return <DetectScenesDialog ids={dialog.ids} onClose={onClose} />;
+  if (dialog.type === 'suggestScenes') return <SuggestScenesDialog mediaId={dialog.mediaId} onClose={onClose} />;
   if (dialog.type === 'makeScene') {
     const { mediaId, shotIds } = dialog;
     return (
