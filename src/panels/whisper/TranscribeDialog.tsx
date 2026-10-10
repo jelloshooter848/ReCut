@@ -25,7 +25,7 @@ import {
   activeTranscribeJob, activeWhisperDownloads, audioStreamLabel, chooseWhisperModel, closeTranscribeDialog, defaultAudioStream, defaultSpokenLanguage,
   downloadProgressLabel, openWhisperModels, transcribeUnavailableReason, useWhisperUi,
 } from '@/whisper/whisperUi';
-import { WHISPER_LANGUAGES, verbatimApplies, whisperTrackName } from '@shared/whisper';
+import { WHISPER_LANGUAGES, whisperTrackName } from '@shared/whisper';
 import type { ID, MediaItem } from '@shared/model';
 import './whisper.css';
 
@@ -50,7 +50,7 @@ export function TranscribeDialog() {
   const [language, setLanguage] = useState('auto');
   const [languageTouched, setLanguageTouched] = useState(false);
   const [translate, setTranslate] = useState(false);
-  const [verbatim, setVerbatim] = useState(true);
+  const [force, setForce] = useState(false);
   const [query, setQuery] = useState('');
   const [starting, setStarting] = useState(false);
   /** Installed model ids when last seen (null right after opening): spots a model that finishes installing. */
@@ -76,7 +76,7 @@ export function TranscribeDialog() {
     setQuery('');
     setStarting(false);
     setTranslate(back ? back.translate : false);
-    setVerbatim(back ? back.verbatim : true);
+    setForce(back ? back.force : false);
     setLanguage(back ? back.language : 'auto');
     setLanguageTouched(back ? back.languageTouched : false);
     setModel(restore?.model ?? null);
@@ -93,8 +93,8 @@ export function TranscribeDialog() {
   // Keep the choices in the store while open, so Finish in background can bring them back (#110).
   useEffect(() => {
     if (!openFor) return;
-    useWhisperUi.setState({ draft: { openFor: [...openFor], checked: [...checked], streams: { ...streams }, language, languageTouched, translate, verbatim } });
-  }, [openFor, checked, streams, language, languageTouched, translate, verbatim]);
+    useWhisperUi.setState({ draft: { openFor: [...openFor], checked: [...checked], streams: { ...streams }, language, languageTouched, translate, force } });
+  }, [openFor, checked, streams, language, languageTouched, translate, force]);
 
   // A model that finishes installing while the dialog is open is selected when none was installed before.
   const installedIds = (models ?? []).filter((m) => m.installed).map((m) => m.id).join(',');
@@ -119,8 +119,6 @@ export function TranscribeDialog() {
     return tags.size === 1 ? [...tags][0] : 'auto';
   }, [chosen.map((m) => `${m.id}:${streamOf(m)}`).join('|')]);
   const lang = englishOnly ? 'en' : languageTouched ? language : defaultLanguage;
-  const verbatimPossible = verbatimApplies({ verbatim: true, language: lang, translate: translate && !englishOnly });
-  const verbatimOn = verbatim && verbatimPossible;
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -145,7 +143,7 @@ export function TranscribeDialog() {
       const streamIndex = streamOf(m);
       if (streamIndex === undefined) continue;
       try {
-        await api.startTranscribe({ mediaId: m.id, path: m.path, streamIndex, model: selectedModel, language: lang, translate: translate && !englishOnly, verbatim });
+        await api.startTranscribe({ mediaId: m.id, path: m.path, streamIndex, model: selectedModel, language: lang, translate: translate && !englishOnly, force });
         queued++;
       } catch (e) {
         toast('error', `Could not start transcribing ${m.name}: ${errText(e)}`);
@@ -233,19 +231,18 @@ export function TranscribeDialog() {
             disabled={englishOnly} onChange={(v) => { setLanguage(v); setLanguageTouched(true); }} data-testid="transcribe-language" aria-label="Spoken language" />
         </label>
         <label className="row gap-6 trx-check">
-          <input type="checkbox" checked={verbatimOn} disabled={!verbatimPossible} onChange={(e) => setVerbatim(e.target.checked)} data-testid="transcribe-verbatim" />
-          <span className="text-sm">Verbatim (exact)</span>
-        </label>
-        <div className="text-dim text-sm trx-hint" data-testid="transcribe-verbatim-hint">
-          {verbatimPossible ? 'Keeps every word as spoken, including "um", "uh", stutters and repeats, so they can be found and cut.'
-            : 'Available when transcribing English without translating. Choose English as the language.'}
-        </div>
-        <label className="row gap-6 trx-check">
           <input type="checkbox" checked={translate && !englishOnly} disabled={englishOnly} onChange={(e) => setTranslate(e.target.checked)} data-testid="transcribe-translate" />
           <span className="text-sm">Translate the speech to English</span>
         </label>
         <div className="text-dim text-sm trx-hint" data-testid="transcribe-translate-hint">
           The transcript is less exact when translating: filler words like "um" and "uh" are dropped.
+        </div>
+        <label className="row gap-6 trx-check">
+          <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} data-testid="transcribe-force" />
+          <span className="text-sm">Transcribe again (ignore the saved result)</span>
+        </label>
+        <div className="text-dim text-sm trx-hint" data-testid="transcribe-force-hint">
+          A file already transcribed with the same model and settings normally reuses that transcript at once. Tick this if it came out wrong.
         </div>
         </div>
         {blocked && blocked !== 'Install a transcription model first.' ? <div className="text-sm text-accent-2" data-testid="transcribe-blocked">{blocked}</div> : null}

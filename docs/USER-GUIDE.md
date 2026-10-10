@@ -197,10 +197,10 @@ search use. It runs on your computer: **nothing is uploaded, and transcribing ne
 3. In **Transcribe with Whisper**, tick the media to transcribe (others with audio can be added; a filter helps in
    long projects) and, when a media has several audio streams, choose the stream. Choose the **Model** (installed
    ones; **Manage models…** opens the model list) and the **Language** spoken: the stream's language tag is used
-   when it has one, otherwise **Auto-detect** (which listens to the start of the audio). **Verbatim (exact)** is on by
-   default for English: it keeps every word as spoken, including "um", "uh", stutters and repeats, so they can be
-   found and cut (choose English as the language to use it). **Translate the speech to English** is off by default;
-   a translated transcript is less exact, because filler words are dropped.
+   when it has one, otherwise **Auto-detect** (which listens to the start of the audio). **Translate the speech to
+   English** is off by default; a translated transcript is less exact, because filler words are dropped. A file
+   transcribed before with the same model and settings reuses that transcript at once; tick **Transcribe again (ignore
+   the saved result)** to make a new one, for example if it came out wrong.
 4. Click **Transcribe**. Each media becomes one job in the **Jobs** list with its progress; cancel it there. Long
    films are processed in parts of up to 30 minutes, cut at quiet moments.
 5. When a job finishes, a toast says how many lines were transcribed and the media gets a track named, for example,

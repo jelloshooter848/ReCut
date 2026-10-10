@@ -23,7 +23,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { JobInfo, SubtitleCue, SubtitleWord } from '@shared/model';
 import { uid } from '@shared/ids';
-import { WHISPER_ENGINE_VERSION, WHISPER_VERBATIM_PROMPT, verbatimApplies, whisperDtwPreset, whisperLanguage, type TranscribeRequest, type TranscribeResult } from '@shared/whisper';
+import { WHISPER_ENGINE_VERSION, whisperDtwPreset, whisperLanguage, type TranscribeRequest, type TranscribeResult } from '@shared/whisper';
 import type { JobQueue, JobRunContext } from '../jobs/jobQueue';
 import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
 import { cacheKeyForPath, cacheSubdir, fileExists, removeQuietly } from '../media/cache';
@@ -36,8 +36,12 @@ import { parseProgressLine, parseSegmentLine, parseWhisperJson, segmentsToCues }
 import { CHUNK_SECONDS, planChunks, readWavInfo, writeWavChunk } from './wav';
 import { PRODUCT_NAME } from '../../shared/productIdentity';
 
-/** Bump when a change to extraction / chunking / clean-up changes the text or timing of a result. */
-export const WHISPER_PIPELINE_VERSION = 4;
+/**
+ * Bump when a change to extraction / chunking / clean-up changes the text or timing of a result.
+ * v5 (#158): `-mc 0` and no verbatim prompt; v4 results could loop on hallucinated lines.
+ * v6 (#160): whisper's stock phrases over music ("Thank you." over a logo) are dropped.
+ */
+export const WHISPER_PIPELINE_VERSION = 6;
 /** Share of the progress bar for the audio extraction. */
 const EXTRACT_SHARE = 0.1;
 
@@ -69,16 +73,16 @@ export function transcriptionMediaKey(mediaPath: string): Promise<string> {
 }
 
 /** Settings part of the cache key: everything besides the media that changes the result. */
-export function transcriptionSettingsHash(req: Pick<TranscribeRequest, 'streamIndex' | 'model' | 'language' | 'translate' | 'verbatim'>, modelSha256: string): string {
+export function transcriptionSettingsHash(req: Pick<TranscribeRequest, 'streamIndex' | 'model' | 'language' | 'translate'>, modelSha256: string): string {
   const parts = {
     v: WHISPER_PIPELINE_VERSION, engine: WHISPER_ENGINE_VERSION, stream: req.streamIndex, model: req.model, sha: modelSha256,
-    language: req.language, translate: Boolean(req.translate), verbatim: verbatimApplies(req),
+    language: req.language, translate: Boolean(req.translate),
   };
   return crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 16);
 }
 
 /** Cache file of one transcription result. */
-export function transcriptionCachePath(fileKey: string, req: Pick<TranscribeRequest, 'streamIndex' | 'model' | 'language' | 'translate' | 'verbatim'>, modelSha256: string): string {
+export function transcriptionCachePath(fileKey: string, req: Pick<TranscribeRequest, 'streamIndex' | 'model' | 'language' | 'translate'>, modelSha256: string): string {
   return path.join(cacheSubdir('whisper'), `${fileKey}_s${req.streamIndex}_${req.model}-${transcriptionSettingsHash(req, modelSha256)}.json`);
 }
 
@@ -135,9 +139,15 @@ export function engineFileArg(p: string, from: string): string {
  * whisper-cli arguments for one chunk. `-ojf` writes the JSON result with tokens (word timing, #118); `dtw` is the
  * model's alignment preset (whisperDtwPreset), which needs flash attention off (`-nfa`) to take effect.
  */
-export function whisperArgs(o: { model: string; input: string; outBase: string; threads: number; language: string; translate: boolean; prompt?: string; dtw?: string | null }): string[] {
-  return ['-m', o.model, '-f', o.input, '-of', o.outBase, '-ojf', '-pp', '-t', String(o.threads), '-l', o.language, ...(o.translate ? ['-tr'] : []),
-    ...(o.dtw ? ['--dtw', o.dtw, '-nfa'] : []), ...(o.prompt ? ['--prompt', o.prompt] : [])];
+/**
+ * whisper-cli arguments. `-mc 0`: no text context is carried from one 30 s window to the next, so a line hallucinated
+ * over music or silence cannot repeat itself for the rest of the film (#158: "Thank you." and other lines hundreds of
+ * times; worse with DTW, which needs flash attention off, `-nfa`). No prompt: a "verbatim" filler prompt made it
+ * invent "uh, uh, uh…" rather than keep real fillers, and `-mc 0` drops prompts anyway.
+ */
+export function whisperArgs(o: { model: string; input: string; outBase: string; threads: number; language: string; translate: boolean; dtw?: string | null }): string[] {
+  return ['-m', o.model, '-f', o.input, '-of', o.outBase, '-ojf', '-pp', '-t', String(o.threads), '-l', o.language, '-mc', '0', ...(o.translate ? ['-tr'] : []),
+    ...(o.dtw ? ['--dtw', o.dtw, '-nfa'] : [])];
 }
 
 interface EngineRun { segmentsEnd: number; stderrTail: string[] }
@@ -200,7 +210,8 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
 
   const fileKey = await transcriptionMediaKey(req.path);
   const cacheFile = transcriptionCachePath(fileKey, req, model.sha256);
-  if (await fileExists(cacheFile)) {
+  // Transcribe again (#158) skips the saved result; the new one replaces it.
+  if (!req.force && await fileExists(cacheFile)) {
     const hit = await readCache(cacheFile, req);
     if (hit) { jc.setProgress(1, `${hit.cues.length} lines (cached)`); return hit; }
   }
@@ -237,7 +248,6 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
     const modelArg = engineFileArg(verified.path, tmp);
     const cues: SubtitleCue[] = [];
     let spoken = req.language === 'auto' ? (model.englishOnly ? 'en' : null) : req.language;
-    const prompt = verbatimApplies(req) ? WHISPER_VERBATIM_PROMPT : undefined;
     const dtw = whisperDtwPreset(req.model);
     jc.setProgress(EXTRACT_SHARE, total > 0 ? 'Transcribing…' : 'No audio');
 
@@ -257,7 +267,7 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
       const outBase = 'out';
       await removeQuietly(path.join(tmp, `${outBase}.json`));
       const lang = spoken ?? 'auto';
-      await runEngine(bin, [...(ctx.enginePrefixArgs ?? []), ...whisperArgs({ model: modelArg, input, outBase, threads, language: lang, translate, prompt, dtw })], tmp, seconds, jc,
+      await runEngine(bin, [...(ctx.enginePrefixArgs ?? []), ...whisperArgs({ model: modelArg, input, outBase, threads, language: lang, translate, dtw })], tmp, seconds, jc,
         (f) => jc.setProgress(base + share * f, `Transcribing${label}… ${Math.round((start / info.sampleRate + f * seconds) / 60)} of ${Math.max(1, Math.round(total / 60))} min`),
         (child) => ctx.onEngine?.(child, tmp));
       if (jc.signal.aborted) throw canceled();
@@ -285,7 +295,7 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
   }
 }
 
-/** In-flight transcription per path|stream|model|language|translate|verbatim (dedupe). */
+/** In-flight transcription per path|stream|model|language|translate (dedupe). */
 const inFlightTranscribe: InFlight = new WeakMap();
 
 /** Job title: "Transcribe film.mkv #1 (Whisper Small)". */
@@ -299,7 +309,7 @@ export function transcribeJobTitle(req: TranscribeRequest): string {
  * or running, that job is returned. Its result is a TranscribeResult.
  */
 export function startTranscribeJob(queue: JobQueue, req: TranscribeRequest, ctx: TranscribeJobContext): JobInfo {
-  const key = `${req.path}|${req.streamIndex}|${req.model}|${req.language}|${req.translate ? 1 : 0}|${verbatimApplies(req) ? 1 : 0}`;
+  const key = `${req.path}|${req.streamIndex}|${req.model}|${req.language}|${req.translate ? 1 : 0}`;
   const existing = inFlightJob(queue, inFlightTranscribe, key);
   if (existing) return existing;
   const job = queue.add<TranscribeResult>({
