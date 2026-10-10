@@ -5,7 +5,7 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
-  ArrowDownAZ, ArrowUpAZ, Captions, ChevronDown, ChevronRight, Clapperboard, Copy, Film, LayoutGrid, List, ListOrdered, ListPlus, Palette, Pencil, Plus, Scissors, Star, Trash2, Wand2, Filter, X,
+  ArrowDownAZ, ArrowUpAZ, Captions, ChevronDown, ChevronRight, Clapperboard, Copy, Film, LayoutGrid, List, ListOrdered, ListPlus, Merge, Palette, Pencil, Plus, Scissors, Star, Trash2, Wand2, Filter, X,
 } from 'lucide-react';
 import type { ID, MediaItem, SceneRecord } from '@shared/model';
 import { formatSequenceSecondsTimecode } from '@shared/time';
@@ -179,6 +179,14 @@ export function ScenesPanel({ active }: PanelProps) {
       { label: many ? `Insert ${targets.length} at playhead` : 'Insert at playhead', icon: Plus, disabled: !hasSeq, onSelect: () => (many ? insertScenesAtPlayhead(targets, 'insert') : insertSceneAtPlayhead(scene, 'insert')) },
       { label: many ? `Overwrite ${targets.length} at playhead` : 'Overwrite at playhead', icon: Scissors, disabled: !hasSeq, onSelect: () => (many ? insertScenesAtPlayhead(targets, 'overwrite') : insertSceneAtPlayhead(scene, 'overwrite')) },
       { separator: true },
+      ...(many ? [{
+        label: `Merge ${targets.length} Scenes`, icon: Merge, disabled: targets.some((t) => t.mediaId !== targets[0].mediaId),
+        title: targets.some((t) => t.mediaId !== targets[0].mediaId) ? 'The selected scenes are from different videos' : 'One scene from the first start to the last end',
+        onSelect: () => {
+          const id = useStore.getState().mergeScenes(targets.map((t) => t.id));
+          if (id) { useStore.getState().selectScenes([id], 'set'); anchorRef.current = id; toast.ok(`Merged ${targets.length} scenes into "${useStore.getState().project.scenes[id]?.name}"`); }
+        },
+      }] : []),
       { label: many ? `Make Sequence from ${targets.length} Scenes…` : 'Make Sequence…', icon: ListOrdered, onSelect: () => setSeqPrompt(ordered) },
       {
         label: 'Add to Sequence', icon: ListPlus, disabled: !sequences.length, title: sequences.length ? undefined : 'No sequences yet: use Make Sequence…',

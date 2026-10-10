@@ -94,6 +94,38 @@ describe('store actions', () => {
   });
 });
 
+describe('merge scenes (#152)', () => {
+  it('scenes of one video merge into the first; sequences and clips follow; one undo step', () => {
+    S().updateScene('A', { characters: ['Bourne'], notes: 'one', rating: 2 });
+    S().updateScene('B', { characters: ['Marie'], notes: 'two', rating: 4, location: 'Zurich' });
+    const q = S().addSceneSequence('Act', ['C', 'B', 'A']);
+    const tl = S().project.activeSequenceId!;
+    S().insertFromSource(tl, { mediaId: media.id, in: 30, out: 35, atFrame: 0, mode: 'overwrite', extra: { sceneRecordId: 'B' } });
+    const past = S().history.past.length;
+    expect(S().mergeScenes(['B', 'A'])).toBe('A');
+    const a = S().project.scenes.A;
+    expect(S().project.scenes.B).toBeUndefined();
+    expect(a).toMatchObject({ in: 10, out: 35, characters: ['Bourne', 'Marie'], notes: 'one\n\ntwo', rating: 4, location: 'Zurich' });
+    expect(S().project.sceneSequences[q].sceneIds).toEqual(['C', 'A']);
+    const clips = allTracks(S().project.sequences[tl]).flatMap((t) => t.clips);
+    expect(clips.length).toBeGreaterThan(0);
+    expect(clips.every((c) => c.sceneRecordId === 'A')).toBe(true);
+    expect(S().history.past.length).toBe(past + 1);
+    S().undo();
+    expect(S().project.scenes.B).toBeDefined();
+    expect(S().project.sceneSequences[q].sceneIds).toEqual(['C', 'B', 'A']);
+  });
+
+  it('refuses fewer than two scenes or scenes from different videos', () => {
+    const other: MediaItem = { ...media, id: 'other', path: '/m/other.mkv' };
+    S().addMedia([other]);
+    S().addScene({ ...scene('X', 0, 5), mediaId: 'other' });
+    expect(S().mergeScenes(['A'])).toBeNull();
+    expect(S().mergeScenes(['A', 'X'])).toBeNull();
+    expect(Object.keys(S().project.scenes).sort()).toEqual(['A', 'B', 'C', 'X']);
+  });
+});
+
 describe('project file', () => {
   it('saves and loads sequences; references to missing scenes are dropped with a repair note', () => {
     const id = S().addSceneSequence('Act', ['A', 'C']);

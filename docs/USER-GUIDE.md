@@ -239,6 +239,9 @@ Scenes in the library are reusable, tagged source ranges.
   location, arc, tags, rating, colour and notes. Filter, sort (Name, Rating, Created, Duration, Source), group
   (Character, Location, Arc, Movie / episode) and switch between grid and list views. Double-click or Enter loads a
   scene in Source. Drag it to the timeline to use it.
+- To combine scenes, select scenes from the same video (Shift-click a range) › right-click › **Merge N Scenes**. The
+  result runs from the first start to the last end and keeps the first scene's name; characters, tags and notes are
+  combined. Sequences and timeline clips that used the merged scenes follow. One undo step.
 
 ### Sequences: groups of scenes
 
