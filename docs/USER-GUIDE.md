@@ -3,6 +3,7 @@
 This guide uses a typical project as its example: cutting a TV season (or a film trilogy) down to one character's
 story. Menu and button names are the ones in the app. Shortcuts are the defaults (see [SHORTCUTS](SHORTCUTS.md)).
 On macOS, read Ctrl as Cmd.
+See the [glossary](#glossary) for editing terms used below.
 
 To practise without real media, run `scripts/make-test-media.sh ~/recut-test` and use the "Galaxy Saga" movies and
 the "Station Eleven" episodes it creates.
@@ -616,3 +617,67 @@ sees your IP address as for any web request. Pre-releases (release candidates su
 to a stable version. If you run a release candidate, the check asks GitHub for the list of recent releases instead
 (still one request) and tells you about a later candidate of the same version or the final release. Administrators can turn the prompt and
 the daily check off for an installation with the environment variable `RECUT_UPDATE_CHECK=0`.
+
+## Glossary
+
+- **Alternate cut:** Another version of a sequence made by duplicating it or saving a snapshot, which can be
+  reviewed side by side in [Compare](#11-alternate-cuts-and-comparing-them).
+- **Compound clip:** **Make Compound Clip** moves selected clips and their linked clips into a new sequence at
+  their relative positions with transitions, replacing them with one nested clip for each media type present in the
+  selection; if both video and audio are present, the two nested clips are linked ([Acts and reels](#acts-and-reels-nested-sequences-and-compound-clips)).
+- **Drop-frame timecode:** At 29.97/59.94 fps, ReCut uses SMPTE labels with a semicolon and skips 2/4 timecode
+  numbers each minute except every tenth, keeping the labels aligned with real time; no video frames are dropped
+  ([The screen](#the-screen), [SHORTCUTS](SHORTCUTS.md#timecode-entry)).
+- **Edit point:** The boundary where one clip ends and the next begins; **↑ / ↓** moves the playhead to the
+  previous or next edit point ([Trim](#8-trim), [SHORTCUTS](SHORTCUTS.md#playback)).
+- **Extract:** Removes the In-to-Out range and closes the gap by shifting later clips left; press **'**
+  ([Trim](#8-trim), [SHORTCUTS](SHORTCUTS.md#editing)).
+- **Insert edit:** Usually places source material at sequence In, or at the playhead when sequence In is unset,
+  and pushes later clips right; press **,** ([Assemble with three-point edits](#7-assemble-with-three-point-edits)).
+  If only sequence Out is set, ReCut back-times the edit so it ends there.
+- **Keyframe:** Stores a property value at a frame so it can change over time; ReCut animates Position, Scale,
+  Opacity and audio Level ([Keyframes](#keyframes-ken-burns-moves-ducking-fades-that-are-not-straight)).
+- **Lift:** Removes the In-to-Out range on the targeted tracks but leaves a gap; press **;**
+  ([Trim](#8-trim), [SHORTCUTS](SHORTCUTS.md#editing)).
+- **Linked clips:** Clips linked with **Link / Unlink** can move or trim together; **Ctrl+L** links or unlinks the
+  selection, and **Alt**-clicking an edge selects one side only ([Trim](#8-trim), [SHORTCUTS](SHORTCUTS.md#editing)).
+- **Marker:** A named point or time range on a sequence for a note or navigation; **M** adds one at the playhead or
+  opens an existing marker for editing, while **Chapter** markers become chapters in supported exports
+  ([SHORTCUTS](SHORTCUTS.md#marks-markers), [Export](#15-export)).
+- **Nested sequence:** A sequence used as a clip in another sequence, where edits inside it appear at every use
+  ([Acts and reels](#acts-and-reels-nested-sequences-and-compound-clips)).
+- **Overwrite edit:** Usually places source material at sequence In, or at the playhead when sequence In is unset,
+  replacing material in that range without pushing later clips; press **.**
+  ([Assemble with three-point edits](#7-assemble-with-three-point-edits)). If only sequence Out is set,
+  ReCut back-times the edit so it ends there.
+- **Proxy:** A helper copy used for preview playback when needed; proxies affect preview only, while export reads
+  the original media ([Proxies and relinking](#14-proxies-and-relinking)).
+- **Ripple delete:** Removes the selected clips and shifts later clips earlier to close the gaps; **Shift+Delete**
+  runs it, while clips on locked tracks are left alone ([Trim](#8-trim)).
+- **Ripple trim:** Trims the previous edit to the playhead with **Q**, or the next edit with **W**, shifting later
+  clips accordingly ([Trim](#8-trim), [SHORTCUTS](SHORTCUTS.md#editing)).
+- **Rolling edit:** Moves the cut between adjacent clips, extending one and shortening the other so their combined
+  duration stays the same; choose **Rolling Edit** with **N** ([Trim](#8-trim), [SHORTCUTS](SHORTCUTS.md#tools)).
+- **Sequence:** An editable timeline with video and audio tracks and its own frame rate, with timeline positions
+  measured in frames; **Ctrl+Shift+N** creates one ([Assemble with three-point edits](#7-assemble-with-three-point-edits),
+  [Alternate cuts and comparing them](#11-alternate-cuts-and-comparing-them)).
+- **Sidecar subtitles:** When the sequence has subtitles to export, Export's **Sidecar** option writes them to a
+  separate `.srt` file next to the output; it also works for audio-only formats ([Export](#15-export)).
+- **Slide edit:** Moves a clip without changing its duration or source range; adjacent clips are trimmed to
+  compensate, and across a gap it can move only within that gap (**U**; [Trim](#8-trim),
+  [SHORTCUTS](SHORTCUTS.md#tools)).
+- **Slip edit:** Changes which source frames a clip shows without changing its timeline position or duration
+  (**Y**; [Trim](#8-trim), [SHORTCUTS](SHORTCUTS.md#tools)).
+- **Snapshot:** A named, restorable checkpoint of the current sequence that can be displayed in Compare
+  ([Alternate cuts and comparing them](#11-alternate-cuts-and-comparing-them)).
+- **Source In/Out points:** Mark the start and end of source footage to use in an edit with **I** and **O**
+  ([Assemble with three-point edits](#7-assemble-with-three-point-edits),
+  [SHORTCUTS](SHORTCUTS.md#marks-markers)).
+- **Three-point edit:** Sets three of the four source and sequence In/Out points so ReCut can infer the missing
+  point; if all four are set, the source range takes priority at sequence In, with **,** for Insert and **.** for
+  Overwrite ([Assemble with three-point edits](#7-assemble-with-three-point-edits)).
+- **Transition (Cross Dissolve):** A transition is an effect at a cut: Cross Dissolve blends pictures, Dip to
+  Black fades each clip to or from black, and Audio Crossfade blends sound. **Ctrl+D** applies the default video
+  Cross Dissolve, and **Ctrl+Shift+D** applies the default Audio Crossfade ([Transitions](#9-transitions)).
+- **Trim:** Changes a clip's start or end to show more or less of its source; **Selection (V)** leaves later clips
+  in place, while **Ripple Edit (B)** moves them ([Trim](#8-trim)).
