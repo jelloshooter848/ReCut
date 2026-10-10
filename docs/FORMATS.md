@@ -38,19 +38,28 @@ files are marked **offline**.
 
 ## Preview: direct vs proxy
 
-A file previews **directly** only when all of these are true (`electron/media/probe.ts` → `evaluatePlayability`):
+A file previews **directly** only when all of these are true (`shared/media.ts` → `evaluatePlayability`):
 
 | Check | Accepted |
 |---|---|
 | Container | mp4, mov, m4v, m4a, webm, matroska (mkv), mp3, wav, flac, ogg |
-| Video codec | h264 (8-bit 4:2:0 only), vp8, vp9, av1, theora (in ogg) |
+| Video codec | h264 (8-bit 4:2:0 only), vp8, vp9, av1, theora (in ogg); hevc where this machine decodes it (below) |
 | Audio codecs (every stream) | aac, mp3, opus, vorbis, flac, pcm_s16le, pcm_s24le, pcm_f32le |
 
 Anything else needs a proxy. The reason is shown in the Media Inspector and Source monitor (e.g. "audio codec ac3
 not supported by Chromium"). Typical cases:
 
-- HEVC / H.265, MPEG-2, VC-1, ProRes, DNxHD and other codecs
+- HEVC / H.265 on a machine that can't decode it (see below); MPEG-2, VC-1, ProRes, DNxHD and other codecs
 - H.264 4:2:2, 4:4:4, or 10-bit
+
+**HEVC (H.265)** previews directly, without a proxy, when this machine's Chromium can decode it: ReCut asks the
+preview at startup (`canPlayType` and `MediaSource.isTypeSupported` for HEVC Main and Main 10,
+`src/playback/codecSupport.ts`). That is the case on macOS (hardware decoding) and on Windows with HEVC hardware or the
+HEVC Video Extensions; Linux has no HEVC decoding, so HEVC still needs a proxy there. Only 4:2:0 HEVC at 8 bits (Main)
+or 10 bits (Main 10) in mp4 / mov / m4v qualifies, and every audio stream must still be on the list above. The
+project file keeps the machine-independent result, so a project moved to another machine re-checks there. A file that
+fails to load directly falls back to its proxy (or asks for one). Exports always read the originals with FFmpeg and
+are not affected.
 - AC-3, E-AC-3, DTS or TrueHD audio, even when the video is H.264
 - MPEG-TS / M2TS, AVI, WMV, FLV containers
 

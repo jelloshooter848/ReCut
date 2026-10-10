@@ -22,7 +22,7 @@ import type { Clip, ClipTransform, ID, MediaItem, Rational, Sequence, Track, Tra
 import { clipEnd, sourceTimeAt } from '../../shared/timeline';
 import { envelopeAt } from '../../shared/nest';
 import { evaluateClipProperty, hasTransformKeyframes, hasVolumeKeyframes, transformAt } from '../../shared/keyframes';
-import { audioTrackOrdinal, channelProxyPendingReason, clipChannelProxy, mediaFps, mediaSize, mediaTimeOffset, previewUpmixGain, proxyAudioStreams, resolveAudioStream, resolvePlaybackPath } from './mediaSource';
+import { audioTrackOrdinal, channelProxyPendingReason, clipChannelProxy, mediaFps, mediaSize, mediaTimeOffset, previewUpmixGain, proxyAudioStreams, resolveAudioStream, resolvePlaybackPath, previewPlayable } from './mediaSource';
 
 export interface LayerPlan {
   clipId: ID;
@@ -354,7 +354,7 @@ export function planFrame(seq: Sequence, media: Record<ID, MediaItem>, frame: nu
       let { path, usingProxy } = res;
       let timeOffset = res.timeOffset ?? 0;
       // An older single-stream proxy without the clip's stream: play the original when the browser can decode it.
-      if (usingProxy && stream !== null && m.probe?.browserPlayable && m.probe.audio.length > 1 && !proxyAudioStreams(m).includes(stream)) {
+      if (usingProxy && stream !== null && previewPlayable(m) && m.probe && m.probe.audio.length > 1 && !proxyAudioStreams(m).includes(stream)) {
         path = m.path; usingProxy = false; timeOffset = mediaTimeOffset(m, false);
       }
       // A mono stream played directly is up-mixed to stereo at unity by Web Audio, at -3 dB by the export: match it.

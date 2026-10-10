@@ -4,6 +4,8 @@
  */
 import { MediaElementPool, ThumbnailCache, WaveformCache } from '@/playback';
 import { onSourceLoadError } from '@/playback/sourcePlayer';
+import { previewPlayable } from '@/playback/mediaSource';
+import { markDirectDecodeFailed } from '@/playback/codecSupport';
 import { useStore } from '@/state';
 
 let pool: MediaElementPool | null = null;
@@ -25,10 +27,18 @@ export function getPool(): MediaElementPool {
 export function handleLoadError(path: string): void {
   const st = useStore.getState();
   for (const m of Object.values(st.project.media)) {
+    // An original previewed directly only because this machine's decoder supports it (HEVC, #138) failed to load:
+    // preview it from a proxy from now on (previewPlayable checks directDecodeFailed).
+    if (m.path === path && m.probe && !m.probe.browserPlayable && previewPlayable(m)) {
+      markDirectDecodeFailed(path);
+      invalidateMediaPath(path);
+      st.toast('warning', `"${m.name}" could not be decoded directly on this machine; generate a proxy to preview it.`);
+      continue;
+    }
     if (m.proxy.status !== 'ready' || m.proxy.path !== path) continue;
     st.invalidateProxy(m.id);
     invalidateMediaPath(path);
-    st.toast('warning', m.probe?.browserPlayable
+    st.toast('warning', previewPlayable(m)
       ? `Proxy for "${m.name}" could not be loaded; playing the original.`
       : `Proxy for "${m.name}" could not be loaded; generate a new proxy to preview it.`);
   }
