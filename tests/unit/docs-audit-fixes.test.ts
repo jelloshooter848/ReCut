@@ -1,9 +1,9 @@
 /**
  * Defects found by the docs audit (2026-10-08):
  *  1. File › Import Media… and the Project panel's Import… offer the same file-type filters (one list, docs/FORMATS.md)
- *     (bugs/closed/2026-10-08-import-menu-stale-file-filter.md);
+ *     (bugs/closed/2026-10-08-import-menu-stale-file-filter.md @ 59eafc6);
  *  2. the frame rate of a sequence with clips is fixed: Sequence Settings… disables it and the store action refuses it
- *     (bugs/closed/2026-10-08-sequence-settings-fps-retimes-clips.md);
+ *     (bugs/closed/2026-10-08-sequence-settings-fps-retimes-clips.md @ 59eafc6);
  *  3. Help › About says every release build bundles a GPL FFmpeg, not only the Windows builds.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';

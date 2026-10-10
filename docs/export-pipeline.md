@@ -95,7 +95,7 @@ subtract the probed container start_time `t0` (`MediaProbe.startTime`, clamped a
 exactly what `sourceIn` means (and what the editor, proxies and thumbnails use). Not `-start_at_zero`: for MPEG-TS,
 MPEG-PS and FLV, FFmpeg takes that zero from the streams the command maps, so an input that mapped only a video stream
 starting after the audio exported early by that offset
-([report](../bugs/closed/2026-10-09-ts-late-video-export-early.md)). ffmpeg's default rebasing is not used because it depends on the container: MPEG-TS does not
+([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-ts-late-video-export-early.md)). ffmpeg's default rebasing is not used because it depends on the container: MPEG-TS does not
 rebase to the `-ss` point (its picture came out 1 s early), and each stream's own start offset was lost for
 clips in the first second of a file. `-ss` is only a decode shortcut: `seek = max(0, S - h - preroll)` with
 `h = 0.5/mediaFps`, `preroll = 0.04 s` for MP4/MOV/MKV/WebM (frame-exact input seek) and `1 s` for other
@@ -198,7 +198,7 @@ Muted video tracks are skipped; if any track is soloed, only soloed tracks are r
 A transition of `D` frames between A (outgoing) and B (incoming) is **centered on the cut**. Timeline positions of A
 and B do not move and the total duration is unchanged. Each type renders the picture the Program monitor shows
 (`src/playback/planner.ts` `contribute`, composited by `SequencePlayer.paint`); `tests/unit/export-fade.test.ts`
-measures every frame against it (bugs/closed/2026-10-08-two-sided-transition-preview-mismatch.md).
+measures every frame against it (https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-two-sided-transition-preview-mismatch.md).
 
 **Cross Dissolve** is the linear mix `(1 − t)·A + t·B` over `[cut − h, cut + h)`, `t = k / 2h` on frame `k`:
 
@@ -246,7 +246,7 @@ luma 0: up to 146 levels from the preview.
   opacity (static or keyed) in the per-frame `lut` + `sendcmd` above, so a fade shows the track below, black on V1.
   (FFmpeg's `fade` was used before: it darkened the colour instead of the alpha, and towards luma 0, not 16, since
   it treats `yuva420p` as full range: up to 16 levels darker than the preview, see
-  `bugs/closed/2026-10-07-export-fade-to-black-ends-early.md`.) Measured in `tests/unit/export-fade.test.ts`.
+  `https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-export-fade-to-black-ends-early.md`.) Measured in `tests/unit/export-fade.test.ts`.
 
 Audio uses the Cross Dissolve geometry with `acrossfade=d=2h:c1=tri:c2=tri` (which overlaps the last `2h` of A'
 with the first `2h` of B', i.e. the same `A + B` length), `afade` for the one-sided cases. Its law is the preview's:

@@ -1,5 +1,5 @@
 /**
- * bugs/closed/2026-10-06-edits-during-save-marked-saved.md
+ * bugs/closed/2026-10-06-edits-during-save-marked-saved.md @ 59eafc6
  *
  * A save serializes a snapshot of the project, then awaits serialization slices and the IPC write. Edits committed
  * in that window are not in the file, so the save must not mark them saved: the project stays dirty and the next

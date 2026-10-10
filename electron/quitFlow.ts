@@ -1,5 +1,5 @@
 /**
- * The main process's side of quitting (bugs/closed/2026-10-08-quit-stuck-after-renderer-dies.md). Pure: Electron is
+ * The main process's side of quitting (bugs/closed/2026-10-08-quit-stuck-after-renderer-dies.md @ 59eafc6). Pure: Electron is
  * reached only through the deps, so the state machine is unit-tested (tests/unit/quit-flow.test.ts).
  *
  * A quit request asks the renderer first (ev:beforeQuit): it may prompt Save / Don't Save / Cancel. Until it acks,

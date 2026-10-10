@@ -183,7 +183,7 @@ function tone(d: { data: Float32Array; channels: number }, freq: number, from: n
  * float), so each tone reaches FL of the 5.1 track and L of the stereo track at the source level: 0.0884² / 4 =
  * 1.953e-3. Measured over 1-3 s: 1.9418e-3 (FFmpeg 8.1.3 Linux) to 1.9460e-3 (FFmpeg 6.1.1), 1.9458e-3 on macOS x64
  * (Rosetta 2) and arm64, byte-identical audio in every run on a platform: AC-3 / AAC cost < 0.05 dB per segment
- * (bugs/closed/2026-10-09-mkv-downmix-tone-level-ci-failure.md).
+ * (bugs/closed/2026-10-09-mkv-downmix-tone-level-ci-failure.md @ 59eafc6).
  */
 const DOWNMIX_TONE = (1 / 8 / Math.SQRT2) ** 2 / 4;
 /**

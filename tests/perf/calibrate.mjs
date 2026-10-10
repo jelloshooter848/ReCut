@@ -3,7 +3,7 @@
  * Host calibration for the performance gate (docs/DEVELOPMENT.md → Performance gate → Calibration).
  *
  * A short fixed benchmark that says how fast this machine is, so perf-check.mjs can compare a run on one host with a
- * baseline recorded on another (bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md: hosts of the same
+ * baseline recorded on another (bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md @ 59eafc6: hosts of the same
  * nominal class differed 1.5-2.3x on identical code). Three scores, each the median wall time in ms of a fixed
  * workload (lower = faster), after a warm-up:
  *

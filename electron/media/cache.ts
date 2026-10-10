@@ -1,7 +1,7 @@
 /**
  * On-disk cache layout for derived media (thumbnails, waveforms, proxies, scene detection, OCR and transcription results).
  *
- * Keys (bugs/closed/2026-10-05-moved-media-cache-miss.md):
+ * Keys (bugs/closed/2026-10-05-moved-media-cache-miss.md @ 59eafc6):
  *  - `cacheKeyForPath` is the file's CONTENT key (./identity.ts: size + a sampled fingerprint, no path, no mtime), so
  *    derived media survive moving, renaming, copying, relinking and Collect Project. New entries are written under it.
  *  - The pre-0.10 key, `cacheKeyForFile` (sha1 of path + size + mtime), is kept as a read-only fallback: a lookup

@@ -41,7 +41,7 @@ the shipped licences (0.4.1) and the calibrated performance gate (0.5.0).
 ## Road to 1.0
 
 Decided by the project owner on 7 October 2026, from the review of "ReCut — Whisper Findings and Recommended Roadmap
-to v1.0" and [the 1.0 definition report](../bugs/closed/2026-10-07-roadmap-no-1.0-definition.md).
+to v1.0" and [the 1.0 definition report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-roadmap-no-1.0-definition.md).
 
 **What 1.0 means:** ReCut is reliable for the workflow it was built for (restructuring finished films and television
 at franchise scale), on Windows, Linux and macOS. It is not feature parity with Premiere Pro or DaVinci Resolve.
@@ -54,7 +54,7 @@ at franchise scale), on Windows, Linux and macOS. It is not feature parity with 
 | 0.6.1 | Official Linux release (AppImage) | §19, Linux part (done) |
 | 0.7.0 | Collect Project, the moved-media cache fix, the project compatibility promise and the update notice (all of 0.10.0, shipped early) | §16 (done), 0.10.0 (done) |
 | 0.8.0 | Everything else for 1.0, in one release (owner's decision, 7 October 2026: "don't hold anything"): the official macOS release (Apple Silicon and Intel dmgs, signed and notarised), Delivery 1 (intermediates and audio), Delivery 2 (MKV packaging), local transcription (Whisper), nested sequences and compound clips, keyframes (first version) | §19 macOS part, §6 and the centre-channel utility from §9, §7, §5, §8, §11 (all done) |
-| 0.10.0 | Portability and trust (done early, in 0.7.0) | §16 Collect / Consolidate, the [moved-media cache fix](../bugs/closed/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
+| 0.10.0 | Portability and trust (done early, in 0.7.0) | §16 Collect / Consolidate, the [moved-media cache fix](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-moved-media-cache-miss.md), the project compatibility promise and its tests, an update notice |
 | before 1.0.0-rc.1 | Disc file import, file-level parity (owner's decision, 9 October 2026; moves to 1.1 if it threatens the release candidates) | §20 file-level part |
 | 1.0.0-rc.N | Feature freeze, release candidates | see below |
 | 1.0.0 | Stable release | |
@@ -145,7 +145,7 @@ until now.
 user-facing gates (pass/fail), architecture guardrails (fail on a material regression against
 `tests/perf/baseline.json`) and diagnostic microbenchmarks (reported with their trend, never blocking); see
 `docs/DEVELOPMENT.md` → Performance gate (measurements of 6 October 2026 in
-`bugs/closed/2026-10-05-perf-budgets-2500-clips.md`; compare medians of two or more runs). Remove the remaining
+`https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-perf-budgets-2500-clips.md`; compare medians of two or more runs). Remove the remaining
 per-frame clip re-renders when scrubbing, keep edit commit → paint under 32 ms, and move project open / save / clone
 off the renderer's main thread (compact JSON built off-thread, one `normalizeProject` pass). The benches also cover a 3 h, 6,700-clip sequence at 23.976 fps
 (`buildLongSequence` in `tests/perf/bigProject.mjs`). Re-run the perf, attack and acceptance suites before each large
@@ -155,7 +155,7 @@ unexplained material regression, and diagnostic microbenchmarks remain reported 
 **Status: done (7 October 2026, release 0.3.0).** The final gate (`npm run perf:check -- --runs 2` on bd60227)
 passes 98 of 98 gates and 130 of 130 guardrails in both runs; the 3 h sequence scrubs at about 59 fps at 1 px/frame,
 edits paint in 17–28 ms, save takes 214–249 ms and open 714–808 ms. Record and before/after table:
-`bugs/closed/2026-10-05-perf-budgets-2500-clips.md`. Two deliberate rendering trade-offs were approved for it (waveform
+`https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-perf-budgets-2500-clips.md`. Two deliberate rendering trade-offs were approved for it (waveform
 bars, composited playhead; `docs/attack/performance.md`).
 **Future architecture trigger:** incremental persistence (saving only what changed) or a different project
 representation becomes worth doing when a measurable trigger is hit, for example the end-to-end save or open gate
@@ -300,8 +300,8 @@ file name to `.mp4` (`withMp4` in `src/panels/export/settings.ts`), so packaging
 today.
 **Why deferred:** chapters are no longer the blocker. Since 0.2.0 the sequence's Chapter markers are exported as MP4
 chapters and no metadata is copied from the sources (see [the export chapter / metadata
-bug](../bugs/closed/2026-10-05-export-ignores-chapter-markers-copies-source-metadata.md) and [the first-chapter-break
-fix](../bugs/closed/2026-10-06-first-chapter-break-lost-and-stale-roadmap.md)), and an MKV export would write the same
+bug](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-export-ignores-chapter-markers-copies-source-metadata.md) and [the first-chapter-break
+fix](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-06-first-chapter-break-lost-and-stale-roadmap.md)), and an MKV export would write the same
 chapters (`exportChapters`). What packaging still needs: there is no container option and the export settings force
 `.mp4` (`withMp4` in `src/panels/export/settings.ts`); export mixes everything to one audio track; subtitles are only
 burned in or written as a sidecar file, never as a soft subtitle track.
@@ -452,7 +452,7 @@ verifies each copy (size and fingerprint) and writes the project, with absolute 
 Same-named files from different folders get distinguishing subfolders; offline media are skipped with a warning; a
 failed or canceled collect leaves the folder marked `COLLECT-INCOMPLETE.txt` and never touches the originals. The
 derived-media cache is now keyed by content (size + sampled fingerprint, with the old path key still read), which
-closes the [moved-media cache bug](../bugs/closed/2026-10-05-moved-media-cache-miss.md). Paths stay absolute (§17).
+closes the [moved-media cache bug](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-moved-media-cache-miss.md). Paths stay absolute (§17).
 
 ## 17. Cloud-free collaboration
 

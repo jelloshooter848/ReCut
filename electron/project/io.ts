@@ -817,7 +817,7 @@ function normalizeUpdatePrefs(out: AppPreferences): void {
  * prefs.json is read and replaced (temp file + rename) by several callers at once: the window bounds, the recent
  * list on every open and save, the renderer's prefs and AppInfo (cache folder) requests. On Windows a rename over a
  * file another handle has open fails with EPERM, so a read of prefs.json in flight made a concurrent write fail,
- * and with it the project open that updates the recent list (bugs/closed/2026-10-07-startup-open-fails-prefs-rename-windows.md).
+ * and with it the project open that updates the recent list (bugs/closed/2026-10-07-startup-open-fails-prefs-rename-windows.md @ 59eafc6).
  * Every prefs operation of this process runs here, one at a time; a read-modify-write is one operation, so
  * concurrent updates no longer drop each other's changes either.
  */
@@ -880,7 +880,7 @@ export function updateLayoutPrefs(userData: string, patch: Record<string, number
  * window moves (`set`), and at once when it closes (`flush`). Quitting waits for that last write (`pending`, `flush`;
  * electron/main.ts, will-quit). Every prefs.json write of the process goes through the queue: the close path used to
  * read and replace prefs.json synchronously outside it, which could collide with a queued operation in flight
- * (bugs/closed/2026-10-07-startup-open-fails-prefs-rename-windows.md, follow-ups).
+ * (bugs/closed/2026-10-07-startup-open-fails-prefs-rename-windows.md @ 59eafc6, follow-ups).
  */
 export class LayoutPrefsWriter {
   private latest: Record<string, number> | null = null;

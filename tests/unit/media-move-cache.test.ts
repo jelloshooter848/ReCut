@@ -1,7 +1,7 @@
 /**
  * Derived-media cache behaviour when a source file is moved, renamed or copied.
  *
- * Regression test for bugs/closed/2026-10-05-moved-media-cache-miss.md. Cache keys used to hash the absolute path
+ * Regression test for bugs/closed/2026-10-05-moved-media-cache-miss.md @ 59eafc6. Cache keys used to hash the absolute path
  * (electron/media/cache.ts cacheKeyForFile), so after a move every thumbnail, waveform, proxy and scene lookup for the
  * new path missed and the work was redone. They are now content keys (size + sampled fingerprint, cacheKeyForPath),
  * and entries written under the old path-based key are still found (legacy fallback, adopted under the content key).

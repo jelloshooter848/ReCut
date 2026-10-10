@@ -1,5 +1,5 @@
 /**
- * Scene-detect timestamp precision (bugs/closed/2026-10-07-scene-detect-pts-precision.md): showinfo's `pts_time`
+ * Scene-detect timestamp precision (bugs/closed/2026-10-07-scene-detect-pts-precision.md @ 59eafc6): showinfo's `pts_time`
  * text has 6 significant digits on FFmpeg 6.1, so cuts past 10,000 s were off by frames. Boundaries now come from
  * the integer `pts` after `settb=AVTB`.
  */

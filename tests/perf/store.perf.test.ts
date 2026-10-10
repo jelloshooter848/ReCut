@@ -275,7 +275,7 @@ describe('store @ 2500 clips', () => {
 
   // 0.8.0 content (Roadmap §8 nested sequences, §11 keyframes) at normal scale. Runs after every row above, on a
   // duplicate of the 2,500-clip sequence, so nothing above changes. Not the pathological fan-out case
-  // (bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md): 20 compound clips, each nested once, one level deep.
+  // (bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md @ 59eafc6): 20 compound clips, each nested once, one level deep.
   it('0.8.0 content: nested sequences and keyframes (flatten after an edit, planFrame on the flattened sequence)', () => {
     const host = big.altIds[0];
     const media0 = S().project.media;

@@ -734,7 +734,7 @@ function covers(save: WriteSnapshot, snap: WriteSnapshot): boolean {
 }
 
 /*
- * An autosave never lands after a save that holds its content (bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md).
+ * An autosave never lands after a save that holds its content (bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md @ 59eafc6).
  * Saves and autosaves run on their own queues, and an autosave serializes in idle slices for a while: one that
  * snapshotted the project before or during a save could make its file after the save's. Its file is then newer
  * than the project file while holding nothing the project lacks, and the next launch offers it for recovery after a
@@ -859,8 +859,7 @@ let lastAutosaveDoneAt = 0;
  * An edit made while a manual save was in flight stays dirty (markSaved), and its debounced autosave may have
  * landed before the save's write: recovery then takes that autosave for older than the project file and ignores
  * it, and the lifecycle would only autosave again on its interval tick (60 s by default). Autosave once more
- * AUTOSAVE_AFTER_SAVE_MS after such a save, unless an autosave finished since (bugs/closed/
- * 2026-10-06-autosave-during-save-ignored-by-recovery.md). Never while playing or mid-drag (the lifecycle's rule):
+ * AUTOSAVE_AFTER_SAVE_MS after such a save, unless an autosave finished since (bugs/closed/2026-10-06-autosave-during-save-ignored-by-recovery.md @ 59eafc6). Never while playing or mid-drag (the lifecycle's rule):
  * it waits for those to end. Dropped when the project is saved, replaced or opened meanwhile.
  */
 function autosaveAfterSave(projectId: ID, loadedRevision: number): void {

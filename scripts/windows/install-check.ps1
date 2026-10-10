@@ -3,7 +3,7 @@
 
   1. Silently installs <product>-Setup-*.exe, smoke-tests the installed app (first -SmokeAttempts attempts), silently
      uninstalls it, and repeats -Attempts times. Each uninstall removes the per-user registry keys, so every attempt
-     is a fresh per-user install: the path that crashed in bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md
+     is a fresh per-user install: the path that crashed in bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md @ 59eafc6
      (System.dll 0xc0000005 at offset 0x1581). That crash was intermittent, so a single install proves little.
   2. With -UpgradeFrom <an earlier release's setup exe>: installs that release, installs this build over it and checks
      that it was upgraded in place (one uninstall entry, under the pinned NSIS GUID package.json build.nsis.guid, the

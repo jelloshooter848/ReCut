@@ -231,7 +231,7 @@ with the budget in brackets.
 
 | Row (tier) | R1 | R2 | B1–B3 | A1–A3 (0.7.0) | V1 | V2 | Verdict |
 |---|---|---|---|---|---|---|---|
-| long tasks during scrub multi-hour @ 1 px/frame, no selection (gate, == 0) | 2 | 3 | 0, 0, 0 | 5, 4, 3 | 4 | 0 | Flaky and pre-existing: no change against 0.7.0, which fails 3/3. Fixed in the bench on 9 October (see below and `bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md`) |
+| long tasks during scrub multi-hour @ 1 px/frame, no selection (gate, == 0) | 2 | 3 | 0, 0, 0 | 5, 4, 3 | 4 | 0 | Flaky and pre-existing: no change against 0.7.0, which fails 3/3. Fixed in the bench on 9 October (see below and `https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md`) |
 | long tasks during scrub @ 1 px/frame, within the visible page, no selection (gate, == 0) | 0 | 1 (56 ms) | 0, 0, 0 | 0, 0, 0 | 0 | 0 | Noise: one task 6 ms over the 50 ms limit in the run with outside load |
 | wheel ×100 @ 1 px/frame: median / fps / real mouse.wheel long tasks (gates) | 7.1 ms / 55.6 / 0 | 6.1 / 57.0 / 0 | pass | pass | 9.7 / 48.7 / 1 | 6.4 / 58.6 / 0 | Noise: V1 overlapped my unlocked test |
 | main filmstrip 48 frames cold (guardrail, ≤ 3,000 ms) | 3,036 | 2,859 | (node) | (node) | — | — | Pre-existing: the baseline median is 2,984 ms, over budget in 1 of its 2 seed runs; `electron/media/thumbs.ts` is unchanged since 0.7.0. Open: [#155](https://github.com/jelloshooter848/ReCut/issues/155) |
@@ -270,7 +270,7 @@ filmstrip cold is the pre-existing borderline row in the table above. The multi-
   Budgets are 16 ms for the flatten rows (Program re-flattens on every edit, so they take the store-commit
   budget of one frame) and 2 / 4 ms for the planFrame rows (the per-frame budgets of the other planFrame rows). The
   rows have no baseline until the next re-seed. The pathological fan-out case is a separate bug
-  (`bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md`).
+  (`https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md`).
 - **Baseline unchanged.** No row regressed because of a 0.8.0 cost, nothing improved enough to lock in, and the
   machine is the reference class. None of the conditions for a re-seed applies.
 
@@ -283,7 +283,7 @@ passes").
 
 **This is a fix to the test harness, not to the app.** The flaky gate `long tasks during scrub multi-hour @ 1 px/frame,
 no selection` measured an artifact of how Playwright launches Electron, which the shipped app never hits. No app code,
-budget, tier, row name or baseline changed. Record: `bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md`.
+budget, tier, row name or baseline changed. Record: `https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md`.
 
 - **What the long tasks were.** They were ordinary page-flip frames: about 15 ms of main-thread work at 60 fps, with
   the thread about 95 % busy. In each long task every phase (JS, style, layout, paint, layerize) ran 4–8× its usual
@@ -325,14 +325,14 @@ Each run has a timing pass and a counting pass.
 **`npm run perf:check -- --runs 2` after the fix.**
 - Gates: **98 of 98 PASS** in both runs, with raw verdicts (the host calibrated within ±10 %).
 - Guardrails: 132 of 134.
-  - The pool row read 2 and 2: fixed below, `bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md`.
+  - The pool row read 2 and 2: fixed below, `https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md`.
   - `filmstrip 48 frames warm` read 5.6 and 13.8 ms against 5.2 ms. It is noise: the node suite is unchanged, and
     three locked reruns read 4.35, 4.73 and 3.65 ms.
 - `filmstrip 48 frames cold` passed at 2,528 and 2,706 ms but stays borderline:
   [#155](https://github.com/jelloshooter848/ReCut/issues/155).
 
 **Side finding.** In 1 of 11 runs (possibly 2) the Program monitor issued no seeks during the whole scrub:
-`bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md` (fixed below).
+`https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md` (fixed below).
 
 The same artifact applies to every Playwright-launched suite (e2e, attack). They check correctness, not timing, and
 are unchanged. Perf results recorded before this fix on a disk-backed `/tmp` include the writeback noise. Mostly the
@@ -340,8 +340,8 @@ page-flip and decode-heavy rows were affected.
 
 ### Program scrub stall and pool row (9 October 2026)
 
-Two open items from the run above. Records: `bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md`
-(app fix) and `bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md` (bench fix).
+Two open items from the run above. Records: `https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md`
+(app fix) and `https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md` (bench fix).
 
 **Program monitor scrub stall (app).**
 - **The bug.** `SequencePlayer` waited for a media element's seek without limit, and it never issued a seek again

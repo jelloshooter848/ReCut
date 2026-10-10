@@ -191,7 +191,7 @@ jobs:
             if ($end - $start -lt 2) { return '' }
             return ($lines[($start + 1)..($end - 1)] -join "`n").Trim()
           }
-          # Release body: the changelog section, then the install note. Repository-relative links (bugs/closed/...)
+          # Release body: the changelog section, then the install note. Repository-relative links (docs/...)
           # do not resolve in a release body, so they are pointed at the release tag. A pre-release starts with a note
           # saying what it is.
           $preNote = "**Pre-release: a release candidate of ReCut $core, for testing.** It is not the latest stable release (that is the one marked **Latest**). ReCut's update notice tells people running an earlier candidate of $core about it, and nobody else."
@@ -396,7 +396,7 @@ jobs:
           $global:LASTEXITCODE = 0
 
       # Five silent install / smoke / uninstall cycles, an upgrade over the latest release and one portable launch,
-      # because the installer crash in bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md was intermittent.
+      # because the installer crash in bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md @ 59eafc6 was intermittent.
       # Prints the CPU first and, on a failed install, the faulting module (Application error events) and the NSIS
       # temp dir.
       - name: Install check (installer x5, upgrade, uninstall, portable exe)
@@ -407,7 +407,7 @@ jobs:
 
   # Manual only (workflow_dispatch with installer_stress): repeats the install check on several runners to raise the
   # chance of landing on the host types where the intermittent NSIS installer crash showed up (AMD EPYC 7763), see
-  # bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md. Reuses the installer job's build; never on push/tag.
+  # bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md @ 59eafc6. Reuses the installer job's build; never on push/tag.
   installer-stress:
     name: Installer stress ${{ matrix.shard }}
     needs: installer
@@ -562,7 +562,7 @@ jobs:
       # Would ReCut's download policy (electron/net/download.ts, WHISPER_DOWNLOAD_POLICY / OCR_DOWNLOAD_POLICY) accept
       # the real redirect chain of every pinned Whisper model and two OCR language files from this runner? First byte
       # only (Range: bytes=0-0), the app's own redirect loop; fails when the policy refuses a hop
-      # (bugs/closed/2026-10-09-whisper-model-download-redirect.md, issue #102), so a storage move on Hugging Face's
+      # (bugs/closed/2026-10-09-whisper-model-download-redirect.md @ 59eafc6, issue #102), so a storage move on Hugging Face's
       # side shows up here before users hit it. A network error or HTTP 5xx is retried once; a refusal never is.
       - name: Download redirect check (Hugging Face, GitHub raw)
         timeout-minutes: 5
@@ -866,7 +866,7 @@ jobs:
       # Would ReCut's download policy (electron/net/download.ts, WHISPER_DOWNLOAD_POLICY / OCR_DOWNLOAD_POLICY) accept
       # the real redirect chain of every pinned Whisper model and two OCR language files from this runner? First byte
       # only (Range: bytes=0-0), the app's own redirect loop; fails when the policy refuses a hop
-      # (bugs/closed/2026-10-09-whisper-model-download-redirect.md, issue #102), so a storage move on Hugging Face's
+      # (bugs/closed/2026-10-09-whisper-model-download-redirect.md @ 59eafc6, issue #102), so a storage move on Hugging Face's
       # side shows up here before users hit it. A network error or HTTP 5xx is retried once; a refusal never is.
       - name: Download redirect check (Hugging Face, GitHub raw)
         timeout-minutes: 5

@@ -1,6 +1,6 @@
 /**
  * The Electron perf scripts launch the app with Chromium's shared memory on tmpfs
- * (bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md). Playwright's Electron loader adds
+ * (bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md @ 59eafc6). Playwright's Electron loader adds
  * --disable-dev-shm-usage, which puts every shared memory region in a file under TMPDIR; on a disk-backed /tmp their
  * writeback slowed the renderer 4–6x and made `long tasks during scrub multi-hour @ 1 px/frame` flaky.
  */

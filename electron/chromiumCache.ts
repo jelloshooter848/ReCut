@@ -1,6 +1,6 @@
 /**
  * Chromium's HTTP cache and the app's default cache folder
- * (bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md).
+ * (bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md @ 59eafc6).
  *
  * The app's default cache folder is `<userData>/cache`. Chromium keeps its HTTP cache in `<sessionData>/Cache`
  * (`<sessionData>` = `<userData>`), and on Windows and macOS, whose file systems ignore case, those are the same folder.

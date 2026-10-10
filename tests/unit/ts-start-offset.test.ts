@@ -1,6 +1,6 @@
 /**
  * MPEG-TS / MPEG-PS sources whose video (or audio) stream starts after the container start
- * (bugs/closed/2026-10-09-ts-late-video-export-early.md).
+ * (bugs/closed/2026-10-09-ts-late-video-export-early.md @ 59eafc6).
  *
  * For formats with discontinuous timestamps (MPEG-TS, MPEG-PS, FLV) FFmpeg recomputes the input's start time from the
  * streams the command maps (fftools correct_input_start_times), and `-copyts -start_at_zero` (or no `-copyts`) uses
