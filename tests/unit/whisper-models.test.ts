@@ -533,11 +533,12 @@ describe('test models and argument checks', () => {
     expect(() => assertWhisperModelId(5)).toThrow();
     const abs = path.resolve('/media/film.mkv');
     const good = { mediaId: 'm1', path: abs, streamIndex: 1, model: 'small', language: 'auto', translate: true, extra: 'dropped' };
-    expect(parseTranscribeRequest(good)).toEqual({ mediaId: 'm1', path: abs, streamIndex: 1, model: 'small', language: 'auto', translate: true, verbatim: false });
+    expect(parseTranscribeRequest(good)).toEqual({ mediaId: 'm1', path: abs, streamIndex: 1, model: 'small', language: 'auto', translate: true, force: false });
     expect(parseTranscribeRequest({ ...good, translate: undefined }).translate).toBe(false);
-    expect(parseTranscribeRequest({ ...good, verbatim: true }).verbatim).toBe(true);
+    expect(parseTranscribeRequest({ ...good, force: true }).force).toBe(true);
+    expect(parseTranscribeRequest({ ...good, verbatim: true })).not.toHaveProperty('verbatim'); // removed in #158, ignored
     for (const bad of [null, {}, { ...good, mediaId: '' }, { ...good, path: 'relative.mkv' }, { ...good, streamIndex: -1 }, { ...good, streamIndex: 1.5 },
-      { ...good, model: 'huge' }, { ...good, language: 'xx' }, { ...good, translate: 'yes' }, { ...good, verbatim: 1 }]) {
+      { ...good, model: 'huge' }, { ...good, language: 'xx' }, { ...good, translate: 'yes' }, { ...good, force: 1 }]) {
       expect(() => parseTranscribeRequest(bad)).toThrow();
     }
   });
