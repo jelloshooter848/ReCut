@@ -118,7 +118,13 @@ timelines.
    right-click shots › **Name from Transcript**, or the video › **Name Shots from Transcript** for all of them. In the
    Scenes panel, right-click scenes › **Name from Transcript** does the same over each scene's whole range. Each is
    one undo step.
-6. In the Source monitor, **↑ / ↓** jump between shot boundaries.
+6. **Suggested scenes.** Right-click a video with shots › **Suggest Scenes…**. ReCut compares each cut: whether a
+   line of dialogue runs across it, how alike the pictures before and after are (it looks back three shots, so a
+   back-and-forth conversation stays together), and whether the sound carries on. It proposes scenes for you to
+   review: untick one to skip it, rename it, **Join next**, open its shots and **Split here**, or move the slider
+   between more, shorter and fewer, longer scenes. **Create N Scenes** adds the ticked ones to the Scenes panel (one
+   undo step). Everything is worked out on your computer.
+7. In the Source monitor, **↑ / ↓** jump between shot boundaries.
 
 ## 4. Import subtitles
 
