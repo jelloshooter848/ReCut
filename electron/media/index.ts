@@ -10,7 +10,7 @@ import path from 'node:path';
 import type { ID, JobInfo, MediaProbe } from '@shared/model';
 import {
   pathToMediaUrl, ffmpegMissingMessage,
-  type ExportRequest, type ExportStartResult, type FilmstripRequest, type ProxyRequest, type ChannelProxyRequest,
+  type ExportRequest, type ExportStartResult, type FilmstripRequest, type ProxyRequest, type ProxyLookup, type ChannelProxyRequest,
   type SceneDetectRequest, type ThumbnailRequest, type WaveformData,
 } from '@shared/ipc';
 import type { OcrLanguageState, OcrRequest } from '@shared/ocr';
@@ -37,7 +37,7 @@ import { getFfmpegPath, getFfprobePath, setFfmpegPaths } from './ffmpeg';
 import { probeMedia } from './probe';
 import { cancelThumbRequests, getFilmstrip, getThumbnail } from './thumbs';
 import { getWaveform } from './waveform';
-import { startProxyJob } from './proxy';
+import { lookupCachedProxy, startProxyJob } from './proxy';
 import { startChannelProxyJob } from './channelProxy';
 import { startSceneDetectJob } from './sceneDetect';
 import { extractSubtitles } from './subtitlesExtract';
@@ -148,6 +148,11 @@ export const mediaHandlers: MediaHandlers = {
     if (!getFfmpegPath()) throw new Error(ffmpegMissingMessage('ffmpeg'));
     const { job } = await startProxyJob(jobQueue, req);
     return job;
+  },
+
+  /** A finished proxy already in the cache, without starting a job (#136); null when none. */
+  async lookupProxy(req: ProxyRequest): Promise<ProxyLookup | null> {
+    return lookupCachedProxy(req.path, req.height);
   },
 
   async startChannelProxy(req: ChannelProxyRequest): Promise<JobInfo> {

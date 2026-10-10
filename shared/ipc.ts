@@ -54,6 +54,7 @@ export const IPC = {
   mediaThumbCancel: 'media:thumbCancel',
   mediaWaveform: 'media:waveform',
   mediaProxyStart: 'media:proxyStart',
+  mediaProxyLookup: 'media:proxyLookup',
   mediaChannelProxyStart: 'media:channelProxyStart',
   mediaSceneDetectStart: 'media:sceneDetectStart',
   mediaExtractSubtitles: 'media:extractSubtitles',
@@ -189,6 +190,9 @@ export interface WaveformData {
   duration: number;
 }
 
+/** A cached proxy found by RecutApi.lookupProxy (#136). */
+export interface ProxyLookup { path: string; width?: number; height?: number; audioStreams: number[] }
+
 export interface ProxyRequest {
   mediaId: ID; path: string; height: number; audioChannels?: number;
   /**
@@ -314,6 +318,8 @@ export interface RecutApi {
   /** Peaks of one audio stream (`streamIndex`: absolute ffprobe index; default the first audio stream). */
   waveform(path: string, mediaId?: ID, streamIndex?: number): Promise<WaveformData>;
   startProxy(req: ProxyRequest): Promise<JobInfo>;
+  /** A finished all-streams proxy of `req.path` at `req.height` already in the cache, without rendering (#136); null when none. */
+  lookupProxy(req: ProxyRequest): Promise<ProxyLookup | null>;
   /** Queue (or join) the channel proxy job of a clip's channel selection. */
   startChannelProxy(req: ChannelProxyRequest): Promise<JobInfo>;
   startSceneDetect(req: SceneDetectRequest): Promise<JobInfo>;

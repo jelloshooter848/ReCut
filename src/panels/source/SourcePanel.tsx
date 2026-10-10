@@ -13,7 +13,7 @@ import { pathToMediaUrl } from '@shared/ipc';
 import { useStore, identityLabel, startProxy } from '@/state';
 import type { StoreState } from '@/state';
 import { SourcePlayer, resolvePlaybackPath, mediaFps, mediaSize, type SourcePlayerStatus } from '@/playback';
-import { isStillImage } from '@/playback/mediaSource';
+import { isStillImage, previewPlayable, previewReason } from '@/playback/mediaSource';
 import { activeWordIndex } from '@/playback/subtitleWrap';
 import { resumeAudio } from '@/app/media';
 import { registerTransport, setActiveTransport, shuttle, useActiveTransportId, type Transport } from '@/app/transport';
@@ -44,7 +44,7 @@ function selectMedia(s: StoreState): MediaItem | undefined {
 export function selectLoadKey(s: StoreState): string {
   const m = selectMedia(s);
   if (!m) return '';
-  return [m.id, m.path, m.kind, m.offline ? 1 : 0, m.probe ? 1 : 0, m.probe?.browserPlayable ? 1 : 0, m.proxy.status, m.proxy.path ?? '', s.project.settings.useProxies ? 1 : 0, m.preferredAudioStream ?? ''].join('|');
+  return [m.id, m.path, m.kind, m.offline ? 1 : 0, m.probe ? 1 : 0, previewPlayable(m) ? 1 : 0, m.proxy.status, m.proxy.path ?? '', s.project.settings.useProxies ? 1 : 0, m.preferredAudioStream ?? ''].join('|');
 }
 
 /**
@@ -58,7 +58,7 @@ export function describeDecodeProblem(media: MediaItem | undefined): string {
     const m = /\.([^./\\]+)$/.exec(media!.path);
     return `${m ? m[1].toUpperCase() : 'This'} image needs a preview proxy`;
   }
-  const reason = p.playabilityReason?.trim();
+  const reason = previewReason(media)?.trim();
   if (reason) {
     const audio = /audio codec\s+([\w.-]+)/i.exec(reason);
     if (audio) return `${codecName(audio[1])} audio can't be decoded for preview`;
