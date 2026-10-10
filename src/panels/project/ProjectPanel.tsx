@@ -407,7 +407,7 @@ export function ProjectPanel(_props: PanelProps) {
       <div className="pp-toolbar">
         <Button size="sm" icon={Import} onClick={() => { void importViaDialog(selectedBinId, selectedMediaIds.length === 1 ? selectedMediaIds[0] : null); }} data-testid="import-btn">Import…</Button>
         <IconButton size="sm" icon={FolderPlus} label="New Bin" onClick={() => newBin(selectedBinId)} data-testid="new-bin" />
-        <IconButton size="sm" icon={LayersIcon} label="New Sequence…" onClick={() => st.openDialog('newSequence')} data-testid="new-sequence" />
+        <IconButton size="sm" icon={LayersIcon} label="New Timeline…" onClick={() => st.openDialog('newSequence')} data-testid="new-sequence" />
         <span className="grow" />
         <Toggle checked={useProxies} onChange={(v) => useStore.getState().setSettings({ useProxies: v })} label={<span className="text-sm">Use proxies</span>} title="Play proxies instead of originals when available (export always uses originals)" />
       </div>

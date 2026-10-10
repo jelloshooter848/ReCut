@@ -49,7 +49,7 @@ export function InfoFooter({ mediaId, sequenceId, open, onToggle }: InfoFooterPr
     rows.push({ k: 'Duration', v: sequenceDurationLabel(seq) });
     rows.push({ k: 'Tracks', v: `${seq.videoTracks.length} video · ${seq.audioTracks.length} audio · ${seq.subtitleTracks.length} subtitle` });
     rows.push({ k: 'Clips', v: String(tracks.reduce((n, t) => n + t.clips.length, 0)) });
-    if (seq.parentSequenceId) rows.push({ k: 'Lineage', v: `${seq.versionLabel ?? 'alternate cut'} of ${useStore.getState().project.sequences[seq.parentSequenceId]?.name ?? 'deleted sequence'}` });
+    if (seq.parentSequenceId) rows.push({ k: 'Lineage', v: `${seq.versionLabel ?? 'alternate cut'} of ${useStore.getState().project.sequences[seq.parentSequenceId]?.name ?? 'deleted timeline'}` });
     rows.push({ k: 'Created', v: dateLabel(seq.createdAt) });
   }
   return (

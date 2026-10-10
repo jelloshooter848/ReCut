@@ -88,7 +88,7 @@ test('File › Collect Project… copies the project and its media into a new fo
   // Only media used in sequences: the same two files here (the offline one is unused too).
   await page.getByTestId('collect-scope-sequences').check();
   await expect(page.getByTestId('collect-summary')).not.toContainText('lost.mp4');
-  await expect(page.getByTestId('collect-summary')).toContainText('1 media item not used in any sequence');
+  await expect(page.getByTestId('collect-summary')).toContainText('1 media item not used in any timeline');
   if (SHOT_DIR) await page.locator('.collect-dialog').screenshot({ path: path.join(SHOT_DIR, 'collect-dialog.png') });
 
   await page.getByTestId('collect-start').click();

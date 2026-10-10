@@ -72,7 +72,7 @@ export function liveView(v: SequenceView): SequenceView {
 }
 
 export function createSequence(name: string, fps: Rational = { ...DEFAULT_SEQUENCE_FPS }, width = 1920, height = 1080): Sequence {
-  if (!isValidFps(fps)) throw new RangeError(`Invalid sequence frame rate ${describeFps(fps)}`);
+  if (!isValidFps(fps)) throw new RangeError(`Invalid timeline frame rate ${describeFps(fps)}`);
   const now = Date.now();
   return {
     id: uid('seq'), name, fps, width, height, sampleRate: 48000, channels: 2,
@@ -89,7 +89,7 @@ export const DEFAULT_BINS: { id: string; name: string }[] = [
   { id: 'bin-movies', name: 'Movies' },
   { id: 'bin-tv', name: 'TV' },
   { id: 'bin-scenes', name: 'Scenes' },
-  { id: 'bin-sequences', name: 'Sequences' },
+  { id: 'bin-sequences', name: 'Timelines' },
   { id: 'bin-audio', name: 'Audio' },
   { id: 'bin-subtitles', name: 'Subtitles' },
   { id: 'bin-graphics', name: 'Graphics' },
@@ -100,7 +100,7 @@ export function createProject(name = 'Untitled Project'): Project {
   const now = Date.now();
   const bins: Record<ID, Bin> = {};
   for (const b of DEFAULT_BINS) bins[b.id] = { id: b.id, name: b.name, parentId: null, kind: 'bin' };
-  const seq = createSequence('Sequence 01');
+  const seq = createSequence('Timeline 01');
   seq.binId = 'bin-sequences';
   return {
     formatVersion: PROJECT_FORMAT_VERSION,
@@ -206,14 +206,14 @@ function normalizeInner(raw: unknown): Project {
   } as Project;
   const order = [...new Set(out.sequenceOrder)].filter((id) => Object.hasOwn(out.sequences, id));
   for (const id of Object.keys(out.sequences)) if (!order.includes(id)) order.push(id);
-  if (order.length !== out.sequenceOrder.length || order.some((id, i) => id !== out.sequenceOrder[i])) note('sequence order repaired');
+  if (order.length !== out.sequenceOrder.length || order.some((id, i) => id !== out.sequenceOrder[i])) note('timeline order repaired');
   out.sequenceOrder = order;
   if (!out.activeSequenceId || !Object.hasOwn(out.sequences, out.activeSequenceId)) {
-    if (out.activeSequenceId) note('unknown active sequence replaced');
+    if (out.activeSequenceId) note('unknown active timeline replaced');
     out.activeSequenceId = out.sequenceOrder[0] ?? null;
   }
   if (out.sequenceOrder.length === 0) {
-    const seq = createSequence('Sequence 01'); seq.binId = 'bin-sequences';
+    const seq = createSequence('Timeline 01'); seq.binId = 'bin-sequences';
     out.sequences[seq.id] = seq; out.sequenceOrder.push(seq.id); out.activeSequenceId = seq.id;
   }
   repairBins(out);
@@ -413,7 +413,7 @@ function repairFps(v: unknown, fallback: Readonly<Rational>): Rational {
 
 function repairSequence(s: Obj, id: ID, fallbackFps: Readonly<Rational>): Sequence {
   keyedId(s, id);
-  const template = createSequence(str(s.name, 'Sequence'));
+  const template = createSequence(str(s.name, 'Timeline'));
   const fps = repairFps(s.fps, fallbackFps);
   const posInt = (v: unknown, d: number) => { if (isPosInt(v)) return v; if (v !== undefined) note(FIELD_RESET); return d; };
   const seq = {
@@ -810,7 +810,7 @@ function repairNesting(p: Project): void {
   for (const s of seqs) {
     for (const t of [...s.videoTracks, ...s.audioTracks]) for (const c of t.clips) {
       if (c.sequenceId === undefined) continue;
-      if (inheritedOnly(p.sequences, c.sequenceId)) { delete c.sequenceId; note('nested sequence reference that is not a sequence id cleared'); continue; }
+      if (inheritedOnly(p.sequences, c.sequenceId)) { delete c.sequenceId; note('nested timeline reference that is not a timeline id cleared'); continue; }
       any = true;
     }
   }
@@ -818,7 +818,7 @@ function repairNesting(p: Project): void {
   for (const [host, child] of nestingRepairs(p.sequences, p.sequenceOrder)) {
     const seq = p.sequences[host];
     for (const t of [...seq.videoTracks, ...seq.audioTracks]) for (const c of t.clips) {
-      if (c.sequenceId === child) { delete c.sequenceId; note('nested sequence that contained itself or was nested too deep made offline'); }
+      if (c.sequenceId === child) { delete c.sequenceId; note('nested timeline that contained itself or was nested too deep made offline'); }
     }
     // New track lists: shared/nest.ts caches the references per list.
     seq.videoTracks = [...seq.videoTracks]; seq.audioTracks = [...seq.audioTracks];
@@ -827,7 +827,7 @@ function repairNesting(p: Project): void {
   for (const [host, clipId] of nestSizeRepairs(p.sequences, p.sequenceOrder)) {
     const seq = p.sequences[host];
     for (const t of [...seq.videoTracks, ...seq.audioTracks]) for (const c of t.clips) {
-      if (c.id === clipId && c.sequenceId !== undefined) { delete c.sequenceId; note(`nested sequence that would expand to more than ${FLAT_LIMIT_TEXT} when flattened made offline`); }
+      if (c.id === clipId && c.sequenceId !== undefined) { delete c.sequenceId; note(`nested timeline that would expand to more than ${FLAT_LIMIT_TEXT} when flattened made offline`); }
     }
     sized.add(host);
   }

@@ -131,7 +131,7 @@ export function SubtitlesPanel({ active }: PanelProps) {
     { label: 'Import to track…', icon: FileUp, onSelect: () => { void importToTrack(); } },
   ], [track, doExport, importToTrack]);
 
-  if (!seq) return <div className="panel"><EmptyState icon={Captions} title="No active sequence" description="Open or create a sequence to manage its subtitles." /></div>;
+  if (!seq) return <div className="panel"><EmptyState icon={Captions} title="No active timeline" description="Open or create a timeline to manage its subtitles." /></div>;
 
   const trackOptions = tracks.map((t) => ({ value: t.id, label: `${t.name}${t.language && t.language !== 'und' ? ` (${t.language})` : ''}${t.enabled ? '' : ' — off'}` }));
 
@@ -153,7 +153,7 @@ export function SubtitlesPanel({ active }: PanelProps) {
         <span className="text-dim text-sm ml-auto nowrap" data-testid="subtitle-count">{resolved.length} cue{resolved.length === 1 ? '' : 's'}</span>
         {orphans.length ? (
           <>
-            <span className="badge warn" title="Cues attached to clips that are no longer in the sequence">{orphans.length} orphan{orphans.length === 1 ? '' : 's'}</span>
+            <span className="badge warn" title="Cues attached to clips that are no longer in the timeline">{orphans.length} orphan{orphans.length === 1 ? '' : 's'}</span>
             <Button size="sm" icon={Eraser} onClick={() => { const n = removeOrphanCues(seq.id); if (n) toast.ok(`Removed ${n} orphan cue${n === 1 ? '' : 's'}`); }} title="Delete cues whose clips were removed">Clean up</Button>
           </>
         ) : null}

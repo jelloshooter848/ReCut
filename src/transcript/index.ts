@@ -404,7 +404,7 @@ export function scopeOptions(project: Project, current: { sourceMediaId?: ID | n
   }
   if (current.activeSequenceId && project.sequences[current.activeSequenceId]) {
     const s = project.sequences[current.activeSequenceId];
-    out.push({ key: `sequence:${s.id}`, label: `Sequence: ${s.name}`, scope: { kind: 'sequence', sequenceId: s.id } });
+    out.push({ key: `sequence:${s.id}`, label: `Timeline: ${s.name}`, scope: { kind: 'sequence', sequenceId: s.id } });
   }
   const series = new Map<string, Set<number>>();
   const franchises = new Set<string>();

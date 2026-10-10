@@ -187,7 +187,7 @@ const SceneRowView = memo(function SceneRowView({ row, selected, renaming, cb }:
 
 const SequenceRowView = memo(function SequenceRowView({ row, selected, renaming, cb }: { row: SequenceRow; selected: boolean; renaming: boolean; cb: RowCallbacks }) {
   const s = row.seq;
-  const lineage = s.parentSequenceId ? `${s.versionLabel ?? 'v2'} of ${row.parentName ?? 'deleted sequence'}` : s.versionLabel;
+  const lineage = s.parentSequenceId ? `${s.versionLabel ?? 'v2'} of ${row.parentName ?? 'deleted timeline'}` : s.versionLabel;
   return (
     <div className={['pp-row', selected ? 'selected' : ''].filter(Boolean).join(' ')} data-row-kind="sequence" data-sequence-id={s.id} data-row-key={row.key}
       draggable={!renaming}

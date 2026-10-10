@@ -57,7 +57,7 @@ describe('Make Compound Clip', () => {
     expect(innerId).toBeTruthy();
     expect(getUndoLabels().undo).toBe('Make Compound Clip');
     const outer = seqOf(seqId), inner = seqOf(innerId);
-    expect(inner.name).toBe('Nested Sequence 01');
+    expect(inner.name).toBe('Nested Timeline 01');
     expect(P().sequenceOrder.indexOf(innerId)).toBe(P().sequenceOrder.indexOf(seqId) + 1);
     const nested = clipsOf(outer).filter(isNestedClip);
     expect(nested.map((c) => [c.kind, c.start, c.duration, c.sequenceId])).toEqual([['video', 48, 48, innerId], ['audio', 48, 48, innerId]]);
@@ -110,7 +110,7 @@ describe('editing a nested sequence', () => {
     S().addSequence(other, { activate: false });
     expect(S().nestSequence(other.id, innerId, 10)).toHaveLength(2);
     expect(shown(other.id, 10)).toEqual([`${A.id}@1.0000`]);
-    expect(getUndoLabels().undo).toBe('Nest sequence');
+    expect(getUndoLabels().undo).toBe('Nest timeline');
     // Trim the clip inside: both places follow.
     const innerA = seqOf(innerId).videoTracks[0].clips[0];
     S().trimClipEdge(innerId, innerA.id, 'end', 24, false);

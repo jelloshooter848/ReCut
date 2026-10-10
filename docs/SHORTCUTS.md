@@ -19,7 +19,7 @@ and Ctrl+Shift+S.
 | Step Back / Forward 1 Frame | ← / → |
 | Step Back / Forward 5 Frames | Shift+← / Shift+→ |
 | Go to Previous / Next Edit Point | ↑ / ↓ (in the Source monitor: previous / next detected scene boundary) |
-| Go to Sequence Start / End | Home / End |
+| Go to Timeline Start / End | Home / End |
 | Go to In Point / Out Point | Shift+I / Shift+O |
 | Play In to Out | Ctrl+Shift+Space |
 
@@ -53,7 +53,7 @@ or Timeline, whichever was clicked last), or Compare when it is focused.
 | Apply Default Video Transition (cross dissolve) | Ctrl+D |
 | Apply Default Audio Transition (crossfade) | Ctrl+Shift+D |
 | Enable / Disable Clip | Shift+E |
-| Remove Disabled Clips… (ripple, asks first) | unbound (Sequence menu, Storyline › What if, clip context menu) |
+| Remove Disabled Clips… (ripple, asks first) | unbound (Timeline menu, Storyline › What if, clip context menu) |
 | Extract Centre Channel (Dialogue), Make Compound Clip, Open in Timeline, Break Apart Compound Clip | unbound (Clip menu, clip context menu) |
 | Link / Unlink | Ctrl+L |
 | Speed / Duration… | Ctrl+R |
@@ -88,17 +88,17 @@ The default transition length is set in **Preferences › Default transition** (
 | Save Project / Save Project As… | Ctrl+S / Ctrl+Shift+S |
 | Import Media… | Ctrl+I |
 | Export… | Ctrl+M |
-| New Sequence… | Ctrl+Shift+N |
+| New Timeline… | Ctrl+Shift+N |
 | Preferences… | Ctrl+, (menu: **Edit › Preferences…** on Linux / Windows, **ReCut › Preferences…** on macOS) |
 | Quit | Ctrl+Q |
-| Import Subtitles…, Collect Project…, OCR Languages…, Transcription Models…, Duplicate Sequence…, Duplicate as Cut Without Disabled Clips…, Take Sequence Snapshot…, Rename Sequence…, Sequence Settings…, Clear Recent Projects | unbound (assign them in the dialog) |
+| Import Subtitles…, Collect Project…, OCR Languages…, Transcription Models…, Duplicate Timeline…, Duplicate as Cut Without Disabled Clips…, Take Timeline Snapshot…, Rename Timeline…, Timeline Settings…, Clear Recent Projects | unbound (assign them in the dialog) |
 
 ## View & panels
 
 | Command | Keys |
 |---|---|
 | Zoom In / Out (timeline) | = / - |
-| Zoom to Fit Sequence | \\ |
+| Zoom to Fit Timeline | \\ |
 | Toggle Snapping | S |
 | Maximize / Restore Focused Panel | Ctrl+` |
 | Program Monitor Full Screen (maximizes the Program zone) | Ctrl+Shift+F |
@@ -148,7 +148,7 @@ does not change. A valid entry is clamped to the field's range.
 | Source monitor focused | Space, J/K/L, ←/→ (Shift = 5), Home/End, I/O, Shift+I/O, `,` insert, `.` overwrite |
 | Program monitor focused | Space, J/K/L, ←/→ (Shift = 5), Home/End, I/O, Shift+I/O |
 | Timeline focused | Esc cancels a drag, closes a popover or clears the selection. Delete/Backspace deletes (Shift = ripple). Ctrl+A / Ctrl+Shift+A, Ctrl+C / X / V |
-| Project panel | ↑/↓ move (Shift extends the selection), ←/→ collapse/expand, Enter opens (loads media in Source, opens a sequence, toggles a bin), F2 rename, Delete remove, Esc clear selection, Ctrl+A select all media |
+| Project panel | ↑/↓ move (Shift extends the selection), ←/→ collapse/expand, Enter opens (loads media in Source, opens a timeline, toggles a bin), F2 rename, Delete remove, Esc clear selection, Ctrl+A select all media |
 | Transcript search | ↑/↓ pick a result, Enter loads it in Source with In/Out on the line, Ctrl+Enter inserts it at the playhead, Esc clears the query, then leaves the field |
 | Scenes panel | ↑/↓ select (Shift extends the selection), Ctrl+A select all shown, Enter load in Source, Delete delete |
 | Continuity panel | ↑/↓ select, Space resolve/reopen, Enter or F2 edit, Delete delete, Esc clear focus |

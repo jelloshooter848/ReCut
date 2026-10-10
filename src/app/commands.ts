@@ -80,12 +80,12 @@ const EXTRA_META: Record<string, { title: string; category: string; keys: string
   [EXTRA_COMMAND_IDS.whisperModels]: { title: 'Transcription Models…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.collectProject]: { title: 'Collect Project…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.quit]: { title: 'Quit', category: 'File', keys: ['Ctrl+Q'] },
-  [EXTRA_COMMAND_IDS.duplicateSequence]: { title: 'Duplicate Sequence…', category: 'File', keys: [] },
+  [EXTRA_COMMAND_IDS.duplicateSequence]: { title: 'Duplicate Timeline…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.removeDisabledClips]: { title: 'Remove Disabled Clips…', category: 'Editing', keys: [] },
   [EXTRA_COMMAND_IDS.duplicateWithoutDisabled]: { title: 'Duplicate as Cut Without Disabled Clips…', category: 'File', keys: [] },
-  [EXTRA_COMMAND_IDS.takeSnapshot]: { title: 'Take Sequence Snapshot…', category: 'File', keys: [] },
-  [EXTRA_COMMAND_IDS.renameSequence]: { title: 'Rename Sequence…', category: 'File', keys: [] },
-  [EXTRA_COMMAND_IDS.sequenceSettings]: { title: 'Sequence Settings…', category: 'File', keys: [] },
+  [EXTRA_COMMAND_IDS.takeSnapshot]: { title: 'Take Timeline Snapshot…', category: 'File', keys: [] },
+  [EXTRA_COMMAND_IDS.renameSequence]: { title: 'Rename Timeline…', category: 'File', keys: [] },
+  [EXTRA_COMMAND_IDS.sequenceSettings]: { title: 'Timeline Settings…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.about]: { title: `About ${PRODUCT_NAME}`, category: 'Help', keys: [] },
   [EXTRA_COMMAND_IDS.extractCentreChannel]: { title: 'Extract Centre Channel (Dialogue)', category: 'Editing', keys: [] },
   [EXTRA_COMMAND_IDS.makeCompoundClip]: { title: 'Make Compound Clip', category: 'Editing', keys: [] },
@@ -130,7 +130,7 @@ function selectedNestedClip(seq: Sequence): Clip | undefined {
 
 /** Open in Timeline (Roadmap §8): the nested clip's sequence becomes the active one, at the frame under the playhead. */
 export function runOpenInTimeline(seqId: ID, clipId: ID | undefined, frame?: number): boolean {
-  if (!clipId) { toast('info', 'Select a nested sequence clip first'); return false; }
+  if (!clipId) { toast('info', 'Select a nested timeline clip first'); return false; }
   return S().openNestedSequence(seqId, clipId, frame);
 }
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -525,7 +525,7 @@ export function buildEditingCommands(): CommandInput[] {
     cmd(X.openInTimeline, () => { const seq = seqNow(); if (seq) runOpenInTimeline(seq.id, selectedNestedClip(seq)?.id); }, () => hasSeq() && selectedClips(S()).some(isNestedClip)),
     cmd(X.breakApartCompound, () => {
       const seq = seqNow(); const c = seq && selectedNestedClip(seq);
-      if (!seq || !c) { toast('info', 'Select a nested sequence clip first'); return; }
+      if (!seq || !c) { toast('info', 'Select a nested timeline clip first'); return; }
       S().breakApartCompoundClip(seq.id, c.id);
     }, () => hasSeq() && selectedClips(S()).some(isNestedClip)),
 
@@ -570,7 +570,7 @@ export function buildEditingCommands(): CommandInput[] {
     cmd(C.newSequence, () => S().openDialog('newSequence')),
     cmd(X.duplicateSequence, async () => {
       const seq = seqNow(); if (!seq) return;
-      const name = await promptText({ title: 'Duplicate Sequence', label: 'Name for the new version', initial: `${seq.name} copy` });
+      const name = await promptText({ title: 'Duplicate Timeline', label: 'Name for the new version', initial: `${seq.name} copy` });
       if (name === null) return;
       const id = S().duplicateSequence(seq.id, name.trim() || `${seq.name} copy`);
       if (id) toast('ok', `Created ${S().project.sequences[id]?.name}`);
@@ -579,7 +579,7 @@ export function buildEditingCommands(): CommandInput[] {
     cmd(X.duplicateWithoutDisabled, async () => {
       const seq = seqNow(); if (!seq) return;
       const n = disabledCount();
-      if (!n) { toast('info', 'No disabled clips in this sequence'); return; }
+      if (!n) { toast('info', 'No disabled clips in this timeline'); return; }
       const name = await promptText({ title: 'Duplicate as Cut Without Disabled Clips', label: `Name for the new cut (${n} disabled clip${n === 1 ? '' : 's'} removed, gaps closed)`, initial: `${seq.name} cut` });
       if (name === null) return;
       const id = S().duplicateWithoutDisabled(seq.id, name.trim() || `${seq.name} cut`);
@@ -593,7 +593,7 @@ export function buildEditingCommands(): CommandInput[] {
     }, hasSeq),
     cmd(X.renameSequence, async () => {
       const seq = seqNow(); if (!seq) return;
-      const name = await promptText({ title: 'Rename Sequence', label: 'Sequence name', initial: seq.name });
+      const name = await promptText({ title: 'Rename Timeline', label: 'Timeline name', initial: seq.name });
       if (name === null || !name.trim() || name.trim() === seq.name) return;
       S().renameSequence(seq.id, name.trim());
     }, hasSeq),
@@ -639,7 +639,7 @@ function disabledCount(): number {
 export async function removeDisabledClipsConfirmed(): Promise<number> {
   const seq = seqNow(); if (!seq) return 0;
   const n = disabledCount();
-  if (!n) { toast('info', 'No disabled clips in this sequence'); return 0; }
+  if (!n) { toast('info', 'No disabled clips in this timeline'); return 0; }
   const i = await confirm({
     type: 'question', title: 'Remove Disabled Clips',
     message: `Remove ${n} disabled clip${n === 1 ? '' : 's'} from "${seq.name}" and close the gaps?`,

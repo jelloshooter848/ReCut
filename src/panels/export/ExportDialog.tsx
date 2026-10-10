@@ -191,7 +191,7 @@ export function ExportDialog() {
   if (!seq || !exportSeq || !settings) {
     return (
       <Dialog open title="Export" onClose={onClose} width={420} footer={<Button onClick={onClose}>Close</Button>}>
-        <div className="text-dim">Open or create a sequence to export.</div>
+        <div className="text-dim">Open or create a timeline to export.</div>
       </Dialog>
     );
   }
@@ -326,7 +326,7 @@ function SettingsView(p: SettingsViewProps) {
 
   const fpsOptions = useMemo(() => {
     const opts = FPS_PRESETS.map((f) => ({ value: f.label, label: `${f.label} fps` }));
-    if (!FPS_PRESETS.some((f) => fpsEquals(f.fps, seq.fps))) opts.unshift({ value: fpsOptionValue(seq.fps), label: `${fpsLabel(seq.fps)} fps (sequence)` });
+    if (!FPS_PRESETS.some((f) => fpsEquals(f.fps, seq.fps))) opts.unshift({ value: fpsOptionValue(seq.fps), label: `${fpsLabel(seq.fps)} fps (timeline)` });
     return opts;
   }, [seq.fps]);
 
@@ -363,7 +363,7 @@ function SettingsView(p: SettingsViewProps) {
           <div>
             <h4>Source</h4>
             <dl className="xd-kv">
-              <dt>Sequence</dt><dd title={seq.name}>{seq.name}</dd>
+              <dt>Timeline</dt><dd title={seq.name}>{seq.name}</dd>
               <dt>Format</dt><dd>{seq.width}×{seq.height} · {fpsLabel(seq.fps)} fps</dd>
               <dt>Audio</dt><dd>{seq.channels === 6 ? '5.1' : 'Stereo'} · {(seq.sampleRate / 1000).toFixed(1).replace(/\.0$/, '')} kHz</dd>
               <dt>Clips</dt><dd>{clipCount(seq)}</dd>
@@ -378,7 +378,7 @@ function SettingsView(p: SettingsViewProps) {
               {h26x ? <><dt>Quality</dt><dd>{settings.qualityMode === 'crf' ? `CRF ${settings.crf} (${crfLabel(settings.crf)})` : `${settings.videoBitrateKbps} kbps`} · {settings.preset}</dd></> : null}
               <dt>Audio</dt><dd data-testid="export-summary-audio" title={audioSummary(settings)}>{audioSummary(settings)}{mkv ? '' : ` · ${channelsLabel}`} · {kHz}</dd>
               {mkv ? <><dt>Subtitles</dt><dd data-testid="export-summary-subtitles">{mkvSubs.length ? `${mkvSubs.length} track${mkvSubs.length === 1 ? '' : 's'} (soft)` : 'none (soft)'}</dd></> : null}
-              <dt>Range</dt><dd>{range.usesInOut ? 'In → Out' : 'Entire sequence'}</dd>
+              <dt>Range</dt><dd>{range.usesInOut ? 'In → Out' : 'Entire timeline'}</dd>
               <dt>Duration</dt><dd className="mono">{formatSequenceTimecode(range.frames, seq.fps)}{audioOnly ? '' : ` · ${outFramesLabel}`}</dd>
               <dt>Est. size</dt><dd data-testid="export-size">{size.approximate ? '≈ ' : ''}{formatBytes(size.bytes)}</dd>
               {perTrackPaths ? (
@@ -445,7 +445,7 @@ function SettingsView(p: SettingsViewProps) {
                 <NumberField value={settings.width} min={MIN_DIMENSION} max={MAX_DIMENSION} step={2} unit="px" title={issueFor('width')} onChange={(v) => update({ width: Math.round(v) })} />
                 <span className="text-dim">×</span>
                 <NumberField value={settings.height} min={MIN_DIMENSION} max={MAX_DIMENSION} step={2} unit="px" title={issueFor('height')} onChange={(v) => update({ height: Math.round(v) })} />
-                <Button size="sm" onClick={() => update({ width: seq.width - (seq.width % 2), height: seq.height - (seq.height % 2) })}>Match sequence</Button>
+                <Button size="sm" onClick={() => update({ width: seq.width - (seq.width % 2), height: seq.height - (seq.height % 2) })}>Match timeline</Button>
               </div>
             </div>
             {issueFor('width') || issueFor('height') ? <div className="xd-row"><span /><span className="xd-warn"><AlertTriangle />{issueFor('width') ?? issueFor('height')}</span></div> : null}
@@ -569,7 +569,7 @@ function SettingsView(p: SettingsViewProps) {
               <label>Export</label>
               <div className="ctl">
                 <Select value={settings.rangeMode} onChange={(v) => update({ rangeMode: v })}
-                  options={[{ value: 'entire', label: 'Entire sequence' }, { value: 'inOut', label: hasInOut(seq) ? 'In to Out' : 'In to Out (not set)', disabled: !hasInOut(seq) }]} />
+                  options={[{ value: 'entire', label: 'Entire timeline' }, { value: 'inOut', label: hasInOut(seq) ? 'In to Out' : 'In to Out (not set)', disabled: !hasInOut(seq) }]} />
                 <span className="xd-hint mono">{formatSequenceTimecode(range.frames, seq.fps)} · {outFramesLabel} · {size.approximate ? '≈ ' : ''}{formatBytes(size.bytes)}</span>
               </div>
             </div>
@@ -582,7 +582,7 @@ function SettingsView(p: SettingsViewProps) {
               <div className="ctl">
                 <Toggle checked={!!settings.includeTranscripts && hasTranscripts} disabled={!hasTranscripts} onChange={(v) => update({ includeTranscripts: v })}
                   label={<span className="text-sm">Include transcripts as subtitles</span>}
-                  title={hasTranscripts ? 'Adds the on-screen transcript (what the Subtitles row and Program monitor show) as a subtitle track named "Transcript"' : 'No clip in this sequence has a transcript'} />
+                  title={hasTranscripts ? 'Adds the on-screen transcript (what the Subtitles row and Program monitor show) as a subtitle track named "Transcript"' : 'No clip in this timeline has a transcript'} />
               </div>
             </div>
             <div className="xd-row">
@@ -619,7 +619,7 @@ function SettingsView(p: SettingsViewProps) {
               </div>
               <SubtitleOutputsEditor seq={seq} settings={settings} update={update} />
             </> : null}
-            {!hasSubs ? <div className="xd-row"><span /><span className="xd-hint">The sequence has no subtitle tracks.</span></div> : null}
+            {!hasSubs ? <div className="xd-row"><span /><span className="xd-hint">The timeline has no subtitle tracks.</span></div> : null}
           </section>
 
           <section className="xd-section">

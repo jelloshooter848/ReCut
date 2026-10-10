@@ -417,7 +417,7 @@ describe('export request validation', () => {
     vclip(s, mediaA, 0, 24, 0);
     const srcDir = path.dirname(mediaA.path);
     const base = path.basename(mediaA.path);
-    expect(() => buildRenderGraph(req(s, { outputDir: srcDir, fileName: base }))).toThrow(/used by the sequence/);
+    expect(() => buildRenderGraph(req(s, { outputDir: srcDir, fileName: base }))).toThrow(/used by the timeline/);
     const q = fakeQueue();
     const r = await startExportJob(q, req(s, { outputDir: srcDir, fileName: base }));
     expect(r.ok).toBe(false);
@@ -432,10 +432,10 @@ describe('export request validation', () => {
     // sidecar .srt / proxy path
     const m3 = { ...mediaA, id: 'px', proxy: { status: 'ready' as const, path: path.join(dir, 'prx.mp4') } };
     const s3 = seq(); vclip(s3, m3, 0, 24, 0);
-    expect(() => buildRenderGraph({ sequence: s3, media: { px: m3 }, settings: settings({ fileName: 'prx.mp4' }) })).toThrow(/used by the sequence/);
+    expect(() => buildRenderGraph({ sequence: s3, media: { px: m3 }, settings: settings({ fileName: 'prx.mp4' }) })).toThrow(/used by the timeline/);
     const m4 = { ...mediaA, id: 'sc', path: path.join(dir, 'cap.srt') };
     const s4 = seq(); vclip(s4, m4, 0, 24, 0);
-    expect(() => buildRenderGraph({ sequence: s4, media: { sc: m4 }, settings: settings({ fileName: 'cap.mp4', exportSubtitleSidecar: true }) })).toThrow(/used by the sequence/);
+    expect(() => buildRenderGraph({ sequence: s4, media: { sc: m4 }, settings: settings({ fileName: 'cap.mp4', exportSubtitleSidecar: true }) })).toThrow(/used by the timeline/);
     expect(() => buildRenderGraph({ sequence: s4, media: { sc: m4 }, settings: settings({ fileName: 'cap.mp4' }) })).not.toThrow();
   });
 
@@ -444,8 +444,8 @@ describe('export request validation', () => {
     vclip(s, mediaA, 0, 24, 0);
     const upper = path.basename(mediaA.path).toUpperCase();
     const r = req(s, { outputDir: path.dirname(mediaA.path), fileName: upper });
-    expect(() => buildRenderGraph(r, { platform: 'darwin' })).toThrow(/used by the sequence/);
-    expect(() => buildRenderGraph(r, { platform: 'linux' })).toThrow(/used by the sequence/);
+    expect(() => buildRenderGraph(r, { platform: 'darwin' })).toThrow(/used by the timeline/);
+    expect(() => buildRenderGraph(r, { platform: 'linux' })).toThrow(/used by the timeline/);
     const link = path.join(dir, 'linkdir');
     try { fs.symlinkSync(path.dirname(mediaA.path), link, 'dir'); } catch { return; }
     const res = await startExportJob(fakeQueue(), req(s, { outputDir: link, fileName: path.basename(mediaA.path) }));

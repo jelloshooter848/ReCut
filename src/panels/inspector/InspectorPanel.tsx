@@ -25,14 +25,14 @@ export function InspectorPanel({ active }: PanelProps) {
     if (seqId && s.ui.selectedClipIds.length) return s.ui.selectedClipIds.length === 1 ? 'Clip' : `${s.ui.selectedClipIds.length} clips`;
     if (s.ui.selectedMediaIds.length) return s.ui.selectedMediaIds.length === 1 ? (s.project.media[s.ui.selectedMediaIds[0]]?.name ?? 'Media') : `${s.ui.selectedMediaIds.length} media items`;
     const seq = seqId ? s.project.sequences[seqId] : undefined;
-    return seq?.name ?? 'No sequence';
+    return seq?.name ?? 'No timeline';
   });
 
   // Hidden panels stay mounted; skip their subtree entirely so background edits do not re-render the inspector.
   if (!active) return <div className="panel insp" data-testid="inspector" data-mode="hidden" />;
 
   const mode: Mode = seqId && transitionId ? 'transition' : seqId && clipIds.length ? 'clip' : mediaIds.length ? 'media' : seqId ? 'sequence' : 'none';
-  const kind = mode === 'transition' ? 'Transition' : mode === 'clip' ? 'Clip' : mode === 'media' ? 'Media' : 'Sequence';
+  const kind = mode === 'transition' ? 'Transition' : mode === 'clip' ? 'Clip' : mode === 'media' ? 'Media' : 'Timeline';
 
   return (
     <div className="panel insp" data-testid="inspector" data-mode={mode}>
@@ -45,7 +45,7 @@ export function InspectorPanel({ active }: PanelProps) {
         {mode === 'clip' && seqId ? <ClipInspector seqId={seqId} fps={fps} /> : null}
         {mode === 'media' ? <MediaInspector ids={mediaIds} /> : null}
         {mode === 'sequence' && seqId ? <SequenceInspector seqId={seqId} /> : null}
-        {mode === 'none' ? <div className="insp-empty p-8">Nothing to inspect — create or open a sequence.</div> : null}
+        {mode === 'none' ? <div className="insp-empty p-8">Nothing to inspect — create or open a timeline.</div> : null}
       </div>
     </div>
   );

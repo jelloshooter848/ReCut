@@ -183,7 +183,7 @@ export function sceneClipExtra(scene: SceneRecord) {
 export function insertSceneAtPlayhead(scene: SceneRecord, mode: 'insert' | 'overwrite'): ID[] {
   const s = useStore.getState();
   const seq = activeSequence(s);
-  if (!seq) { toast.warn('No active sequence'); return []; }
+  if (!seq) { toast.warn('No active timeline'); return []; }
   if (!s.project.media[scene.mediaId]) { toast.warn('Scene media is missing from the project'); return []; }
   const ids = s.insertFromSource(seq.id, {
     mediaId: scene.mediaId, in: scene.in, out: scene.out, atFrame: seq.view.playhead, mode, extra: sceneClipExtra(scene),
@@ -196,7 +196,7 @@ export function insertSceneAtPlayhead(scene: SceneRecord, mode: 'insert' | 'over
 export function insertScenesAtPlayhead(scenes: SceneRecord[], mode: 'insert' | 'overwrite'): void {
   const s = useStore.getState();
   const seq = activeSequence(s);
-  if (!seq) { toast.warn('No active sequence'); return; }
+  if (!seq) { toast.warn('No active timeline'); return; }
   let at = seq.view.playhead;
   for (const scene of scenes) {
     const ids = s.insertFromSource(seq.id, { mediaId: scene.mediaId, in: scene.in, out: scene.out, atFrame: at, mode, extra: sceneClipExtra(scene) });

@@ -113,7 +113,7 @@ export function insertAtPlayhead(mediaId: ID, mode: 'insert' | 'overwrite', rang
   const st = useStore.getState();
   const seq = activeSequence(st);
   const m = st.project.media[mediaId];
-  if (!seq) { toast('warn', 'No active sequence'); return; }
+  if (!seq) { toast('warn', 'No active timeline'); return; }
   if (!m) return;
   const dur = m.kind === 'image' ? 5 : m.probe?.duration;
   if (!range && (dur === undefined || !Number.isFinite(dur) || dur <= 0)) { toast('warn', 'Media has no duration yet (still probing?)'); return; }
@@ -131,7 +131,7 @@ export interface RangeToInsert { mediaId: ID; in: number; out: number }
 export function insertRangesAtPlayhead(ranges: RangeToInsert[], mode: 'insert' | 'overwrite', label = mode === 'insert' ? 'Insert shots' : 'Overwrite shots'): number {
   const st = useStore.getState();
   const seq = activeSequence(st);
-  if (!seq) { toast('warn', 'No active sequence'); return 0; }
+  if (!seq) { toast('warn', 'No active timeline'); return 0; }
   let at = seq.view.playhead;
   let placed = 0;
   st.batch(label, () => {
@@ -212,10 +212,10 @@ export async function removeMediaConfirmed(ids: ID[]): Promise<boolean> {
     const choice = api
       ? await api.message({
         type: 'warning', title: 'Remove media', message: `Remove ${ids.length} item${ids.length === 1 ? '' : 's'} from the project?`,
-        detail: `${used} clip${used === 1 ? '' : 's'} in your sequences use${used === 1 ? 's' : ''} this media and will be deleted too.`,
+        detail: `${used} clip${used === 1 ? '' : 's'} in your timelines use${used === 1 ? 's' : ''} this media and will be deleted too.`,
         buttons: ['Remove', 'Cancel'], defaultId: 1, cancelId: 1,
       })
-      : (window.confirm(`Remove ${ids.length} item(s)? ${used} clip(s) in sequences will be deleted.`) ? 0 : 1);
+      : (window.confirm(`Remove ${ids.length} item(s)? ${used} clip(s) in timelines will be deleted.`) ? 0 : 1);
     if (choice !== 0) return false;
   }
   const st = useStore.getState();
@@ -235,8 +235,8 @@ export async function deleteSequenceConfirmed(id: ID): Promise<boolean> {
     const api = recutApi();
     const nestNote = hosts.length ? ` It is nested in ${hosts.map((h) => `"${h.name}"`).join(', ')}: those nested clips will play nothing.` : '';
     const choice = api
-      ? await api.message({ type: 'warning', title: 'Delete sequence', message: `Delete "${seq.name}"?`, detail: `It contains ${clips} clip${clips === 1 ? '' : 's'}.${nestNote}`, buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1 })
-      : (window.confirm(`Delete sequence "${seq.name}" (${clips} clips)?${nestNote}`) ? 0 : 1);
+      ? await api.message({ type: 'warning', title: 'Delete timeline', message: `Delete "${seq.name}"?`, detail: `It contains ${clips} clip${clips === 1 ? '' : 's'}.${nestNote}`, buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1 })
+      : (window.confirm(`Delete timeline "${seq.name}" (${clips} clips)?${nestNote}`) ? 0 : 1);
     if (choice !== 0) return false;
   }
   st.deleteSequence(id);

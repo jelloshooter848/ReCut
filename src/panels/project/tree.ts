@@ -278,7 +278,7 @@ export function buildSeriesRows(tree: SeriesTree, input: BuildInput, lists: Seri
   if (loose.length) group('loose', 'Other media', 'loose', 0, () => { for (const m of loose) pushMedia(out, m, 1, input, terms); }, loose.length);
   const seqs = input.sequenceOrder.map((id) => input.sequences[id]).filter((s): s is Sequence => !!s && (!filtering || textMatches(s.name, terms)))
     .sort((a, b) => compareSequences(a, b, input.sort));
-  if (seqs.length) group('sequences', 'Sequences', 'sequences', 0, () => { for (const s of seqs) pushSequence(out, s, 1, input); }, seqs.length);
+  if (seqs.length) group('sequences', 'Timelines', 'sequences', 0, () => { for (const s of seqs) pushSequence(out, s, 1, input); }, seqs.length);
   return input.view === 'grid' ? chunkCards(out, input.cols) : out;
 }
 

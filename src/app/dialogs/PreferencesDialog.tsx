@@ -111,7 +111,7 @@ export function PreferencesDialog() {
             <NumberField value={settings.defaultTransitionFrames} min={DEFAULT_TRANSITION_FRAMES_MIN} max={DEFAULT_TRANSITION_FRAMES_MAX} step={1} unit="frames" onChange={(v) => set({ defaultTransitionFrames: clampInt(v, DEFAULT_TRANSITION_FRAMES_MIN, DEFAULT_TRANSITION_FRAMES_MAX) })} />
           </Row>
           <Row label="Snapping"><Toggle checked={settings.snapping} onChange={(v) => set({ snapping: v })} /></Row>
-          <Row label="Carry subtitles into sequence" hint="Copy the media's subtitle cues onto new clips">
+          <Row label="Carry subtitles into timeline" hint="Copy the media's subtitle cues onto new clips">
             <Toggle checked={settings.carrySubtitles} onChange={(v) => set({ carrySubtitles: v })} />
           </Row>
           <Row label="Show source timecode on clips">
