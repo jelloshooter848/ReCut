@@ -14,7 +14,7 @@ import { toast } from '@/components/ui/toastStore';
 import { useJobsStore, isJobActive } from '@/app/jobsStore';
 import { recutApi } from '@/state/mediaActions';
 import { formatModelSize, modelsDiskUsage, useWhisperStatus } from '@/state/whisperStatus';
-import { closeWhisperModels, useWhisperUi, WHISPER_DOWNLOAD_PREFIX } from '@/whisper/whisperUi';
+import { activeWhisperDownloads, closeWhisperModels, finishModelsInBackground, useWhisperUi, WHISPER_DOWNLOAD_PREFIX } from '@/whisper/whisperUi';
 import type { JobInfo } from '@shared/model';
 import type { WhisperModelState } from '@shared/whisper';
 import { PRODUCT_NAME } from '@shared/productIdentity';
@@ -176,7 +176,10 @@ export function WhisperModelsDialog() {
           title={sel ? `Install ${sel.name} from a ggml-${sel.id}.bin file you downloaded` : 'Select a model in the list first'}>
           {sel ? `Install ${sel.name} from file…` : 'Install from file…'}
         </Button>
-        <Button variant="primary" onClick={closeWhisperModels}>Done</Button>
+        {activeWhisperDownloads(jobs).length ? (
+          <Button variant="primary" onClick={finishModelsInBackground} data-testid="whisper-models-background"
+            title="The download continues (see Jobs); you get a message when the model is installed">Finish in background</Button>
+        ) : <Button variant="primary" onClick={closeWhisperModels} data-testid="whisper-models-done">Done</Button>}
       </>}>
       <div className="col gap-8" data-testid="whisper-models-dialog">
         <p className="wm-note text-dim text-sm">{WHISPER_MODELS_NOTE}</p>

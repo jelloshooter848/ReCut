@@ -302,6 +302,7 @@ textarea.input { height: auto; min-height: 60px; padding: 4px 6px; resize: verti
 .toast.ok { border-left-color: var(--ok); } .toast.error { border-left-color: var(--danger); } .toast.warn { border-left-color: var(--accent-2); }
 .toast > svg { width: 14px; height: 14px; flex-shrink: 0; }
 .toast.ok > svg { color: var(--ok); } .toast.error > svg { color: var(--danger); } .toast.warn > svg { color: var(--accent-2); } .toast.info > svg { color: var(--accent); }
+.toast .toast-action { flex-shrink: 0; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* ---------- empty state ---------- */

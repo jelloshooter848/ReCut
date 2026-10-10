@@ -8,6 +8,18 @@ import { create } from 'zustand';
 import type { AudioStreamInfo, ID, JobInfo, MediaItem } from '../../shared/model';
 import { guessWhisperLanguage, type WhisperModelState } from '../../shared/whisper';
 
+/** The Transcribe dialog's choices, kept while it is closed for a model download (#110). */
+export interface TranscribeDraft {
+  /** Media the dialog was opened for (listed first). */
+  openFor: ID[];
+  checked: ID[];
+  streams: Record<ID, number>;
+  language: string;
+  languageTouched: boolean;
+  translate: boolean;
+  verbatim: boolean;
+}
+
 export interface WhisperUiState {
   /** Media the Transcribe dialog was opened for (checked when it opens), or null when it is closed. */
   transcribeFor: ID[] | null;
@@ -15,24 +27,62 @@ export interface WhisperUiState {
   modelsOpen: boolean;
   /** Model id to highlight when it opens. */
   focusModel: string | null;
+  /** Transcription Models was opened from the Transcribe dialog (Finish in background then closes both). */
+  modelsFromTranscribe: boolean;
+  /** The open Transcribe dialog's choices (kept after Finish in background), or null. */
+  draft: TranscribeDraft | null;
+  /** On the next opening, restore `draft` and select this model (resumeTranscribe). */
+  restore: { model: string | null } | null;
 }
 
-export const useWhisperUi = create<WhisperUiState>()(() => ({ transcribeFor: null, modelsOpen: false, focusModel: null }));
+export const useWhisperUi = create<WhisperUiState>()(() => ({
+  transcribeFor: null, modelsOpen: false, focusModel: null, modelsFromTranscribe: false, draft: null, restore: null,
+}));
 
 export function openTranscribeDialog(mediaIds: readonly ID[]): void {
-  useWhisperUi.setState({ transcribeFor: [...mediaIds] });
+  useWhisperUi.setState({ transcribeFor: [...mediaIds], restore: null });
 }
 
+/** Cancel / close: the choices are dropped. */
 export function closeTranscribeDialog(): void {
-  useWhisperUi.setState({ transcribeFor: null });
+  useWhisperUi.setState({ transcribeFor: null, draft: null, restore: null });
 }
 
-export function openWhisperModels(focusModel?: string): void {
-  useWhisperUi.setState({ modelsOpen: true, focusModel: focusModel ?? null });
+/** Reopen the Transcribe dialog with the choices kept by Finish in background, and `model` selected (#110). */
+export function resumeTranscribe(model?: string | null): void {
+  const { draft } = useWhisperUi.getState();
+  if (!draft) return;
+  useWhisperUi.setState({ transcribeFor: [...draft.openFor], restore: { model: model ?? null } });
+}
+
+export function openWhisperModels(focusModel?: string, opts: { fromTranscribe?: boolean } = {}): void {
+  useWhisperUi.setState({ modelsOpen: true, focusModel: focusModel ?? null, modelsFromTranscribe: !!opts.fromTranscribe });
 }
 
 export function closeWhisperModels(): void {
-  useWhisperUi.setState({ modelsOpen: false, focusModel: null });
+  useWhisperUi.setState({ modelsOpen: false, focusModel: null, modelsFromTranscribe: false });
+}
+
+/**
+ * Transcription Models' "Finish in background" (#110): closes it, and the Transcribe dialog under it when it was opened
+ * from there, keeping that dialog's choices for the "model installed" toast's Transcribe… button.
+ */
+export function finishModelsInBackground(): void {
+  const s = useWhisperUi.getState();
+  useWhisperUi.setState({
+    modelsOpen: false, focusModel: null, modelsFromTranscribe: false,
+    ...(s.modelsFromTranscribe ? { transcribeFor: null, restore: null } : {}),
+  });
+}
+
+/** Active Whisper model downloads, newest first. */
+export function activeWhisperDownloads(jobs: readonly JobInfo[]): JobInfo[] {
+  return jobs.filter((j) => isWhisperDownload(j) && (j.status === 'queued' || j.status === 'running')).reverse();
+}
+
+/** "Installing Large v3 Turbo… 15%" / "… queued". */
+export function downloadProgressLabel(job: JobInfo): string {
+  return `${whisperDownloadName(job)}${job.status === 'queued' ? ' (queued)' : ` ${Math.round((job.progress || 0) * 100)}%`}`;
 }
 
 // ------------------------------------------------------------------
