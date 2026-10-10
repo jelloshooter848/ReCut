@@ -1685,6 +1685,38 @@ export const useStore = create<RecutStore>()((set, get) => {
       });
     },
     removeScene(id) { commit('Remove scene', (d) => { delete d.scenes[id]; }); },
+    mergeScenes(ids) {
+      // #152: scenes of one video become the first (by start) covering them all; references follow it.
+      const list = [...new Set(ids)].map((id) => get().project.scenes[id]).filter((x): x is SceneRecord => !!x).sort((a, b) => a.in - b.in || a.out - b.out);
+      if (list.length < 2 || list.some((x) => x.mediaId !== list[0].mediaId)) return null;
+      const keep = list[0].id;
+      const gone = new Set(list.slice(1).map((x) => x.id));
+      commit(`Merge ${list.length} scenes`, (d) => {
+        const k = d.scenes[keep];
+        k.in = Math.min(...list.map((x) => x.in));
+        k.out = Math.max(...list.map((x) => x.out));
+        k.characters = [...new Set(list.flatMap((x) => x.characters))];
+        k.tags = [...new Set(list.flatMap((x) => x.tags))];
+        k.notes = list.map((x) => x.notes.trim()).filter(Boolean).join('\n\n');
+        k.rating = Math.max(...list.map((x) => x.rating));
+        if (!k.location) k.location = list.find((x) => x.location)?.location ?? '';
+        if (!k.arc) k.arc = list.find((x) => x.arc)?.arc ?? '';
+        for (const id of gone) delete d.scenes[id];
+        // Sequences hold the merged scene once, where the first of them was.
+        for (const q of Object.values(d.sceneSequences ?? {})) {
+          if (!q.sceneIds.some((id) => gone.has(id) || id === keep)) continue;
+          const out: ID[] = [];
+          for (const id of q.sceneIds) { const to = gone.has(id) ? keep : id; if (!out.includes(to)) out.push(to); }
+          q.sceneIds = out;
+        }
+        // Timeline clips made from the merged scenes point to the one that remains.
+        for (const seq of Object.values(d.sequences)) {
+          const hit = allTracks(seq).flatMap((t) => t.clips).filter((c) => c.sceneRecordId && gone.has(c.sceneRecordId)).map((c) => c.id);
+          for (const c of clipsWithIds(seq, hit)) c.sceneRecordId = keep;
+        }
+      });
+      return keep;
+    },
 
     // ---------------------------------------------------------------- sequences of scenes (#146)
     addSceneSequence(name, sceneIds, opts = {}) {

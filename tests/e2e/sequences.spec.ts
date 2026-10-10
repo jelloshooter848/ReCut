@@ -75,3 +75,16 @@ test('make a sequence from scenes, edit it in the Sequences tab, and make a time
   await expect(page.getByTestId('sequence-row')).toHaveCount(0);
   expect(await getState<number>(page, '(s) => Object.keys(s.project.scenes).length')).toBe(3);
 });
+
+test('merge scenes that sit next to each other in the Scenes tab (#152)', async () => {
+  await showPanel(page, 'scenes');
+  const rows = page.locator('[data-testid="scenes-panel"] [data-scene-id]');
+  await expect(rows).toHaveCount(3);
+  await rows.nth(0).click();
+  await rows.nth(1).click({ modifiers: ['Shift'] });
+  await rows.nth(0).click({ button: 'right' });
+  await page.locator('.menu-item', { hasText: 'Merge 2 Scenes' }).click();
+  await expect(rows).toHaveCount(2);
+  const merged = await getState<{ in: number; out: number }>(page, '(s) => { const x = s.project.scenes.s1; return { in: x.in, out: x.out }; }');
+  expect(merged).toEqual({ in: 1, out: 4 });
+});

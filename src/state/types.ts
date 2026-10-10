@@ -309,6 +309,8 @@ export interface StoreActions {
   addScene(record: SceneRecord): void;
   updateScene(id: ID, patch: Partial<SceneRecord>): void;
   removeScene(id: ID): void;
+  /** Merge library scenes of one video into the first (#152); null when fewer than two or from several videos. */
+  mergeScenes(ids: ID[]): ID | null;
   sceneFromSource(name?: string): ID | null;
   sceneFromClip(seqId: ID, clipId: ID, name?: string): ID | null;
 
