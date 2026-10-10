@@ -11,6 +11,7 @@ import './inspector';
 import './transcript';
 import './subtitles';
 import './scenes';
+import './sequences';
 import './continuity';
 import './storyline';
 import './compare';

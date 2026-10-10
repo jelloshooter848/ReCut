@@ -225,6 +225,22 @@ Scenes in the library are reusable, tagged source ranges.
   (Character, Location, Arc, Movie / episode) and switch between grid and list views. Double-click or Enter loads a
   scene in Source. Drag it to the timeline to use it.
 
+### Sequences: groups of scenes
+
+A **sequence** groups scenes into a larger part of the story, such as an act, a storyline or a set piece (shots make
+scenes, scenes make sequences, and you edit on timelines).
+
+- In the **Scenes** panel, select scenes, right-click › **Make Sequence…** and name it. The scenes keep the order the
+  list shows. **Add to Sequence** adds the selected scenes to the end of an existing one.
+- The **Sequences** panel (next to Scenes) lists each sequence with its number of scenes and total length.
+  Double-click a sequence to show its scenes; reorder them with the arrows, remove one with ×, or select scenes in the
+  Scenes panel and right-click the sequence › **Add Selected Scenes**. Rename (F2), set its colour, or delete it
+  (the scenes stay in the library).
+- To use a sequence: right-click › **Insert at Playhead** / **Overwrite at Playhead** puts its scenes on the timeline
+  back to back, in order; drag it to the timeline; or choose **New Timeline from Sequence**, which makes a timeline
+  named after it (with the active timeline's frame rate and size) holding its scenes from the start. Each is one undo
+  step.
+
 ## 7. Assemble with three-point edits
 
 1. Double-click a media row (or press Enter) to load it in the **Source** monitor. Play with Space or J/K/L, step
