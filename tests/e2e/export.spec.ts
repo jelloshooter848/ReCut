@@ -133,7 +133,7 @@ test('pre-export warnings: another source frame rate and a short-handle transiti
   expect(ids.transitionId).toBeTruthy();
 
   const checklist = page.getByTestId('export-checklist');
-  await expect(checklist).toContainText('Source frame rate differs from the sequence (25 fps): Galaxy Saga 1 - A New Dawn.mp4 (24 fps).');
+  await expect(checklist).toContainText('Source frame rate differs from the timeline (25 fps): Galaxy Saga 1 - A New Dawn.mp4 (24 fps).');
   await expect(checklist).toContainText('Transitions shortened: "Galaxy Saga 1 - A New Dawn.mp4" → "Galaxy Saga 1 - A New Dawn.mp4" (24 → 10 frames, not enough source media past the cut).');
   await expect(checklist.locator('[data-level="warning"]')).toHaveCount(2);
   await expect(checklist.locator('[data-level="error"]')).toHaveCount(0);

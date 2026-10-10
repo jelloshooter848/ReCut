@@ -127,15 +127,15 @@ export function sequenceMenu(row: SequenceRow, env: MenuEnv): MenuItem[] {
   const st = useStore.getState();
   return [
     { label: 'Open in Timeline', shortcut: 'Enter', onSelect: () => openSequence(s.id) },
-    { label: 'Duplicate', onSelect: () => { const id = st.duplicateSequence(s.id, `${s.name} copy`); if (id) toast('ok', 'Sequence duplicated'); } },
+    { label: 'Duplicate', onSelect: () => { const id = st.duplicateSequence(s.id, `${s.name} copy`); if (id) toast('ok', 'Timeline duplicated'); } },
     {
       // Roadmap §8: nest this sequence in the active one at its playhead (cycles are refused with a toast).
-      label: 'Nest in Active Sequence', disabled: !st.project.activeSequenceId || st.project.activeSequenceId === s.id,
+      label: 'Nest in Active Timeline', disabled: !st.project.activeSequenceId || st.project.activeSequenceId === s.id,
       onSelect: () => { const a = st.project.activeSequenceId; if (a) st.nestSequence(a, s.id, st.project.sequences[a]?.view.playhead ?? 0); },
     },
     { separator: true },
     { label: 'Rename', shortcut: 'F2', onSelect: () => env.startRename(row.key) },
-    { label: 'Delete Sequence', shortcut: 'Del', onSelect: () => { void deleteSequenceConfirmed(s.id); } },
+    { label: 'Delete Timeline', shortcut: 'Del', onSelect: () => { void deleteSequenceConfirmed(s.id); } },
   ];
 }
 
@@ -161,6 +161,6 @@ export function backgroundMenu(env: MenuEnv, binId: ID | null): MenuItem[] {
   return [
     { label: 'Import…', shortcut: 'Ctrl+I', onSelect: () => { void importViaDialog(binId); } },
     { label: 'New Bin', onSelect: () => env.newBin(binId) },
-    { label: 'New Sequence…', shortcut: 'Ctrl+Shift+N', onSelect: () => st.openDialog('newSequence') },
+    { label: 'New Timeline…', shortcut: 'Ctrl+Shift+N', onSelect: () => st.openDialog('newSequence') },
   ];
 }

@@ -263,9 +263,9 @@ function resolveRange(seq: Sequence, settings: ExportSettings, warnings: string[
   if (settings.rangeMode === 'inOut') {
     const i = seq.view.inPoint, o = seq.view.outPoint;
     if (i !== null && o !== null && o > i) return check({ startF: Math.max(0, Math.round(i)), endF: Math.round(o) });
-    warnings.push('In/Out range is not set or empty; exporting the entire sequence instead.');
+    warnings.push('In/Out range is not set or empty; exporting the entire timeline instead.');
   }
-  if (total <= 0) throw new Error('Nothing to export: the sequence is empty.');
+  if (total <= 0) throw new Error('Nothing to export: the timeline is empty.');
   return check({ startF: 0, endF: total });
 }
 
@@ -1191,7 +1191,7 @@ export function assertExportPathsSafe(req: ExportRequest, outputs: string[], wri
   for (const t of tracks) {
     for (const c of t.clips) {
       const m = Object.hasOwn(req.media, c.mediaId) ? req.media[c.mediaId] : undefined; // "constructor" etc. are not media
-      if (m) for (const p of [m.path, m.proxy?.path]) add(p, 'used by the sequence');
+      if (m) for (const p of [m.path, m.proxy?.path]) add(p, 'used by the timeline');
     }
   }
   for (const m of Object.values(req.media)) if (m) for (const p of [m.path, m.proxy?.path]) add(p, 'a source file of the project');
@@ -1332,7 +1332,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   if (reqFps !== undefined && reqFps !== null) {
     if (!isValidFps(reqFps)) {
       const bad = reqFps as Rational;
-      warnings.push(`Export frame rate ${String(bad.num)}/${String(bad.den)} is not valid; using the sequence frame rate ${fpsStr(seq.fps)}.`);
+      warnings.push(`Export frame rate ${String(bad.num)}/${String(bad.den)} is not valid; using the timeline frame rate ${fpsStr(seq.fps)}.`);
     } else if (!sameRate(reqFps, seq.fps)) {
       const g = gcd(reqFps.num, reqFps.den);
       outFps = { num: reqFps.num / g, den: reqFps.den / g };

@@ -63,7 +63,7 @@ export function ClipInspector({ seqId, fps }: { seqId: ID; fps: Rational }) {
   // Nested sequence clips (Roadmap §8): the sequence they play instead of a media file.
   const nestedSeq = useStore((s) => (clips.length && isNestedClip(clips[0]) && Object.hasOwn(s.project.sequences, clips[0].sequenceId) ? s.project.sequences[clips[0].sequenceId] : undefined));
 
-  if (clips.length === 0) return <div className="insp-empty p-8">Selected clips are not in the active sequence.</div>;
+  if (clips.length === 0) return <div className="insp-empty p-8">Selected clips are not in the active timeline.</div>;
   const single = clips.length === 1 ? clips[0] : null;
   const videoClips = clips.filter((c) => c.kind === 'video');
   const ids = clips.map((c) => c.id);
@@ -108,7 +108,7 @@ function ClipHeader({ seqId, clips, media, linkedCount, nestedName }: { seqId: I
       </div>
       <div className="insp-sub">
         <span className="badge dim">{kindLabel}</span>
-        {isNestedClip(clips[0]) ? (nestedName !== undefined ? <span className="ellipsis" title="Nested sequence">Sequence: {nestedName}</span> : <span className="text-danger">sequence missing</span>)
+        {isNestedClip(clips[0]) ? (nestedName !== undefined ? <span className="ellipsis" title="Nested timeline">Timeline: {nestedName}</span> : <span className="text-danger">timeline missing</span>)
           : media ? <span className="ellipsis" title={media.path}>{media.name}</span> : <span className="text-danger">media missing</span>}
         {media?.offline ? <span className="badge danger">offline</span> : null}
         {!allEnabled ? <span className="badge warn">disabled</span> : null}
@@ -135,19 +135,19 @@ function ClipHeader({ seqId, clips, media, linkedCount, nestedName }: { seqId: I
 // ------------------------------------------------------------------ nested sequence (Roadmap §8)
 function NestedSection({ seqId, fps, clip, inner }: { seqId: ID; fps: Rational; clip: Clip; inner: Sequence | undefined }) {
   if (!inner) {
-    return <Section id="source" title="Nested sequence"><div className="insp-note warn">Its sequence is no longer in the project: the clip plays nothing.</div></Section>;
+    return <Section id="source" title="Nested timeline"><div className="insp-note warn">Its timeline is no longer in the project: the clip plays nothing.</div></Section>;
   }
   const innerFrames = sequenceDuration(inner);
   const inF = innerFrameAt(clip, clip.start, fps, inner.fps);
   const outF = Math.round(((clip.sourceIn + (clip.duration * fps.den) / fps.num) * inner.fps.num) / inner.fps.den);
   const st = useStore.getState;
   return (
-    <Section id="source" title="Nested sequence" badge={`${fpsLabel(inner.fps)} fps`}>
-      <Row label="Sequence"><Value>{inner.name}</Value></Row>
-      <Row label="Plays" title="In → out on the nested sequence's timeline"><Range a={formatSequenceTimecode(inF, inner.fps)} b={formatSequenceTimecode(outF, inner.fps)} testId="nested-range" /></Row>
+    <Section id="source" title="Nested timeline" badge={`${fpsLabel(inner.fps)} fps`}>
+      <Row label="Timeline"><Value>{inner.name}</Value></Row>
+      <Row label="Plays" title="In → out on the nested timeline"><Range a={formatSequenceTimecode(inF, inner.fps)} b={formatSequenceTimecode(outF, inner.fps)} testId="nested-range" /></Row>
       <Row label="Length"><Value dim>{formatSequenceTimecode(innerFrames, inner.fps)} · {inner.width}×{inner.height}</Value></Row>
-      {outF > innerFrames ? <div className="insp-note warn">The clip runs past the end of its sequence: the rest is black and silent.</div> : null}
-      {!fpsEquals(inner.fps, fps) ? <div className="insp-note">Plays at this sequence's {fpsLabel(fps)} fps (the nested sequence is {fpsLabel(inner.fps)} fps).</div> : null}
+      {outF > innerFrames ? <div className="insp-note warn">The clip runs past the end of its timeline: the rest is black and silent.</div> : null}
+      {!fpsEquals(inner.fps, fps) ? <div className="insp-note">Plays at this timeline's {fpsLabel(fps)} fps (the nested timeline is {fpsLabel(inner.fps)} fps).</div> : null}
       <div className="row gap-4 p-4">
         <button type="button" className="btn btn-sm" data-testid="open-nested" onClick={() => { st().openNestedSequence(seqId, clip.id); }}>Open in Timeline</button>
         <button type="button" className="btn btn-sm btn-ghost" onClick={() => { st().breakApartCompoundClip(seqId, clip.id); }}>Break Apart</button>
@@ -186,7 +186,7 @@ function SourceSection({ seqId: _seqId, fps, clips, media }: { seqId: ID; fps: R
   if (!single) {
     return (
       <Section id="source" title="Source" badge={`${clips.length} clips`}>
-        <Row label="Sequence range"><Range a={tc(start, fps)} b={tc(end, fps)} /></Row>
+        <Row label="Timeline range"><Range a={tc(start, fps)} b={tc(end, fps)} /></Row>
         <Row label="Span"><Value>{framesLabel(end - start, fps)}</Value></Row>
         <Row label="Total duration"><Value>{framesLabel(clips.reduce((a, c) => a + c.duration, 0), fps)}</Value></Row>
         <Row label="Media"><Value dim>{new Set(clips.map((c) => c.mediaId)).size} source file(s)</Value></Row>
@@ -202,7 +202,7 @@ function SourceSection({ seqId: _seqId, fps, clips, media }: { seqId: ID; fps: R
   return (
     <Section id="source" title="Source" badge={media ? fpsLabel(mediaFps) + ' fps' : undefined}>
       <SourceAtPlayhead clip={single} fps={fps} media={media} />
-      <Row label="Sequence" title="Clip position in the sequence"><Range a={tc(single.start, fps)} b={tc(clipEnd(single), fps)} /></Row>
+      <Row label="Timeline" title="Clip position in the timeline"><Range a={tc(single.start, fps)} b={tc(clipEnd(single), fps)} /></Row>
       <Row label="Source at start" title="Original source timecode at the first frame of the clip"><Value copy={tcStart}>{tcStart}</Value></Row>
       <Row label="Source range" title="Source in → out (media timecode)"><Range a={tcIn} b={tcOut} testId="source-range" /></Row>
       <Row label=""><Range a={secondsLabel(srcIn)} b={secondsLabel(srcOut)} dim /></Row>
@@ -214,7 +214,7 @@ function SourceSection({ seqId: _seqId, fps, clips, media }: { seqId: ID; fps: R
       {media ? <Row label="Category"><Value dim>{media.category}{media.identity.year ? ` · ${media.identity.year}` : ''}</Value></Row> : null}
       {single.audioStream !== undefined ? <Row label="Audio stream"><Value dim>#{single.audioStream}</Value></Row> : null}
       {single.originLabel ? <Row label="Origin"><Value dim>{single.originLabel}</Value></Row> : null}
-      {media && !fpsEquals(mediaFps, fps) ? <div className="insp-note warn">Media is {fpsLabel(mediaFps)} fps, sequence is {fpsLabel(fps)} fps — source timecode uses the media rate.</div> : null}
+      {media && !fpsEquals(mediaFps, fps) ? <div className="insp-note warn">Media is {fpsLabel(mediaFps)} fps, timeline is {fpsLabel(fps)} fps — source timecode uses the media rate.</div> : null}
     </Section>
   );
 }

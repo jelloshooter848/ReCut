@@ -48,7 +48,7 @@ import type {
 function isPosInt(v: unknown): v is number { return Number.isSafeInteger(v) && (v as number) > 0; }
 
 /** Why a sequence's frame rate cannot change (the Inspector tooltip and the Sequence Settings dialog say the same). */
-export const FPS_LOCKED_REASON = 'Frame rate is fixed once a sequence has clips (positions are frames).';
+export const FPS_LOCKED_REASON = 'Frame rate is fixed once a timeline has clips (positions are frames).';
 
 /**
  * True when the sequence holds any clip: its frame rate is then fixed, because clip positions are stored in frames
@@ -916,7 +916,7 @@ export const useStore = create<RecutStore>()((set, get) => {
 
     // ---------------------------------------------------------------- sequences
     addSequence(seq, opts = {}) {
-      commit('New sequence', (d) => {
+      commit('New timeline', (d) => {
         if (seq.binId === null && d.bins['bin-sequences']) seq = { ...seq, binId: 'bin-sequences' };
         d.sequences[seq.id] = seq;
         if (!d.sequenceOrder.includes(seq.id)) d.sequenceOrder.push(seq.id);
@@ -924,7 +924,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       });
     },
     duplicateSequence(id, newName) {
-      return duplicateSeq(id, newName, 'Duplicate sequence', false);
+      return duplicateSeq(id, newName, 'Duplicate timeline', false);
     },
     duplicateWithoutDisabled(id, newName) {
       return duplicateSeq(id, newName, 'Duplicate as cut without disabled clips', true);
@@ -937,7 +937,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       return removed;
     },
     deleteSequence(id) {
-      commit('Delete sequence', (d) => {
+      commit('Delete timeline', (d) => {
         if (!d.sequences[id]) return;
         const at = d.sequenceOrder.indexOf(id);
         delete d.sequences[id];
@@ -945,7 +945,7 @@ export const useStore = create<RecutStore>()((set, get) => {
         if (d.activeSequenceId === id) d.activeSequenceId = d.sequenceOrder[Math.min(Math.max(at, 0), d.sequenceOrder.length - 1)] ?? null;
       });
     },
-    renameSequence(id, name) { commit('Rename sequence', (d) => { const s = d.sequences[id]; if (s) s.name = name; }); },
+    renameSequence(id, name) { commit('Rename timeline', (d) => { const s = d.sequences[id]; if (s) s.name = name; }); },
     setActiveSequence(id) {
       quiet((d) => { if (id === null || d.sequences[id]) d.activeSequenceId = id; });
     },
@@ -993,7 +993,7 @@ export const useStore = create<RecutStore>()((set, get) => {
         if (!Object.keys(rest).length) return;
         patch = rest;
       }
-      commit('Sequence settings', (d) => {
+      commit('Timeline settings', (d) => {
         const seq = d.sequences[seqId];
         if (seq) Object.assign(seq, patch.fps ? { ...patch, fps: { num: patch.fps.num, den: patch.fps.den } } : patch);
       });
@@ -1285,7 +1285,7 @@ export const useStore = create<RecutStore>()((set, get) => {
     extractCentreChannel(seqId, clipId) {
       const { project } = get();
       const seq = project.sequences[seqId];
-      if (!seq) return { ok: false, reason: 'No sequence.' };
+      if (!seq) return { ok: false, reason: 'No timeline.' };
       const loc = findClip(seq, clipId);
       if (!loc) return { ok: false, reason: 'Select a clip first.' };
       if (loc.track.locked) return { ok: false, reason: 'The clip is on a locked track.' };
@@ -1700,7 +1700,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       const loc = seq && findClip(seq, clipId);
       if (!seq || !loc) return null;
       const c = loc.clip;
-      if (isNestedClip(c)) { get().toast('info', 'A nested sequence clip has no source media to make a scene of: open it in the timeline and add its clips'); return null; }
+      if (isNestedClip(c)) { get().toast('info', 'A nested timeline clip has no source media to make a scene of: open it in the timeline and add its clips'); return null; }
       const record: SceneRecord = {
         id: uid('scn'), name: name ?? c.name, mediaId: c.mediaId, in: c.sourceIn, out: clipSourceOut(c, seq.fps),
         characters: [...c.characters], location: c.locations[0] ?? '', arc: c.plotlines[0] ?? '', tags: [...c.tags], notes: c.notes,
@@ -1765,8 +1765,8 @@ export const useStore = create<RecutStore>()((set, get) => {
       if (!ids.length) { get().toast('info', 'Select the clips to make a compound clip of'); return null; }
       const names = new Set(Object.values(get().project.sequences).map((s) => s.name));
       let n = 1;
-      while (names.has(`Nested Sequence ${String(n).padStart(2, '0')}`)) n++;
-      const inner = createSequence(name?.trim() || `Nested Sequence ${String(n).padStart(2, '0')}`, { num: seq.fps.num, den: seq.fps.den }, seq.width, seq.height);
+      while (names.has(`Nested Timeline ${String(n).padStart(2, '0')}`)) n++;
+      const inner = createSequence(name?.trim() || `Nested Timeline ${String(n).padStart(2, '0')}`, { num: seq.fps.num, den: seq.fps.den }, seq.width, seq.height);
       inner.sampleRate = seq.sampleRate; inner.channels = seq.channels;
       // A selection that holds nested clips nests them one level deeper: check depth and size on a dry run.
       const seqs = get().project.sequences;
@@ -1821,7 +1821,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       const clip = seq ? findClip(seq, clipId)?.clip : undefined;
       if (!seq || !clip || !isNestedClip(clip)) return false;
       const inner = Object.hasOwn(p.sequences, clip.sequenceId) ? p.sequences[clip.sequenceId] : undefined;
-      if (!inner) { get().toast('warning', `The sequence of "${clip.name}" is no longer in the project`); return false; }
+      if (!inner) { get().toast('warning', `The timeline of "${clip.name}" is no longer in the project`); return false; }
       get().setView(inner.id, { playhead: innerFrameAt(clip, frame ?? seq.view.playhead, seq.fps, inner.fps) });
       get().setActiveSequence(inner.id);
       return true;
@@ -1847,9 +1847,9 @@ export const useStore = create<RecutStore>()((set, get) => {
         const trial = dryRun(p.sequences, seqId, (s) => { nestInto(s); });
         if (trial) problem = nestProblem(trial, seqId, childId, []);
       }
-      if (problem) { get().toast('warning', `Cannot nest the sequence here: ${nestProblemText(problem)}`); return []; }
+      if (problem) { get().toast('warning', `Cannot nest the timeline here: ${nestProblemText(problem)}`); return []; }
       let created: ID[] = [];
-      commit('Nest sequence', (d) => {
+      commit('Nest timeline', (d) => {
         const seq = d.sequences[seqId];
         if (!seq) return;
         created = nestInto(seq);

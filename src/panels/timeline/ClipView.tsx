@@ -241,7 +241,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
     <div
       className={cls} data-clip-id={clip.id} data-track-id={p.trackId} data-nested={nested ? clip.sequenceId : undefined}
       style={{ left: x, width: w, height: height - 2 }}
-      title={nested ? `${clip.name}\nNested sequence (double-click to open in the timeline)` : `${clip.name}${media ? `\n${media.name}` : ''}`}
+      title={nested ? `${clip.name}\nNested timeline (double-click to open it)` : `${clip.name}${media ? `\n${media.name}` : ''}`}
     >
       {stripe ? <div className="tl-clip-stripe" style={{ background: stripe }} /> : null}
       <div className="tl-clip-bar">
@@ -253,7 +253,7 @@ export const ClipView = memo(function ClipView(p: ClipViewProps) {
         {srcTc ? <span className="tl-clip-tc">{srcTc}</span> : null}
         {clip.speed !== 1 ? <span className="tl-badge speed">{Math.round(clip.speed * 100)}%</span> : null}
         {offline ? <span className="tl-badge offline">OFFLINE</span> : null}
-        {nested ? <span className="tl-badge nested" title="Nested sequence">NEST</span> : null}
+        {nested ? <span className="tl-badge nested" title="Nested timeline">NEST</span> : null}
         {needsProxy ? <span className="tl-badge needs-proxy" title={previewReason(media) ? `Needs a proxy to preview: ${previewReason(media)}` : 'Needs a proxy to preview'}>PROXY</span> : null}
         {characters.map((c) => <span key={c} className="tl-badge" title={c}>{c}</span>)}
       </div>

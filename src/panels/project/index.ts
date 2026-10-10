@@ -4,7 +4,7 @@ import { ProjectPanel } from './ProjectPanel';
 import './project.css';
 import { clipsPastEnd, importPaths, relinkWithPath } from './actions';
 
-registerPanel({ id: 'project', title: 'Project', defaultZone: 'left-top', icon: FolderOpen, component: ProjectPanel, description: 'Media library: bins, series, scenes, sequences' });
+registerPanel({ id: 'project', title: 'Project', defaultZone: 'left-top', icon: FolderOpen, component: ProjectPanel, description: 'Media library: bins, series, scenes, timelines' });
 
 export { ProjectPanel } from './ProjectPanel';
 export { RelinkDialog } from './RelinkDialog';

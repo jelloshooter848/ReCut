@@ -7,7 +7,7 @@ registerPanel({
   title: 'Continuity',
   defaultZone: 'left-bottom',
   icon: AlertTriangle,
-  description: 'Project-wide continuity issues — continuity markers across all sequences with status, category and linked clips',
+  description: 'Project-wide continuity issues — continuity markers across all timelines with status, category and linked clips',
   component: ContinuityPanel,
 });
 

@@ -250,7 +250,7 @@ export function ComparePanel({ active, focused }: PanelProps) {
     ...seqOptions.filter((o) => o.value !== aId),
     ...(seqA?.snapshots ?? []).map((s) => ({ value: `${SNAP_PREFIX}${s.id}`, label: `Snapshot: ${s.name}` })),
   ];
-  if (!bOptions.length) bOptions.push({ value: '', label: 'No other sequence', disabled: true });
+  if (!bOptions.length) bOptions.push({ value: '', label: 'No other timeline', disabled: true });
   const bValue = snapshot ? `${SNAP_PREFIX}${snapshot.id}` : bId ?? '';
 
   // ---- comparison ----
@@ -290,7 +290,7 @@ export function ComparePanel({ active, focused }: PanelProps) {
   if (!seqA) {
     return (
       <div className="panel compare-panel" ref={rootRef}>
-        <EmptyState icon={Columns2} title="Nothing to compare" description="Create a sequence first; Compare shows two cuts side by side." />
+        <EmptyState icon={Columns2} title="Nothing to compare" description="Create a timeline first; Compare shows two cuts side by side." />
       </div>
     );
   }
@@ -305,7 +305,7 @@ export function ComparePanel({ active, focused }: PanelProps) {
     <div className={`cmp-monitor ${mode === 'side' || mode === side.toLowerCase() ? '' : 'hidden'}`} data-testid={`compare-monitor-${side.toLowerCase()}`}>
       <div className="cmp-canvas-box" style={{ aspectRatio: `${ratio}`, maxHeight: maxBoxH, maxWidth: Math.round(maxBoxH * ratio) }}>
         <canvas ref={ref} className="cmp-canvas" />
-        {!seq ? <div className="cmp-canvas-empty">Select a sequence for {side}</div> : null}
+        {!seq ? <div className="cmp-canvas-empty">Select a timeline for {side}</div> : null}
       </div>
       <div className="cmp-monitor-bar">
         <span className={`cmp-side-badge ${side === 'B' ? 'b' : ''}`}>{side}</span>
@@ -322,10 +322,10 @@ export function ComparePanel({ active, focused }: PanelProps) {
       <div className="cmp-header">
         <div className="cmp-header-row">
           <span className="cmp-side-badge">A</span>
-          <Select size="sm" className="grow" value={aId ?? ''} options={seqOptions} onChange={setA} data-testid="compare-select-a" aria-label="Sequence A" />
+          <Select size="sm" className="grow" value={aId ?? ''} options={seqOptions} onChange={setA} data-testid="compare-select-a" aria-label="Timeline A" />
           <IconButton size="sm" icon={ArrowLeftRight} label="Swap A and B" data-testid="compare-swap" disabled={!bId} onClick={swap} />
           <span className="cmp-side-badge b">B</span>
-          <Select size="sm" className="grow" value={bValue} options={bOptions} onChange={setB} data-testid="compare-select-b" aria-label="Sequence B" />
+          <Select size="sm" className="grow" value={bValue} options={bOptions} onChange={setB} data-testid="compare-select-b" aria-label="Timeline B" />
         </div>
         <div className="cmp-header-row">
           <Toggle checked={sync} onChange={setSync} label="Sync" title="Lock both players to one clock" className="cmp-sync" />
@@ -387,7 +387,7 @@ export function ComparePanel({ active, focused }: PanelProps) {
               </div>
               <DiffList diff={diff} fpsA={seqA.fps} fpsB={seqB.fps} selectedClipId={selectedClip} onPick={onPickEntry} nameA={seqA.name} nameB={nameB} />
             </>
-          ) : <div className="cmp-empty">Pick a second sequence (or a snapshot) for B to compare structure.</div>}
+          ) : <div className="cmp-empty">Pick a second timeline (or a snapshot) for B to compare structure.</div>}
         </div>
 
         <CutsSection sequences={sequences} order={order} activeId={activeId} aId={aId} bId={bId} bSnapshotId={snapshot?.id ?? null}

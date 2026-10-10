@@ -76,7 +76,7 @@ export function sequenceFpsLock(edit: Sequence | null): string | null {
 
 function initialForm(edit: Sequence | null, count: number): FormState {
   if (edit) return { name: edit.name, fps: edit.fps, width: edit.width, height: edit.height, sampleRate: edit.sampleRate, channels: edit.channels };
-  return { name: `Sequence ${String(count + 1).padStart(2, '0')}`, fps: { num: 24000, den: 1001 }, width: 1920, height: 1080, sampleRate: 48000, channels: 2 };
+  return { name: `Timeline ${String(count + 1).padStart(2, '0')}`, fps: { num: 24000, den: 1001 }, width: 1920, height: 1080, sampleRate: 48000, channels: 2 };
 }
 
 export function NewSequenceDialog() {
@@ -111,7 +111,7 @@ export function NewSequenceDialog() {
   };
 
   const submit = () => {
-    const name = form.name.trim() || 'Sequence';
+    const name = form.name.trim() || 'Timeline';
     const width = Math.max(16, Math.round(form.width)); const height = Math.max(16, Math.round(form.height));
     if (!isValidFps(form.fps)) { toast('error', `Choose a frame rate between ${MIN_FPS} and ${MAX_FPS} fps`); return; }
     const st = useStore.getState();
@@ -134,7 +134,7 @@ export function NewSequenceDialog() {
     </div>
   );
   return (
-    <Dialog open title={editSeq ? 'Sequence Settings' : 'New Sequence'} onClose={close} width={460} className="new-sequence-dialog" onSubmit={submit}
+    <Dialog open title={editSeq ? 'Timeline Settings' : 'New Timeline'} onClose={close} width={460} className="new-sequence-dialog" onSubmit={submit}
       footer={<>
         <Button onClick={matchMedia} title="Fill settings from the selected media item">Match Media</Button>
         <span className="grow" />
@@ -170,7 +170,7 @@ export function NewSequenceDialog() {
           <Select value={String(form.sampleRate)} options={SAMPLE_RATES} onChange={(v) => setForm((f) => ({ ...f, sampleRate: Number(v) }))} />
           <Select value={String(form.channels)} options={CHANNELS} onChange={(v) => setForm((f) => ({ ...f, channels: Number(v) }))} />
         </>)}
-        {editSeq ? <div className="text-faint text-sm" data-testid="sequence-dialog-fps-note">{fpsLocked ? FPS_LOCKED_REASON : 'The frame rate can change while the sequence has no clips.'} Timebase: {fpsLabel(form.fps)} fps.</div> : null}
+        {editSeq ? <div className="text-faint text-sm" data-testid="sequence-dialog-fps-note">{fpsLocked ? FPS_LOCKED_REASON : 'The frame rate can change while the timeline has no clips.'} Timebase: {fpsLabel(form.fps)} fps.</div> : null}
       </form>
     </Dialog>
   );

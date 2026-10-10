@@ -51,8 +51,8 @@ Footage: *Tears of Steel* and *Sintel* © Blender Foundation, [CC BY 3.0](https:
 
 ### Editing core
 - Source / Program monitors with JKL shuttle (up to 8x), frame stepping, In/Out marks and typed timecode entry.
-- Three-point **Insert** (`,`) and **Overwrite** (`.`) that honour sequence and source In/Out. On the first edit into
-  an empty sequence, ReCut offers to change the sequence to match the clip.
+- Three-point **Insert** (`,`) and **Overwrite** (`.`) that honour timeline and source In/Out. On the first edit into
+  an empty timeline, ReCut offers to change the timeline to match the clip.
 - Multi-track timeline (video + audio tracks, linked A/V, source patching, lock / mute / solo), snapping,
   Lift / Extract, Ripple Delete, Add Edit, Ripple Trim to playhead (Q / W), nudge, copy / paste.
 - Tools: Selection, Track Select, Ripple, Rolling, Slip, Slide, Razor, Hand. All edits are frame-exact.
@@ -61,8 +61,8 @@ Footage: *Tears of Steel* and *Sintel* © Blender Foundation, [CC BY 3.0](https:
 - Clip speed (1 %–10 000 %), position / scale / rotation / opacity / crop, clip gain, level and fades, and track volume.
 - **Keyframes** for position, scale, opacity and volume, Linear or Ease, shown as diamonds on the timeline. They stay
   with the picture through trims, splits, rolls and slides, and the export matches the preview.
-- **Nested sequences and compound clips.** Make Compound Clip folds the selection into its own sequence; edits to it
-  show everywhere it is used. Drag a sequence onto the timeline to nest it; Break Apart reverses it.
+- **Nested timelines and compound clips.** Make Compound Clip folds the selection into its own timeline; edits to it
+  show everywhere it is used. Drag a timeline from the Project panel into another to nest it; Break Apart reverses it.
 
 ### Fan-edit tools
 - **Series / season / franchise organisation.** On import, ReCut reads `S01E03`, `1x03` or `Season 1 Episode 3` and
@@ -71,7 +71,7 @@ Footage: *Tears of Steel* and *Sintel* © Blender Foundation, [CC BY 3.0](https:
 - **Scene detection** (FFmpeg scene filter, adjustable threshold) with merge, split and tag of detected scenes.
 - **Transcript search across a franchise.** Import SRT / WebVTT (sidecars next to a video are picked up
   automatically) or extract embedded text subtitles. Search by project, series, season, franchise, collection, source
-  or sequence, with regex and whole-word options. Click a hit to load it in the Source monitor at that line.
+  or timeline, with regex and whole-word options. Click a hit to load it in the Source monitor at that line.
 - **Speech-to-text (Whisper).** Media without subtitles gets a searchable transcript from the built-in whisper.cpp
   engine, entirely offline. Models (tiny to large-v3-turbo) are downloaded once, when you choose one, and checked
   against a fixed checksum.
@@ -82,12 +82,12 @@ Footage: *Tears of Steel* and *Sintel* © Blender Foundation, [CC BY 3.0](https:
 - **Story tagging.** Tag clips with characters, plotlines, locations and tags. The Storyline panel can **Highlight** or
   **Solo** matching clips, and its **What if** buttons disable matching / non-matching clips and estimate the runtime.
   **Remove disabled** turns the experiment into the real cut (ripple, one undo step), and **Duplicate as cut** does the
-  same in a new version of the sequence.
+  same in a new version of the timeline.
 - **Storyline blocks.** Label acts and arcs as coloured blocks above the cut.
-- **Alternate cuts and snapshots.** Duplicate a sequence as a versioned alternate cut, or take restorable snapshots.
-- **Compare cuts.** Play two sequences side by side on one clock and read a structural diff
+- **Alternate cuts and snapshots.** Duplicate a timeline as a versioned alternate cut, or take restorable snapshots.
+- **Compare cuts.** Play two timelines side by side on one clock and read a structural diff
   (same / moved / trimmed / only in A / only in B).
-- **Continuity notes.** Categorised issues that are pinned to a clip, can be resolved, are aggregated across sequences
+- **Continuity notes.** Categorised issues that are pinned to a clip, can be resolved, are aggregated across timelines
   and can be copied as text.
 - **Original source timecode.** The Inspector shows the source file's timecode at the playhead. The Program timecode
   can switch from SEQ to SRC, and Match Frame (`F`) jumps to the source.
@@ -122,7 +122,7 @@ Footage: *Tears of Steel* and *Sintel* © Blender Foundation, [CC BY 3.0](https:
 | ![Project panel](docs/screenshots/project-panel.png) Project panel: bins, series, scenes | ![Source](docs/screenshots/source.png) Source monitor with subtitles |
 | ![Program](docs/screenshots/program.png) Program monitor | ![Timeline](docs/screenshots/timeline.png) Timeline |
 | ![Inspector](docs/screenshots/inspector.png) Inspector with original source timecode | ![Keyframes](docs/screenshots/keyframes.png) Keyframes in the Inspector and on the timeline |
-| ![Nested sequence](docs/screenshots/nested.png) A compound clip (nested sequence) | ![Channels](docs/screenshots/channels.png) Centre channel extracted from a 5.1 source |
+| ![Nested timeline](docs/screenshots/nested.png) A compound clip (nested timeline) | ![Channels](docs/screenshots/channels.png) Centre channel extracted from a 5.1 source |
 | ![Transcript](docs/screenshots/transcript.png) Transcript search across a franchise | ![Scenes](docs/screenshots/scenes.png) Scene library |
 | ![Storyline](docs/screenshots/storyline.png) Storyline blocks and tag filters | ![Compare](docs/screenshots/compare.png) Compare cuts with structural diff |
 | ![Continuity](docs/screenshots/continuity.png) Continuity notes | ![Jobs](docs/screenshots/jobs.png) Jobs and proxies |

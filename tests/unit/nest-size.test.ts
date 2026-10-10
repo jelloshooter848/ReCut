@@ -255,7 +255,7 @@ describe('store paths that create nested clips check the size limit', () => {
     expect(S().nestSequence(host, 'W', 100).length).toBe(1);
     // At the same time on V2 it needs 601 more tracks of its own.
     expect(S().nestSequence(host, 'W', 0, { videoTrackId: 'HV2' })).toEqual([]);
-    expect(S().ui.toasts.at(-1)?.text).toBe(`Cannot nest the sequence here: nesting would expand to more than ${FLAT_LIMIT_TEXT} when flattened`);
+    expect(S().ui.toasts.at(-1)?.text).toBe(`Cannot nest the timeline here: nesting would expand to more than ${FLAT_LIMIT_TEXT} when flattened`);
     const placed = S().project.sequences.H.videoTracks[0].clips[0];
     expect(S().placeClipsAction(host, [{ trackId: 'HV1', clip: { ...placed, id: 'pasted', start: 200 } }], 'overwrite')).toBe(true);
     expect(S().placeClipsAction(host, [{ trackId: 'HV2', clip: { ...placed, id: 'pasted2', start: 0 } }], 'overwrite')).toBe(false);
@@ -288,7 +288,7 @@ describe('load repair', () => {
     const a = normalizeProjectWithReport(JSON.parse(raw));
     const b = normalizeProjectWithReport(JSON.parse(raw));
     const q = a.project;
-    expect(a.repairs.join('\n')).toMatch(new RegExp(`nested sequence that would expand to more than ${FLAT_LIMIT_TEXT} when flattened made offline \\(\\d+x\\)`));
+    expect(a.repairs.join('\n')).toMatch(new RegExp(`nested timeline that would expand to more than ${FLAT_LIMIT_TEXT} when flattened made offline \\(\\d+x\\)`));
     // Deterministic: the same clips are cut.
     const cuts = (x: Project) => Object.values(x.sequences).flatMap((s) => allTracks(s).flatMap((t) => t.clips.filter((c) => !c.sequenceId && c.mediaId.startsWith('L')).map((c) => `${s.id}/${c.id}`))).sort();
     expect(cuts(a.project)).toEqual(cuts(b.project));

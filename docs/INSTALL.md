@@ -253,7 +253,7 @@ Build one package per platform: the binaries are platform-specific.
 ## First launch
 
 1. ReCut opens the **Editing** workspace with an empty project, the default bins (Audio, Graphics, Misc, Movies,
-   Scenes, Sequences, Subtitles, TV), and **Sequence 01** (1920×1080, 23.976 fps, stereo, 48 kHz).
+   Scenes, Timelines, Subtitles, TV), and **Timeline 01** (1920×1080, 23.976 fps, stereo, 48 kHz).
 2. Press **Ctrl+I** (Cmd+I) or click **Import…** in the Project panel. Proxies are on by default, so files the
    preview cannot decode get a proxy automatically.
 3. If an earlier session ended without saving, ReCut offers to **recover** the newer autosave.

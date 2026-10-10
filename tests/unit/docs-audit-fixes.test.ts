@@ -122,7 +122,7 @@ describe('the frame rate of a sequence with clips is fixed', () => {
     expect(sequenceFpsLock(seq())).toBeNull();
     addClip();
     expect(sequenceFpsLock(seq())).toBe(FPS_LOCKED_REASON);
-    expect(FPS_LOCKED_REASON).toBe('Frame rate is fixed once a sequence has clips (positions are frames).');
+    expect(FPS_LOCKED_REASON).toBe('Frame rate is fixed once a timeline has clips (positions are frames).');
   });
 });
 
