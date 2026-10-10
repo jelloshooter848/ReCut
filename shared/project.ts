@@ -3,7 +3,7 @@ import type {
   Project, Sequence, Rational, MediaItem, ProjectSettings, Bin, ID, TagVocabulary, SequenceView, Track, Clip, Transition,
   TransitionType, MediaKind, ProxyStatus, MarkerKind, Marker, StoryBlock, SequenceSubtitleTrack, SequenceSubtitleCue,
   SequenceSnapshot, SceneRecord, SubtitleTrack, ClipTransform, ClipAudio, ProxyInfo, MediaProbe, VideoStreamInfo, SourceIdentity,
-  DetectedScene,
+  DetectedScene, SceneSequence,
 } from './model';
 import { uid } from './ids';
 import { PRODUCT_NAME } from './productIdentity';
@@ -106,7 +106,7 @@ export function createProject(name = 'Untitled Project'): Project {
     formatVersion: PROJECT_FORMAT_VERSION,
     id: uid('proj'), name, createdAt: now, modifiedAt: now,
     media: {}, bins, sequences: { [seq.id]: seq }, sequenceOrder: [seq.id],
-    scenes: {}, subtitleTracks: {}, tags: emptyTags(), settings: defaultSettings(), activeSequenceId: seq.id,
+    scenes: {}, sceneSequences: {}, subtitleTracks: {}, tags: emptyTags(), settings: defaultSettings(), activeSequenceId: seq.id,
   };
 }
 
@@ -198,6 +198,7 @@ function normalizeInner(raw: unknown): Project {
     bins: p.bins ?? base.bins,
     sequences: entries(p.sequences, 'sequences', (s, id) => repairSequence(s, id, DEFAULT_SEQUENCE_FPS)),
     scenes: entries(p.scenes, 'scenes', repairScene),
+    sceneSequences: entries(p.sceneSequences, 'sceneSequences', repairSceneSequence),
     subtitleTracks: entries(p.subtitleTracks, 'subtitleTracks', repairSubtitleTrack),
     tags: repairTags(p.tags),
     settings: repairSettings(p.settings),
@@ -216,6 +217,7 @@ function normalizeInner(raw: unknown): Project {
     const seq = createSequence('Timeline 01'); seq.binId = 'bin-sequences';
     out.sequences[seq.id] = seq; out.sequenceOrder.push(seq.id); out.activeSequenceId = seq.id;
   }
+  repairSceneSequenceRefs(out);
   repairBins(out);
   repairPrototypeRefs(out);
   repairNesting(out);
@@ -997,6 +999,26 @@ function repairScene(s: Obj, id: ID): SceneRecord | null {
   s.notes = str(s.notes, ''); s.location = str(s.location, ''); s.arc = str(s.arc, '');
   s.rating = num(s.rating, 0); s.color = str(s.color, '#4d7cfe'); s.createdAt = num(s.createdAt, 0);
   return s as unknown as SceneRecord;
+}
+
+/** A sequence of scenes (#146): fields reset when wrongly typed; scene references are checked by repairSceneSequenceRefs. */
+function repairSceneSequence(s: Obj, id: ID): SceneSequence | null {
+  keyedId(s, id);
+  s.name = str(s.name, 'Sequence');
+  s.sceneIds = strList(s.sceneIds);
+  s.color = str(s.color, SCENE_SEQUENCE_COLOR); s.tags = strList(s.tags); s.notes = str(s.notes, ''); s.createdAt = num(s.createdAt, 0);
+  return s as unknown as SceneSequence;
+}
+
+/** Default colour of a new sequence of scenes. */
+export const SCENE_SEQUENCE_COLOR = '#c77dff';
+
+/** Sequences keep only scenes that exist, each once, in their order. */
+function repairSceneSequenceRefs(p: Project): void {
+  for (const q of Object.values(p.sceneSequences)) {
+    const kept = [...new Set(q.sceneIds)].filter((id) => Object.hasOwn(p.scenes, id));
+    if (kept.length !== q.sceneIds.length) { note('sequence reference to a missing scene removed'); q.sceneIds = kept; }
+  }
 }
 
 /** Optional per-word timing of a cue (#118): a list of {start, end, text} in source seconds; anything else is dropped. */

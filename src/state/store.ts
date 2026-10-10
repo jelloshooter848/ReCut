@@ -18,7 +18,7 @@ import type {
 import { withoutCopiedTranscripts } from '../../shared/transcripts';
 import { uid } from '../../shared/ids';
 import { fpsEquals, isValidFps, secondsToFrames } from '../../shared/time';
-import { createProject, createSequence, LiveView } from '../../shared/project';
+import { createProject, createSequence, LiveView, SCENE_SEQUENCE_COLOR } from '../../shared/project';
 import {
   breakApartCompoundClip as nestBreakApart, innerFrameAt, isNestedClip, makeCompoundClip as nestMakeCompound, nestedClipsFor, nestLimitProblem,
   nestProblem, nestProblemText, sequenceSeconds,
@@ -399,6 +399,12 @@ export const useStore = create<RecutStore>()((set, get) => {
     const now = Date.now();
     return produce(next, (d) => {
       d.modifiedAt = now;
+      // Scenes removed by any edit leave the sequences that held them (#146).
+      if (prev.scenes !== next.scenes && d.sceneSequences) {
+        for (const q of Object.values(d.sceneSequences)) {
+          if (q.sceneIds.some((id) => !d.scenes[id])) q.sceneIds = q.sceneIds.filter((id) => !!d.scenes[id]);
+        }
+      }
       for (const id of changed) {
         const seq = d.sequences[id];
         if (!seq) continue;
@@ -1679,6 +1685,29 @@ export const useStore = create<RecutStore>()((set, get) => {
       });
     },
     removeScene(id) { commit('Remove scene', (d) => { delete d.scenes[id]; }); },
+
+    // ---------------------------------------------------------------- sequences of scenes (#146)
+    addSceneSequence(name, sceneIds, opts = {}) {
+      const id = uid('sqn');
+      commit('Make sequence', (d) => {
+        const ids = [...new Set(sceneIds)].filter((x) => !!d.scenes[x]);
+        d.sceneSequences ??= {};
+        d.sceneSequences[id] = { id, name: name.trim() || 'Sequence', sceneIds: ids, color: opts.color ?? SCENE_SEQUENCE_COLOR, tags: [], notes: '', createdAt: Date.now() };
+      });
+      return id;
+    },
+    updateSceneSequence(id, patch) {
+      commit(patch.sceneIds ? 'Edit sequence scenes' : patch.name !== undefined ? 'Rename sequence' : 'Edit sequence', (d) => {
+        const q = d.sceneSequences?.[id];
+        if (!q) return;
+        if (patch.name !== undefined) q.name = patch.name.trim() || q.name;
+        if (patch.sceneIds) q.sceneIds = [...new Set(patch.sceneIds)].filter((x) => !!d.scenes[x]);
+        if (patch.color !== undefined) q.color = patch.color;
+        if (patch.tags) { q.tags = [...patch.tags]; addToVocab(d.tags, 'custom', patch.tags); }
+        if (patch.notes !== undefined) q.notes = patch.notes;
+      });
+    },
+    removeSceneSequence(id) { commit('Delete sequence', (d) => { if (d.sceneSequences) delete d.sceneSequences[id]; }); },
     sceneFromSource(name) {
       const s = get();
       const sc = s.ui.sourceClip;

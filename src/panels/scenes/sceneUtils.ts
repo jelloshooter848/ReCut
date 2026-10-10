@@ -2,7 +2,8 @@
  * Pure helpers for the Scene Library panel: fps lookup, formatting, filtering, sorting, grouping and the
  * store-facing actions (load in Source, insert at playhead, drag payload) shared by rows, cards and menus.
  */
-import type { ID, MediaItem, Rational, SceneRecord } from '@shared/model';
+import type { ID, MediaItem, Rational, SceneRecord, SceneSequence } from '@shared/model';
+import { createSequence } from '@shared/project';
 import { formatSequenceSecondsTimecode, formatClock, secondsToFrames, validFpsOr } from '@shared/time';
 import { uid } from '@shared/ids';
 import { clipEnd, findClip } from '@shared/timeline';
@@ -192,13 +193,13 @@ export function insertSceneAtPlayhead(scene: SceneRecord, mode: 'insert' | 'over
   return ids;
 }
 
-/** Insert several scenes back-to-back at the playhead (library order). */
-export function insertScenesAtPlayhead(scenes: SceneRecord[], mode: 'insert' | 'overwrite'): void {
+/** Insert several scenes back-to-back at the playhead (in the order given), as one undo step. */
+export function insertScenesAtPlayhead(scenes: SceneRecord[], mode: 'insert' | 'overwrite', label = mode === 'insert' ? 'Insert scenes' : 'Overwrite scenes'): void {
   const s = useStore.getState();
   const seq = activeSequence(s);
   if (!seq) { toast.warn('No active timeline'); return; }
   let at = seq.view.playhead;
-  for (const scene of scenes) {
+  s.batch(label, () => { for (const scene of scenes) {
     const ids = s.insertFromSource(seq.id, { mediaId: scene.mediaId, in: scene.in, out: scene.out, atFrame: at, mode, extra: sceneClipExtra(scene) });
     if (!ids.length) continue;
     // Advance by what was actually placed: inserts are capped at the media end, so the rounded scene length
@@ -207,8 +208,58 @@ export function insertScenesAtPlayhead(scenes: SceneRecord[], mode: 'insert' | '
     let end = -Infinity;
     if (placed) for (const id of ids) { const loc = findClip(placed, id); if (loc) end = Math.max(end, clipEnd(loc.clip)); }
     at = Number.isFinite(end) ? end : at + Math.max(1, secondsToFrames(sceneDuration(scene), seq.fps));
-  }
+  } });
   if (scenes.length) s.setView(seq.id, { playhead: at });
+}
+
+// ------------------------------------------------------------------ sequences of scenes (#146)
+
+/** A sequence's scenes that still exist, in its order. */
+export function sequenceScenes(q: SceneSequence, scenes: Record<ID, SceneRecord> = useStore.getState().project.scenes): SceneRecord[] {
+  return q.sceneIds.map((id) => scenes[id]).filter((x): x is SceneRecord => !!x);
+}
+
+/** Total length of a sequence's scenes, in seconds. */
+export function sequenceDuration(q: SceneSequence, scenes?: Record<ID, SceneRecord>): number {
+  return sequenceScenes(q, scenes).reduce((t, sc) => t + sceneDuration(sc), 0);
+}
+
+/** Next free default sequence name: "Sequence 01", "Sequence 02", … */
+export function nextSequenceName(): string {
+  const names = new Set(Object.values(useStore.getState().project.sceneSequences ?? {}).map((q) => q.name));
+  for (let n = 1; ; n++) { const name = `Sequence ${String(n).padStart(2, '0')}`; if (!names.has(name)) return name; }
+}
+
+/** Put a sequence's scenes on the active timeline at the playhead, back to back, in one undo step. */
+export function insertSequenceAtPlayhead(q: SceneSequence, mode: 'insert' | 'overwrite'): void {
+  const scenes = sequenceScenes(q);
+  if (!scenes.length) { toast.warn(`"${q.name}" has no scenes`); return; }
+  insertScenesAtPlayhead(scenes, mode, mode === 'insert' ? 'Insert sequence' : 'Overwrite sequence');
+}
+
+/**
+ * A new timeline named after the sequence, with the active timeline's frame rate and size (or the defaults), holding
+ * the sequence's scenes from the start, in one undo step. Returns the new timeline's id.
+ */
+export function newTimelineFromSequence(q: SceneSequence): ID | null {
+  const s = useStore.getState();
+  const scenes = sequenceScenes(q);
+  if (!scenes.length) { toast.warn(`"${q.name}" has no scenes`); return null; }
+  const like = activeSequence(s);
+  const tl = like ? createSequence(q.name, { ...like.fps }, like.width, like.height) : createSequence(q.name);
+  if (like) { tl.sampleRate = like.sampleRate; tl.channels = like.channels; }
+  s.batch('New timeline from sequence', () => {
+    useStore.getState().addSequence(tl, { activate: true });
+    insertScenesAtPlayhead(scenes, 'overwrite');
+  });
+  useStore.getState().setView(tl.id, { playhead: 0 });
+  toast.ok(`Timeline "${q.name}" made from ${scenes.length} scene${scenes.length === 1 ? '' : 's'}`);
+  return tl.id;
+}
+
+/** Drag payload for a whole sequence: its scenes, in order. */
+export function sequenceDragPayload(q: SceneSequence): ClipDragPayload[] {
+  return sequenceScenes(q).map(sceneDragPayload);
 }
 
 export function sceneDragPayload(scene: SceneRecord): ClipDragPayload {

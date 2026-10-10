@@ -4,7 +4,7 @@
  */
 import type {
   AudioChannelSelection, Bin, Clip, ClipAudio, ClipTransform, DetectedScene, ID, JobInfo, Marker, MediaItem, MediaProbe, Project,
-  ProjectSettings, ProxyInfo, SceneRecord, Sequence, SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock,
+  ProjectSettings, ProxyInfo, SceneRecord, SceneSequence, Sequence, SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock,
   SubtitleTrack, TagVocabulary, Track, Transition, TransitionType, KeyframeInterp,
 } from '../../shared/model';
 import type { MoveSpec, NewClipSpec } from '../../shared/timeline';
@@ -310,6 +310,12 @@ export interface StoreActions {
   removeScene(id: ID): void;
   sceneFromSource(name?: string): ID | null;
   sceneFromClip(seqId: ID, clipId: ID, name?: string): ID | null;
+
+  // ---- sequences of scenes (#146; not timelines) ----
+  /** A new sequence holding the given scenes (existing ones, each once) in that order. Returns its id. */
+  addSceneSequence(name: string, sceneIds: ID[], opts?: { color?: string }): ID;
+  updateSceneSequence(id: ID, patch: Partial<Pick<SceneSequence, 'name' | 'sceneIds' | 'color' | 'tags' | 'notes'>>): void;
+  removeSceneSequence(id: ID): void;
 
   // ---- tags ----
   addTag(kind: keyof TagVocabulary, value: string): void;
