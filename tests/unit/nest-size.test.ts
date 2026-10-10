@@ -3,7 +3,7 @@
  * MAX_NEST_DEPTH): the size computation (flattenedSize) against what flattenSequence really makes, nestProblem's
  * 'size' reason, the store paths that create nested clips, the load repair (deterministic, stable, no clip lost), a
  * realistic season-scale project that stays legal, and flattening time at the limits.
- * bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md
+ * bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md @ 59eafc6
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { Clip, ID, MediaItem, Project, Rational, Sequence, Track, Transition } from '../../shared/model';

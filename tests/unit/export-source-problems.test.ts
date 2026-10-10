@@ -1,5 +1,5 @@
 /**
- * Export with damaged sources (bugs/closed/2026-10-09-export-silently-pads-truncated-sources.md): FFmpeg exits 0 when
+ * Export with damaged sources (bugs/closed/2026-10-09-export-silently-pads-truncated-sources.md @ 59eafc6): FFmpeg exits 0 when
  * a source ends early or has corrupt data, and the render graph pads every clip to its full length, so the export
  * "succeeds" with a silent or frozen stretch. runExport must still finish, and must report the problem as an export
  * warning naming the file. Clean sources must produce no warnings.

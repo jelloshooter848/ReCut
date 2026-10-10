@@ -279,7 +279,7 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   (249 ms with the 3 h timeline), opening takes 714 ms (808 ms) without freezing the window, and autosave takes about
   190 ms without stalling playback or scrubbing. `npm run perf:check` checks these numbers (see
   [DEVELOPMENT](DEVELOPMENT.md) → Performance gate); the full record is
-  `bugs/closed/2026-10-05-perf-budgets-2500-clips.md`.
+  `https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-perf-budgets-2500-clips.md`.
 - **The reference machine** for these numbers and for the gate is that class of machine: a 4-core cloud container
   (Intel Xeon @ 2.10 GHz, 16 GB, xvfb + software GL), calibration score js 80 ms, ffmpeg 452 ms, render 242 ms
   (`tests/perf/calibrate.mjs`, lower is faster; recorded in `tests/perf/baseline.json` on 7 October 2026). Re-measured

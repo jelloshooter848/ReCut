@@ -21,7 +21,7 @@ export const DEFAULT_MIN_SCENE_SECONDS = 1.0;
  * Bump when the detected boundaries for the same file and threshold change, so cached results are recomputed.
  * v2: boundaries come from showinfo's integer `pts` in AV_TIME_BASE units instead of the rounded `pts_time` text.
  * v3: boundaries are relative to the container start, not to the video stream's start, on MPEG-TS / MPEG-PS too
- *     (bugs/closed/2026-10-09-ts-late-video-export-early.md).
+ *     (bugs/closed/2026-10-09-ts-late-video-export-early.md @ 59eafc6).
  * v4: the adaptive detector (shared/shotDetect.ts) instead of FFmpeg's fixed `scene` threshold (#149).
  */
 export const SCENE_VERSION = 4;

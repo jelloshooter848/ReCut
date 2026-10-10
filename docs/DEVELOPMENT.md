@@ -162,7 +162,7 @@ Every budgeted row has a tier. The owner decided this policy on 6 October 2026:
   scrub rows happened to leave out of the pool. Since 9 October 2026 the row counts a replay of the same 10 s (the
   first playback, with its fps and long-task gates, runs unchanged before it), which starts with exactly the
   elements playback needs, so it reads 0 on unchanged code
-  (`bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md`). Every other row is unchanged: time, rate and long-task rows with a baseline of 0, and
+  (`https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md`). Every other row is unchanged: time, rate and long-task rows with a baseline of 0, and
   count rows with a non-zero baseline (1 → 2 still fails), keep the ratio rule; the row's own budget still applies.
 - **Nothing is deleted or loosened.** Re-scoping a row's tier is the only mechanism. Diagnostic rows (and
   `reference` guardrails) keep their old threshold in the row, shown as a reference, so history stays comparable.
@@ -177,7 +177,7 @@ Every budgeted row has a tier. The owner decided this policy on 6 October 2026:
 
 Cloud hosts of the same nominal class differ in real speed: identical code measured 1.5–2.3× slower on one 4-core
 container than on another and failed 15 of 98 gates there
-(`bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md`). So every run measures the host first and judges its
+(`https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md`). So every run measures the host first and judges its
 rows on the scale of the **reference machine**, the machine the baseline was seeded on.
 
 - **Calibration** (`tests/perf/calibrate.mjs`, run before each run into `<run dir>/calibration.json`; on its own:
@@ -259,7 +259,7 @@ machine, so no local baseline is needed; to judge a change against main on one h
   the slowest ratio (`RECUT_PERF_TIMEOUT_SCALE`), so the 8-minute full export does not time out there.
 - **Treat ±30 % as noise on a single run.** On an idle 4-core container three runs agreed within about ±10 % for
   most rows, but with other jobs on the machine a single row has doubled on identical code (`serializeProject`
-  344 → 704 ms; see the baseline in `bugs/closed/2026-10-05-perf-budgets-2500-clips.md`). A single run is not
+  344 → 704 ms; see the baseline in `https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-perf-budgets-2500-clips.md`). A single run is not
   evidence of a regression or a fix, and rows within a few percent of their budget flip between runs. Compare
   medians of at least two runs: `npm run perf:check -- --runs 2` runs everything twice and reports the median per row
   with its min–max spread; a row passes its budget only when it passed in more than half of the runs.

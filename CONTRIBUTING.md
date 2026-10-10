@@ -194,8 +194,9 @@ Please search [existing issues](https://github.com/jelloshooter848/ReCut/issues)
 Where ReCut keeps preferences, autosaves and its cache on each OS is listed in
 [INSTALL › Where data lives](docs/INSTALL.md#where-data-lives).
 
-All bugs are tracked in GitHub Issues. Older reports, from before the project moved to Issues, are kept as a
-read-only archive in [`bugs/closed/`](bugs/closed/), which code comments link to; don't add files there.
+All bugs are tracked in GitHub Issues. Reports from before the move to Issues were Markdown files in a `bugs/`
+folder, since removed. Code comments cite them as `bugs/closed/<file> @ 59eafc6` (read one with
+`git show 59eafc6:bugs/closed/<file>`), and the docs and changelog link to them at that commit.
 
 **Security problems:** please don't describe a vulnerability in a public issue.
 <!-- OWNER: say how to report a vulnerability privately (GitHub private vulnerability reporting is currently off for this repository, or give a contact), then remove this comment. -->

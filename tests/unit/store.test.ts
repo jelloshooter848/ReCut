@@ -573,7 +573,7 @@ describe('attack fixes (store)', () => {
     S().invalidateProxy(media.id);
     expect(S().project.media[media.id].proxy).toEqual({ status: 'none' });
     expect(S().history.past.length).toBe(n);
-    // A job mirror, not an edit (bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md).
+    // A job mirror, not an edit (bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md @ 59eafc6).
     expect(S().dirty).toBe(false);
   });
 

@@ -33,7 +33,7 @@ export interface PlaybackPathResolution {
  * EXR, PSD, JPEG XL, HEIC, ...) is previewed from a PNG proxy that FFmpeg decodes on import (electron/media/proxy.ts),
  * so the preview shows what the export decodes. AVIF is proxied too although Electron 33 decodes it: Chromium applies
  * the AVIF `irot` / `imir` orientation and FFmpeg 6.1 does not, so a rotated AVIF drawn directly would preview
- * rotated and export unrotated (bugs/closed/2026-10-07-avif-preview-orientation-differs-from-export.md).
+ * rotated and export unrotated (bugs/closed/2026-10-07-avif-preview-orientation-differs-from-export.md @ 59eafc6).
  */
 export const DISPLAYABLE_IMAGE_EXTS: readonly string[] = ['png', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'gif', 'bmp'];
 
@@ -154,8 +154,8 @@ export function audioTrackOrdinal(media: MediaItem, usingProxy: boolean, want: n
 }
 
 /**
- * Gain that makes the preview's up-mix of the played stream match the export's (bugs/closed/2026-10-07-mono-preview-
- * level.md). The Web Audio destination plays a mono stream on L and R at unity; a stereo export up-mixes it with
+ * Gain that makes the preview's up-mix of the played stream match the export's
+ * (bugs/closed/2026-10-07-mono-preview-level.md @ 59eafc6). The Web Audio destination plays a mono stream on L and R at unity; a stereo export up-mixes it with
  * FFmpeg (`aformat=...:channel_layouts=stereo`, equal power) to 1/sqrt(2) (-3.01 dB) on each, and a 5.1 export puts it
  * in the centre, which a stereo down-mix plays at the same 1/sqrt(2). A proxy is already stereo, up-mixed by FFmpeg
  * (`-ac 2`, electron/media/proxy.ts), so it plays as exported. 1 for anything else (stereo and multichannel streams are

@@ -771,7 +771,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       if (afterRelink && !('error' in result)) fitClipsToRelinkedMedia(id);
     },
     // Job/status mirrors are quiet: they arrive asynchronously and must not become undo steps (nor clear redo).
-    // Nor do they mark the project dirty (bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md): proxy,
+    // Nor do they mark the project dirty (bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md @ 59eafc6): proxy,
     // channel-proxy and scene-detect state is written to the file with the next save / autosave, but it is not an
     // edit: the jobs make it again from the content-keyed cache. A job finishing after a clean save must not ask
     // "Save changes?" on quit nor start an autosave (which recovery would offer after the clean quit). Writes that

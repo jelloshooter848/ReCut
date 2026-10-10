@@ -1,5 +1,5 @@
 /**
- * bugs/closed/2026-10-08-stored-probe-audio-streams-not-repaired.md: a project's stored probe is used as is until the
+ * bugs/closed/2026-10-08-stored-probe-audio-streams-not-repaired.md @ 59eafc6: a project's stored probe is used as is until the
  * file is probed again (an offline file never is), so its audio stream entries are repaired on load, and the channel
  * menu of a stream never lists more channels than a selection can address (c0..c99).
  */

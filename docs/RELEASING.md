@@ -354,8 +354,7 @@ section uses these headings (leave out empty ones):
 - **Changed**: behaviour users will notice even though nothing is broken: new prompts, stricter validation, different
   output, different defaults. Put behaviour changes here, in bold if a user could be surprised.
 - **Fixed**: bugs fixed. Link the closed issue for every bug, for example
-  `([#139](https://github.com/jelloshooter848/ReCut/issues/139))`. Older fixes link their archived report under
-  `bugs/closed/`.
+  `([#139](https://github.com/jelloshooter848/ReCut/issues/139))`.
 - **Known issues**: important open bug issues, linked, plus any limitation users must know about.
 
 Rules:
@@ -363,7 +362,7 @@ Rules:
 - Describe what users see, not how it was implemented. One line per item where possible. No marketing.
 - Build the section from `git log --oneline <previous tag>..origin/dev` and from the bug issues closed since the
   previous release (label `bug`, or `done on dev`).
-- Link repository files with relative links (`docs/...`, archived `bugs/closed/...`). CI rewrites them to absolute links at
+- Link repository files with relative links (`docs/...`). CI rewrites them to absolute links at
   the release tag for the GitHub release notes.
 - Mention a project `formatVersion` change explicitly.
 - CI copies everything between `## [x.y.z]` and the next `## [` heading into the release notes, so keep that section

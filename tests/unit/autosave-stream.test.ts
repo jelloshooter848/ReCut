@@ -9,7 +9,7 @@
  *    and its .bak are never touched; no temp file is left; recovery offers it as before;
  *  - a failed / incomplete / refused autosave leaves the previous autosave in place and no temp file;
  *  - autosaves never interleave;
- *  - bugs/closed/2026-10-06-autosave-during-save-ignored-by-recovery.md: after a save that left edits unsaved, an
+ *  - bugs/closed/2026-10-06-autosave-during-save-ignored-by-recovery.md @ 59eafc6: after a save that left edits unsaved, an
  *    autosave newer than the project file follows.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -334,7 +334,7 @@ describe('streamed autosave: renderer -> main -> disk', () => {
 });
 
 /**
- * bugs/closed/2026-10-06-autosave-during-save-ignored-by-recovery.md: an edit made while a manual save is in flight
+ * bugs/closed/2026-10-06-autosave-during-save-ignored-by-recovery.md @ 59eafc6: an edit made while a manual save is in flight
  * stays dirty, but its autosave may land before the save's write, and recovery then ignores it (not newer than the
  * project file). After such a save, another autosave must follow.
  */

@@ -139,7 +139,7 @@ describe('nested sequences: cycles and depth in a hostile file', () => {
     await stable(q);
   });
 
-  // bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md: 4 tracks x 8 levels flattened to 349,524 tracks in ~2 s,
+  // bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md @ 59eafc6: 4 tracks x 8 levels flattened to 349,524 tracks in ~2 s,
   // 5 tracks threw "Maximum call stack size exceeded" in buildFlat. The loader now cuts the nested references past
   // the flattened size limit (MAX_FLAT_TRACKS / MAX_FLAT_CLIPS), as it cuts too-deep ones.
   for (const K of [4, 5]) {
