@@ -21,6 +21,13 @@ export interface SourceClipState {
   inPoint: number | null;   // seconds
   outPoint: number | null;  // seconds
   time: number;             // seconds
+  /**
+   * The scrub bar's zoom (#150): opening a shot or scene shows just its range (seconds), until `viewFull` or until the
+   * playhead leaves it. Absent / null when a whole file was opened.
+   */
+  view?: { start: number; end: number } | null;
+  /** The scene range is set but the user chose Full file. */
+  viewFull?: boolean;
 }
 
 export interface FilterState {
@@ -332,6 +339,10 @@ export interface StoreActions {
   selectBin(id: ID | null): void;
   selectMarker(id: ID | null): void;
   setSourceClip(mediaId: ID | null, time?: number): void;
+  /** Zoom the Source scrub bar to a range (a shot or scene, #150), or clear it (null). Shows the range. */
+  setSourceView(view: { start: number; end: number } | null): void;
+  /** Switch the Source scrub bar between the scene range (false) and the full file (true). */
+  setSourceViewFull(full: boolean): void;
   setSourceIn(seconds: number | null): void;
   setSourceOut(seconds: number | null): void;
   setSourceTime(seconds: number): void;

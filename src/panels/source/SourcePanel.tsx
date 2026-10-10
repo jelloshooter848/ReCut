@@ -29,6 +29,13 @@ import './source.css';
 /** Max rate at which playback time is written back to the store. */
 const REPORT_INTERVAL_MS = 1000 / 30;
 
+/** Switch the Source scrub bar between the opened scene's range and the full file (#150; the button and the backslash key). */
+export function toggleSourceSceneView(): void {
+  const st = useStore.getState();
+  const sc = st.ui.sourceClip;
+  if (sc?.view) st.setSourceViewFull(!sc.viewFull);
+}
+
 type Zoom = 'fit' | '50' | '100';
 const ZOOM_OPTIONS = [{ value: 'fit', label: 'Fit' }, { value: '50', label: '50%' }, { value: '100', label: '100%' }] as const;
 
@@ -85,6 +92,8 @@ export function SourcePanel({ focused, active }: PanelProps) {
   const loadKey = useStore(selectLoadKey);
   const inPoint = useStore((s) => s.ui.sourceClip?.inPoint ?? null);
   const outPoint = useStore((s) => s.ui.sourceClip?.outPoint ?? null);
+  const sceneView = useStore((s) => s.ui.sourceClip?.view ?? null);
+  const viewFull = useStore((s) => !!s.ui.sourceClip?.viewFull);
   const useProxies = useStore((s) => s.project.settings.useProxies);
   const subtitleTracks = useStore((s) => s.project.subtitleTracks);
   const activeSequenceId = useStore((s) => s.project.activeSequenceId);
@@ -118,6 +127,20 @@ export function SourcePanel({ focused, active }: PanelProps) {
   const currentCue = useMemo(() => cues.find((c) => c.start <= time && time < c.end) ?? null, [cues, time]);
   const highlightWords = useStore((s) => s.project.settings.highlightSpokenWords);
   const activeWord = highlightWords ? activeWordIndex(currentCue?.words, time) : -1;
+
+  // Scene range (#150): the bar shows the opened shot / scene until Full file is chosen or the playhead leaves the range
+  // (playing past Out, stepping to another shot, typing a time). It arms once the playhead has been inside the range,
+  // so the moment before the opening seek lands does not count.
+  const zoomed = !!sceneView && !viewFull;
+  const armed = useRef(false);
+  useEffect(() => { armed.current = false; }, [sceneView?.start, sceneView?.end]);
+  useEffect(() => {
+    if (!sceneView || viewFull) return;
+    const tol = fps.den / fps.num;
+    const inside = time >= sceneView.start - tol / 2 && time <= sceneView.end + tol;
+    if (inside) { armed.current = true; return; }
+    if (armed.current) useStore.getState().setSourceViewFull(true);
+  }, [time, sceneView, viewFull, fps]);
 
   // ------------------------------------------------------------- refs shared with the transport / callbacks
   const live = useRef({ inPoint, outPoint, duration, fps, loop, isImage, mediaId: media?.id ?? null, playRange: null as { in: number; out: number } | null });
@@ -307,6 +330,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
       case 'End': transport.goToEnd(); break;
       case 'KeyI': if (e.shiftKey) transport.goToIn(); else transport.markIn(); break;
       case 'KeyO': if (e.shiftKey) transport.goToOut(); else transport.markOut(); break;
+      case 'Backslash': if (sceneView) toggleSourceSceneView(); else handled = false; break;
       case 'Comma': if (e.shiftKey) handled = false; else insertAt('insert'); break;
       case 'Period': if (e.shiftKey) handled = false; else insertAt('overwrite'); break;
       default: handled = false;
@@ -406,7 +430,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
       </div>
 
       <ScrubBar
-        duration={duration} time={time} inPoint={inPoint} outPoint={outPoint} fps={fps}
+        duration={duration} time={time} inPoint={inPoint} outPoint={outPoint} fps={fps} view={zoomed ? sceneView : null}
         scenes={media.detectedScenes} cues={cues}
         onSeekFrame={(f) => { if (isImage) return; if (getPlayer().isPlaying) pause(); seekFrame(f); }}
       />
@@ -428,6 +452,11 @@ export function SourcePanel({ focused, active }: PanelProps) {
         </div>
         <span className="tc-label">Dur</span>
         <span className="mono text-sm tc-dur" title="In → Out duration">{formatSequenceTimecode(Math.max(0, rangeFrames), fps)}</span>
+        {sceneView ? (
+          <Button size="sm" variant="ghost" className="source-view-toggle" data-testid="source-view-toggle" data-view={zoomed ? 'scene' : 'full'}
+            title={zoomed ? 'The scrub bar shows the scene. Click to show the full file (\\)' : 'The scrub bar shows the full file. Click to show just the scene (\\)'}
+            onClick={toggleSourceSceneView}>{zoomed ? 'Scene' : 'Full file'}</Button>
+        ) : null}
         <Select<Zoom> size="sm" value={zoom} options={ZOOM_OPTIONS} onChange={setZoom} title="Zoom" aria-label="Zoom" />
       </div>
 

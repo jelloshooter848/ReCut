@@ -163,6 +163,7 @@ export function loadSceneInSource(scene: SceneRecord): void {
   s.setSourceClip(scene.mediaId, scene.in);
   s.setSourceIn(scene.in);
   s.setSourceOut(scene.out);
+  s.setSourceView({ start: scene.in, end: scene.out }); // the scrub bar shows just the scene (#150)
   s.setActivePanel('source');
   useLayoutStore.getState().focusPanel('source');
 }

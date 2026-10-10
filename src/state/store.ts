@@ -1794,6 +1794,12 @@ export const useStore = create<RecutStore>()((set, get) => {
         return { sourceClip: { mediaId, inPoint: null, outPoint: null, time } };
       });
     },
+    setSourceView(view) {
+      setUi((ui) => (ui.sourceClip ? { sourceClip: { ...ui.sourceClip, view: view && view.end > view.start ? { ...view } : null, viewFull: false } } : {}));
+    },
+    setSourceViewFull(full) {
+      setUi((ui) => (ui.sourceClip?.view ? { sourceClip: { ...ui.sourceClip, viewFull: full } } : {}));
+    },
     setSourceIn(seconds) {
       setUi((ui) => {
         if (!ui.sourceClip) return {};

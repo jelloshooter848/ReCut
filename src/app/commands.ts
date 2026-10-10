@@ -25,7 +25,7 @@ import { MAX_ZOOM, MIN_ZOOM, minZoomFor, zoomAround, zoomToFit } from '@/panels/
 import { useTimelineUi } from '@/panels/timeline/timelineStore';
 import { insertSourceIntoSequence } from '@/panels/source/insert';
 import { clipboardHasClips, copyClipsToClipboard, pasteClipboardAt } from './clipboard';
-import { getActiveTransport, shuttle, type Transport } from './transport';
+import { getActiveTransport, getActiveTransportId, shuttle, type Transport } from './transport';
 import { requestNewProject, requestOpenProject, requestSave, requestSaveAs } from './project';
 import { confirm, promptText } from './dialogs/ConfirmDialog';
 import { openSpeedDialog } from './dialogs/SpeedDialog';
@@ -543,9 +543,11 @@ export function buildEditingCommands(): CommandInput[] {
     cmd(C.zoomIn, () => { const seq = seqNow(); if (seq) zoomAroundPlayhead(seq, 1.5); }, hasSeq),
     cmd(C.zoomOut, () => { const seq = seqNow(); if (seq) zoomAroundPlayhead(seq, 1 / 1.5); }, hasSeq),
     cmd(C.zoomToFit, () => {
+      // In the Source monitor with a shot / scene open, \ switches its scrub bar between the scene and the file (#150).
+      if (getActiveTransportId() === 'source' && S().ui.sourceClip?.view) { S().setSourceViewFull(!S().ui.sourceClip!.viewFull); return; }
       const seq = seqNow(); if (!seq) return;
       S().setView(seq.id, { zoom: zoomToFitValue(sequenceDuration(seq)), scroll: 0 });
-    }, hasSeq),
+    }, () => hasSeq() || (getActiveTransportId() === 'source' && !!S().ui.sourceClip?.view)),
     cmd(X.toggleSnapping, () => {
       const next = !S().project.settings.snapping;
       S().setSettings({ snapping: next });
