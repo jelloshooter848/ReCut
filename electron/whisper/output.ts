@@ -106,6 +106,41 @@ function trimBrokenChars(s: string): string {
 }
 
 /**
+ * Whisper's stock hallucinations (#158): lines it learned from subtitle credits and video outros and writes over music,
+ * logos or silence ("Thank you.", "Thanks for watching!", "Transcription by CastingWords", "The End"). Compared without
+ * case or punctuation.
+ */
+const STOCK_PHRASES = [
+  /^(thank you|thanks)( (very much|so much|a lot|for watching|for listening))?$/, /^(please )?(like and )?subscribe\b/,
+  /^(transcription|transcribed|subtitles?|subtitled|translation|translated|captions?|captioned|sync(ed)?) by\b/,
+  /^the end$/, /^you$/, /^bye( bye)?$/,
+];
+
+/**
+ * A segment that is one of whisper's stock phrases and does not sound like speech: it fills most of a 30 s window
+ * (whisper had nothing to place it on) or a token in it is a guess (probability under 0.1). A real, spoken "Thank you."
+ * lasts a second or two and is recognized confidently, so it stays.
+ */
+export function isStockHallucination(text: string, durationSec: number, minTokenP: number): boolean {
+  const t = text.toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, ' ').replace(/\s+/g, ' ').trim();
+  if (!STOCK_PHRASES.some((r) => r.test(t))) return false;
+  return durationSec >= 20 || minTokenP < 0.1;
+}
+
+/** Lowest probability of a segment's text tokens (special tokens skipped); 1 when there are none. */
+function minTokenProbability(tokens: unknown): number {
+  if (!Array.isArray(tokens)) return 1;
+  let min = 1;
+  for (const raw of tokens) {
+    if (!raw || typeof raw !== 'object') continue;
+    const t = raw as { text?: unknown; p?: unknown };
+    if (typeof t.text !== 'string' || /^\s*(\[_|<\|)/.test(t.text) || typeof t.p !== 'number' || !Number.isFinite(t.p)) continue;
+    min = Math.min(min, t.p);
+  }
+  return min;
+}
+
+/**
  * Parse whisper-cli's `-oj` file (bytes or text). Throws when it is not a whisper result at all; segments with
  * unusable times are skipped (see segmentsToCues for the rest of the clean-up).
  */
@@ -129,8 +164,10 @@ export function parseWhisperJson(data: Uint8Array | string): WhisperJsonResult {
     const start = timeOf(seg, 'from');
     const end = timeOf(seg, 'to');
     if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+    const segText = typeof seg.text === 'string' ? trimBrokenChars(seg.text) : '';
+    if (isStockHallucination(segText, end - start, minTokenProbability(seg.tokens))) continue;
     const words = tokensToWords(seg.tokens, start, end);
-    segments.push({ start, end, text: typeof seg.text === 'string' ? trimBrokenChars(seg.text) : '', ...(words.length ? { words } : {}) });
+    segments.push({ start, end, text: segText, ...(words.length ? { words } : {}) });
   }
   return { language, segments };
 }
