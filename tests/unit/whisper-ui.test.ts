@@ -208,3 +208,72 @@ describe('jobs router: transcribe jobs', () => {
     expect(whisperModels).toHaveBeenCalledTimes(2);
   });
 });
+
+// ------------------------------------------------------------------ #110: model downloads from the Transcribe dialog
+import {
+  activeWhisperDownloads, downloadProgressLabel, finishModelsInBackground, openWhisperModels, resumeTranscribe,
+} from '../../src/whisper/whisperUi';
+import { dismissToast, runToastAction, toast } from '../../src/components/ui/toastStore';
+
+describe('toasts with an action (#110)', () => {
+  it('the action runs once and dismisses the toast; timeout 0 keeps it; plain toasts are unchanged', () => {
+    for (const t of getToasts()) dismissToast(t.id);
+    const run = vi.fn();
+    vi.useFakeTimers();
+    try {
+      const id = toast('ok', 'Model installed', 0, { label: 'Transcribe…', run });
+      const plain = toast('info', 'Plain');
+      expect(getToasts().find((t) => t.id === plain)?.action).toBeUndefined();
+      vi.advanceTimersByTime(60_000);
+      expect(getToasts().map((t) => t.id)).toEqual([id]); // the plain one timed out, the sticky one stays
+      runToastAction(id);
+      runToastAction(id);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(getToasts()).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('Finish in background (#110)', () => {
+  const dl = (status: JobInfo['status'], progress = 0.15): JobInfo => ({ id: `d${status}`, kind: 'download', title: 'Install Whisper model Large v3 Turbo (1.6 GB)', status, progress });
+  beforeEach(() => useWhisperUi.setState({ transcribeFor: null, modelsOpen: false, focusModel: null, modelsFromTranscribe: false, draft: null, restore: null }));
+
+  it('active downloads and their label', () => {
+    const jobs = [dl('done'), dl('running'), { ...dl('running'), id: 'x', kind: 'export' as const }];
+    expect(activeWhisperDownloads(jobs).map((j) => j.id)).toEqual(['drunning']);
+    expect(downloadProgressLabel(dl('running'))).toBe('Large v3 Turbo 15%');
+    expect(downloadProgressLabel(dl('queued'))).toBe('Large v3 Turbo (queued)');
+  });
+
+  it('opened from the Transcribe dialog it closes both and keeps the choices; resumeTranscribe brings them back', () => {
+    openTranscribeDialog(['m1']);
+    const draft = { openFor: ['m1'], checked: ['m1'], streams: { m1: 2 }, language: 'fr', languageTouched: true, translate: true, verbatim: false };
+    useWhisperUi.setState({ draft });
+    openWhisperModels('small', { fromTranscribe: true });
+    finishModelsInBackground();
+    expect(useWhisperUi.getState()).toMatchObject({ modelsOpen: false, transcribeFor: null, draft });
+    resumeTranscribe('large-v3-turbo');
+    expect(useWhisperUi.getState()).toMatchObject({ transcribeFor: ['m1'], restore: { model: 'large-v3-turbo' } });
+  });
+
+  it('opened from elsewhere it closes only Transcription Models', () => {
+    openTranscribeDialog(['m1']);
+    openWhisperModels();
+    finishModelsInBackground();
+    expect(useWhisperUi.getState()).toMatchObject({ modelsOpen: false, transcribeFor: ['m1'] });
+  });
+
+  it('the "installed" toast offers Transcribe… only when a Transcribe dialog is waiting for it', () => {
+    resetJobsRouter();
+    for (const t of getToasts()) dismissToast(t.id);
+    useWhisperUi.setState({ draft: { openFor: ['m1'], checked: ['m1'], streams: {}, language: 'auto', languageTouched: false, translate: false, verbatim: true } });
+    routeJobs([{ ...dl('done'), id: 'w1' }]);
+    const t = getToasts().at(-1)!;
+    expect(t.text).toBe('Large v3 Turbo transcription model installed');
+    expect(t.action?.label).toBe('Transcribe…');
+    expect(t.timeout).toBe(0);
+    useWhisperUi.setState({ draft: null });
+    routeJobs([{ ...dl('done'), id: 'w2' }]);
+    expect(getToasts().at(-1)?.action).toBeUndefined();
+  });
+});

@@ -31,7 +31,7 @@ import { iso6392ForOcr, ocrLanguage, type OcrResult } from '@shared/ocr';
 import { uid } from '@shared/ids';
 import { routeChannelProxyJob } from './channelProxies';
 import { useWhisperStatus } from '@/state/whisperStatus';
-import { isWhisperDownload, whisperDownloadName } from '@/whisper/whisperUi';
+import { isWhisperDownload, resumeTranscribe, useWhisperUi, whisperDownloadName } from '@/whisper/whisperUi';
 import { whisperLanguage, whisperModel, whisperTrackName, type TranscribeResult } from '@shared/whisper';
 import type { CollectResult } from '@shared/collect';
 
@@ -153,9 +153,17 @@ function routeDownload(job: JobInfo): void {
   if (!isTerminal(job) || !claim(job)) return;
   if (isWhisperDownload(job)) {
     const model = whisperDownloadName(job);
-    if (job.status === 'done') toast('ok', `${model} transcription model installed`);
-    else if (job.status === 'failed') toast('error', `Could not install the ${model} transcription model: ${job.error ?? 'unknown error'}`);
-    else toast('info', `${model} model download canceled`);
+    const id = useWhisperStatus.getState().models?.find((m) => m.name === model)?.id ?? null;
+    if (job.status === 'done') {
+      // #110: back to the Transcribe dialog closed for this download, with its choices and the new model.
+      const waiting = !!useWhisperUi.getState().draft && !useWhisperUi.getState().transcribeFor;
+      if (waiting) toast('ok', `${model} transcription model installed`, 0, { label: 'Transcribe…', run: () => resumeTranscribe(id) });
+      else toast('ok', `${model} transcription model installed`, 8000);
+    } else if (job.status === 'failed') {
+      const api = window.recut;
+      toast('error', `Could not install the ${model} transcription model: ${job.error ?? 'unknown error'}`, 12_000,
+        id && api ? { label: 'Retry', run: () => { void api.whisperInstallModel(id).then(() => useWhisperStatus.getState().refresh()).catch((e: unknown) => toast('error', `Could not install the ${model} model: ${e instanceof Error ? e.message : String(e)}`)); } } : undefined);
+    } else toast('info', `${model} model download canceled`);
     void useWhisperStatus.getState().refresh();
     return;
   }

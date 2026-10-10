@@ -9,11 +9,12 @@
  * Jobs and the jobs router adds each track when its job finishes. Nothing is uploaded: the engine runs on this
  * computer and never uses the network.
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Mic } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
+import { ProgressBar } from '@/components/ui/ProgressBar';
 import { SearchField } from '@/components/ui/SearchField';
 import { toast } from '@/components/ui/toastStore';
 import { useJobsStore } from '@/app/jobsStore';
@@ -21,8 +22,8 @@ import { useStore } from '@/state';
 import { recutApi } from '@/state/mediaActions';
 import { formatModelSize, useWhisperStatus } from '@/state/whisperStatus';
 import {
-  activeTranscribeJob, audioStreamLabel, chooseWhisperModel, closeTranscribeDialog, defaultAudioStream, defaultSpokenLanguage,
-  openWhisperModels, transcribeUnavailableReason, useWhisperUi,
+  activeTranscribeJob, activeWhisperDownloads, audioStreamLabel, chooseWhisperModel, closeTranscribeDialog, defaultAudioStream, defaultSpokenLanguage,
+  downloadProgressLabel, openWhisperModels, transcribeUnavailableReason, useWhisperUi,
 } from '@/whisper/whisperUi';
 import { WHISPER_LANGUAGES, verbatimApplies, whisperTrackName } from '@shared/whisper';
 import type { ID, MediaItem } from '@shared/model';
@@ -52,6 +53,8 @@ export function TranscribeDialog() {
   const [verbatim, setVerbatim] = useState(true);
   const [query, setQuery] = useState('');
   const [starting, setStarting] = useState(false);
+  /** Installed model ids when last seen (null right after opening): spots a model that finishes installing. */
+  const prevInstalled = useRef<string | null>(null);
   const api = recutApi();
 
   // Opened-for media first, then every other media with audio.
@@ -65,15 +68,20 @@ export function TranscribeDialog() {
 
   useEffect(() => {
     if (!openFor) return;
-    setChecked(new Set(openFor.filter((id) => !transcribeUnavailableReason(mediaMap[id]))));
-    setStreams({});
+    // Reopened from the "model installed" toast (#110): the choices from before Finish in background.
+    const { draft, restore } = useWhisperUi.getState();
+    const back = restore && draft ? draft : null;
+    setChecked(new Set(back ? back.checked : openFor.filter((id) => !transcribeUnavailableReason(mediaMap[id]))));
+    setStreams(back ? { ...back.streams } : {});
     setQuery('');
     setStarting(false);
-    setTranslate(false);
-    setVerbatim(true);
-    setLanguageTouched(false);
-    setModel(null);
+    setTranslate(back ? back.translate : false);
+    setVerbatim(back ? back.verbatim : true);
+    setLanguage(back ? back.language : 'auto');
+    setLanguageTouched(back ? back.languageTouched : false);
+    setModel(restore?.model ?? null);
     setLastModel(undefined);
+    prevInstalled.current = null;
     void refresh();
     if (api) api.getPrefs().then((p) => setLastModel(p.whisperLastModel ?? null)).catch(() => setLastModel(null));
     else setLastModel(null);
@@ -81,6 +89,22 @@ export function TranscribeDialog() {
 
   const streamOf = (m: MediaItem): number | undefined => streams[m.id] ?? defaultAudioStream(m)?.index;
   const chosen = candidates.filter((m) => checked.has(m.id) && !transcribeUnavailableReason(m));
+
+  // Keep the choices in the store while open, so Finish in background can bring them back (#110).
+  useEffect(() => {
+    if (!openFor) return;
+    useWhisperUi.setState({ draft: { openFor: [...openFor], checked: [...checked], streams: { ...streams }, language, languageTouched, translate, verbatim } });
+  }, [openFor, checked, streams, language, languageTouched, translate, verbatim]);
+
+  // A model that finishes installing while the dialog is open is selected when none was installed before.
+  const installedIds = (models ?? []).filter((m) => m.installed).map((m) => m.id).join(',');
+  useEffect(() => {
+    if (models === null) return;
+    const prev = prevInstalled.current;
+    prevInstalled.current = installedIds;
+    if (prev === null || prev !== '' || !installedIds) return;
+    setModel((cur) => cur ?? installedIds.split(',')[0]);
+  }, [installedIds, models === null]);
 
   // Default model: the last used / Small / first installed, until the user picks one.
   const defaultModel = useMemo(() => chooseWhisperModel(models, lastModel), [models, lastModel]);
@@ -139,13 +163,15 @@ export function TranscribeDialog() {
   });
 
   const modelOptions = installed.map((m) => ({ value: m.id, label: `${m.name} (${formatModelSize(m.bytes)})` }));
+  const downloads = activeWhisperDownloads(jobs);
+  const download = downloads[0];
   const exampleName = whisperTrackName(lang === 'auto' ? 'en' : lang, modelInfo?.name ?? 'Small', translate && !englishOnly);
 
   return (
     <Dialog open title={<span className="row gap-6"><Mic size={14} /> Transcribe with Whisper</span>} onClose={closeTranscribeDialog} width={620}
       className="transcribe-dialog" onSubmit={canStart ? () => { void start(); } : false}
       footer={<>
-        <Button variant="ghost" onClick={() => openWhisperModels(selectedModel ?? undefined)} data-testid="transcribe-manage-models">Manage models…</Button>
+        <Button variant="ghost" onClick={() => openWhisperModels(selectedModel ?? undefined, { fromTranscribe: true })} data-testid="transcribe-manage-models">Manage models…</Button>
         <span className="grow" />
         <Button onClick={closeTranscribeDialog}>Cancel</Button>
         <Button variant="primary" disabled={!canStart} onClick={() => { void start(); }} data-testid="transcribe-start" title={blocked ?? undefined}>
@@ -178,18 +204,29 @@ export function TranscribeDialog() {
             );
           })}
         </div>
-        <label className="row gap-8 trx-field">
+        <div className="trx-settings">
+        <div className="row gap-8 trx-field">
           <span className="text-sm">Model</span>
           {modelOptions.length ? (
             <Select value={selectedModel ?? ''} options={modelOptions} size="sm" className="grow" onChange={(v) => setModel(v || null)}
               data-testid="transcribe-model" aria-label="Whisper model" />
+          ) : download ? (
+            <span className="row gap-8 grow">
+              <Button size="sm" onClick={() => openWhisperModels(undefined, { fromTranscribe: true })} data-testid="transcribe-installing" title="Show the download">
+                {`Installing ${downloadProgressLabel(download)}…`}
+              </Button>
+              <ProgressBar value={download.status === 'queued' ? undefined : download.progress} className="grow trx-dl-bar" />
+            </span>
           ) : (
             <span className="row gap-8 grow">
               <span className="text-dim text-sm" data-testid="transcribe-no-model">{models === null ? 'Loading…' : 'No model installed.'}</span>
-              {models !== null ? <Button size="sm" onClick={() => openWhisperModels('small')} data-testid="transcribe-install-model">Install a model…</Button> : null}
+              {models !== null ? <Button size="sm" onClick={() => openWhisperModels('small', { fromTranscribe: true })} data-testid="transcribe-install-model">Install a model…</Button> : null}
             </span>
           )}
-        </label>
+        </div>
+        {modelOptions.length && download ? (
+          <div className="text-dim text-sm trx-hint" data-testid="transcribe-downloading">{downloadProgressLabel(download).replace(/ (\d+%)$/, ' is downloading ($1)')}</div>
+        ) : null}
         <label className="row gap-8 trx-field">
           <span className="text-sm">Language</span>
           <Select value={lang} options={englishOnly ? [{ value: 'en', label: 'English' }] : LANGUAGE_OPTIONS} size="sm" className="grow"
@@ -209,6 +246,7 @@ export function TranscribeDialog() {
         </label>
         <div className="text-dim text-sm trx-hint" data-testid="transcribe-translate-hint">
           The transcript is less exact when translating: filler words like "um" and "uh" are dropped.
+        </div>
         </div>
         {blocked && blocked !== 'Install a transcription model first.' ? <div className="text-sm text-accent-2" data-testid="transcribe-blocked">{blocked}</div> : null}
         {running.length ? <div className="text-sm text-dim">{running.length === 1 ? `${running[0].name} is already being transcribed; starting again joins that job.` : `${running.length} of these are already being transcribed.`}</div> : null}
