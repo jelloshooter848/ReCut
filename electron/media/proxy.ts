@@ -258,6 +258,25 @@ async function findProxy(keys: Pick<MediaCacheKeys, 'key' | 'legacyKey'>, pathFo
   return hit && info ? { path: hit, ...(info as { width?: number; height?: number }) } : null;
 }
 
+/**
+ * The finished all-streams proxy of `sourcePath` at `height` already in the cache, without rendering anything (#136):
+ * how a project that is opened again finds the proxies it lost (a proxy that finished after the last save is not in
+ * the file, and queued / running proxies load as 'none'). Null when there is none, for stills, or on any error.
+ */
+export async function lookupCachedProxy(sourcePath: string, height: number): Promise<{ path: string; width?: number; height?: number; audioStreams: number[] } | null> {
+  try {
+    if (typeof sourcePath !== 'string' || !path.isAbsolute(sourcePath) || !(await fileExists(sourcePath))) return null;
+    const probe = await probeMedia(sourcePath);
+    if (isStillProbe(probe)) return null;
+    const keys = await cacheKeysForPath(sourcePath);
+    const reqHeight = evenDown(height > 0 ? height : 540);
+    const hit = await findProxy(keys, (k) => proxyOutputPath(k, reqHeight));
+    return hit ? { ...hit, audioStreams: probe.audio.map((a) => a.index) } : null;
+  } catch {
+    return null;
+  }
+}
+
 function streamList(streams: readonly number[]): string {
   return streams.map((s) => `#${s}`).join(', ');
 }
