@@ -247,7 +247,7 @@ describe('Finish in background (#110)', () => {
 
   it('opened from the Transcribe dialog it closes both and keeps the choices; resumeTranscribe brings them back', () => {
     openTranscribeDialog(['m1']);
-    const draft = { openFor: ['m1'], checked: ['m1'], streams: { m1: 2 }, language: 'fr', languageTouched: true, translate: true, verbatim: false };
+    const draft = { openFor: ['m1'], checked: ['m1'], streams: { m1: 2 }, language: 'fr', languageTouched: true, translate: true, force: false };
     useWhisperUi.setState({ draft });
     openWhisperModels('small', { fromTranscribe: true });
     finishModelsInBackground();
@@ -266,7 +266,7 @@ describe('Finish in background (#110)', () => {
   it('the "installed" toast offers Transcribe… only when a Transcribe dialog is waiting for it', () => {
     resetJobsRouter();
     for (const t of getToasts()) dismissToast(t.id);
-    useWhisperUi.setState({ draft: { openFor: ['m1'], checked: ['m1'], streams: {}, language: 'auto', languageTouched: false, translate: false, verbatim: true } });
+    useWhisperUi.setState({ draft: { openFor: ['m1'], checked: ['m1'], streams: {}, language: 'auto', languageTouched: false, translate: false, force: false } });
     routeJobs([{ ...dl('done'), id: 'w1' }]);
     const t = getToasts().at(-1)!;
     expect(t.text).toBe('Large v3 Turbo transcription model installed');
