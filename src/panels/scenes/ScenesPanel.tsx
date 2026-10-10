@@ -5,7 +5,7 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
-  ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronRight, Clapperboard, Copy, Film, LayoutGrid, List, ListOrdered, ListPlus, Palette, Pencil, Plus, Scissors, Star, Trash2, Wand2, Filter, X,
+  ArrowDownAZ, ArrowUpAZ, Captions, ChevronDown, ChevronRight, Clapperboard, Copy, Film, LayoutGrid, List, ListOrdered, ListPlus, Palette, Pencil, Plus, Scissors, Star, Trash2, Wand2, Filter, X,
 } from 'lucide-react';
 import type { ID, MediaItem, SceneRecord } from '@shared/model';
 import { formatSequenceSecondsTimecode } from '@shared/time';
@@ -17,7 +17,7 @@ import { toast } from '@/components/ui/toastStore';
 import { useLayoutStore } from '@/components/layout/layoutStore';
 import {
   EMPTY_FILTERS, collectFacets, compareScenes, defaultSceneName, duplicateScene, durationLabel, filtersActive, groupScenes, importDetectedScenes,
-  insertSceneAtPlayhead, insertScenesAtPlayhead, loadSceneInSource, matchesFilters, mediaFps, nextSequenceName, rangeLabel, sourceLabel, startSceneDrag,
+  insertSceneAtPlayhead, insertScenesAtPlayhead, loadSceneInSource, matchesFilters, mediaFps, nameScenesFromTranscript, nextSequenceName, rangeLabel, sourceLabel, startSceneDrag,
   type GroupKey, type SceneFilters, type SortKey, type ViewMode,
 } from './sceneUtils';
 import { useThumb } from './useThumb';
@@ -189,6 +189,7 @@ export function ScenesPanel({ active }: PanelProps) {
       },
       { separator: true },
       { label: 'Edit…', icon: Pencil, onSelect: () => openEditor(scene.id) },
+      { label: many ? `Name ${targets.length} from Transcript` : 'Name from Transcript', icon: Captions, title: 'Uses the first words spoken in the scene (Whisper transcript or subtitles)', onSelect: () => { nameScenesFromTranscript(targets); } },
       { label: many ? `Duplicate ${targets.length}` : 'Duplicate', icon: Copy, onSelect: () => { const ids = targets.map(duplicateScene); useStore.getState().selectScenes(ids, 'set'); } },
       {
         label: 'Set color', icon: Palette,

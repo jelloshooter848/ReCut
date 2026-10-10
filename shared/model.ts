@@ -438,6 +438,8 @@ export interface ProjectSettings {
   showSourceTimecodeOnClips: boolean;
   /** Highlight the word being spoken in word-timed subtitles, in the Source and Program monitors (#119). */
   highlightSpokenWords: boolean;
+  /** Name newly detected shots from the media's transcript or subtitles, when it has one (#144). */
+  nameShotsFromTranscript: boolean;
 }
 
 export interface Project {

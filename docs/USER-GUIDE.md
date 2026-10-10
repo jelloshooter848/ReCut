@@ -112,7 +112,13 @@ timelines.
    the timeline places all of it. Each of these is one undo step.
 4. Right-click the video › **Insert All Shots at Playhead** puts every shot on the timeline in order, as separate
    clips: a starting point for a recut.
-5. In the Source monitor, **↑ / ↓** jump between shot boundaries.
+5. **Names from what is said.** When the video has a Whisper transcript or subtitles, new shots are named from the
+   first words spoken in them (fillers like "um" skipped, about 40 characters); shots without speech stay **Shot
+   NNN**. Turn this off in the Detect Shots dialog (**Name shots from the transcript**). To name existing shots,
+   right-click shots › **Name from Transcript**, or the video › **Name Shots from Transcript** for all of them. In the
+   Scenes panel, right-click scenes › **Name from Transcript** does the same over each scene's whole range. Each is
+   one undo step.
+6. In the Source monitor, **↑ / ↓** jump between shot boundaries.
 
 ## 4. Import subtitles
 

@@ -6,6 +6,7 @@ import type { FileFilter } from '@shared/ipc';
 import { uid } from '@shared/ids';
 import { allTracks, clipEnd, clipSourceOut, findClip } from '@shared/timeline';
 import { secondsToFrames } from '@shared/time';
+import { mediaSpeechCues, nameFromSpeech } from '@shared/sceneNaming';
 import { AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS } from '@/state/parseIdentity';
 import { toast } from '@/components/ui/toastStore';
 import { invalidateMediaPath } from '@/app/media';
@@ -191,6 +192,30 @@ export function makeSceneFromShots(mediaId: ID, shotIds: ID[], name: string): ID
   useStore.getState().addScene(rec);
   toast('ok', `Scene "${name}" made from ${shots.length} shot${shots.length === 1 ? '' : 's'}`);
   return rec.id;
+}
+
+/**
+ * Rename shots from the speech inside them (#144): the given shots of a media item, or all of them. Shots without
+ * speech keep their names. One undo step. Returns how many were renamed.
+ */
+export function nameShotsFromTranscript(mediaId: ID, shotIds?: ID[]): number {
+  const st = useStore.getState();
+  const m = st.project.media[mediaId];
+  if (!m) return 0;
+  const cues = mediaSpeechCues(m, st.project.subtitleTracks);
+  if (!cues) { toast('info', `${m.name} has no transcript or subtitles to name shots from (Transcribe with Whisper… or Import Subtitles…)`); return 0; }
+  const want = shotIds ? new Set(shotIds) : null;
+  let n = 0;
+  st.batch('Name shots from transcript', () => {
+    for (const shot of m.detectedScenes) {
+      if (want && !want.has(shot.id)) continue;
+      const name = nameFromSpeech(cues, shot.start, shot.end);
+      if (name && name !== shot.name) { useStore.getState().renameDetectedScene(mediaId, shot.id, name); n++; }
+    }
+  });
+  const of = want ? want.size : m.detectedScenes.length;
+  toast(n ? 'ok' : 'info', n ? `Named ${n} of ${of} shot${of === 1 ? '' : 's'} from the transcript` : 'No speech in those shots: names unchanged');
+  return n;
 }
 
 // ---------------------------------------------------------------- removal

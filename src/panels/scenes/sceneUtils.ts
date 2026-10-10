@@ -4,6 +4,7 @@
  */
 import type { ID, MediaItem, Rational, SceneRecord, SceneSequence } from '@shared/model';
 import { createSequence } from '@shared/project';
+import { mediaSpeechCues, nameFromSpeech } from '@shared/sceneNaming';
 import { formatSequenceSecondsTimecode, formatClock, secondsToFrames, validFpsOr } from '@shared/time';
 import { uid } from '@shared/ids';
 import { clipEnd, findClip } from '@shared/timeline';
@@ -210,6 +211,28 @@ export function insertScenesAtPlayhead(scenes: SceneRecord[], mode: 'insert' | '
     at = Number.isFinite(end) ? end : at + Math.max(1, secondsToFrames(sceneDuration(scene), seq.fps));
   } });
   if (scenes.length) s.setView(seq.id, { playhead: at });
+}
+
+/**
+ * Rename library scenes from the speech inside their range (#144): the first words spoken, from their media's
+ * transcript or subtitles. Scenes without speech keep their names. One undo step. Returns how many were renamed.
+ */
+export function nameScenesFromTranscript(scenes: SceneRecord[]): number {
+  const s = useStore.getState();
+  let n = 0;
+  let noTranscript = 0;
+  s.batch('Name scenes from transcript', () => {
+    for (const sc of scenes) {
+      const cues = mediaSpeechCues(s.project.media[sc.mediaId], s.project.subtitleTracks);
+      if (!cues) { noTranscript++; continue; }
+      const name = nameFromSpeech(cues, sc.in, sc.out);
+      if (name && name !== sc.name) { useStore.getState().updateScene(sc.id, { name }); n++; }
+    }
+  });
+  if (n) toast.ok(`Named ${n} of ${scenes.length} scene${scenes.length === 1 ? '' : 's'} from the transcript`);
+  else if (noTranscript === scenes.length) toast.info('No transcript or subtitles for these scenes (Transcribe with Whisper… or Import Subtitles…)');
+  else toast.info('No speech in those scenes: names unchanged');
+  return n;
 }
 
 // ------------------------------------------------------------------ sequences of scenes (#146)
