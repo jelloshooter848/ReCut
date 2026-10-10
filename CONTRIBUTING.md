@@ -169,9 +169,9 @@ Before you open a PR into `dev`, check:
 ### The changelog
 
 Don't edit [CHANGELOG.md](CHANGELOG.md) in a feature or bug PR. Each release PR adds the new version's section,
-written from the merged changes since the previous release and from the bug reports moved to `bugs/closed/`
+written from the merged changes since the previous release and from the bug issues closed since then
 ([RELEASING › What goes in the changelog](docs/RELEASING.md#what-goes-in-the-changelog)). Help it by giving your PR a
-title and description that say what a user will notice, and by linking the bug report it fixes.
+title and description that say what a user will notice, and by linking the issue it fixes (`Fixes #N`).
 
 ## Reporting bugs
 
@@ -194,9 +194,8 @@ Please search [existing issues](https://github.com/jelloshooter848/ReCut/issues)
 Where ReCut keeps preferences, autosaves and its cache on each OS is listed in
 [INSTALL › Where data lives](docs/INSTALL.md#where-data-lives).
 
-Maintainers also track bugs as Markdown files under [`bugs/`](bugs/) (`bugs/open/` and `bugs/closed/`, one file per
-bug, with the severity scale and the fix process in [bugs/README.md](bugs/README.md)). You don't need to write one:
-an issue is enough. If you fix a bug that has a file there, close it as bugs/README.md describes, in the same PR.
+All bugs are tracked in GitHub Issues. Older reports, from before the project moved to Issues, are kept as a
+read-only archive in [`bugs/closed/`](bugs/closed/), which code comments link to; don't add files there.
 
 **Security problems:** please don't describe a vulnerability in a public issue.
 <!-- OWNER: say how to report a vulnerability privately (GitHub private vulnerability reporting is currently off for this repository, or give a contact), then remove this comment. -->

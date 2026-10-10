@@ -119,7 +119,7 @@ not a promise, as for the Road to 1.0.
 
 | Release | Milestone | Entries |
 |---|---|---|
-| 1.0.x | Fixes found by the release candidates and the first users, starting with the open bugs in `bugs/open/`. On the 1.0 release day, apply to a free open-source code signing programme (SignPath Foundation) for Windows | §18 (Windows signing) |
+| 1.0.x | Fixes found by the release candidates and the first users, starting with the open bug issues. On the 1.0 release day, apply to a free open-source code signing programme (SignPath Foundation) for Windows | §18 (Windows signing) |
 | 1.1.0 | Polish what shipped | §18 smaller items (Move / Slip into Sync, Build alternate cut without matching clips, transcript hits on timeline in every scope, MP4 with more than one audio track and soft subtitles); keyframes v2 (rotation and crop keyframes, dragging keyframe diamonds on the timeline); the nested-sequence follow-ups (inner chapters and subtitles on export as an option, opacity applied to the composite, speed on nested clips) |
 | 1.2.0 | Subtitle authoring | §15: the next need once OCR (§4) and Whisper (§5) produce subtitles is fixing their text and timing |
 | 1.3.0 | Audio mixer | §9 (mixer panel, per-track meters, stereo / 5.1 panning, multichannel proxies; track volume automation built on keyframes) |
