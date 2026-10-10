@@ -1,63 +1,87 @@
 /**
- * Suggested scenes (#147), renderer side: gather the signals shared/sceneSuggest.ts groups shots by (a colour
- * histogram per shot from two small frames, the audio level peaks, the transcript) and create the accepted scenes.
+ * Suggested scenes (#147), renderer side: start the analysis job (#151, electron/media/suggestScenes.ts), keep its
+ * result, and create the accepted scenes. The transcript signal and the grouping are added in the dialog.
  */
 import type { ID, MediaItem, SceneRecord } from '@shared/model';
 import { uid } from '@shared/ids';
-import { histogramFromRgba, meanHistogram, type AudioPeaks } from '@shared/sceneSuggest';
+import type { SuggestScenesResult } from '@shared/ipc';
+import { create } from 'zustand';
 import { mediaSpeechCues, nameFromSpeech } from '@shared/sceneNaming';
 import { useStore, recutApi } from '@/state';
 import { toast } from '@/components/ui/toastStore';
+import { activeJobFor, useJobsStore } from '@/app/jobsStore';
 
-export interface ShotFeatures {
-  hists: (Float32Array | null)[];
-  audio: AudioPeaks | null;
+/** A finished analysis (#151): what the job measured, for the shots it was run on. */
+export interface SuggestAnalysis { shotKey: string; hists: (number[] | null)[]; audioLinks: (number | null)[] }
+
+interface SuggestState {
+  /** Finished analyses by media id (kept for the session, so reopening Suggest Scenes needs no new job). */
+  results: Record<ID, SuggestAnalysis>;
+  /** The media whose Suggest Scenes dialog is open. */
+  open: ID | null;
+  /** Media whose analysis was asked for and not reviewed yet: the review opens when its job finishes. */
+  waiting: Record<ID, true>;
 }
 
-const FRAME_W = 64;
-const CHUNK = 24;
+export const useSuggestStore = create<SuggestState>()(() => ({ results: {}, open: null, waiting: {} }));
 
-function histogramOfImage(url: string): Promise<Float32Array | null> {
-  if (!url) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      try {
-        const c = document.createElement('canvas');
-        c.width = 32; c.height = 18;
-        const g = c.getContext('2d', { willReadFrequently: true });
-        if (!g) { resolve(null); return; }
-        g.drawImage(img, 0, 0, c.width, c.height);
-        resolve(histogramFromRgba(g.getImageData(0, 0, c.width, c.height).data));
-      } catch { resolve(null); }
-    };
-    img.onerror = () => resolve(null);
-    img.src = url;
-  });
+/** Identifies a media item's current shots: an analysis of other shots is stale. */
+export function shotKey(m: MediaItem): string {
+  const s = m.detectedScenes;
+  if (!s.length) return '0';
+  let sum = 0;
+  for (const x of s) sum += Math.round(x.start * 1000);
+  return `${s.length}:${s[0].id}:${s[s.length - 1].id}:${sum}`;
 }
 
-/** Two frames per shot (at a third and two thirds) -> one histogram per shot; the media's audio peaks. */
-export async function gatherShotFeatures(m: MediaItem, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<ShotFeatures> {
+export function validAnalysis(m: MediaItem | undefined): SuggestAnalysis | null {
+  if (!m) return null;
+  const r = useSuggestStore.getState().results[m.id];
+  return r && r.shotKey === shotKey(m) ? r : null;
+}
+
+/**
+ * Suggest Scenes… : review straight away when this video's shots were already analysed, else start the analysis job
+ * (listed in Jobs) and show its progress; the review opens when it finishes, also after Run in Background.
+ */
+export async function openSuggestScenes(mediaId: ID): Promise<void> {
+  const st = useStore.getState();
+  const m = st.project.media[mediaId];
+  if (!m || !m.detectedScenes.length) return;
+  useSuggestStore.setState((s) => ({ open: mediaId, waiting: validAnalysis(m) ? s.waiting : { ...s.waiting, [mediaId]: true } }));
+  if (validAnalysis(m) || activeJobFor(useJobsStore.getState().jobs, mediaId, 'suggestScenes')) return;
   const api = recutApi();
-  const shots = m.detectedScenes;
-  const hists: (Float32Array | null)[] = shots.map(() => null);
-  if (!api || m.offline || m.kind !== 'video') return { hists, audio: null };
-  const audioP = m.probe?.audio.length
-    ? api.waveform(m.path, m.id, m.preferredAudioStream ?? m.probe.audio[0]?.index).then((w) => ({ rate: w.rate, peaks: w.peaks })).catch(() => null)
-    : Promise.resolve(null);
-  const requestId = uid('sgst');
-  signal?.addEventListener('abort', () => { void api.cancelThumbnails([requestId]).catch(() => undefined); }, { once: true });
-  for (let i = 0; i < shots.length; i += CHUNK) {
-    if (signal?.aborted) break;
-    const part = shots.slice(i, i + CHUNK);
-    const times = part.flatMap((s) => { const d = s.end - s.start; return [s.start + d / 3, s.start + (2 * d) / 3]; });
-    const urls = await api.filmstrip({ path: m.path, times, width: FRAME_W, mediaId: m.id, requestId }).catch(() => times.map(() => ''));
-    const frames = await Promise.all(urls.map(histogramOfImage));
-    part.forEach((_, k) => { hists[i + k] = meanHistogram([frames[2 * k], frames[2 * k + 1]].filter((h): h is Float32Array => !!h)); });
-    onProgress?.(Math.min(shots.length, i + CHUNK), shots.length);
+  if (!api) return;
+  const audio = m.probe?.audio.length ? { audioPath: m.path, audioStream: m.preferredAudioStream ?? m.probe.audio[0]?.index } : {};
+  try {
+    await api.startSuggestScenes({
+      mediaId, name: m.name, shots: m.detectedScenes.map((x) => ({ start: x.start, end: x.end })),
+      videoPath: m.proxy.status === 'ready' && m.proxy.path ? m.proxy.path : m.path, duration: m.probe?.duration ?? 0, ...audio,
+    });
+  } catch (e) {
+    toast('error', `Suggest Scenes could not start: ${e instanceof Error ? e.message : String(e)}`);
+    useSuggestStore.setState((s) => { const w = { ...s.waiting }; delete w[mediaId]; return { waiting: w }; });
   }
-  return { hists, audio: await audioP };
+}
+
+/** jobsRouter: a finished analysis is kept, and its review opens when it was asked for. */
+export function suggestJobFinished(mediaId: ID, status: 'done' | 'failed' | 'canceled', result: SuggestScenesResult | null, error?: string): void {
+  const m = useStore.getState().project.media[mediaId];
+  const s = useSuggestStore.getState();
+  const wanted = !!s.waiting[mediaId];
+  const waiting = { ...s.waiting };
+  delete waiting[mediaId];
+  if (status !== 'done' || !result || !m) {
+    useSuggestStore.setState({ waiting, open: s.open === mediaId ? null : s.open });
+    if (status === 'failed') toast('error', `Suggest Scenes failed${m ? ` for ${m.name}` : ''}: ${error ?? 'unknown error'}`);
+    return;
+  }
+  const results = { ...s.results, [mediaId]: { shotKey: shotKey(m), hists: result.hists, audioLinks: result.audioLinks } };
+  if (wanted && (s.open === null || s.open === mediaId)) useSuggestStore.setState({ results, waiting, open: mediaId });
+  else {
+    useSuggestStore.setState({ results, waiting });
+    if (wanted) toast('ok', `Scene suggestions for ${m.name} are ready: right-click it › Suggest Scenes… to review`, 8000);
+  }
 }
 
 export interface SuggestedScene { shotIndices: number[]; name: string; accepted: boolean }

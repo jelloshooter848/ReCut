@@ -16,9 +16,10 @@
  * Note: status writes are quiet (not undoable) but per-tick progress is still NOT written to the store (only
  * status transitions); live progress is read from jobsStore by the UI.
  */
+import { suggestJobFinished } from '@/panels/project/suggestScenes';
 import { mediaSpeechCues, nameFromSpeech } from '@shared/sceneNaming';
 import type { JobInfo } from '@shared/model';
-import type { SceneDetectResult } from '@shared/ipc';
+import type { SceneDetectResult, SuggestScenesResult } from '@shared/ipc';
 import { useStore } from '@/state/store';
 import { useJobsStore } from './jobsStore';
 import { invalidateMediaPath } from './media';
@@ -247,6 +248,13 @@ function routeCollect(job: JobInfo): void {
   }
 }
 
+/** Suggest Scenes analysis (#151): keep the result and open its review. */
+function routeSuggestScenes(job: JobInfo): void {
+  if (!job.mediaId || (job.status !== 'done' && job.status !== 'failed' && job.status !== 'canceled')) return;
+  if (!claim(job)) return;
+  suggestJobFinished(job.mediaId, job.status, job.status === 'done' ? (job.result ?? null) as SuggestScenesResult | null : null, job.error);
+}
+
 /** Reveal an exported file in the OS file manager (for UI that renders export results). */
 export function revealExport(path: string): void { void window.recut?.showItemInFolder?.(path).catch(() => { /* ignore */ }); }
 
@@ -257,6 +265,7 @@ export function routeJobs(jobs: JobInfo[]): void {
     try {
       if (job.kind === 'proxy') routeProxy(job);
       else if (job.kind === 'sceneDetect') routeSceneDetect(job);
+      else if (job.kind === 'suggestScenes') routeSuggestScenes(job);
       else if (job.kind === 'export') routeExport(job);
       else if (job.kind === 'download') routeDownload(job);
       else if (job.kind === 'ocr') routeOcr(job);

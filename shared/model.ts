@@ -495,7 +495,7 @@ export interface AppPreferences {
  * (Whisper); 'channelProxy': preview audio of a clip's channel selection (electron/media/channelProxy.ts);
  * 'collect': Collect Project (copy the project and its media to one folder).
  */
-export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download' | 'channelProxy' | 'collect';
+export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'suggestScenes' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download' | 'channelProxy' | 'collect';
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled';
 
 export interface JobInfo {

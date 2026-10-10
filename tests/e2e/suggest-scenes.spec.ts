@@ -30,7 +30,9 @@ test('suggests scenes from the shots and creates the accepted ones', async () =>
   await row.click();
   await row.click({ button: 'right' });
   await page.locator('.menu-item', { hasText: 'Suggest Scenes' }).click();
+  // The analysis is a background job (#151), listed in Jobs; the review opens when it finishes.
   await expect(page.getByTestId('suggest-list')).toBeVisible({ timeout: 60_000 });
+  expect(await getState<string[]>(page, '(s) => s.jobs.filter((j) => j.kind === "suggestScenes").map((j) => j.status)')).toEqual(['done']);
   const rows = page.getByTestId('suggest-row');
   await expect(rows).toHaveCount(3);
   await expect(rows.nth(0).getByTestId('suggest-shots')).toHaveText('2 shots');

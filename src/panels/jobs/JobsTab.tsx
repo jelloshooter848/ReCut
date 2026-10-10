@@ -15,11 +15,11 @@ import { estimateEtaSeconds, formatDuration } from '@/panels/export/settings';
 import { arrayEq, jobEq, useJobsSelect } from './useJobsSelect';
 
 const KIND_ICON: Record<JobKind, LucideIcon> = {
-  probe: Search, proxy: FileVideo, waveform: AudioWaveform, sceneDetect: Clapperboard, export: Film, thumbnails: Images, transcribe: Mic,
+  probe: Search, proxy: FileVideo, waveform: AudioWaveform, sceneDetect: Clapperboard, suggestScenes: Clapperboard, export: Film, thumbnails: Images, transcribe: Mic,
   ocr: ScanText, download: Download, channelProxy: AudioWaveform, collect: FolderInput,
 };
 const KIND_LABEL: Record<JobKind, string> = {
-  probe: 'Probe', proxy: 'Proxy', waveform: 'Waveform', sceneDetect: 'Shot detection', export: 'Export', thumbnails: 'Thumbnails', transcribe: 'Transcribe',
+  probe: 'Probe', proxy: 'Proxy', waveform: 'Waveform', sceneDetect: 'Shot detection', suggestScenes: 'Suggest scenes', export: 'Export', thumbnails: 'Thumbnails', transcribe: 'Transcribe',
   ocr: 'OCR', download: 'Download', channelProxy: 'Preview audio', collect: 'Collect',
 };
 const STATUS_BADGE: Record<JobStatus, { label: string; cls: string }> = {

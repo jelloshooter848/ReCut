@@ -8,6 +8,7 @@ import { embeddedStreamEntry } from '@/ocr/ocrUi';
 import { openTranscribeDialog } from '@/whisper/whisperUi';
 import type { BinRow, GroupRow, SceneRow, SequenceRow } from './tree';
 import type { PanelDialog } from './dialogs';
+import { openSuggestScenes } from './suggestScenes';
 import {
   addSceneToLibrary, cancelMediaJob, contiguousShots, deleteSequenceConfirmed, generateProxy, importEmbedded, importSubtitlesViaDialog, importViaDialog,
   insertAllShots, insertAtPlayhead, insertRangesAtPlayhead, loadInSource, locateMedia, mergeWithNext, nameShotsFromTranscript, openSequence, removeMediaConfirmed, revealInFolder,
@@ -44,7 +45,7 @@ export function mediaMenu(m: MediaItem, env: MenuEnv): MenuItem[] {
       onSelect: () => { insertAllShots(m.id, 'insert'); },
     }, {
       label: 'Suggest Scenes…', disabled: m.offline, title: 'Proposes groups of shots as scenes (speech, picture and sound across each cut) for you to review',
-      onSelect: () => env.openPanelDialog({ type: 'suggestScenes', mediaId: m.id }),
+      onSelect: () => { void openSuggestScenes(m.id); },
     }, {
       label: 'Name Shots from Transcript', title: 'Names each shot from the first words spoken in it (Whisper transcript or subtitles)',
       onSelect: () => { nameShotsFromTranscript(m.id); },
