@@ -39,8 +39,9 @@ import { PRODUCT_NAME } from '../../shared/productIdentity';
 /**
  * Bump when a change to extraction / chunking / clean-up changes the text or timing of a result.
  * v5 (#158): `-mc 0` and no verbatim prompt; v4 results could loop on hallucinated lines.
+ * v6 (#160): whisper's stock phrases over music ("Thank you." over a logo) are dropped.
  */
-export const WHISPER_PIPELINE_VERSION = 5;
+export const WHISPER_PIPELINE_VERSION = 6;
 /** Share of the progress bar for the audio extraction. */
 const EXTRACT_SHARE = 0.1;
 
