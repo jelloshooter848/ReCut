@@ -791,7 +791,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       });
     },
     setSceneDetectStatus(id, status) { quiet((d) => { const m = d.media[id]; if (m) m.sceneDetectStatus = status; }); },
-    setDetectedScenes(id, boundaries, duration) {
+    setDetectedScenes(id, boundaries, duration, nameFor) {
       // Detection results also arrive from a background job (a mirror: not dirty, the job's cache makes them again);
       // edits to the scenes (rename/merge/split) stay undoable and mark the project dirty.
       quiet((d) => {
@@ -802,7 +802,7 @@ export const useStore = create<RecutStore>()((set, get) => {
         const scenes: DetectedScene[] = [];
         for (let i = 0; i < edges.length - 1; i++) {
           if (edges[i + 1] - edges[i] <= 0) continue;
-          scenes.push({ id: uid('dsc'), start: edges[i], end: edges[i + 1], name: `Shot ${String(scenes.length + 1).padStart(3, '0')}`, tags: [], characters: [] });
+          scenes.push({ id: uid('dsc'), start: edges[i], end: edges[i + 1], name: nameFor?.(edges[i], edges[i + 1]) ?? `Shot ${String(scenes.length + 1).padStart(3, '0')}`, tags: [], characters: [] });
         }
         m.detectedScenes = scenes;
         m.sceneDetectStatus = 'done';

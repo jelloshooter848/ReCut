@@ -10,7 +10,7 @@ import type { BinRow, GroupRow, SceneRow, SequenceRow } from './tree';
 import type { PanelDialog } from './dialogs';
 import {
   addSceneToLibrary, cancelMediaJob, contiguousShots, deleteSequenceConfirmed, generateProxy, importEmbedded, importSubtitlesViaDialog, importViaDialog,
-  insertAllShots, insertAtPlayhead, insertRangesAtPlayhead, loadInSource, locateMedia, mergeWithNext, openSequence, removeMediaConfirmed, revealInFolder,
+  insertAllShots, insertAtPlayhead, insertRangesAtPlayhead, loadInSource, locateMedia, mergeWithNext, nameShotsFromTranscript, openSequence, removeMediaConfirmed, revealInFolder,
 } from './actions';
 
 export interface MenuEnv {
@@ -42,6 +42,9 @@ export function mediaMenu(m: MediaItem, env: MenuEnv): MenuItem[] {
     ...(m.detectedScenes.length ? [{
       label: 'Insert All Shots at Playhead', disabled: m.offline || !hasSeq, title: `Places all ${m.detectedScenes.length} shots back to back, in order`,
       onSelect: () => { insertAllShots(m.id, 'insert'); },
+    }, {
+      label: 'Name Shots from Transcript', title: 'Names each shot from the first words spoken in it (Whisper transcript or subtitles)',
+      onSelect: () => { nameShotsFromTranscript(m.id); },
     }] : []),
     { separator: true },
     proxyBusy
@@ -112,6 +115,10 @@ export function sceneMenu(row: SceneRow, env: MenuEnv): MenuItem[] {
     { label: 'Split at Source Time…', disabled: many, onSelect: splitAtSource },
     { separator: true },
     { label: 'Rename', shortcut: 'F2', disabled: many, onSelect: () => env.startRename(row.key) },
+    {
+      label: many ? `Name ${sel.length} Shots from Transcript` : 'Name from Transcript', title: 'Uses the first words spoken in the shot (Whisper transcript or subtitles)',
+      onSelect: () => { const byMedia = new Map<ID, ID[]>(); for (const r of sel) byMedia.set(r.media.id, [...(byMedia.get(r.media.id) ?? []), r.scene.id]); for (const [mid, sids] of byMedia) nameShotsFromTranscript(mid, sids); },
+    },
     { label: 'Tag…', disabled: many, onSelect: () => env.openPanelDialog({ type: 'tag', mediaId: m.id, sceneId: s.id }) },
     { label: many ? `Add ${sel.length} Shots to Scene Library` : 'Add to Scene Library', onSelect: () => { st.batch('Add to Scene library', () => { for (const r of sel) addSceneToLibrary(r.media, r.scene); }); } },
     { separator: true },

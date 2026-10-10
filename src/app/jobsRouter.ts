@@ -16,6 +16,7 @@
  * Note: status writes are quiet (not undoable) but per-tick progress is still NOT written to the store (only
  * status transitions); live progress is read from jobsStore by the UI.
  */
+import { mediaSpeechCues, nameFromSpeech } from '@shared/sceneNaming';
 import type { JobInfo } from '@shared/model';
 import type { SceneDetectResult } from '@shared/ipc';
 import { useStore } from '@/state/store';
@@ -104,7 +105,9 @@ function routeSceneDetect(job: JobInfo): void {
         return;
       }
       if (media.sceneDetectStatus === 'done' && media.detectedScenes.length > 0) return; // already applied
-      st.setDetectedScenes(media.id, r.boundaries, r.duration > 0 ? r.duration : media.probe?.duration ?? 0);
+      // Name the shots from what is said in them when the media has a transcript or subtitles (#144).
+      const cues = st.project.settings.nameShotsFromTranscript ? mediaSpeechCues(media, st.project.subtitleTracks) : null;
+      st.setDetectedScenes(media.id, r.boundaries, r.duration > 0 ? r.duration : media.probe?.duration ?? 0, cues ? (a, b) => nameFromSpeech(cues, a, b) : undefined);
       toast('ok', `${r.boundaries.length} cut${r.boundaries.length === 1 ? '' : 's'} detected in ${media.name}`);
       break;
     }

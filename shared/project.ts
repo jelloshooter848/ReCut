@@ -44,6 +44,7 @@ export function defaultSettings(): ProjectSettings {
     defaultTransitionFrames: 24,
     showSourceTimecodeOnClips: false,
     highlightSpokenWords: true,
+    nameShotsFromTranscript: true,
   };
 }
 

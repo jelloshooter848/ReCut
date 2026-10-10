@@ -188,7 +188,8 @@ export interface StoreActions {
    */
   setChannelProxies(id: ID, patch: Record<string, ProxyInfo | null>): void;
   setSceneDetectStatus(id: ID, status: NonNullable<MediaItem['sceneDetectStatus']>): void;
-  setDetectedScenes(id: ID, boundaries: number[], duration: number): void;
+  /** `nameFor` names a new shot from its range (e.g. from the transcript, #144); null keeps the default "Shot NNN". */
+  setDetectedScenes(id: ID, boundaries: number[], duration: number, nameFor?: (start: number, end: number) => string | null): void;
   renameDetectedScene(mediaId: ID, sceneId: ID, name: string): void;
   mergeDetectedScenes(mediaId: ID, sceneIds: ID[]): void;
   splitDetectedScene(mediaId: ID, sceneId: ID, atSeconds: number): void;

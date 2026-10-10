@@ -156,6 +156,7 @@ export function DetectScenesDialog({ ids, onClose }: { ids: ID[]; onClose: () =>
   const defaultThreshold = useStore((s) => s.project.settings.sceneThreshold);
   const [threshold, setThreshold] = useState(defaultThreshold);
   const [saveDefault, setSaveDefault] = useState(false);
+  const nameShots = useStore((s) => s.project.settings.nameShotsFromTranscript);
   useEffect(() => { setThreshold(defaultThreshold); }, [defaultThreshold]);
   const run = () => {
     if (saveDefault && threshold !== defaultThreshold) useStore.getState().setSettings({ sceneThreshold: threshold });
@@ -170,6 +171,9 @@ export function DetectScenesDialog({ ids, onClose }: { ids: ID[]; onClose: () =>
         <div className="row gap-6"><NumberField value={threshold} onChange={setThreshold} min={0.05} max={0.95} step={0.01} precision={2} /><span className="text-dim text-sm">lower = more cuts</span></div>
         <label />
         <Toggle checked={saveDefault} onChange={setSaveDefault} label="Save as project default" />
+        <label />
+        <Toggle checked={nameShots} onChange={(v) => useStore.getState().setSettings({ nameShotsFromTranscript: v })} label="Name shots from the transcript"
+          title="When the video has a Whisper transcript or subtitles, each shot is named from the first words spoken in it" data-testid="detect-name-shots" />
       </div>
       <div className="text-dim text-xs mt-8">Finds the cuts between shots in {ids.length} file{ids.length === 1 ? '' : 's'} in the background. Existing detected shots are replaced.</div>
     </Dialog>
