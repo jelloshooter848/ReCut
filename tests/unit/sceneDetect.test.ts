@@ -16,7 +16,7 @@ process.env.RECUT_CACHE_DIR = path.join(tmp, 'cache');
 import { getFfmpegPath } from '../../electron/media/ffmpeg';
 import { cacheKeyForPath } from '../../electron/media/cache';
 import { JobQueue } from '../../electron/jobs/jobQueue';
-import { parseShowinfoPts, sceneFilter, sceneCachePath, startSceneDetectJob, SCENE_VERSION } from '../../electron/media/sceneDetect';
+import { parseShowinfoPts, shotFilter, sceneCachePath, startSceneDetectJob, SCENE_VERSION } from '../../electron/media/sceneDetect';
 
 const FF = getFfmpegPath() ?? 'ffmpeg';
 
@@ -82,7 +82,7 @@ describe('parseShowinfoPts', () => {
   });
 
   it('the filter chain sets the time base right before showinfo', () => {
-    expect(sceneFilter(0.4)).toBe("scale=320:-2,select='gt(scene,0.4)',settb=AVTB,showinfo");
+    expect(shotFilter()).toBe('scale=256:144:flags=area,format=rgb24,settb=AVTB,showinfo');
   });
 });
 
