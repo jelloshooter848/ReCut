@@ -43,13 +43,13 @@ wrong. Scenes already detected in a project stay as they are: run **Detect Scene
 
 - Whisper transcripts of a file whose audio starts after its video (an audio track muxed with a delay) are early by
   that delay; shifting the subtitle track works around it
-  ([report](bugs/open/2026-10-09-whisper-ignores-late-audio-start.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/issues/157)).
 - Thumbnails and filmstrips of an MPEG-TS file with long keyframe intervals can show the next keyframe instead of
   the frame at that time; the preview and the export are right
-  ([report](bugs/open/2026-10-09-ts-thumbnail-next-keyframe.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/issues/156)).
 - In a file that starts slightly before zero (some FFmpeg-made MKVs with AAC audio), thumbnails are one frame early,
   and a clip that starts at the file's first frame exports that frame black; trimming one frame works around it
-  ([report](bugs/open/2026-10-09-negative-start-video-start-offset.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/issues/154)).
 - Unchanged from 0.8.0: the Intel dmg is tested only under Rosetta 2
   ([LIMITATIONS](docs/LIMITATIONS.md#platform-and-packaging)), unsigned Windows builds (SmartScreen), NSIS 3.0.4
   (CVE-2025-43715, only when an installer runs as SYSTEM).

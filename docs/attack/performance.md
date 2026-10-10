@@ -234,7 +234,7 @@ with the budget in brackets.
 | long tasks during scrub multi-hour @ 1 px/frame, no selection (gate, == 0) | 2 | 3 | 0, 0, 0 | 5, 4, 3 | 4 | 0 | Flaky and pre-existing: no change against 0.7.0, which fails 3/3. Fixed in the bench on 9 October (see below and `bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md`) |
 | long tasks during scrub @ 1 px/frame, within the visible page, no selection (gate, == 0) | 0 | 1 (56 ms) | 0, 0, 0 | 0, 0, 0 | 0 | 0 | Noise: one task 6 ms over the 50 ms limit in the run with outside load |
 | wheel ×100 @ 1 px/frame: median / fps / real mouse.wheel long tasks (gates) | 7.1 ms / 55.6 / 0 | 6.1 / 57.0 / 0 | pass | pass | 9.7 / 48.7 / 1 | 6.4 / 58.6 / 0 | Noise: V1 overlapped my unlocked test |
-| main filmstrip 48 frames cold (guardrail, ≤ 3,000 ms) | 3,036 | 2,859 | (node) | (node) | — | — | Pre-existing: the baseline median is 2,984 ms, over budget in 1 of its 2 seed runs; `electron/media/thumbs.ts` is unchanged since 0.7.0. Open: `bugs/open/2026-10-09-perf-filmstrip-cold-borderline.md` |
+| main filmstrip 48 frames cold (guardrail, ≤ 3,000 ms) | 3,036 | 2,859 | (node) | (node) | — | — | Pre-existing: the baseline median is 2,984 ms, over budget in 1 of its 2 seed runs; `electron/media/thumbs.ts` is unchanged since 0.7.0. Open: [#155](https://github.com/jelloshooter848/ReCut/issues/155) |
 | autosave round trip while playing (guardrail, ≤ 500 ms) | 574 | 658 | 764, 611, 617 | 618, 657, 569 | 274 | 231 | Bench artifact; fixed below |
 | store insertFromSource overwrite (p95) (guardrail, regression) | 1.65 ms | 6.58 ms | (node) | (node) | — | — | Noise: R2's node suite ran at load 22; two more store-only runs gave 1.90 and 1.45 ms (baseline 1.45) |
 | pool: media elements created during 10 s playback (guardrail, count, baseline 0) | 1 | 2 | 2, 2, 2 | 1, 2, 1 | 2 | 0 | Not a 0.8.0 change: the row reads 0–2 on every build since the seed (1 and 2 on 7 October code equal to the baseline's playback code); the seed's 0 / 0 was the low end. The A/B calls it `same`. Fixed in the bench on 9 October (see "Program scrub stall and pool row" below) |
@@ -270,7 +270,7 @@ filmstrip cold is the pre-existing borderline row in the table above. The multi-
   Budgets are 16 ms for the flatten rows (Program re-flattens on every edit, so they take the store-commit
   budget of one frame) and 2 / 4 ms for the planFrame rows (the per-frame budgets of the other planFrame rows). The
   rows have no baseline until the next re-seed. The pathological fan-out case is a separate bug
-  (`bugs/open/2026-10-08-nested-fan-out-flatten-blowup.md`).
+  (`bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md`).
 - **Baseline unchanged.** No row regressed because of a 0.8.0 cost, nothing improved enough to lock in, and the
   machine is the reference class. None of the conditions for a re-seed applies.
 
@@ -329,7 +329,7 @@ Each run has a timing pass and a counting pass.
   - `filmstrip 48 frames warm` read 5.6 and 13.8 ms against 5.2 ms. It is noise: the node suite is unchanged, and
     three locked reruns read 4.35, 4.73 and 3.65 ms.
 - `filmstrip 48 frames cold` passed at 2,528 and 2,706 ms but stays borderline:
-  `bugs/open/2026-10-09-perf-filmstrip-cold-borderline.md`.
+  [#155](https://github.com/jelloshooter848/ReCut/issues/155).
 
 **Side finding.** In 1 of 11 runs (possibly 2) the Program monitor issued no seeks during the whole scrub:
 `bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md` (fixed below).

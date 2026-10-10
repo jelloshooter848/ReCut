@@ -263,7 +263,7 @@ rows' values can improve slightly. On a host whose `/tmp` is already tmpfs nothi
 
 ### Follow-ups
 
-- `bugs/open/2026-10-09-perf-filmstrip-cold-borderline.md`: `main | thumbs | filmstrip 48 frames cold` sits on its
+- [#155](https://github.com/jelloshooter848/ReCut/issues/155): `main | thumbs | filmstrip 48 frames cold` sits on its
   3,000 ms guardrail. It is a node-suite row with a different cause.
 - `bugs/open/2026-10-09-perf-pool-elements-created-during-playback.md`: the pool row reads 1–2 against a seed of 0.
   It still read 2, 2, 1 in the 3 verification runs after this fix, so the cause is not shared.
