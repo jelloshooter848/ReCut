@@ -123,7 +123,10 @@ timelines.
    back-and-forth conversation stays together), and whether the sound carries on. It proposes scenes for you to
    review: untick one to skip it, rename it, **Join next**, open its shots and **Split here**, or move the slider
    between more, shorter and fewer, longer scenes. **Create N Scenes** adds the ticked ones to the Scenes panel (one
-   undo step). Everything is worked out on your computer.
+   undo step). Everything is worked out on your computer. The analysis is a background job (in **Jobs**, with
+   progress and the time left; it reads the proxy when there is one): **Run in Background** closes the dialog, and
+   the review opens when it finishes. Choosing Suggest Scenes… again later reuses the analysis while the shots are
+   unchanged.
 7. In the Source monitor, **↑ / ↓** jump between shot boundaries.
 
 ## 4. Import subtitles

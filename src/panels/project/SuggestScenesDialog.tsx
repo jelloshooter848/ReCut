@@ -1,39 +1,64 @@
 /**
  * Suggest Scenes (#147): proposes groupings of a video's shots into scenes from speech, picture and sound at each cut.
- * Review them (untick to reject, join with the next, split at a shot, rename), then create the accepted ones.
+ * The analysis is a background job (#151): the dialog shows its progress and can be closed (Run in Background); the
+ * review (untick, rename, join with the next, split at a shot) opens when it finishes.
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import type { ID } from '@shared/model';
 import { formatClock } from '@shared/time';
 import { cutLinks, groupShots, SUGGEST_THRESHOLD, type CutLink } from '@shared/sceneSuggest';
 import { mediaSpeechCues } from '@shared/sceneNaming';
+import type { JobInfo } from '@shared/model';
 import { Button, Dialog, ProgressBar, Slider } from '@/components/ui';
-import { useStore } from '@/state';
-import { createSuggestedScenes, gatherShotFeatures, nameSuggestions, type SuggestedScene } from './suggestScenes';
+import { recutApi, useStore } from '@/state';
+import { useMediaJob } from '@/app/jobsStore';
+import { estimateEtaSeconds, formatDuration } from '@/panels/export/settings';
+import { createSuggestedScenes, nameSuggestions, shotKey, useSuggestStore, type SuggestedScene } from './suggestScenes';
+
+/** "1m 05s elapsed · ≈ 2m left", as in the Jobs tab. */
+function timing(job: JobInfo, now: number): string {
+  if (!job.startedAt) return '';
+  const ms = now - job.startedAt;
+  const eta = job.status === 'running' ? estimateEtaSeconds(job.progress, ms) : null;
+  return `${formatDuration(ms / 1000)} elapsed${eta !== null ? ` · ≈ ${formatDuration(eta)} left` : ''}`;
+}
+
+/** Re-renders once per second while `on`. */
+function useClock(on: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [on]);
+  return now;
+}
 
 const clock = (s: number) => formatClock(Math.max(0, s), false).replace(/^00:/, '0:');
 
+/** Mounted once in the app: shows the dialog of the media in useSuggestStore.open. */
+export function SuggestScenesHost() {
+  const open = useSuggestStore((s) => s.open);
+  if (!open) return null;
+  return <SuggestScenesDialog key={open} mediaId={open} onClose={() => useSuggestStore.setState({ open: null })} />;
+}
+
 export function SuggestScenesDialog({ mediaId, onClose }: { mediaId: ID; onClose: () => void }) {
   const media = useStore((s) => s.project.media[mediaId]);
-  const [links, setLinks] = useState<CutLink[] | null>(null);
-  const [progress, setProgress] = useState(0);
+  const job = useMediaJob(mediaId, 'suggestScenes');
+  const result = useSuggestStore((s) => s.results[mediaId]);
+  const analysis = media && result && result.shotKey === shotKey(media) ? result : null;
+  const links = useMemo<CutLink[] | null>(() => {
+    if (!media || !analysis) return null;
+    const st = useStore.getState();
+    return cutLinks({ shots: media.detectedScenes, cues: mediaSpeechCues(media, st.project.subtitleTracks), hists: analysis.hists, audioLinks: analysis.audioLinks });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysis]);
   // The slider is "how readily shots join": high joins more (fewer, longer scenes).
   const [join, setJoin] = useState(1 - SUGGEST_THRESHOLD);
   const [suggestions, setSuggestions] = useState<SuggestedScene[]>([]);
   const [open, setOpen] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!media) return;
-    const ac = new AbortController();
-    void gatherShotFeatures(media, (d, t) => setProgress(t ? d / t : 1), ac.signal).then((f) => {
-      if (ac.signal.aborted) return;
-      const st = useStore.getState();
-      setLinks(cutLinks({ shots: media.detectedScenes, cues: mediaSpeechCues(media, st.project.subtitleTracks), hists: f.hists, audio: f.audio }));
-    });
-    return () => ac.abort();
-    // Analyse once per opening; edits to the shots meanwhile are picked up next time.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mediaId]);
+  const now = useClock(!links && !!job);
 
   const regroup = (groups: number[][]) => {
     if (!media) return;
@@ -69,13 +94,26 @@ export function SuggestScenesDialog({ mediaId, onClose }: { mediaId: ID; onClose
     <Dialog open title={`Suggest Scenes · ${media.name}`} onClose={onClose} width={620}
       footer={<>
         <span className="text-dim text-sm grow">{links ? summary : 'Analysing…'}</span>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button variant="primary" disabled={!links || !accepted} onClick={create} data-testid="suggest-create">{`Create ${accepted} Scene${accepted === 1 ? '' : 's'}`}</Button>
+        {!links && job ? <>
+          <Button onClick={() => { void recutApi()?.cancelJob(job.id); onClose(); }} data-testid="suggest-cancel-job">Stop</Button>
+          <Button variant="primary" onClick={onClose} data-testid="suggest-background">Run in Background</Button>
+        </> : <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" disabled={!links || !accepted} onClick={create} data-testid="suggest-create">{`Create ${accepted} Scene${accepted === 1 ? '' : 's'}`}</Button>
+        </>}
       </>}>
       {!links ? (
         <div className="col gap-6" data-testid="suggest-analysing">
-          <div className="text-dim text-sm">Comparing the shots: what is said across each cut, how alike the pictures are, and whether the sound carries on.</div>
-          <ProgressBar value={progress} />
+          <div className="text-dim text-sm">Comparing the shots: what is said across each cut, how alike the pictures are, and whether the sound carries on. This runs in the background (see Jobs): you can keep working.</div>
+          {job ? (
+            <>
+              <ProgressBar value={job.status === 'queued' ? undefined : job.progress} />
+              <div className="row text-dim text-xs mono" data-testid="suggest-progress">
+                <span className="grow">{job.status === 'queued' ? 'Waiting for other jobs…' : job.message ?? `${Math.round(job.progress * 100)}%`}</span>
+                <span>{timing(job, now)}</span>
+              </div>
+            </>
+          ) : <div className="text-faint text-sm">The analysis stopped. Close this and choose Suggest Scenes… again to retry.</div>}
         </div>
       ) : (
         <div className="col gap-6">

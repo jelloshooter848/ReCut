@@ -21,6 +21,8 @@ export interface SuggestInputs {
   /** One colour histogram per shot (histogramFromRgba), or null where none could be read. */
   hists?: readonly (ArrayLike<number> | null)[] | null;
   audio?: AudioPeaks | null;
+  /** Sound scores per cut already worked out (audioLink, in the main process); used instead of `audio`. */
+  audioLinks?: readonly (number | null)[] | null;
 }
 
 /** Scores of one cut (between shot i and i+1): null where the signal has nothing to say. */
@@ -88,7 +90,7 @@ export function cutLinks(inp: SuggestInputs): CutLink[] {
       for (let k = i; k >= 0 && k > i - VISUAL_LOOKBACK; k--) { const h = inp.hists?.[k]; if (h) best = Math.max(best, histSimilarity(h, next)); }
       if (best >= 0) visual = clamp01((best - 0.45) / 0.4);
     }
-    const audio = inp.audio ? audioLink(inp.audio, b) : null;
+    const audio = inp.audioLinks ? inp.audioLinks[i] ?? null : inp.audio ? audioLink(inp.audio, b) : null;
     let sum = 0, w = 0;
     if (speech !== null) { sum += WEIGHTS.speech * speech; w += WEIGHTS.speech; }
     if (visual !== null) { sum += WEIGHTS.visual * visual; w += WEIGHTS.visual; }
@@ -115,15 +117,16 @@ export function groupShots(links: readonly CutLink[], threshold = SUGGEST_THRESH
 const HUE_BINS = 18, VAL_BINS = 8;
 
 /**
- * Colour histogram of an RGBA image (canvas ImageData): hue of the saturated pixels and brightness of all pixels,
+ * Colour histogram of an RGBA image (canvas ImageData), or packed RGB with `channels` 3 (FFmpeg rgb24): hue of the
+ * saturated pixels and brightness of all pixels,
  * normalised to sum 1, so histSimilarity compares location and lighting rather than detail.
  */
-export function histogramFromRgba(px: ArrayLike<number>): Float32Array {
+export function histogramFromRgba(px: ArrayLike<number>, channels: 3 | 4 = 4): Float32Array {
   const h = new Float32Array(HUE_BINS + VAL_BINS);
-  const n = Math.floor(px.length / 4);
+  const n = Math.floor(px.length / channels);
   if (!n) return h;
   for (let i = 0; i < n; i++) {
-    const r = px[i * 4], g = px[i * 4 + 1], b = px[i * 4 + 2];
+    const r = px[i * channels], g = px[i * channels + 1], b = px[i * channels + 2];
     const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
     // Soft binning: a pixel is shared between its two nearest bins, so near-identical colours do not fall apart
     // at a bin edge.

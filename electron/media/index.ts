@@ -11,7 +11,7 @@ import type { ID, JobInfo, MediaProbe } from '@shared/model';
 import {
   pathToMediaUrl, ffmpegMissingMessage,
   type ExportRequest, type ExportStartResult, type FilmstripRequest, type ProxyRequest, type ProxyLookup, type ChannelProxyRequest,
-  type SceneDetectRequest, type ThumbnailRequest, type WaveformData,
+  type SceneDetectRequest, type SuggestScenesRequest, type ThumbnailRequest, type WaveformData,
 } from '@shared/ipc';
 import type { OcrLanguageState, OcrRequest } from '@shared/ocr';
 import type { MediaContext, MediaFetch, MediaHandlers } from '../ipc';
@@ -40,6 +40,7 @@ import { getWaveform } from './waveform';
 import { lookupCachedProxy, startProxyJob } from './proxy';
 import { startChannelProxyJob } from './channelProxy';
 import { startSceneDetectJob } from './sceneDetect';
+import { startSuggestScenesJob } from './suggestScenes';
 import { extractSubtitles } from './subtitlesExtract';
 import { envVar } from '../env';
 import { PRODUCT_NAME } from '../../shared/productIdentity';
@@ -162,6 +163,11 @@ export const mediaHandlers: MediaHandlers = {
 
   async startSceneDetect(req: SceneDetectRequest): Promise<JobInfo> {
     return startSceneDetectJob(jobQueue, req);
+  },
+
+  async startSuggestScenes(req: SuggestScenesRequest): Promise<JobInfo> {
+    if (!getFfmpegPath()) throw new Error(ffmpegMissingMessage('ffmpeg'));
+    return startSuggestScenesJob(jobQueue, req);
   },
 
   extractSubtitles(path: string, streamIndex: number): Promise<string> {
