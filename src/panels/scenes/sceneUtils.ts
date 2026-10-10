@@ -252,7 +252,7 @@ export function importDetectedScenes(mediaId: ID): number {
     });
   }
   if (records.length === 0) return 0;
-  s.commit(`Import ${records.length} detected scenes`, (d) => {
+  s.commit(`Import ${records.length} detected shots`, (d) => {
     const addVocab = (list: string[], values: string[]) => { for (const v of values) if (v && !list.includes(v)) list.push(v); };
     for (const r of records) {
       d.scenes[r.id] = r;

@@ -171,19 +171,19 @@ test('detects scenes through the context menu and lists scene rows under the med
   const mediaId = await row.getAttribute('data-media-id');
   await row.click();                       // plain click: only this item is selected
   await row.click({ button: 'right' });
-  await page.locator('.menu-item', { hasText: 'Detect Scenes' }).click();
+  await page.locator('.menu-item', { hasText: 'Detect Shots' }).click();
   await page.getByTestId('detect-run').click();
   // The media row reports progress while the job runs, then the result lands in the store.
-  await expect(row).toContainText('Scenes');
+  await expect(row).toContainText('Shots');
   await expect.poll(() => page.evaluate((id) => (window as any).__recut.store.getState().project.media[id]?.sceneDetectStatus, mediaId), { timeout: 90_000 }).toBe('done');
   const scenes = page.locator(`[data-row-kind="scene"][data-media-id="${mediaId}"]`);
   await expect(scenes.first()).toBeVisible();
   const n = await scenes.count();
   expect(n).toBeGreaterThanOrEqual(2);
   expect(await page.locator('[data-row-kind="scene"]').count()).toBe(n);   // only this media was detected
-  await expect(scenes.first()).toContainText('Scene 001');
+  await expect(scenes.first()).toContainText('Shot 001');
   await expect(scenes.first()).toContainText('00:00–');
-  await expect(row).toContainText(`${n} scene${n === 1 ? '' : 's'}`);
+  await expect(row).toContainText(`${n} shot${n === 1 ? '' : 's'}`);
 
   // Inline rename of a scene via F2.
   await scenes.first().click();
@@ -197,6 +197,54 @@ test('detects scenes through the context menu and lists scene rows under the med
   await scenes.first().click({ button: 'right' });
   await page.locator('.menu-item', { hasText: 'Merge with Next' }).click();
   await expect(scenes).toHaveCount(n - 1);
+});
+
+test('several selected shots: Insert N Shots places all in order as one undo step; Make Scene; Merge (#143)', async () => {
+  const row = page.locator('[data-row-kind="media"]', { hasText: 'S01E01' });
+  const mediaId = (await row.getAttribute('data-media-id'))!;
+  const ev = <T,>(fn: string, arg?: unknown) => page.evaluate(({ fn, arg }) => new Function('s', 'arg', `return (${fn})(s, arg)`)((window as any).__recut.store.getState(), arg) as T, { fn, arg });
+  // Four known shots; an empty timeline to insert into.
+  const dur = await ev<number>('(s, id) => s.project.media[id].probe.duration', mediaId);
+  await ev('(s, a) => { s.setDetectedScenes(a.id, [a.d / 4, a.d / 2, (3 * a.d) / 4], a.d); }', { id: mediaId, d: dur });
+  const clipCount = () => ev<number>('(s) => { const q = s.project.sequences[s.project.activeSequenceId]; return q.videoTracks.reduce((n, t) => n + t.clips.length, 0); }');
+  const before = await clipCount();
+  const shots = page.locator(`[data-row-kind="scene"][data-media-id="${mediaId}"]`);
+  await expect(shots).toHaveCount(4);
+
+  // Select shots 1-3 (click, shift-click) and insert them.
+  await shots.nth(0).click();
+  await shots.nth(2).click({ modifiers: ['Shift'] });
+  await shots.nth(1).click({ button: 'right' });
+  await page.locator('.menu-item', { hasText: 'Insert 3 Shots at Playhead' }).click();
+  await expect.poll(clipCount).toBe(before + 3);
+  const starts = await ev<number[]>('(s) => { const q = s.project.sequences[s.project.activeSequenceId]; return q.videoTracks.flatMap((t) => t.clips).map((c) => c.sourceIn).sort((a, b) => a - b); }');
+  expect(starts.slice(-3).map((x) => Math.round(x * 10) / 10)).toEqual([0, dur / 4, dur / 2].map((x) => Math.round(x * 10) / 10));
+  // The shot selection survived the edit (it used to be pruned: shot ids aren't Scene library ids).
+  expect(await ev<number>('(s) => s.ui.selectedSceneIds.length')).toBe(3);
+  // One undo step removes all three.
+  await ev('(s) => s.undo()');
+  await expect.poll(clipCount).toBe(before);
+
+  // Make Scene from the three shots: one library record covering them.
+  await shots.nth(1).click({ button: 'right' });
+  await page.locator('.menu-item', { hasText: 'Make Scene from 3 Shots' }).click();
+  await page.getByTestId('name-prompt-input').fill('Opening');
+  await page.getByTestId('name-prompt-confirm').click();
+  const rec = await ev<{ in: number; out: number } | undefined>('(s) => Object.values(s.project.scenes).find((r) => r.name === "Opening")');
+  expect(rec?.in).toBeCloseTo(0, 3);
+  expect(rec?.out).toBeCloseTo((3 * dur) / 4, 3);
+
+  // A non-contiguous selection can't be merged; a contiguous one merges in one step.
+  await shots.nth(0).click();
+  await shots.nth(2).click({ modifiers: [process.platform === 'darwin' ? 'Meta' : 'Control'] });
+  await shots.nth(0).click({ button: 'right' });
+  await expect(page.locator('.menu-item', { hasText: 'Merge 2 Shots' })).toHaveClass(/disabled/);
+  await page.keyboard.press('Escape');
+  await shots.nth(0).click();
+  await shots.nth(2).click({ modifiers: ['Shift'] });
+  await shots.nth(0).click({ button: 'right' });
+  await page.locator('.menu-item', { hasText: 'Merge 3 Shots' }).click();
+  await expect(shots).toHaveCount(2);
 });
 
 test('keyboard: Enter loads the selected media in the Source monitor', async () => {

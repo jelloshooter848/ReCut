@@ -151,13 +151,13 @@ function SingleMedia({ m }: { m: MediaItem }) {
           )}
         </Row>
         {m.proxy.error ? <div className="insp-note warn">{m.proxy.error}</div> : null}
-        <Row label="Scenes" prop="scenes">
-          <Value dim={!m.detectedScenes.length}>{m.sceneDetectStatus && m.sceneDetectStatus !== 'none' ? m.sceneDetectStatus : 'not run'}{m.detectedScenes.length ? ` · ${pluralize(m.detectedScenes.length, 'scene')}` : ''}</Value>
+        <Row label="Shots" prop="scenes">
+          <Value dim={!m.detectedScenes.length}>{m.sceneDetectStatus && m.sceneDetectStatus !== 'none' ? m.sceneDetectStatus : 'not run'}{m.detectedScenes.length ? ` · ${pluralize(m.detectedScenes.length, 'shot')}` : ''}</Value>
           {sceneJob ? <ProgressBar value={sceneJob.progress} /> : null}
           {sceneJob ? (
             <IconButton icon={Square} label="Cancel scene detection" size="sm" onClick={() => cancelJob(sceneJob.id)} />
           ) : (
-            <Button size="sm" icon={ScanSearch} disabled={m.kind !== 'video' || m.offline || m.sceneDetectStatus === 'running'} title="Detect scene cuts" onClick={() => { void startSceneDetect(m.id); }}>Detect</Button>
+            <Button size="sm" icon={ScanSearch} disabled={m.kind !== 'video' || m.offline || m.sceneDetectStatus === 'running'} title="Detect shot cuts" onClick={() => { void startSceneDetect(m.id); }}>Detect</Button>
           )}
         </Row>
         <Row label="Waveform"><Value dim>{m.waveformStatus ?? 'none'}</Value></Row>

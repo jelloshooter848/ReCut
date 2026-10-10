@@ -19,7 +19,7 @@ const KIND_ICON: Record<JobKind, LucideIcon> = {
   ocr: ScanText, download: Download, channelProxy: AudioWaveform, collect: FolderInput,
 };
 const KIND_LABEL: Record<JobKind, string> = {
-  probe: 'Probe', proxy: 'Proxy', waveform: 'Waveform', sceneDetect: 'Scene detection', export: 'Export', thumbnails: 'Thumbnails', transcribe: 'Transcribe',
+  probe: 'Probe', proxy: 'Proxy', waveform: 'Waveform', sceneDetect: 'Shot detection', export: 'Export', thumbnails: 'Thumbnails', transcribe: 'Transcribe',
   ocr: 'OCR', download: 'Download', channelProxy: 'Preview audio', collect: 'Collect',
 };
 const STATUS_BADGE: Record<JobStatus, { label: string; cls: string }> = {

@@ -573,7 +573,8 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     const run = () => {
       let at = frame;
       const created: ID[] = [];
-      for (const p of valid) {
+      // Several dropped items (e.g. a multi-selection of shots) are one undo step (#143).
+      useStore.getState().batch(insertMode ? 'Insert' : 'Overwrite', () => { for (const p of valid) {
         const extra: NonNullable<Parameters<typeof st.insertFromSource>[1]['extra']> = {};
         if (p.name) extra.name = p.name;
         if (p.characters?.length) extra.characters = p.characters;
@@ -588,7 +589,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
         if (!res.ok || res.endFrame === null) continue;
         created.push(...res.clipIds);
         at = Math.max(at + 1, res.endFrame);
-      }
+      } });
       if (created.length) useStore.getState().select(created, 'set');
       else toast('warn', 'Could not place the clip here (target tracks locked?)');
       rootRef.current?.focus({ preventScroll: true });

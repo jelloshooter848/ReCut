@@ -145,7 +145,7 @@ export function ScenesPanel({ active }: PanelProps) {
   const runImport = () => {
     if (!importCandidate) return;
     const n = importDetectedScenes(importCandidate.id);
-    toast.ok(n ? `Imported ${n} detected scene${n === 1 ? '' : 's'} from ${importCandidate.name}` : 'All detected scenes are already in the library');
+    toast.ok(n ? `Imported ${n} detected shot${n === 1 ? '' : 's'} from ${importCandidate.name}` : 'All detected shots are already in the library');
   };
 
   // ---- deletion
@@ -337,9 +337,9 @@ export function ScenesPanel({ active }: PanelProps) {
         <div className="scn-import" data-testid="scene-import-detected">
           <Wand2 size={13} />
           <span className="grow ellipsis" title={importCandidate.name}>
-            <b>{importable}</b> detected scene{importable === 1 ? '' : 's'} in <b>{importCandidate.name}</b>
+            <b>{importable}</b> detected shot{importable === 1 ? '' : 's'} in <b>{importCandidate.name}</b>
           </span>
-          <Button size="sm" onClick={runImport} title={`Import detected scenes of ${importCandidate.name} as records`}>Import as records</Button>
+          <Button size="sm" onClick={runImport} title={`Make one scene per detected shot of ${importCandidate.name}`}>Import as records</Button>
         </div>
       ) : null}
 
@@ -347,7 +347,7 @@ export function ScenesPanel({ active }: PanelProps) {
       <div className="panel-body scn-body" ref={bodyRef} onClick={(e) => { if (!(e.target as HTMLElement).closest('[data-scene-id], .scn-group-head')) useStore.getState().selectScenes([], 'clear'); }}>
         {all.length === 0 ? (
           <EmptyState icon={Clapperboard} title="No scenes in the library yet"
-            description="Mark In/Out in the Source monitor and press “From Source In/Out”, or import detected scenes from a movie. Scene records only reference the source — nothing is copied." />
+            description="Mark In/Out in the Source monitor and press “From Source In/Out”, or select shots in the Project panel and choose Make Scene. Scene records only reference the source — nothing is copied." />
         ) : filtered.length === 0 ? (
           <EmptyState icon={Filter} title="No scenes match" description="Try a different search or clear the filters." action={<Button size="sm" onClick={() => setFilters(EMPTY_FILTERS)}>Clear filters</Button>} />
         ) : (

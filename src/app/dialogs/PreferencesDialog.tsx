@@ -97,7 +97,7 @@ export function PreferencesDialog() {
           <Row label="Playback resolution">
             <Select value={settings.playbackResolution} options={PLAYBACK_RES} onChange={(v) => set({ playbackResolution: v as ProjectSettings['playbackResolution'] })} />
           </Row>
-          <Row label="Scene detection threshold" hint="Higher values detect fewer, stronger cuts">
+          <Row label="Shot detection threshold" hint="Higher values detect fewer, stronger cuts">
             <Slider value={threshold} min={0.05} max={0.95} step={0.01} onChange={setThreshold} onCommit={(v) => set({ sceneThreshold: v })} className="grow" />
             <span className="mono text-dim" style={{ width: 36, textAlign: 'right' }}>{threshold.toFixed(2)}</span>
           </Row>
