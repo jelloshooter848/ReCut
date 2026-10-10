@@ -8,7 +8,7 @@ registerPanel({
   defaultZone: 'right',
   icon: SlidersHorizontal,
   component: InspectorPanel,
-  description: 'Effect controls and properties for the selected clip, transition, media item or sequence.',
+  description: 'Effect controls and properties for the selected clip, transition, media item or timeline.',
 });
 
 export { InspectorPanel };

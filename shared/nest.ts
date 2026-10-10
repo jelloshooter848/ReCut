@@ -205,9 +205,9 @@ export const FLAT_LIMIT_TEXT = `${fmtCount(MAX_FLAT_TRACKS)} tracks or ${fmtCoun
 /** User-facing text for a NestProblem ("Cannot nest X in Y: ..."). */
 export function nestProblemText(p: NestProblem): string {
   switch (p) {
-    case 'missing': return 'the sequence no longer exists';
-    case 'self': return 'a sequence cannot contain itself';
-    case 'cycle': return 'the sequence already contains this one (directly or through another nested sequence)';
+    case 'missing': return 'the timeline no longer exists';
+    case 'self': return 'a timeline cannot contain itself';
+    case 'cycle': return 'the timeline already contains this one (directly or through another nested timeline)';
     case 'depth': return `nesting would be more than ${MAX_NEST_DEPTH} levels deep`;
     case 'size': return `nesting would expand to more than ${FLAT_LIMIT_TEXT} when flattened`;
   }
@@ -757,7 +757,7 @@ function flattenTrack(seq: Sequence, T: Track, kind: 'video' | 'audio', ctx: Ctx
     const f = innerFlat(ctx, seq, c.sequenceId);
     inner.set(c.sequenceId, f);
     if (!f) {
-      const why = own(ctx.sequences, c.sequenceId) ? 'it contains this sequence (a cycle)' : 'the sequence is missing from the project';
+      const why = own(ctx.sequences, c.sequenceId) ? 'it contains this timeline (a cycle)' : 'the timeline is missing from the project';
       const w = `Nested clip "${c.name}" on ${T.name}: ${why}; rendered as ${kind === 'video' ? 'black' : 'silence'}.`;
       if (!ctx.warnings.includes(w)) ctx.warnings.push(w);
     }
@@ -1386,11 +1386,11 @@ export type BreakApartResult = { ok: true; clipIds: ID[] } | { ok: false; error:
 export function breakApartCompoundClip(outer: Sequence, clipId: ID, sequences: Seqs, media: Readonly<Record<ID, MediaItem>>): BreakApartResult {
   const all = rawClips(outer);
   const hit = all.find((x) => x.clip.id === clipId);
-  if (!hit || !isNestedClip(hit.clip)) return { ok: false, error: 'Select a nested sequence clip.' };
+  if (!hit || !isNestedClip(hit.clip)) return { ok: false, error: 'Select a nested timeline clip.' };
   const N = hit.clip;
   const inner = own(sequences, N.sequenceId);
-  if (!inner) return { ok: false, error: 'Its sequence is no longer in the project.' };
-  if (!fpsEquals(inner.fps, outer.fps)) return { ok: false, error: 'The nested sequence has another frame rate.' };
+  if (!inner) return { ok: false, error: 'Its timeline is no longer in the project.' };
+  if (!fpsEquals(inner.fps, outer.fps)) return { ok: false, error: 'The nested timeline has another frame rate.' };
   const group = all.filter((x) => x.clip.id === N.id || (!!N.linkId && x.clip.linkId === N.linkId && isNestedClip(x.clip)
     && x.clip.sequenceId === N.sequenceId && x.clip.start === N.start && x.clip.duration === N.duration && Math.abs(x.clip.sourceIn - N.sourceIn) < 1e-9));
   if (group.some((x) => x.track.locked)) return { ok: false, error: 'The clip is on a locked track.' };

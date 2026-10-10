@@ -40,7 +40,7 @@ async function generateFor(ids: ID[]): Promise<void> {
 async function detectFor(ids: ID[]): Promise<void> {
   let n = 0;
   for (const id of ids) {
-    const r = await startSceneDetect(id).catch((e: unknown) => { toast('error', `Scene detection failed to start: ${e instanceof Error ? e.message : String(e)}`); return null; });
+    const r = await startSceneDetect(id).catch((e: unknown) => { toast('error', `Shot detection failed to start: ${e instanceof Error ? e.message : String(e)}`); return null; });
     if (r) n++;
   }
   if (n > 0) toast('info', `Detecting scenes in ${n} file${n > 1 ? 's' : ''}`);
@@ -89,11 +89,11 @@ export function ProxiesTab() {
           Cancel all{activeProxyJobs ? ` (${activeProxyJobs})` : ''}
         </Button>
         <span className="toolbar-sep" />
-        <Button size="sm" icon={Clapperboard} disabled={!selectedScene.length} title="Detect scenes in the selected media (uses the project scene threshold)" onClick={() => detectFor(selectedScene.map((m) => m.id))}>
-          Detect scenes: selected{selectedScene.length ? ` (${selectedScene.length})` : ''}
+        <Button size="sm" icon={Clapperboard} disabled={!selectedScene.length} title="Detect shots in the selected media (uses the project shot threshold)" onClick={() => detectFor(selectedScene.map((m) => m.id))}>
+          Detect shots: selected{selectedScene.length ? ` (${selectedScene.length})` : ''}
         </Button>
-        <Button size="sm" disabled={!withoutScenes.length} title="Detect scenes in every video that has none yet" onClick={() => detectFor(withoutScenes.map((m) => m.id))}>
-          All without scenes{withoutScenes.length ? ` (${withoutScenes.length})` : ''}
+        <Button size="sm" disabled={!withoutScenes.length} title="Detect shots in every video that has none yet" onClick={() => detectFor(withoutScenes.map((m) => m.id))}>
+          All without shots{withoutScenes.length ? ` (${withoutScenes.length})` : ''}
         </Button>
       </div>
       <div className="toolbar" style={{ height: 'auto', flexWrap: 'wrap', padding: '3px 6px', gap: 8, rowGap: 2 }}>

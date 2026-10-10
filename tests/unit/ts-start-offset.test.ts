@@ -1,6 +1,6 @@
 /**
  * MPEG-TS / MPEG-PS sources whose video (or audio) stream starts after the container start
- * (bugs/closed/2026-10-09-ts-late-video-export-early.md).
+ * (bugs/closed/2026-10-09-ts-late-video-export-early.md @ 59eafc6).
  *
  * For formats with discontinuous timestamps (MPEG-TS, MPEG-PS, FLV) FFmpeg recomputes the input's start time from the
  * streams the command maps (fftools correct_input_start_times), and `-copyts -start_at_zero` (or no `-copyts`) uses
@@ -218,7 +218,7 @@ describe('exported frames: a TS whose video starts 0.5 s after its audio, and so
     // The container start is clamped at 0, so source time t is file time t and the video's frame k is at k/25, as
     // Chromium plays it (requestVideoFrameCallback mediaTime N/24 for frame N of a 24 fps variant). The probe's
     // video.startTime (0.1, measured from the negative start) is not where the video is on that timeline
-    // (bugs/open/2026-10-09-negative-start-video-start-offset.md).
+    // (issue #154).
     { name: 'MKV with a negative container start (audio from -0.1 s)', media: () => negMkv, vStart: () => 0 },
   ];
 

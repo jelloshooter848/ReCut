@@ -32,7 +32,7 @@ class FakeMedia {
   seeks = 0; queuedSeeks = 0;
   /**
    * The pending seek never completes (land() does nothing) until the next one: what Chromium did in the perf bench
-   * (bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md). A new seek restarts the element.
+   * (bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md @ 59eafc6). A new seek restarts the element.
    */
   stalled = false;
   private t = 0;
@@ -282,7 +282,7 @@ describe('SequencePlayer scrubbing', () => {
 });
 
 describe("SequencePlayer: the landed frame reaches the compositor after 'seeked'", () => {
-  // bugs/closed/2026-10-07-program-stale-frame-after-seek.md: under load Chromium fires 'seeked' (readyState 4, not
+  // bugs/closed/2026-10-07-program-stale-frame-after-seek.md @ 59eafc6: under load Chromium fires 'seeked' (readyState 4, not
   // seeking) before the landed frame is in the element's compositor, so a draw at 'seeked' paints the previous frame.
   // The picture was keyed on currentTime, so that stale frame stayed on screen at rest.
 
@@ -335,7 +335,7 @@ describe("SequencePlayer: the landed frame reaches the compositor after 'seeked'
 });
 
 describe('SequencePlayer: a paused draw waits until the landed frame is presented', () => {
-  // bugs/closed/2026-10-07-program-transient-stale-frame-before-present.md: the repaint above fixed the picture at
+  // bugs/closed/2026-10-07-program-transient-stale-frame-before-present.md @ 59eafc6: the repaint above fixed the picture at
   // rest, but the draw at 'seeked' still put the previous frame (the other clip's, on a cut back) on screen for one
   // display frame. With WebCodecs the player sees the frame the element holds (new VideoFrame(el)) and holds the
   // last picture until it is the landed one.
@@ -451,7 +451,7 @@ describe('SequencePlayer: a paused draw waits until the landed frame is presente
 });
 
 describe('SequencePlayer: a seek that never lands does not freeze the Program monitor', () => {
-  // bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md: in the perf bench two pooled elements stayed
+  // bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md @ 59eafc6: in the perf bench two pooled elements stayed
   // seeking / readyState < 2 for minutes. A scrub round waited for them for ever (no seek for the whole drag, the
   // monitor frozen on the frame before it), and since an element was never sought while `seeking`, even the update at
   // rest never restarted them: their layer was not drawn until something else moved them.

@@ -1,6 +1,6 @@
 /**
  * The default cache folder `<userData>/cache` survives app starts
- * (bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md).
+ * (bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md @ 59eafc6).
  *
  * On Windows and macOS (case-insensitive file systems) `<userData>/cache` is the same folder as Chromium's HTTP cache
  * folder `<userData>/Cache`. With the HTTP cache on, Chromium deletes every entry of that folder except `Cache_Data` at

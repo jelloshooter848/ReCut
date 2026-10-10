@@ -1,5 +1,5 @@
 /**
- * Mono sources: the preview level matches the export level (bugs/closed/2026-10-07-mono-preview-level.md).
+ * Mono sources: the preview level matches the export level (bugs/closed/2026-10-07-mono-preview-level.md @ 59eafc6).
  *
  * Export side, measured on real exports (runExport) of the same 1 kHz tone (peak 0.25, -15.05 dBFS RMS):
  * a stereo export puts a mono stream on both channels at -3.01 dB (FFmpeg's equal-power up-mix), a stereo stream at

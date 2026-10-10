@@ -38,7 +38,7 @@ function Summary({ s }: { s: Extract<CollectSummary, { ok: true }> }) {
       <div className="row gap-6"><span className="text-dim collect-k">Free space</span>
         <span data-testid="collect-free">{s.freeBytes === null ? 'unknown' : formatCollectBytes(s.freeBytes)}</span></div>
       {s.unusedMedia ? (
-        <div className="text-dim text-sm">{plural(s.unusedMedia, 'media item')} not used in any sequence {s.unusedMedia === 1 ? 'is' : 'are'} not copied and keep{s.unusedMedia === 1 ? 's' : ''} {s.unusedMedia === 1 ? 'its' : 'their'} original path{s.unusedMedia === 1 ? '' : 's'}.</div>
+        <div className="text-dim text-sm">{plural(s.unusedMedia, 'media item')} not used in any timeline {s.unusedMedia === 1 ? 'is' : 'are'} not copied and keep{s.unusedMedia === 1 ? 's' : ''} {s.unusedMedia === 1 ? 'its' : 'their'} original path{s.unusedMedia === 1 ? '' : 's'}.</div>
       ) : null}
       {s.missing.length ? (
         <div className="collect-warn" data-testid="collect-missing">
@@ -122,7 +122,7 @@ export function CollectDialog() {
           <Button icon={FolderOpen} onClick={() => { void choose(); }} disabled={running} data-testid="collect-choose">Choose…</Button>
         </div>
         <fieldset className="collect-options col gap-4" disabled={running}>
-          <label className="row gap-6"><input type="radio" name="collect-scope" checked={options.scope === 'sequences'} onChange={() => setOptions({ scope: 'sequences' })} data-testid="collect-scope-sequences" /> Media used in sequences only</label>
+          <label className="row gap-6"><input type="radio" name="collect-scope" checked={options.scope === 'sequences'} onChange={() => setOptions({ scope: 'sequences' })} data-testid="collect-scope-sequences" /> Media used in timelines only</label>
           <label className="row gap-6"><input type="radio" name="collect-scope" checked={options.scope === 'all'} onChange={() => setOptions({ scope: 'all' })} data-testid="collect-scope-all" /> All project media</label>
           <Toggle checked={options.includeSubtitles} onChange={(v) => setOptions({ includeSubtitles: v })} label="Include subtitle files" className="collect-toggle" disabled={running} />
           <Toggle checked={options.includeProxies} onChange={(v) => setOptions({ includeProxies: v })} label="Include proxies (the copy opens without rebuilding them)" className="collect-toggle" disabled={running} />

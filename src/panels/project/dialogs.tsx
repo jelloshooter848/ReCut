@@ -5,7 +5,8 @@ import { toast } from '@/components/ui/toastStore';
 import { useStore, fileNameOf } from '@/state';
 import { formatClock } from '@shared/time';
 import { parseEpisodeInfo } from './parseIdentity';
-import { detectScenes } from './actions';
+import { detectScenes, makeSceneFromShots, nextSceneName } from './actions';
+import { NamePromptDialog } from '@/panels/scenes/NamePromptDialog';
 
 /** Partial identity update; store.updateMedia merges over the current identity and clears fields set to undefined. */
 function patchIdentity(id: ID, patch: Partial<MediaItem['identity']>): void {
@@ -18,6 +19,7 @@ export type PanelDialog =
   | { type: 'tag'; mediaId: ID; sceneId: ID }
   | { type: 'split'; mediaId: ID; sceneId: ID }
   | { type: 'detect'; ids: ID[] }
+  | { type: 'makeScene'; mediaId: ID; shotIds: ID[] }
   | null;
 
 // ---------------------------------------------------------------- Organize as Series
@@ -126,12 +128,12 @@ export function TagSceneDialog({ media, scene, onClose }: { media: MediaItem; sc
   );
 }
 
-// ---------------------------------------------------------------- Split scene
+// ---------------------------------------------------------------- Split shot
 
 export function SplitSceneDialog({ media, scene, onClose }: { media: MediaItem; scene: DetectedScene; onClose: () => void }) {
   const [at, setAt] = useState((scene.start + scene.end) / 2);
   const apply = () => {
-    if (at <= scene.start || at >= scene.end) { toast('warn', 'Split time must be inside the scene'); return; }
+    if (at <= scene.start || at >= scene.end) { toast('warn', 'Split time must be inside the shot'); return; }
     useStore.getState().splitDetectedScene(media.id, scene.id, at);
     onClose();
   };
@@ -139,7 +141,7 @@ export function SplitSceneDialog({ media, scene, onClose }: { media: MediaItem; 
     <Dialog open title={`Split "${scene.name}"`} onClose={onClose} width={360}
       footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={apply}>Split</Button></>}>
       <div className="pp-dialog-grid">
-        <label>Scene</label><span className="mono text-dim">{formatClock(scene.start, true)} – {formatClock(scene.end, true)}</span>
+        <label>Shot</label><span className="mono text-dim">{formatClock(scene.start, true)} – {formatClock(scene.end, true)}</span>
         <label>Split at</label>
         <div className="row gap-6"><NumberField value={at} onChange={setAt} min={scene.start} max={scene.end} step={0.1} precision={2} unit="s" /><span className="mono text-dim">{formatClock(at, true)}</span></div>
       </div>
@@ -148,12 +150,13 @@ export function SplitSceneDialog({ media, scene, onClose }: { media: MediaItem; 
   );
 }
 
-// ---------------------------------------------------------------- Detect scenes
+// ---------------------------------------------------------------- Detect shots
 
 export function DetectScenesDialog({ ids, onClose }: { ids: ID[]; onClose: () => void }) {
   const defaultThreshold = useStore((s) => s.project.settings.sceneThreshold);
   const [threshold, setThreshold] = useState(defaultThreshold);
   const [saveDefault, setSaveDefault] = useState(false);
+  const nameShots = useStore((s) => s.project.settings.nameShotsFromTranscript);
   useEffect(() => { setThreshold(defaultThreshold); }, [defaultThreshold]);
   const run = () => {
     if (saveDefault && threshold !== defaultThreshold) useStore.getState().setSettings({ sceneThreshold: threshold });
@@ -161,15 +164,18 @@ export function DetectScenesDialog({ ids, onClose }: { ids: ID[]; onClose: () =>
     onClose();
   };
   return (
-    <Dialog open title="Detect Scenes" onClose={onClose} width={380}
+    <Dialog open title="Detect Shots" onClose={onClose} width={380}
       footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={run} data-testid="detect-run">Detect</Button></>}>
       <div className="pp-dialog-grid">
         <label>Threshold</label>
         <div className="row gap-6"><NumberField value={threshold} onChange={setThreshold} min={0.05} max={0.95} step={0.01} precision={2} /><span className="text-dim text-sm">lower = more cuts</span></div>
         <label />
         <Toggle checked={saveDefault} onChange={setSaveDefault} label="Save as project default" />
+        <label />
+        <Toggle checked={nameShots} onChange={(v) => useStore.getState().setSettings({ nameShotsFromTranscript: v })} label="Name shots from the transcript"
+          title="When the video has a Whisper transcript or subtitles, each shot is named from the first words spoken in it" data-testid="detect-name-shots" />
       </div>
-      <div className="text-dim text-xs mt-8">Runs FFmpeg scene detection on {ids.length} file{ids.length === 1 ? '' : 's'} in the background. Existing detected scenes are replaced.</div>
+      <div className="text-dim text-xs mt-8">Finds the cuts between shots in {ids.length} file{ids.length === 1 ? '' : 's'} in the background. Existing detected shots are replaced.</div>
     </Dialog>
   );
 }
@@ -185,6 +191,15 @@ export function PanelDialogs({ dialog, onClose }: { dialog: PanelDialog; onClose
     return dialog.type === 'series' ? <OrganizeSeriesDialog items={items} onClose={onClose} /> : <CollectionDialog items={items} onClose={onClose} />;
   }
   if (dialog.type === 'detect') return <DetectScenesDialog ids={dialog.ids} onClose={onClose} />;
+  if (dialog.type === 'makeScene') {
+    const { mediaId, shotIds } = dialog;
+    return (
+      <NamePromptDialog open title={shotIds.length > 1 ? `Make Scene from ${shotIds.length} Shots` : 'Make Scene from Shot'} label="Scene name" initial={nextSceneName()}
+        confirmLabel="Make Scene" onCancel={onClose} onConfirm={(name) => { makeSceneFromShots(mediaId, shotIds, name); onClose(); }}>
+        <div className="text-dim text-xs">The scene is added to the Scenes tab, covering the selected shots.</div>
+      </NamePromptDialog>
+    );
+  }
   const m = media[dialog.mediaId];
   const scene = m?.detectedScenes.find((s) => s.id === dialog.sceneId);
   if (!m || !scene) return null;

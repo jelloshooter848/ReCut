@@ -97,7 +97,7 @@ export function PreferencesDialog() {
           <Row label="Playback resolution">
             <Select value={settings.playbackResolution} options={PLAYBACK_RES} onChange={(v) => set({ playbackResolution: v as ProjectSettings['playbackResolution'] })} />
           </Row>
-          <Row label="Scene detection threshold" hint="Higher values detect fewer, stronger cuts">
+          <Row label="Shot detection threshold" hint="Higher values detect fewer, stronger cuts">
             <Slider value={threshold} min={0.05} max={0.95} step={0.01} onChange={setThreshold} onCommit={(v) => set({ sceneThreshold: v })} className="grow" />
             <span className="mono text-dim" style={{ width: 36, textAlign: 'right' }}>{threshold.toFixed(2)}</span>
           </Row>
@@ -111,7 +111,7 @@ export function PreferencesDialog() {
             <NumberField value={settings.defaultTransitionFrames} min={DEFAULT_TRANSITION_FRAMES_MIN} max={DEFAULT_TRANSITION_FRAMES_MAX} step={1} unit="frames" onChange={(v) => set({ defaultTransitionFrames: clampInt(v, DEFAULT_TRANSITION_FRAMES_MIN, DEFAULT_TRANSITION_FRAMES_MAX) })} />
           </Row>
           <Row label="Snapping"><Toggle checked={settings.snapping} onChange={(v) => set({ snapping: v })} /></Row>
-          <Row label="Carry subtitles into sequence" hint="Copy the media's subtitle cues onto new clips">
+          <Row label="Carry subtitles into timeline" hint="Copy the media's subtitle cues onto new clips">
             <Toggle checked={settings.carrySubtitles} onChange={(v) => set({ carrySubtitles: v })} />
           </Row>
           <Row label="Show source timecode on clips">

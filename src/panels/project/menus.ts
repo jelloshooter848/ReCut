@@ -8,14 +8,17 @@ import { embeddedStreamEntry } from '@/ocr/ocrUi';
 import { openTranscribeDialog } from '@/whisper/whisperUi';
 import type { BinRow, GroupRow, SceneRow, SequenceRow } from './tree';
 import type { PanelDialog } from './dialogs';
+import { openSuggestScenes } from './suggestScenes';
 import {
-  addSceneToLibrary, cancelMediaJob, deleteSequenceConfirmed, generateProxy, importEmbedded, importSubtitlesViaDialog, importViaDialog,
-  insertAtPlayhead, loadInSource, locateMedia, mergeWithNext, openSequence, removeMediaConfirmed, revealInFolder,
+  addSceneToLibrary, cancelMediaJob, contiguousShots, deleteSequenceConfirmed, generateProxy, importEmbedded, importSubtitlesViaDialog, importViaDialog,
+  insertAllShots, insertAtPlayhead, insertRangesAtPlayhead, loadInSource, locateMedia, mergeWithNext, nameShotsFromTranscript, openSequence, removeMediaConfirmed, revealInFolder,
 } from './actions';
 
 export interface MenuEnv {
   /** All selected media ids (the clicked one is always included). */
   selectedMedia: ID[];
+  /** Selected shot rows (detected scenes), in list order. */
+  selectedShots: SceneRow[];
   openPanelDialog(d: PanelDialog): void;
   startRename(key: string): void;
   expandScenes(mediaId: ID): void;
@@ -37,13 +40,23 @@ export function mediaMenu(m: MediaItem, env: MenuEnv): MenuItem[] {
     { label: 'Load in Source', shortcut: 'Enter', disabled: m.offline, onSelect: () => loadInSource(m.id, 0) },
     { label: 'Insert at Playhead', shortcut: ',', disabled: m.offline || !hasSeq, onSelect: () => insertAtPlayhead(m.id, 'insert') },
     { label: 'Overwrite at Playhead', shortcut: '.', disabled: m.offline || !hasSeq, onSelect: () => insertAtPlayhead(m.id, 'overwrite') },
+    ...(m.detectedScenes.length ? [{
+      label: 'Insert All Shots at Playhead', disabled: m.offline || !hasSeq, title: `Places all ${m.detectedScenes.length} shots back to back, in order`,
+      onSelect: () => { insertAllShots(m.id, 'insert'); },
+    }, {
+      label: 'Suggest Scenes…', disabled: m.offline, title: 'Proposes groups of shots as scenes (speech, picture and sound across each cut) for you to review',
+      onSelect: () => { void openSuggestScenes(m.id); },
+    }, {
+      label: 'Name Shots from Transcript', title: 'Names each shot from the first words spoken in it (Whisper transcript or subtitles)',
+      onSelect: () => { nameShotsFromTranscript(m.id); },
+    }] : []),
     { separator: true },
     proxyBusy
       ? { label: 'Cancel Proxy', onSelect: () => { void cancelMediaJob(m.id, 'proxy'); } }
       : { label: n(m.proxy.status === 'ready' ? 'Regenerate Proxy' : 'Generate Proxy'), disabled: m.offline || m.kind !== 'video', onSelect: () => { for (const id of ids) void generateProxy(id); } },
     sceneBusy
-      ? { label: 'Cancel Scene Detection', onSelect: () => { void cancelMediaJob(m.id, 'sceneDetect'); } }
-      : { label: n('Detect Scenes…'), disabled: m.offline || m.kind !== 'video', onSelect: () => { for (const id of ids) env.expandScenes(id); env.openPanelDialog({ type: 'detect', ids: ids.filter((id) => st.project.media[id]?.kind === 'video') }); } },
+      ? { label: 'Cancel Shot Detection', onSelect: () => { void cancelMediaJob(m.id, 'sceneDetect'); } }
+      : { label: n('Detect Shots…'), disabled: m.offline || m.kind !== 'video', onSelect: () => { for (const id of ids) env.expandScenes(id); env.openPanelDialog({ type: 'detect', ids: ids.filter((id) => st.project.media[id]?.kind === 'video') }); } },
     { label: 'Import Subtitles…', disabled: m.offline, onSelect: () => { void importSubtitlesViaDialog(m.id); } },
     {
       label: 'Embedded Subtitles', disabled: m.offline || embedded.length === 0,
@@ -74,26 +87,49 @@ export function sceneMenu(row: SceneRow, env: MenuEnv): MenuItem[] {
   const st = useStore.getState();
   const hasSeq = !!st.project.activeSequenceId;
   const range = { in: s.start, out: s.end };
+  // Several shots selected (and the clicked one among them): the actions apply to all of them (#143).
+  const sel = env.selectedShots.some((r) => r.scene.id === s.id) ? env.selectedShots : [row];
+  const many = sel.length > 1;
+  const ranges = sel.map((r) => ({ mediaId: r.media.id, in: r.scene.start, out: r.scene.end }));
+  const anyOffline = sel.some((r) => r.media.offline);
+  const sameMedia = sel.every((r) => r.media.id === m.id);
+  const run = sameMedia ? contiguousShots(m, sel.map((r) => r.scene.id)) : null;
+  const notRun = !sameMedia ? 'The selected shots are from different clips' : run ? undefined : 'The selected shots must follow each other';
   const splitAtSource = () => {
     const sc = useStore.getState().ui.sourceClip;
     if (sc && sc.mediaId === m.id) {
       if (sc.time > s.start && sc.time < s.end) { useStore.getState().splitDetectedScene(m.id, s.id, sc.time); return; }
-      toast('warn', 'Source playhead is outside this scene; enter a time instead');
+      toast('warn', 'Source playhead is outside this shot; enter a time instead');
     }
     env.openPanelDialog({ type: 'split', mediaId: m.id, sceneId: s.id });
   };
+  const ids = sel.map((r) => r.scene.id);
   return [
     { label: 'Load in Source', shortcut: 'Enter', disabled: m.offline, onSelect: () => loadInSource(m.id, s.start, range) },
-    { label: 'Insert at Playhead', disabled: m.offline || !hasSeq, onSelect: () => insertAtPlayhead(m.id, 'insert', range) },
-    { label: 'Overwrite at Playhead', disabled: m.offline || !hasSeq, onSelect: () => insertAtPlayhead(m.id, 'overwrite', range) },
+    { label: many ? `Insert ${sel.length} Shots at Playhead` : 'Insert at Playhead', disabled: anyOffline || !hasSeq, onSelect: () => { insertRangesAtPlayhead(ranges, 'insert'); } },
+    { label: many ? `Overwrite ${sel.length} Shots at Playhead` : 'Overwrite at Playhead', disabled: anyOffline || !hasSeq, onSelect: () => { insertRangesAtPlayhead(ranges, 'overwrite'); } },
     { separator: true },
-    { label: 'Rename', shortcut: 'F2', onSelect: () => env.startRename(row.key) },
-    { label: 'Merge with Next', disabled: row.index >= m.detectedScenes.length - 1, onSelect: () => mergeWithNext(m, s.id) },
-    { label: 'Split at Source Time…', onSelect: splitAtSource },
-    { label: 'Tag…', onSelect: () => env.openPanelDialog({ type: 'tag', mediaId: m.id, sceneId: s.id }) },
-    { label: 'Add to Library', onSelect: () => addSceneToLibrary(m, s) },
+    {
+      label: many ? `Make Scene from ${sel.length} Shots…` : 'Make Scene from Shot…', disabled: !run, title: notRun,
+      onSelect: () => env.openPanelDialog({ type: 'makeScene', mediaId: m.id, shotIds: ids }),
+    },
+    many
+      ? { label: `Merge ${sel.length} Shots`, disabled: !run, title: notRun, onSelect: () => st.mergeDetectedScenes(m.id, ids) }
+      : { label: 'Merge with Next', disabled: row.index >= m.detectedScenes.length - 1, onSelect: () => mergeWithNext(m, s.id) },
+    { label: 'Split at Source Time…', disabled: many, onSelect: splitAtSource },
     { separator: true },
-    { label: 'Delete Scene', shortcut: 'Del', onSelect: () => st.deleteDetectedScene(m.id, s.id) },
+    { label: 'Rename', shortcut: 'F2', disabled: many, onSelect: () => env.startRename(row.key) },
+    {
+      label: many ? `Name ${sel.length} Shots from Transcript` : 'Name from Transcript', title: 'Uses the first words spoken in the shot (Whisper transcript or subtitles)',
+      onSelect: () => { const byMedia = new Map<ID, ID[]>(); for (const r of sel) byMedia.set(r.media.id, [...(byMedia.get(r.media.id) ?? []), r.scene.id]); for (const [mid, sids] of byMedia) nameShotsFromTranscript(mid, sids); },
+    },
+    { label: 'Tag…', disabled: many, onSelect: () => env.openPanelDialog({ type: 'tag', mediaId: m.id, sceneId: s.id }) },
+    { label: many ? `Add ${sel.length} Shots to Scene Library` : 'Add to Scene Library', onSelect: () => { st.batch('Add to Scene library', () => { for (const r of sel) addSceneToLibrary(r.media, r.scene); }); } },
+    { separator: true },
+    {
+      label: many ? `Delete ${sel.length} Shots` : 'Delete Shot', shortcut: 'Del',
+      onSelect: () => { st.batch(many ? 'Delete shots' : 'Delete shot', () => { for (const r of sel) useStore.getState().deleteDetectedScene(r.media.id, r.scene.id); }); },
+    },
   ];
 }
 
@@ -102,15 +138,15 @@ export function sequenceMenu(row: SequenceRow, env: MenuEnv): MenuItem[] {
   const st = useStore.getState();
   return [
     { label: 'Open in Timeline', shortcut: 'Enter', onSelect: () => openSequence(s.id) },
-    { label: 'Duplicate', onSelect: () => { const id = st.duplicateSequence(s.id, `${s.name} copy`); if (id) toast('ok', 'Sequence duplicated'); } },
+    { label: 'Duplicate', onSelect: () => { const id = st.duplicateSequence(s.id, `${s.name} copy`); if (id) toast('ok', 'Timeline duplicated'); } },
     {
       // Roadmap §8: nest this sequence in the active one at its playhead (cycles are refused with a toast).
-      label: 'Nest in Active Sequence', disabled: !st.project.activeSequenceId || st.project.activeSequenceId === s.id,
+      label: 'Nest in Active Timeline', disabled: !st.project.activeSequenceId || st.project.activeSequenceId === s.id,
       onSelect: () => { const a = st.project.activeSequenceId; if (a) st.nestSequence(a, s.id, st.project.sequences[a]?.view.playhead ?? 0); },
     },
     { separator: true },
     { label: 'Rename', shortcut: 'F2', onSelect: () => env.startRename(row.key) },
-    { label: 'Delete Sequence', shortcut: 'Del', onSelect: () => { void deleteSequenceConfirmed(s.id); } },
+    { label: 'Delete Timeline', shortcut: 'Del', onSelect: () => { void deleteSequenceConfirmed(s.id); } },
   ];
 }
 
@@ -136,6 +172,6 @@ export function backgroundMenu(env: MenuEnv, binId: ID | null): MenuItem[] {
   return [
     { label: 'Import…', shortcut: 'Ctrl+I', onSelect: () => { void importViaDialog(binId); } },
     { label: 'New Bin', onSelect: () => env.newBin(binId) },
-    { label: 'New Sequence…', shortcut: 'Ctrl+Shift+N', onSelect: () => st.openDialog('newSequence') },
+    { label: 'New Timeline…', shortcut: 'Ctrl+Shift+N', onSelect: () => st.openDialog('newSequence') },
   ];
 }

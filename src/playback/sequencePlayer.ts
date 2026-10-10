@@ -107,7 +107,7 @@ export const PRESENT_HOLD_MS = 250;
 /**
  * A paused seek that has not landed after this long (ms) is issued again, and a scrub round stops waiting for it.
  * Chromium can leave a paused element's seek pending for good (`seeking` true, readyState HAVE_METADATA, no
- * 'seeked'): see bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md. Only a new seek restarts it.
+ * 'seeked'): see bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md @ 59eafc6. Only a new seek restarts it.
  * Each retry of the same element waits twice as long as the one before (up to SEEK_STALL_MAX_MS), so a seek that is
  * just slow (a long-GOP original on a busy machine) still lands instead of being restarted forever.
  */

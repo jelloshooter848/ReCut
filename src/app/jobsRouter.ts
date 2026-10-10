@@ -16,8 +16,10 @@
  * Note: status writes are quiet (not undoable) but per-tick progress is still NOT written to the store (only
  * status transitions); live progress is read from jobsStore by the UI.
  */
+import { suggestJobFinished } from '@/panels/project/suggestScenes';
+import { mediaSpeechCues, nameFromSpeech } from '@shared/sceneNaming';
 import type { JobInfo } from '@shared/model';
-import type { SceneDetectResult } from '@shared/ipc';
+import type { SceneDetectResult, SuggestScenesResult } from '@shared/ipc';
 import { useStore } from '@/state/store';
 import { useJobsStore } from './jobsStore';
 import { invalidateMediaPath } from './media';
@@ -29,7 +31,7 @@ import { iso6392ForOcr, ocrLanguage, type OcrResult } from '@shared/ocr';
 import { uid } from '@shared/ids';
 import { routeChannelProxyJob } from './channelProxies';
 import { useWhisperStatus } from '@/state/whisperStatus';
-import { isWhisperDownload, whisperDownloadName } from '@/whisper/whisperUi';
+import { isWhisperDownload, resumeTranscribe, useWhisperUi, whisperDownloadName } from '@/whisper/whisperUi';
 import { whisperLanguage, whisperModel, whisperTrackName, type TranscribeResult } from '@shared/whisper';
 import type { CollectResult } from '@shared/collect';
 
@@ -100,11 +102,13 @@ function routeSceneDetect(job: JobInfo): void {
       if (!claim(job)) return;
       const r = (job.result ?? null) as SceneDetectResult | null;
       if (!r || !Array.isArray(r.boundaries)) {
-        if (media.sceneDetectStatus !== 'failed') { st.setSceneDetectStatus(media.id, 'failed'); toast('error', `Scene detection returned no result for ${media.name}`); }
+        if (media.sceneDetectStatus !== 'failed') { st.setSceneDetectStatus(media.id, 'failed'); toast('error', `Shot detection returned no result for ${media.name}`); }
         return;
       }
       if (media.sceneDetectStatus === 'done' && media.detectedScenes.length > 0) return; // already applied
-      st.setDetectedScenes(media.id, r.boundaries, r.duration > 0 ? r.duration : media.probe?.duration ?? 0);
+      // Name the shots from what is said in them when the media has a transcript or subtitles (#144).
+      const cues = st.project.settings.nameShotsFromTranscript ? mediaSpeechCues(media, st.project.subtitleTracks) : null;
+      st.setDetectedScenes(media.id, r.boundaries, r.duration > 0 ? r.duration : media.probe?.duration ?? 0, cues ? (a, b) => nameFromSpeech(cues, a, b) : undefined);
       toast('ok', `${r.boundaries.length} cut${r.boundaries.length === 1 ? '' : 's'} detected in ${media.name}`);
       break;
     }
@@ -112,7 +116,7 @@ function routeSceneDetect(job: JobInfo): void {
       if (!claim(job)) return;
       if (media.sceneDetectStatus === 'failed') return;
       st.setSceneDetectStatus(media.id, 'failed');
-      toast('error', `Scene detection failed for ${media.name}: ${job.error ?? 'unknown error'}`);
+      toast('error', `Shot detection failed for ${media.name}: ${job.error ?? 'unknown error'}`);
       break;
     case 'canceled':
       if (!claim(job)) return;
@@ -149,9 +153,17 @@ function routeDownload(job: JobInfo): void {
   if (!isTerminal(job) || !claim(job)) return;
   if (isWhisperDownload(job)) {
     const model = whisperDownloadName(job);
-    if (job.status === 'done') toast('ok', `${model} transcription model installed`);
-    else if (job.status === 'failed') toast('error', `Could not install the ${model} transcription model: ${job.error ?? 'unknown error'}`);
-    else toast('info', `${model} model download canceled`);
+    const id = useWhisperStatus.getState().models?.find((m) => m.name === model)?.id ?? null;
+    if (job.status === 'done') {
+      // #110: back to the Transcribe dialog closed for this download, with its choices and the new model.
+      const waiting = !!useWhisperUi.getState().draft && !useWhisperUi.getState().transcribeFor;
+      if (waiting) toast('ok', `${model} transcription model installed`, 0, { label: 'Transcribe…', run: () => resumeTranscribe(id) });
+      else toast('ok', `${model} transcription model installed`, 8000);
+    } else if (job.status === 'failed') {
+      const api = window.recut;
+      toast('error', `Could not install the ${model} transcription model: ${job.error ?? 'unknown error'}`, 12_000,
+        id && api ? { label: 'Retry', run: () => { void api.whisperInstallModel(id).then(() => useWhisperStatus.getState().refresh()).catch((e: unknown) => toast('error', `Could not install the ${model} model: ${e instanceof Error ? e.message : String(e)}`)); } } : undefined);
+    } else toast('info', `${model} model download canceled`);
     void useWhisperStatus.getState().refresh();
     return;
   }
@@ -244,6 +256,13 @@ function routeCollect(job: JobInfo): void {
   }
 }
 
+/** Suggest Scenes analysis (#151): keep the result and open its review. */
+function routeSuggestScenes(job: JobInfo): void {
+  if (!job.mediaId || (job.status !== 'done' && job.status !== 'failed' && job.status !== 'canceled')) return;
+  if (!claim(job)) return;
+  suggestJobFinished(job.mediaId, job.status, job.status === 'done' ? (job.result ?? null) as SuggestScenesResult | null : null, job.error);
+}
+
 /** Reveal an exported file in the OS file manager (for UI that renders export results). */
 export function revealExport(path: string): void { void window.recut?.showItemInFolder?.(path).catch(() => { /* ignore */ }); }
 
@@ -254,6 +273,7 @@ export function routeJobs(jobs: JobInfo[]): void {
     try {
       if (job.kind === 'proxy') routeProxy(job);
       else if (job.kind === 'sceneDetect') routeSceneDetect(job);
+      else if (job.kind === 'suggestScenes') routeSuggestScenes(job);
       else if (job.kind === 'export') routeExport(job);
       else if (job.kind === 'download') routeDownload(job);
       else if (job.kind === 'ocr') routeOcr(job);

@@ -1,6 +1,6 @@
 /**
  * Program Monitor: a paused draw never paints a frame other than the one at the playhead, not even for one display
- * frame (bugs/closed/2026-10-07-program-transient-stale-frame-before-present.md).
+ * frame (bugs/closed/2026-10-07-program-transient-stale-frame-before-present.md @ 59eafc6).
  *
  * Every Program draw is logged with a signature of the canvas right after it. The sequence cuts between two ranges of
  * one file, so both clips share one pooled <video> and every cut-back is a seek of that element. Under load Chromium

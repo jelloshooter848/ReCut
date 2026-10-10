@@ -70,7 +70,7 @@ field to type a value; see [SHORTCUTS](SHORTCUTS.md#timecode-entry) for what it 
 When a clip's stream has two or more channels (stereo, 5.1, 7.1, ...), Clip Inspector › Audio › **Channels** chooses
 what the clip plays of it:
 
-- **Normal mix** (the default): the stream as FFmpeg mixes it to the sequence, as before.
+- **Normal mix** (the default): the stream as FFmpeg mixes it to the timeline, as before.
 - **One channel only**, as mono: for example **Centre (FC)**, **Front left (FL)**, **LFE (subwoofer)**, **Side left
   (SL)**. Channels are named from the stream's real layout; a stream whose layout is unknown lists **Channel 1, 2,
   ...** instead. In a stereo export the channel sits in the middle at −3 dB on each side (the level the centre has in
@@ -95,15 +95,44 @@ automatically, whatever **Use proxies** says, usually in seconds to a minute; un
 the Program monitor and the **Needs proxy** chip says "preview audio … in progress". The Inspector's **Preview** row
 shows its state, with **Rebuild** if it failed.
 
-## 3. Detect scenes
+## 3. Detect shots
 
-1. Right-click a video › **Detect Scenes…**. Set the **Threshold** (higher means fewer, stronger cuts) and click
-   **Detect**. The Media Inspector › **Detect** button and Jobs › Proxies › **Detect scenes: selected** / **All
-   without scenes** do the same.
-2. Detected scenes appear under the media row in the Project panel. Right-click a scene to **Load in Source**,
-   **Insert at Playhead**, **Rename**, **Merge with Next**, **Split at Source Time…**, **Tag…**, **Add to Library**
-   or **Delete Scene**.
-3. In the Source monitor, **↑ / ↓** jump between scene boundaries.
+A **shot** runs from one cut to the next. Shots are grouped into **scenes** (the Scenes panel), and scenes into
+timelines.
+
+1. Right-click a video › **Detect Shots…**. Set the **Threshold** (higher means fewer, stronger cuts) and click
+   **Detect**. The Media Inspector › **Detect** button and Jobs › Proxies › **Detect shots: selected** / **All
+   without shots** do the same.
+2. Detected shots appear under the media row in the Project panel. Right-click a shot to **Load in Source**,
+   **Insert at Playhead**, **Make Scene from Shot…**, **Merge with Next**, **Split at Source Time…**, **Rename**,
+   **Tag…**, **Add to Scene Library** or **Delete Shot**.
+3. Select several shots (Shift-click a range, Ctrl/Cmd-click to add) and right-click to act on all of them:
+   **Insert N Shots at Playhead** places them back to back in order, **Make Scene from N Shots…** makes one scene
+   covering them, and **Merge N Shots** joins them (shots that follow each other in one clip). Dragging a selection to
+   the timeline places all of it. Each of these is one undo step.
+4. Right-click the video › **Insert All Shots at Playhead** puts every shot on the timeline in order, as separate
+   clips: a starting point for a recut.
+5. **Names from what is said.** When the video has a Whisper transcript or subtitles, new shots are named from the
+   first words spoken in them (fillers like "um" skipped, about 40 characters); shots without speech stay **Shot
+   NNN**. Turn this off in the Detect Shots dialog (**Name shots from the transcript**). To name existing shots,
+   right-click shots › **Name from Transcript**, or the video › **Name Shots from Transcript** for all of them. In the
+   Scenes panel, right-click scenes › **Name from Transcript** does the same over each scene's whole range. Each is
+   one undo step.
+6. **Suggested scenes.** Right-click a video with shots › **Suggest Scenes…**. ReCut compares each cut: whether a
+   line of dialogue runs across it, how alike the pictures before and after are (it looks back three shots, so a
+   back-and-forth conversation stays together), and whether the sound carries on. It proposes scenes for you to
+   review: untick one to skip it, rename it, **Join next**, open its shots and **Split here**, or move the slider
+   between more, shorter and fewer, longer scenes. **Create N Scenes** adds the ticked ones to the Scenes panel (one
+   undo step). Everything is worked out on your computer. The analysis is a background job (in **Jobs**, with
+   progress and the time left; it reads the proxy when there is one): **Run in Background** closes the dialog, and
+   the review opens when it finishes. Choosing Suggest Scenes… again later reuses the analysis while the shots are
+   unchanged.
+7. In the Source monitor, **↑ / ↓** jump between shot boundaries.
+8. Opening a shot or a scene (double-click, Enter or **Load in Source**, in the Project, Scenes or Sequences panel)
+   zooms the Source scrub bar to just its In to Out, so you can scrub through it. The **Scene** / **Full file** button
+   next to the timecodes (or **\\** with the Source monitor active) switches to the whole file and back; the playhead
+   and In/Out stay where they are, and the timecodes stay source timecode. Playing past Out, stepping to another shot
+   or jumping outside the range switches to the full file. Opening a whole file always shows its full length.
 
 ## 4. Import subtitles
 
@@ -183,7 +212,7 @@ Program monitors show the line being spoken and highlight each word as it is sai
 
 On the timeline, a transcribed clip's words show in a **transcript lane** under its audio track: **T1** under A1,
 **T2** under A2. The lane reads the transcript from the media, so transcribing (or re-transcribing) a clip that is
-already in the sequence shows at once. The Program monitor shows the transcript of the clip whose picture is on
+already in the timeline shows at once. The Program monitor shows the transcript of the clip whose picture is on
 screen: the top visible video clip, or the next one down when that clip has no transcript (a cutaway over dialogue
 keeps the dialogue's words) or its audio is muted. The **Subtitles** row at the top of the timeline shows that same
 on-screen transcript (green), switching between clips as the edit cuts, next to any imported subtitle files (purple).
@@ -197,10 +226,10 @@ overlapping voices and quiet lines can be misheard or missed, and it does not sa
 
 1. Open the **Transcript** panel (Shift+6) › **Search**. Type a phrase, e.g. `doctor`.
 2. Pick a scope: **Entire project**, **Series: …**, **Season: …**, **Franchise: …**, **Collection: …**,
-   **Source: …** or **Sequence: …**. Turn on **Regular expression** or **Whole word** if you need them.
+   **Source: …** or **Timeline: …**. Turn on **Regular expression** or **Whole word** if you need them.
 3. Use ↑/↓ to choose a result. **Enter** (or a click) loads it in the Source monitor with In/Out set to that line.
    **Ctrl+Enter** inserts it at the playhead. You can also drag a result onto the timeline.
-4. With a **Sequence** scope, results show which lines are already in the cut. Click the badge to jump there.
+4. With a **Timeline** scope, results show which lines are already in the cut. Click the badge to jump there.
 5. The **Transcript** tab shows the full transcript of one source. Select a span, then **Mark In/Out** or **Insert**.
 
 ## 6. Build the scene library
@@ -208,26 +237,46 @@ overlapping voices and quiet lines can be misheard or missed, and it does not sa
 Scenes in the library are reusable, tagged source ranges.
 
 - From the Source monitor: mark I/O, then **Make Subclip → Library**.
-- From detected scenes: the Scenes panel's **Import as records** banner, or right-click a scene › **Add to Library**.
+- From detected shots: select shots in the Project panel › **Make Scene from Shots…**, the Scenes panel's **Import as
+  records** banner (one scene per shot), or right-click a shot › **Add to Scene Library**.
 - From the timeline: right-click a clip › **Add to Scene Library**.
 - In the **Scenes** panel (Shift+7), you can also use **From Source In/Out** or **From clip**. Edit name, characters,
   location, arc, tags, rating, colour and notes. Filter, sort (Name, Rating, Created, Duration, Source), group
   (Character, Location, Arc, Movie / episode) and switch between grid and list views. Double-click or Enter loads a
   scene in Source. Drag it to the timeline to use it.
+- To combine scenes, select scenes from the same video (Shift-click a range) › right-click › **Merge N Scenes**. The
+  result runs from the first start to the last end and keeps the first scene's name; characters, tags and notes are
+  combined. Sequences and timeline clips that used the merged scenes follow. One undo step.
+
+### Sequences: groups of scenes
+
+A **sequence** groups scenes into a larger part of the story, such as an act, a storyline or a set piece (shots make
+scenes, scenes make sequences, and you edit on timelines).
+
+- In the **Scenes** panel, select scenes, right-click › **Make Sequence…** and name it. The scenes keep the order the
+  list shows. **Add to Sequence** adds the selected scenes to the end of an existing one.
+- The **Sequences** panel (next to Scenes) lists each sequence with its number of scenes and total length.
+  Double-click a sequence to show its scenes; reorder them with the arrows, remove one with ×, or select scenes in the
+  Scenes panel and right-click the sequence › **Add Selected Scenes**. Rename (F2), set its colour, or delete it
+  (the scenes stay in the library).
+- To use a sequence: right-click › **Insert at Playhead** / **Overwrite at Playhead** puts its scenes on the timeline
+  back to back, in order; drag it to the timeline; or choose **New Timeline from Sequence**, which makes a timeline
+  named after it (with the active timeline's frame rate and size) holding its scenes from the start. Each is one undo
+  step.
 
 ## 7. Assemble with three-point edits
 
 1. Double-click a media row (or press Enter) to load it in the **Source** monitor. Play with Space or J/K/L, step
    with ←/→, and mark **I** / **O**.
-2. Place the playhead in the Timeline, or set sequence In/Out.
+2. Place the playhead in the Timeline, or set timeline In/Out.
 3. Press **,** (Insert, which pushes later clips right) or **.** (Overwrite).
-   - The edit goes to the **sequence In** if it is set, otherwise to the playhead.
-   - With sequence In + Out and only a source In, the sequence range sets the duration.
-   - With only a sequence Out, the edit is back-timed to end there.
-   - With all four points set, the source range wins at the sequence In.
-4. The first clip into an empty sequence asks **Change sequence to match clip?** Choosing **Change** adopts the
-   clip's frame size and rate. Do this before you build: once a sequence has clips its frame rate is fixed
-   (positions are frames), so neither the Inspector nor **Sequence Settings…** can change it.
+   - The edit goes to the **timeline In** if it is set, otherwise to the playhead.
+   - With timeline In + Out and only a source In, the timeline range sets the duration.
+   - With only a timeline Out, the edit is back-timed to end there.
+   - With all four points set, the source range wins at the timeline In.
+4. The first clip into an empty timeline asks **Change timeline to match clip?** Choosing **Change** adopts the
+   clip's frame size and rate. Do this before you build: once a timeline has clips its frame rate is fixed
+   (positions are frames), so neither the Inspector nor **Timeline Settings…** can change it.
 5. The source-patch buttons (**V1**, **A1**, ...) in the track headers choose the target tracks. Un-patch video for an audio-only edit
    (and the reverse).
 6. Other ways to add clips: drag from Project, Source (the grip button), Scenes or Transcript. A drag goes to the
@@ -302,77 +351,77 @@ first keyframe's, after the last it is the last one's.
    - **Runtime if removed** shows an estimate.
 
    Each is one undo step. Disabled clips export as black or silence until you remove them.
-   - **Remove disabled** (also **Sequence › Remove Disabled Clips…** and the clip right-click menu) ripple-deletes
+   - **Remove disabled** (also **Timeline › Remove Disabled Clips…** and the clip right-click menu) ripple-deletes
      every disabled clip and closes the gaps, after asking with the count. One undo step. Clips on locked tracks are
      left alone.
-   - **Duplicate as cut** (**Sequence › Duplicate as Cut Without Disabled Clips…**) keeps the experiment and makes a
-     new version of the sequence with the disabled clips removed and the gaps closed.
+   - **Duplicate as cut** (**Timeline › Duplicate as Cut Without Disabled Clips…**) keeps the experiment and makes a
+     new version of the timeline with the disabled clips removed and the gaps closed.
 4. **Story blocks:** drag on the Storyline strip, or use **Block from In/Out** / **Block from Selection**, to label
    acts and arcs. Right-click a block to rename it, set In/Out to it or change its colour. The block table lists
    them with durations and notes.
 
 ## 11. Alternate cuts and comparing them
 
-1. Before a risky change, create a new version with **Duplicate sequence** (Inspector › Sequence) or Compare ›
+1. Before a risky change, create a new version with **Duplicate timeline** (Inspector › Timeline) or Compare ›
    **Duplicate A as new cut…** (add a version label like `v2`). For a restorable checkpoint inside the same
-   sequence, use **Take snapshot…**.
-2. Switch to the **Compare** workspace (Alt+Shift+4). Choose **Sequence A** and **Sequence B** (a snapshot can be B).
+   timeline, use **Take snapshot…**.
+2. Switch to the **Compare** workspace (Alt+Shift+4). Choose **Timeline A** and **Timeline B** (a snapshot can be B).
    **Sync** locks both players to one clock, **Offset** shifts B, and **Swap A and B** swaps them. The view mode is
    side by side, A only or B only, and pressing Alt alone toggles A/B.
 3. The **Structure** list shows every clip as **same**, **moved** (with the frame delta), **trimmed** (head/tail
    deltas), **only in A** or **only in B**. Click an entry to jump there.
-4. To restore a snapshot, use the restore button next to it (Compare › Alternate cuts, or Inspector › Sequence).
+4. To restore a snapshot, use the restore button next to it (Compare › Alternate cuts, or Inspector › Timeline).
 
-### Acts and reels: nested sequences and compound clips
+### Acts and reels: nested timelines and compound clips
 
-A sequence can be used as a clip in another sequence (a **nested sequence**). Build each act, episode or reel as its
-own sequence and drop it into as many cuts as you like: an edit made inside it shows everywhere it is nested.
+A timeline can be used as a clip in another timeline (a **nested timeline**). Build each act, episode or reel as its
+own timeline and drop it into as many cuts as you like: an edit made inside it shows everywhere it is nested.
 
 - **Make Compound Clip** (Clip menu, or right-click a clip): the selected clips, and the clips linked to them, move
-  into a new sequence ("Nested Sequence 01", next to the current one in the Project panel) at the same relative
+  into a new timeline ("Nested Timeline 01", next to the current one in the Project panel) at the same relative
   positions and track numbers, with the transitions between them. One linked nested picture + sound pair takes their
   place. Subtitle cues attached to those clips stay where they were, attached to the nested clip. It is one undo step.
-- **Nest a whole sequence:** drag it from the Project panel onto the timeline (overwrite; hold Ctrl to insert), or
-  right-click it › **Nest in Active Sequence** (at the playhead). A sequence that has picture and sound becomes a
-  linked pair. A sequence cannot contain itself, directly or through another nested sequence, and nesting is limited
+- **Nest a whole timeline:** drag it from the Project panel onto the timeline (overwrite; hold Ctrl to insert), or
+  right-click it › **Nest in Active Timeline** (at the playhead). A timeline that has picture and sound becomes a
+  linked pair. A timeline cannot contain itself, directly or through another nested timeline, and nesting is limited
   to 8 levels and to 1,000 tracks or 50,000 clips once flattened (every inner track of every nested clip becomes a
   track of the cut it plays in, so nesting on several tracks at every level multiplies them); ReCut refuses those
   with a message. A season of 20 episodes, each nesting a few scenes, stays far below that.
 - **Open in Timeline:** double-click the nested clip (or Clip menu, right-click, or the Inspector's button). Its
-  sequence becomes the active one, with the playhead on the frame you were looking at.
+  timeline becomes the active one, with the playhead on the frame you were looking at.
 - **Break Apart Compound Clip** (Clip menu or right-click) puts the inner clips back on this timeline, over the range
   the nested clip plays, with the nested clip's position, scale, opacity and audio levels folded into them. It goes
-  one level deep (nested clips inside stay nested), keeps the inner sequence in the project, and needs both
-  sequences at the same frame rate.
+  one level deep (nested clips inside stay nested), keeps the inner timeline in the project, and needs both
+  timelines at the same frame rate.
 - A nested clip is edited like any clip: move, trim, razor, transitions at its edges, transform, crop, opacity, gain,
   level, fades, mute, tags. Its **speed is always 100 %**. It shows a **NEST** badge and a striped body instead of
-  thumbnails and a waveform. A nested clip on a video track shows the inner sequence's picture (its video tracks); one
+  thumbnails and a waveform. A nested clip on a video track shows the inner timeline's picture (its video tracks); one
   on an audio track plays its sound (its audio tracks, with their volume, mute and solo).
-- **Keyframes** work inside nested sequences and on the nested clip itself. Keyframes on inner clips play where
+- **Keyframes** work inside nested timelines and on the nested clip itself. Keyframes on inner clips play where
   they are on the inner timeline. Keyframes on the nested clip (position, scale, opacity, level, added in the Inspector
   as on any clip) animate the whole inner picture or sound on top of them, frame for frame in the Program monitor and
-  the export. Like the nested clip's other settings, its keyframes count frames of the outer sequence.
-- **Frame rate and size:** the inner sequence plays in real time at the outer sequence's frame rate (a 25 fps reel in
+  the export. Like the nested clip's other settings, its keyframes count frames of the outer timeline.
+- **Frame rate and size:** the inner timeline plays in real time at the outer timeline's frame rate (a 25 fps reel in
   a 23.976 fps cut keeps its duration), and a different frame size is fitted like a media file.
-- **When the inner sequence changes length,** nested clips keep their own length. If the inner sequence gets shorter,
+- **When the inner timeline changes length,** nested clips keep their own length. If the inner timeline gets shorter,
   the part of the nested clip past its new end is black and silent (the Inspector says so): trim the nested clip. If
-  it gets longer, trim the nested clip out to show more; trims stop at the inner sequence's end.
+  it gets longer, trim the nested clip out to show more; trims stop at the inner timeline's end.
 - **Match Frame** (F) on a nested clip goes through to the media that plays inside it at the playhead, and the
-  Program monitor's SRC timecode shows that media's timecode. Transcript search in a sequence finds lines spoken inside
+  Program monitor's SRC timecode shows that media's timecode. Transcript search in a timeline finds lines spoken inside
   its nested clips ("on timeline", on the nested clip). Compare lists a nested clip as one clip.
 - **Export** renders the nested content directly into the cut (no intermediate file), exactly as the Program monitor
   shows it. A nested clip's sound belongs to the outer track it is on (for one file per audio track and for MKV audio
-  tracks). Chapters, subtitle tracks and burned-in subtitles come from the exported sequence only: markers and subtitle
-  tracks inside nested sequences are not exported. Put chapter markers and subtitle tracks on the outer sequence.
-- Deleting a sequence that is nested elsewhere asks first; its nested clips then play nothing, and the Export
-  dialog's Checks warn about them. Collect Project copies the media used inside nested sequences.
+  tracks). Chapters, subtitle tracks and burned-in subtitles come from the exported timeline only: markers and subtitle
+  tracks inside nested timelines are not exported. Put chapter markers and subtitle tracks on the outer timeline.
+- Deleting a timeline that is nested elsewhere asks first; its nested clips then play nothing, and the Export
+  dialog's Checks warn about them. Collect Project copies the media used inside nested timelines.
 
 ## 12. Continuity notes
 
 - **Continuity** panel › **Add note at playhead**, or right-click the timeline › **Add Continuity Note Here…**. Give
   it an issue name, a category (wardrobe, prop, dialogue, music, lighting, source, other) and a note. Tick **Link to
   selected clip** to pin it to the clip so it moves with it.
-- Space marks a note resolved or open. The scope can be **All sequences**. **Copy as text** copies open issues with
+- Space marks a note resolved or open. The scope can be **All timelines**. **Copy as text** copies open issues with
   timecodes for a review document.
 - Where an edit came from: the Inspector's **Original source timecode** block (at the playhead or at the clip start;
   click to copy). Click the Program timecode to switch between **SEQ** and **SRC** (source file and timecode).
@@ -380,9 +429,9 @@ own sequence and drop it into as many cuts as you like: an edit made inside it s
 
 ## 13. Subtitles in the cut
 
-- With **Carry subtitles into sequence** on (default), inserted clips bring their cues with them. The cues stay
+- With **Carry subtitles into timeline** on (default), inserted clips bring their cues with them. The cues stay
   attached through moves, trims, ripples, razors and speed changes.
-- The **Subtitles** panel (Shift+8) has per-sequence tracks: **Add track**, **Add cue at playhead**, inline text and
+- The **Subtitles** panel (Shift+8) has per-timeline tracks: **Add track**, **Add cue at playhead**, inline text and
   timing edits, **Split at playhead**, **Merge with next**, ±1-frame nudges (Shift for ±10), and **Clean up** for cues
   whose clips were removed. **Export › Export SRT… / Export VTT…** exports a track. **Import to track…** brings in an
   external file.
@@ -401,7 +450,7 @@ own sequence and drop it into as many cuts as you like: an edit made inside it s
 - **Moved your media?** Open the project, and offline files are listed with a banner. Click **Relink…** › **Search
   folder…** (matches by name + size) › **Apply N matches**, or **Locate…** per file. **Check files** re-verifies.
 - If a relinked file is shorter than before, clips that now run past its end are trimmed to it and clips that start
-  after its end are removed, in every sequence (one undo step, with a warning that gives the counts).
+  after its end are removed, in every timeline (one undo step, with a warning that gives the counts).
 - Thumbnails, waveforms, proxies, detected scenes and OCR results follow the file, not its folder: they are cached by
   the file's content (its size and a sample of its bytes), so a moved, renamed or copied file reuses them after Relink
   instead of building them again.
@@ -413,12 +462,12 @@ move it to another drive or hand it to someone else.
 
 1. **Choose…** a destination folder. ReCut creates a folder named after the project inside it; that folder must not
    exist yet, or be empty.
-2. Pick **Media used in sequences only** (every file a clip or a sequence snapshot uses) or **All project media**.
+2. Pick **Media used in timelines only** (every file a clip or a timeline snapshot uses) or **All project media**.
    Turn on **Include subtitle files** to copy the subtitle files the project imported (also those only a snapshot
    still names), and **Include proxies** to copy ready proxies, including the preview audio of channel selections
    (an extracted centre channel, a downmix), so the copy previews without rebuilding them on another computer.
-   Media used only inside a nested sequence or compound clip count as used. Whisper and OCR tracks, keyframes and
-   nested sequences are part of the project file and need no copying.
+   Media used only inside a nested timeline or compound clip count as used. Whisper and OCR tracks, keyframes and
+   nested timelines are part of the project file and need no copying.
 3. Check the summary: the folder it creates, the total size and the free space on the destination. Media that are
    offline are listed and skipped. **Collect** stays disabled when the folder is not empty or the space is short.
 4. **Collect** runs as a job: the dialog (and **Jobs**) shows the bytes copied, and **Cancel collect** stops it.
@@ -449,12 +498,12 @@ Saga Fan Cut/
 
 1. **File › Export…** (Ctrl+M).
 2. Pick a **Preset**: 1080p High Quality, 1080p Smaller File, 4K High Quality, 720p Preview, 1080p 5.1 Surround,
-   ProRes 422 HQ (MOV), DNxHR HQ (MOV), WAV 24-bit (audio only), WAV per audio track, or Match Sequence.
+   ProRes 422 HQ (MOV), DNxHR HQ (MOV), WAV 24-bit (audio only), WAV per audio track, or Match Timeline.
 3. Choose the **Format** (see **Formats** below; MP4 unless you change it), then set the **File name** and **Folder**
    (Browse…). The file name's extension follows the format. The folder must be a full path (`/home/me/Videos`,
    `C:\Videos`). Optionally adjust Video (frame size, frame rate, and the codec settings of the format), Audio
    (codec or bit depth, Stereo or **5.1 Surround** when a source has 6+ channels, sample rate; AC-3 offers 32, 44.1
-   and 48 kHz only) and **Range** (Entire sequence or In to Out).
+   and 48 kHz only) and **Range** (Entire timeline or In to Out).
 4. **Subtitles:** **Include transcripts as subtitles** (off by default) adds the on-screen transcript, what the
    Subtitles row and Program monitor show, as a subtitle track named "Transcript". **Burn in** renders the subtitles
    into the picture, on exactly the frames where the Program monitor shows them. With transcripts included,
@@ -462,7 +511,7 @@ Saga Fan Cut/
    spoken in yellow, as the monitors show it; the sidecar and MKV subtitle tracks stay plain text. **Sidecar** writes a `.srt` next to the exported file. Burn-in is off for the audio-only formats (there is
    no picture); the sidecar still works. An **MKV** can also carry the subtitle tracks as soft subtitles that viewers
    switch on and off (see **Subtitle tracks (MKV)** below).
-5. The **Checks** list blocks the export with a reason when something is wrong (an empty sequence, offline or missing
+5. The **Checks** list blocks the export with a reason when something is wrong (an empty timeline, offline or missing
    media, an invalid file name, folder or size). It also warns, without blocking, about what would only show when
    the result is watched (see **Pre-export warnings** below). **Show FFmpeg command** previews the exact command.
 6. Click **Export**. If the file (or its `.srt`) already exists, ReCut asks **Replace it?** first. Progress shows in
@@ -493,7 +542,7 @@ either; the Checks list says which tracks are left out and why. There is no mast
 monitor's volume only changes what you hear), so the files add up to the mixed export.
 
 **Audio tracks (MKV).** With Format **MKV**, the Audio section lists the file's audio tracks. Each one is a mix of
-the sequence audio tracks ticked under **Sources** (**All tracks** is the whole mix, as in an MP4), in its own
+the timeline audio tracks ticked under **Sources** (**All tracks** is the whole mix, as in an MP4), in its own
 **Format**: Stereo, 5.1 or Mono, and AAC, AC-3 (Dolby Digital), FLAC or PCM, with a bitrate for AAC and AC-3. Give it
 a **title** (shown by players, for example "Commentary") and a **language** as a three-letter ISO 639-2 code (`eng`,
 `fre`, `ger`, `spa`, `jpn`, ...; empty is "undetermined"). The first track is the **Default** one players start
@@ -502,7 +551,7 @@ presets:
 
 - **Main mix only**: one track of everything, with the codec and channels of the MP4 settings (the default).
 - **5.1 + stereo downmix**: the whole mix as AC-3 5.1 (640 kbps) and as AAC stereo (256 kbps).
-- **Main + commentary (last audio track)**: the last audio track with clips (A3 in a three-track sequence with a
+- **Main + commentary (last audio track)**: the last audio track with clips (A3 in a three-track timeline with a
   commentary on A3) alone as a stereo "Commentary" track, and every other track as the "Main" track.
 
 Every audio track has exactly the length of the range and lines up sample for sample with the others (AAC and AC-3
@@ -511,7 +560,7 @@ track, and when a track is soloed only the soloed tracks are mixed. The 5.1 trac
 left and right; a stereo or mono track of a 5.1 source is FFmpeg's standard downmix. The sample rate is the same
 for every track.
 
-**Subtitle tracks (MKV).** With Format **MKV** and subtitle tracks in the sequence, the Subtitles section lists them:
+**Subtitle tracks (MKV).** With Format **MKV** and subtitle tracks in the timeline, the Subtitles section lists them:
 tick a track to put it in the file as a soft subtitle stream (SubRip text), with its **title** (the track's name
 unless you change it) and **language** (from the track unless you set one). **Default** asks players to show it
 from the start (only one track should be Default); **Forced** marks a track for lines in another language that are
@@ -531,17 +580,17 @@ range, and more than one Default subtitle track. AC-3 in any track limits the sa
 The exported video has exactly the frame count of the exported range, and each frame is the one the Program monitor showed.
 An In/Out range that starts or ends inside a transition renders those frames exactly as the full export does.
 Anamorphic (non-square pixel) sources are un-squeezed, so they fill the frame as they do in the preview.
-If you pick a **Frame rate** other than the sequence's (for example 30 fps for a 23.976 sequence), the video is
+If you pick a **Frame rate** other than the timeline's (for example 30 fps for a 23.976 timeline), the video is
 converted when it is written: frames are repeated or dropped, while the duration and audio sync stay the same. The
-dialog shows the resulting frame count; **Use <sequence rate>** switches back.
+dialog shows the resulting frame count; **Use <timeline rate>** switches back.
 
 **Pre-export warnings.** The Checks list looks at the clips the export renders (enabled clips on tracks that are not
 muted, inside the chosen range) and warns about:
 
-- **Source frame rate differs from the sequence**: video media at another frame rate, for example 25 fps footage
-  in a 23.976 sequence. Its frames are repeated or dropped to fit, so motion may stutter. Stills, audio and VFR
+- **Source frame rate differs from the timeline**: video media at another frame rate, for example 25 fps footage
+  in a 23.976 timeline. Its frames are repeated or dropped to fit, so motion may stutter. Stills, audio and VFR
   media are not compared.
-- **Variable frame rate (VFR) media in the sequence**: typically phone or screen recordings. Converting such a
+- **Variable frame rate (VFR) media in the timeline**: typically phone or screen recordings. Converting such a
   file to a constant frame rate before editing avoids uneven motion and sync problems.
 - **Linked clips out of sync**: a linked video and audio clip that were moved or slipped apart, with the offset
   the timeline's red **+N / −N** badge shows.
@@ -588,7 +637,7 @@ or languages. The only stream names and languages in a file are the ones you giv
 an MKV.
 
 Export never writes over a file the project reads from: media, proxies, and subtitle files (imported to media or to
-a sequence track, or read by the Transcript). Such a name is refused, also when it differs only in letter case or is
+a timeline track, or read by the Transcript). Such a name is refused, also when it differs only in letter case or is
 a link to the same file. ReCut renders into `<name>.recut-part-<random>.mp4` (`.mkv`, `.mov`, `.wav`, ...) next to the output
 and renames it at the end; a per-track export renders every file before renaming any. If that final rename fails, the
 finished render is kept as `<name>.recut-unsaved-<time>.mp4` and the error says so, so you do not have to render
@@ -602,7 +651,7 @@ again.
 - Opening a project repairs damaged data (invalid frame rates become 23.976, out-of-range values are dropped or
   pulled in, overlapping clips are shortened at their start or moved to a new track) and shows a warning listing the
   repairs. The file as it was is kept as `<file>.pre-repair-<time>`. A file too damaged to repair (not JSON, or its
-  media or sequences list unreadable) opens from its `.bak`, and the damaged file is kept as `<file>.corrupt-<time>`.
+  media or timelines list unreadable) opens from its `.bak`, and the damaged file is kept as `<file>.corrupt-<time>`.
   A file saved by a newer ReCut is refused, never replaced by the `.bak`.
 - Opening or creating a project closes open dialogs (Export, Relink, ...) that belonged to the previous one.
 - **Quit** (Ctrl+Q) asks to save unsaved changes.

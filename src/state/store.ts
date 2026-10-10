@@ -18,7 +18,7 @@ import type {
 import { withoutCopiedTranscripts } from '../../shared/transcripts';
 import { uid } from '../../shared/ids';
 import { fpsEquals, isValidFps, secondsToFrames } from '../../shared/time';
-import { createProject, createSequence, LiveView } from '../../shared/project';
+import { createProject, createSequence, LiveView, SCENE_SEQUENCE_COLOR } from '../../shared/project';
 import {
   breakApartCompoundClip as nestBreakApart, innerFrameAt, isNestedClip, makeCompoundClip as nestMakeCompound, nestedClipsFor, nestLimitProblem,
   nestProblem, nestProblemText, sequenceSeconds,
@@ -48,7 +48,7 @@ import type {
 function isPosInt(v: unknown): v is number { return Number.isSafeInteger(v) && (v as number) > 0; }
 
 /** Why a sequence's frame rate cannot change (the Inspector tooltip and the Sequence Settings dialog say the same). */
-export const FPS_LOCKED_REASON = 'Frame rate is fixed once a sequence has clips (positions are frames).';
+export const FPS_LOCKED_REASON = 'Frame rate is fixed once a timeline has clips (positions are frames).';
 
 /**
  * True when the sequence holds any clip: its frame rate is then fixed, because clip positions are stored in frames
@@ -162,7 +162,10 @@ function pruneUi(project: Project, ui: UIState): UIState {
     if (kept.length !== ui.selectedMediaIds.length) next = { ...next, selectedMediaIds: kept };
   }
   if (ui.selectedSceneIds.length) {
-    const kept = ui.selectedSceneIds.filter((id) => project.scenes[id]);
+    // The selection holds Scene library ids and detected shot ids (dsc_…, under media.detectedScenes) (#143).
+    const shotIds = new Set<ID>();
+    for (const m of Object.values(project.media)) for (const sc of m.detectedScenes) shotIds.add(sc.id);
+    const kept = ui.selectedSceneIds.filter((id) => project.scenes[id] || shotIds.has(id));
     if (kept.length !== ui.selectedSceneIds.length) next = { ...next, selectedSceneIds: kept };
   }
   if (ui.selectedBinId && !project.bins[ui.selectedBinId]) next = { ...next, selectedBinId: null };
@@ -396,6 +399,12 @@ export const useStore = create<RecutStore>()((set, get) => {
     const now = Date.now();
     return produce(next, (d) => {
       d.modifiedAt = now;
+      // Scenes removed by any edit leave the sequences that held them (#146).
+      if (prev.scenes !== next.scenes && d.sceneSequences) {
+        for (const q of Object.values(d.sceneSequences)) {
+          if (q.sceneIds.some((id) => !d.scenes[id])) q.sceneIds = q.sceneIds.filter((id) => !!d.scenes[id]);
+        }
+      }
       for (const id of changed) {
         const seq = d.sequences[id];
         if (!seq) continue;
@@ -405,6 +414,9 @@ export const useStore = create<RecutStore>()((set, get) => {
     });
   };
 
+  /** Open batch (store.batch): commits inside it share one undo step, pushed when the outermost batch ends. */
+  let openBatch: { snapshot: Project } | null = null;
+
   /** `followMarkers: false` for recipes that replace a sequence wholesale (its markers are already right). */
   const commit = (label: string, recipe: Recipe, opts: { followMarkers?: boolean } = {}): boolean => {
     settleProjectFreeze();
@@ -412,6 +424,10 @@ export const useStore = create<RecutStore>()((set, get) => {
     const produced = produce(prev, recipe);
     if (produced === prev) return false;
     const next = stamp(prev, produced, opts.followMarkers ?? true);
+    if (openBatch) {
+      set((s) => ({ project: next, dirty: true, revision: s.revision + 1, ui: pruneUi(next, s.ui) }));
+      return true;
+    }
     set((s) => ({ project: next, dirty: true, revision: s.revision + 1, history: pushHistory(s.history, prev, label), ui: pruneUi(next, s.ui) }));
     return true;
   };
@@ -561,6 +577,16 @@ export const useStore = create<RecutStore>()((set, get) => {
         seq.view = new LiveView(nv);
       });
       if (next !== prev) set((s) => ({ project: next, viewTick: s.viewTick + 1 }));
+    },
+
+    batch(label, fn) {
+      if (openBatch) return fn();
+      openBatch = { snapshot: get().project };
+      try { return fn(); } finally {
+        const { snapshot } = openBatch;
+        openBatch = null;
+        if (get().project !== snapshot) set((s) => ({ history: pushHistory(s.history, snapshot, label) }));
+      }
     },
 
     beginTransaction() {
@@ -745,7 +771,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       if (afterRelink && !('error' in result)) fitClipsToRelinkedMedia(id);
     },
     // Job/status mirrors are quiet: they arrive asynchronously and must not become undo steps (nor clear redo).
-    // Nor do they mark the project dirty (bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md): proxy,
+    // Nor do they mark the project dirty (bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md @ 59eafc6): proxy,
     // channel-proxy and scene-detect state is written to the file with the next save / autosave, but it is not an
     // edit: the jobs make it again from the content-keyed cache. A job finishing after a clean save must not ask
     // "Save changes?" on quit nor start an autosave (which recovery would offer after the clean quit). Writes that
@@ -765,7 +791,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       });
     },
     setSceneDetectStatus(id, status) { quiet((d) => { const m = d.media[id]; if (m) m.sceneDetectStatus = status; }); },
-    setDetectedScenes(id, boundaries, duration) {
+    setDetectedScenes(id, boundaries, duration, nameFor) {
       // Detection results also arrive from a background job (a mirror: not dirty, the job's cache makes them again);
       // edits to the scenes (rename/merge/split) stay undoable and mark the project dirty.
       quiet((d) => {
@@ -776,7 +802,7 @@ export const useStore = create<RecutStore>()((set, get) => {
         const scenes: DetectedScene[] = [];
         for (let i = 0; i < edges.length - 1; i++) {
           if (edges[i + 1] - edges[i] <= 0) continue;
-          scenes.push({ id: uid('dsc'), start: edges[i], end: edges[i + 1], name: `Scene ${String(scenes.length + 1).padStart(3, '0')}`, tags: [], characters: [] });
+          scenes.push({ id: uid('dsc'), start: edges[i], end: edges[i + 1], name: nameFor?.(edges[i], edges[i + 1]) ?? `Shot ${String(scenes.length + 1).padStart(3, '0')}`, tags: [], characters: [] });
         }
         m.detectedScenes = scenes;
         m.sceneDetectStatus = 'done';
@@ -896,7 +922,7 @@ export const useStore = create<RecutStore>()((set, get) => {
 
     // ---------------------------------------------------------------- sequences
     addSequence(seq, opts = {}) {
-      commit('New sequence', (d) => {
+      commit('New timeline', (d) => {
         if (seq.binId === null && d.bins['bin-sequences']) seq = { ...seq, binId: 'bin-sequences' };
         d.sequences[seq.id] = seq;
         if (!d.sequenceOrder.includes(seq.id)) d.sequenceOrder.push(seq.id);
@@ -904,7 +930,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       });
     },
     duplicateSequence(id, newName) {
-      return duplicateSeq(id, newName, 'Duplicate sequence', false);
+      return duplicateSeq(id, newName, 'Duplicate timeline', false);
     },
     duplicateWithoutDisabled(id, newName) {
       return duplicateSeq(id, newName, 'Duplicate as cut without disabled clips', true);
@@ -917,7 +943,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       return removed;
     },
     deleteSequence(id) {
-      commit('Delete sequence', (d) => {
+      commit('Delete timeline', (d) => {
         if (!d.sequences[id]) return;
         const at = d.sequenceOrder.indexOf(id);
         delete d.sequences[id];
@@ -925,7 +951,7 @@ export const useStore = create<RecutStore>()((set, get) => {
         if (d.activeSequenceId === id) d.activeSequenceId = d.sequenceOrder[Math.min(Math.max(at, 0), d.sequenceOrder.length - 1)] ?? null;
       });
     },
-    renameSequence(id, name) { commit('Rename sequence', (d) => { const s = d.sequences[id]; if (s) s.name = name; }); },
+    renameSequence(id, name) { commit('Rename timeline', (d) => { const s = d.sequences[id]; if (s) s.name = name; }); },
     setActiveSequence(id) {
       quiet((d) => { if (id === null || d.sequences[id]) d.activeSequenceId = id; });
     },
@@ -973,7 +999,7 @@ export const useStore = create<RecutStore>()((set, get) => {
         if (!Object.keys(rest).length) return;
         patch = rest;
       }
-      commit('Sequence settings', (d) => {
+      commit('Timeline settings', (d) => {
         const seq = d.sequences[seqId];
         if (seq) Object.assign(seq, patch.fps ? { ...patch, fps: { num: patch.fps.num, den: patch.fps.den } } : patch);
       });
@@ -1265,7 +1291,7 @@ export const useStore = create<RecutStore>()((set, get) => {
     extractCentreChannel(seqId, clipId) {
       const { project } = get();
       const seq = project.sequences[seqId];
-      if (!seq) return { ok: false, reason: 'No sequence.' };
+      if (!seq) return { ok: false, reason: 'No timeline.' };
       const loc = findClip(seq, clipId);
       if (!loc) return { ok: false, reason: 'Select a clip first.' };
       if (loc.track.locked) return { ok: false, reason: 'The clip is on a locked track.' };
@@ -1659,6 +1685,61 @@ export const useStore = create<RecutStore>()((set, get) => {
       });
     },
     removeScene(id) { commit('Remove scene', (d) => { delete d.scenes[id]; }); },
+    mergeScenes(ids) {
+      // #152: scenes of one video become the first (by start) covering them all; references follow it.
+      const list = [...new Set(ids)].map((id) => get().project.scenes[id]).filter((x): x is SceneRecord => !!x).sort((a, b) => a.in - b.in || a.out - b.out);
+      if (list.length < 2 || list.some((x) => x.mediaId !== list[0].mediaId)) return null;
+      const keep = list[0].id;
+      const gone = new Set(list.slice(1).map((x) => x.id));
+      commit(`Merge ${list.length} scenes`, (d) => {
+        const k = d.scenes[keep];
+        k.in = Math.min(...list.map((x) => x.in));
+        k.out = Math.max(...list.map((x) => x.out));
+        k.characters = [...new Set(list.flatMap((x) => x.characters))];
+        k.tags = [...new Set(list.flatMap((x) => x.tags))];
+        k.notes = list.map((x) => x.notes.trim()).filter(Boolean).join('\n\n');
+        k.rating = Math.max(...list.map((x) => x.rating));
+        if (!k.location) k.location = list.find((x) => x.location)?.location ?? '';
+        if (!k.arc) k.arc = list.find((x) => x.arc)?.arc ?? '';
+        for (const id of gone) delete d.scenes[id];
+        // Sequences hold the merged scene once, where the first of them was.
+        for (const q of Object.values(d.sceneSequences ?? {})) {
+          if (!q.sceneIds.some((id) => gone.has(id) || id === keep)) continue;
+          const out: ID[] = [];
+          for (const id of q.sceneIds) { const to = gone.has(id) ? keep : id; if (!out.includes(to)) out.push(to); }
+          q.sceneIds = out;
+        }
+        // Timeline clips made from the merged scenes point to the one that remains.
+        for (const seq of Object.values(d.sequences)) {
+          const hit = allTracks(seq).flatMap((t) => t.clips).filter((c) => c.sceneRecordId && gone.has(c.sceneRecordId)).map((c) => c.id);
+          for (const c of clipsWithIds(seq, hit)) c.sceneRecordId = keep;
+        }
+      });
+      return keep;
+    },
+
+    // ---------------------------------------------------------------- sequences of scenes (#146)
+    addSceneSequence(name, sceneIds, opts = {}) {
+      const id = uid('sqn');
+      commit('Make sequence', (d) => {
+        const ids = [...new Set(sceneIds)].filter((x) => !!d.scenes[x]);
+        d.sceneSequences ??= {};
+        d.sceneSequences[id] = { id, name: name.trim() || 'Sequence', sceneIds: ids, color: opts.color ?? SCENE_SEQUENCE_COLOR, tags: [], notes: '', createdAt: Date.now() };
+      });
+      return id;
+    },
+    updateSceneSequence(id, patch) {
+      commit(patch.sceneIds ? 'Edit sequence scenes' : patch.name !== undefined ? 'Rename sequence' : 'Edit sequence', (d) => {
+        const q = d.sceneSequences?.[id];
+        if (!q) return;
+        if (patch.name !== undefined) q.name = patch.name.trim() || q.name;
+        if (patch.sceneIds) q.sceneIds = [...new Set(patch.sceneIds)].filter((x) => !!d.scenes[x]);
+        if (patch.color !== undefined) q.color = patch.color;
+        if (patch.tags) { q.tags = [...patch.tags]; addToVocab(d.tags, 'custom', patch.tags); }
+        if (patch.notes !== undefined) q.notes = patch.notes;
+      });
+    },
+    removeSceneSequence(id) { commit('Delete sequence', (d) => { if (d.sceneSequences) delete d.sceneSequences[id]; }); },
     sceneFromSource(name) {
       const s = get();
       const sc = s.ui.sourceClip;
@@ -1680,7 +1761,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       const loc = seq && findClip(seq, clipId);
       if (!seq || !loc) return null;
       const c = loc.clip;
-      if (isNestedClip(c)) { get().toast('info', 'A nested sequence clip has no source media to make a scene of: open it in the timeline and add its clips'); return null; }
+      if (isNestedClip(c)) { get().toast('info', 'A nested timeline clip has no source media to make a scene of: open it in the timeline and add its clips'); return null; }
       const record: SceneRecord = {
         id: uid('scn'), name: name ?? c.name, mediaId: c.mediaId, in: c.sourceIn, out: clipSourceOut(c, seq.fps),
         characters: [...c.characters], location: c.locations[0] ?? '', arc: c.plotlines[0] ?? '', tags: [...c.tags], notes: c.notes,
@@ -1712,6 +1793,12 @@ export const useStore = create<RecutStore>()((set, get) => {
         if (ui.sourceClip?.mediaId === mediaId) return { sourceClip: { ...ui.sourceClip, time } };
         return { sourceClip: { mediaId, inPoint: null, outPoint: null, time } };
       });
+    },
+    setSourceView(view) {
+      setUi((ui) => (ui.sourceClip ? { sourceClip: { ...ui.sourceClip, view: view && view.end > view.start ? { ...view } : null, viewFull: false } } : {}));
+    },
+    setSourceViewFull(full) {
+      setUi((ui) => (ui.sourceClip?.view ? { sourceClip: { ...ui.sourceClip, viewFull: full } } : {}));
     },
     setSourceIn(seconds) {
       setUi((ui) => {
@@ -1745,8 +1832,8 @@ export const useStore = create<RecutStore>()((set, get) => {
       if (!ids.length) { get().toast('info', 'Select the clips to make a compound clip of'); return null; }
       const names = new Set(Object.values(get().project.sequences).map((s) => s.name));
       let n = 1;
-      while (names.has(`Nested Sequence ${String(n).padStart(2, '0')}`)) n++;
-      const inner = createSequence(name?.trim() || `Nested Sequence ${String(n).padStart(2, '0')}`, { num: seq.fps.num, den: seq.fps.den }, seq.width, seq.height);
+      while (names.has(`Nested Timeline ${String(n).padStart(2, '0')}`)) n++;
+      const inner = createSequence(name?.trim() || `Nested Timeline ${String(n).padStart(2, '0')}`, { num: seq.fps.num, den: seq.fps.den }, seq.width, seq.height);
       inner.sampleRate = seq.sampleRate; inner.channels = seq.channels;
       // A selection that holds nested clips nests them one level deeper: check depth and size on a dry run.
       const seqs = get().project.sequences;
@@ -1801,7 +1888,7 @@ export const useStore = create<RecutStore>()((set, get) => {
       const clip = seq ? findClip(seq, clipId)?.clip : undefined;
       if (!seq || !clip || !isNestedClip(clip)) return false;
       const inner = Object.hasOwn(p.sequences, clip.sequenceId) ? p.sequences[clip.sequenceId] : undefined;
-      if (!inner) { get().toast('warning', `The sequence of "${clip.name}" is no longer in the project`); return false; }
+      if (!inner) { get().toast('warning', `The timeline of "${clip.name}" is no longer in the project`); return false; }
       get().setView(inner.id, { playhead: innerFrameAt(clip, frame ?? seq.view.playhead, seq.fps, inner.fps) });
       get().setActiveSequence(inner.id);
       return true;
@@ -1827,9 +1914,9 @@ export const useStore = create<RecutStore>()((set, get) => {
         const trial = dryRun(p.sequences, seqId, (s) => { nestInto(s); });
         if (trial) problem = nestProblem(trial, seqId, childId, []);
       }
-      if (problem) { get().toast('warning', `Cannot nest the sequence here: ${nestProblemText(problem)}`); return []; }
+      if (problem) { get().toast('warning', `Cannot nest the timeline here: ${nestProblemText(problem)}`); return []; }
       let created: ID[] = [];
-      commit('Nest sequence', (d) => {
+      commit('Nest timeline', (d) => {
         const seq = d.sequences[seqId];
         if (!seq) return;
         created = nestInto(seq);

@@ -73,7 +73,7 @@ const CUT_MENU_PX = 10;
 
 export function TimelinePanel(props: PanelProps) {
   const seqId = useStore((s) => s.project.activeSequenceId);
-  if (!seqId) return <div className="panel"><div className="panel-placeholder">No sequence — create one with Ctrl+Shift+N</div></div>;
+  if (!seqId) return <div className="panel"><div className="panel-placeholder">No timeline — create one with Ctrl+Shift+N</div></div>;
   return <TimelineBody key={seqId} seqId={seqId} active={props.active} />;
 }
 
@@ -415,7 +415,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
       { label: clip.linkId ? 'Unlink' : 'Link', shortcut: 'Ctrl+L', disabled: !clip.linkId && sel.length < 2, onSelect: () => (clip.linkId ? st.unlinkSelected(seqId) : st.linkSelected(seqId)) },
       { label: 'Speed / Duration…', shortcut: getShortcutLabel('clip.speedDuration') || undefined, disabled: isNestedClip(clip), onSelect: () => setDialog({ kind: 'speed', clipId: clip.id }) },
       // Nested sequences (Roadmap §8).
-      { label: 'Make Compound Clip', disabled: track.locked, title: 'Moves the selected clips (and the clips linked to them) into a new sequence, replaced by one nested clip.',
+      { label: 'Make Compound Clip', disabled: track.locked, title: 'Moves the selected clips (and the clips linked to them) into a new timeline, replaced by one nested clip.',
         onSelect: () => { st.makeCompoundClip(seqId, sel.includes(clip.id) ? sel : [clip.id]); } },
       ...(isNestedClip(clip) ? [
         { label: 'Open in Timeline', onSelect: () => { runOpenInTimeline(seqId, clip.id, inside ? ph : clip.start); } },
@@ -573,7 +573,8 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
     const run = () => {
       let at = frame;
       const created: ID[] = [];
-      for (const p of valid) {
+      // Several dropped items (e.g. a multi-selection of shots) are one undo step (#143).
+      useStore.getState().batch(insertMode ? 'Insert' : 'Overwrite', () => { for (const p of valid) {
         const extra: NonNullable<Parameters<typeof st.insertFromSource>[1]['extra']> = {};
         if (p.name) extra.name = p.name;
         if (p.characters?.length) extra.characters = p.characters;
@@ -588,7 +589,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
         if (!res.ok || res.endFrame === null) continue;
         created.push(...res.clipIds);
         at = Math.max(at + 1, res.endFrame);
-      }
+      } });
       if (created.length) useStore.getState().select(created, 'set');
       else toast('warn', 'Could not place the clip here (target tracks locked?)');
       rootRef.current?.focus({ preventScroll: true });
@@ -608,7 +609,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const onBlur = (e: React.FocusEvent) => { if (!rootRef.current?.contains(e.relatedTarget as Node | null)) { setHasFocus(false); useStore.getState().setTimelineFocus(false); } };
   const focusSelf = (e: React.PointerEvent) => { claimTransport(); if (!isEditableTarget(e.target) && document.activeElement !== rootRef.current && !rootRef.current?.contains(document.activeElement as Node | null)) rootRef.current?.focus({ preventScroll: true }); };
 
-  if (!seq) return <div className="panel"><div className="panel-placeholder">Sequence not found</div></div>;
+  if (!seq) return <div className="panel"><div className="panel-placeholder">Timeline not found</div></div>;
 
   // ---- render helpers --------------------------------------------------------------------------
   // Clips are mounted for the viewport (anything in a margin is invisible, and a page flip would mount and paint the

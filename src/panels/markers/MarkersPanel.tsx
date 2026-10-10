@@ -65,7 +65,7 @@ export function MarkersPanel(_props: PanelProps) {
     return [...list].sort((a, b) => a.time - b.time);
   }, [seq, filter]);
 
-  if (!seq) return <div className="panel"><EmptyState icon={Bookmark} title="No sequence" description="Create or open a sequence to see its markers." /></div>;
+  if (!seq) return <div className="panel"><EmptyState icon={Bookmark} title="No timeline" description="Create or open a timeline to see its markers." /></div>;
   const st = useStore.getState;
   const addAtPlayhead = () => {
     const id = st().addMarker(seq.id, { time: seq.view.playhead });

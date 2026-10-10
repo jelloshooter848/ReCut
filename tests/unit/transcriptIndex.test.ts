@@ -201,7 +201,7 @@ describe('scope options', () => {
     const labels = opts.map((o) => o.label);
     expect(labels[0]).toBe('Entire project');
     expect(labels).toContain('Source: Station Eleven S01E01');
-    expect(labels).toContain('Sequence: Sequence 01');
+    expect(labels).toContain('Timeline: Timeline 01');
     expect(labels).toContain('Series: Station Eleven');
     expect(labels).toContain('Season: Station Eleven S01');
     expect(labels).toContain('Season: Station Eleven S02');

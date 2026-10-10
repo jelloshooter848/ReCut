@@ -374,6 +374,21 @@ export interface SceneRecord {
   createdAt: number;
 }
 
+/**
+ * A sequence (#146): an ordered group of Scene library scenes, a larger part of the story (an act, a storyline, a set
+ * piece). Not a timeline: timelines are `Project.sequences` (the internal name predates this).
+ */
+export interface SceneSequence {
+  id: ID;
+  name: string;
+  /** Scene library ids (project.scenes), in story order. */
+  sceneIds: ID[];
+  color: string;
+  tags: string[];
+  notes: string;
+  createdAt: number;
+}
+
 /** One word of a transcribed cue, in source seconds (#118). */
 export interface SubtitleWord { start: number; end: number; text: string }
 
@@ -423,6 +438,8 @@ export interface ProjectSettings {
   showSourceTimecodeOnClips: boolean;
   /** Highlight the word being spoken in word-timed subtitles, in the Source and Program monitors (#119). */
   highlightSpokenWords: boolean;
+  /** Name newly detected shots from the media's transcript or subtitles, when it has one (#144). */
+  nameShotsFromTranscript: boolean;
 }
 
 export interface Project {
@@ -436,6 +453,8 @@ export interface Project {
   sequences: Record<ID, Sequence>;
   sequenceOrder: ID[];
   scenes: Record<ID, SceneRecord>;
+  /** Groups of scenes (#146). Absent in files saved before it (the loader fills in {}). */
+  sceneSequences: Record<ID, SceneSequence>;
   subtitleTracks: Record<ID, SubtitleTrack>;
   tags: TagVocabulary;
   settings: ProjectSettings;
@@ -476,7 +495,7 @@ export interface AppPreferences {
  * (Whisper); 'channelProxy': preview audio of a clip's channel selection (electron/media/channelProxy.ts);
  * 'collect': Collect Project (copy the project and its media to one folder).
  */
-export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download' | 'channelProxy' | 'collect';
+export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'suggestScenes' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download' | 'channelProxy' | 'collect';
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled';
 
 export interface JobInfo {

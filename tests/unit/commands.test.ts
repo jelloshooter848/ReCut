@@ -528,7 +528,7 @@ describe('insert / overwrite commands use three-point editing', () => {
     S().setView(seqId, { inPoint: 48, outPoint: 200 });
     runCommand(COMMAND_IDS.overwrite);
     expect(videoClips()[0]).toMatchObject({ start: 48, duration: 48 });
-    expect(lastToast()).toMatch(/Sequence Out ignored/);
+    expect(lastToast()).toMatch(/Timeline Out ignored/);
   });
 
   it('asks nothing when the empty sequence already matches the clip (sync path)', () => {

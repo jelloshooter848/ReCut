@@ -4,7 +4,7 @@
  */
 import type {
   AudioChannelSelection, Bin, Clip, ClipAudio, ClipTransform, DetectedScene, ID, JobInfo, Marker, MediaItem, MediaProbe, Project,
-  ProjectSettings, ProxyInfo, SceneRecord, Sequence, SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock,
+  ProjectSettings, ProxyInfo, SceneRecord, SceneSequence, Sequence, SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock,
   SubtitleTrack, TagVocabulary, Track, Transition, TransitionType, KeyframeInterp,
 } from '../../shared/model';
 import type { MoveSpec, NewClipSpec } from '../../shared/timeline';
@@ -21,6 +21,13 @@ export interface SourceClipState {
   inPoint: number | null;   // seconds
   outPoint: number | null;  // seconds
   time: number;             // seconds
+  /**
+   * The scrub bar's zoom (#150): opening a shot or scene shows just its range (seconds), until `viewFull` or until the
+   * playhead leaves it. Absent / null when a whole file was opened.
+   */
+  view?: { start: number; end: number } | null;
+  /** The scene range is set but the user chose Full file. */
+  viewFull?: boolean;
 }
 
 export interface FilterState {
@@ -146,6 +153,8 @@ export interface StoreActions {
   canRedo(): boolean;
   clearHistory(): void;
   setView(seqId: ID, patch: ViewPatch): void;
+  /** Run `fn`; every commit inside it becomes one undo step named `label` (#143). Nested batches join the outer one. */
+  batch<T>(label: string, fn: () => T): T;
   beginTransaction(): void;
   updateTransient(recipe: Recipe): void;
   endTransaction(label: string): boolean;
@@ -186,7 +195,8 @@ export interface StoreActions {
    */
   setChannelProxies(id: ID, patch: Record<string, ProxyInfo | null>): void;
   setSceneDetectStatus(id: ID, status: NonNullable<MediaItem['sceneDetectStatus']>): void;
-  setDetectedScenes(id: ID, boundaries: number[], duration: number): void;
+  /** `nameFor` names a new shot from its range (e.g. from the transcript, #144); null keeps the default "Shot NNN". */
+  setDetectedScenes(id: ID, boundaries: number[], duration: number, nameFor?: (start: number, end: number) => string | null): void;
   renameDetectedScene(mediaId: ID, sceneId: ID, name: string): void;
   mergeDetectedScenes(mediaId: ID, sceneIds: ID[]): void;
   splitDetectedScene(mediaId: ID, sceneId: ID, atSeconds: number): void;
@@ -306,8 +316,16 @@ export interface StoreActions {
   addScene(record: SceneRecord): void;
   updateScene(id: ID, patch: Partial<SceneRecord>): void;
   removeScene(id: ID): void;
+  /** Merge library scenes of one video into the first (#152); null when fewer than two or from several videos. */
+  mergeScenes(ids: ID[]): ID | null;
   sceneFromSource(name?: string): ID | null;
   sceneFromClip(seqId: ID, clipId: ID, name?: string): ID | null;
+
+  // ---- sequences of scenes (#146; not timelines) ----
+  /** A new sequence holding the given scenes (existing ones, each once) in that order. Returns its id. */
+  addSceneSequence(name: string, sceneIds: ID[], opts?: { color?: string }): ID;
+  updateSceneSequence(id: ID, patch: Partial<Pick<SceneSequence, 'name' | 'sceneIds' | 'color' | 'tags' | 'notes'>>): void;
+  removeSceneSequence(id: ID): void;
 
   // ---- tags ----
   addTag(kind: keyof TagVocabulary, value: string): void;
@@ -321,6 +339,10 @@ export interface StoreActions {
   selectBin(id: ID | null): void;
   selectMarker(id: ID | null): void;
   setSourceClip(mediaId: ID | null, time?: number): void;
+  /** Zoom the Source scrub bar to a range (a shot or scene, #150), or clear it (null). Shows the range. */
+  setSourceView(view: { start: number; end: number } | null): void;
+  /** Switch the Source scrub bar between the scene range (false) and the full file (true). */
+  setSourceViewFull(full: boolean): void;
   setSourceIn(seconds: number | null): void;
   setSourceOut(seconds: number | null): void;
   setSourceTime(seconds: number): void;

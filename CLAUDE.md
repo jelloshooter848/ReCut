@@ -16,7 +16,7 @@ ReCut is an Electron + React + TypeScript non-linear video editor for fan edits.
 - Do not add npm dependencies without noting it in your report; keep to what is in package.json.
 - Run `npm run typecheck` and `npm test` before reporting done.
 - Agents own only the files named in their task. Do not edit other files; report needed changes instead.
-- Bugs are filed and closed as Markdown files under `bugs/` (see `bugs/README.md`, copy `bugs/TEMPLATE.md`).
+- Bugs are tracked in GitHub Issues (use the Bug report template). Link the issue from the fix PR (`Fixes #N`). There is no `bugs/` folder any more: comments citing `bugs/closed/<file> @ 59eafc6` refer to old reports, readable with `git show 59eafc6:bugs/closed/<file>`.
 - A PR that completes a roadmap entry updates `docs/ROADMAP.md` in the same PR: the entry's **Status** line and its row in the Progress table.
 - Versioning and releases: see docs/RELEASING.md. Feature and bug PRs never change the version.
 - Branches (CONTRIBUTING.md "Branches and pull requests"): branch from the personal branch you're working for (`devDavid` or `devJames`), or `dev` if told, and PR back into it. One task per branch, one PR. Never target `main` except for a release or hotfix. Don't push to `dev`, `main` or the other person's branch. Merge `dev` into your branch before opening a PR into `dev`.

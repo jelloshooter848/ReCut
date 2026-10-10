@@ -244,7 +244,7 @@ test.describe('Source Monitor', () => {
     // Change → the sequence takes the clip's settings, then the edit happens.
     const a = await makeEmpty('Conform A');
     await page.locator('.source-transport .insert').click();
-    await expect(page.getByTestId('conform-dialog')).toContainText(/Change sequence to match clip/);
+    await expect(page.getByTestId('conform-dialog')).toContainText(/Change timeline to match clip/);
     await page.getByTestId('conform-change').click();
     await expect.poll(() => seqInfo(a)).toEqual({ fps: media.fps, width: media.width, clips: 1 });
 

@@ -22,22 +22,22 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
     or last frame.
   - A Cross Dissolve at the edge of a nested clip is drawn as two ramps, one over the other, not as a mix of the two
     pictures, so it dims in the middle (by a quarter of the outgoing picture at the cut), in the preview and the
-    export alike. Dissolves between clips inside the nested sequence, or between two plain clips, mix linearly.
-- **Nested sequences and compound clips** (see the [user guide](USER-GUIDE.md#acts-and-reels-nested-sequences-and-compound-clips)):
+    export alike. Dissolves between clips inside the nested timeline, or between two plain clips, mix linearly.
+- **Nested timelines and compound clips** (see the [user guide](USER-GUIDE.md#acts-and-reels-nested-timelines-and-compound-clips)):
   - Nesting is limited to 8 levels, and to 1,000 tracks or 50,000 clips (picture and sound together) once
-    flattened: every inner track of every nested clip becomes a track of the outer sequence, with the inner clips the
+    flattened: every inner track of every nested clip becomes a track of the outer timeline, with the inner clips the
     nested clip plays, counting every clip and track as enabled. Nesting, pasting, Make Compound Clip and Break
     Apart refuse what would go past it; a project file past it opens with the nested clips past it made offline
-    (listed in the repair warning). Adding clips or tracks inside a nested sequence is not checked, so a project can
+    (listed in the repair warning). Adding clips or tracks inside a nested timeline is not checked, so a project can
     grow past the limit that way and is then cut the next time it is opened.
   - A nested clip always plays at 100 % speed (no speed change or reverse on it; change the speed of the clips
     inside).
-  - An inner sequence of another frame rate plays in real time at the outer rate by picking the inner frame shown at
+  - An inner timeline of another frame rate plays in real time at the outer rate by picking the inner frame shown at
     each outer frame's start time (frames are repeated or skipped, never blended).
   - A nested clip's opacity applies to each inner layer on its own, not to the inner picture as a whole, so where
     semi-transparent inner layers overlap they show through each other. Inner layers that are rotated are not cut
     off at the inner frame's edge or by the nested clip's crop.
-  - Keyframes inside a nested sequence of another frame rate play at the same times, so their frames are rescaled
+  - Keyframes inside a nested timeline of another frame rate play at the same times, so their frames are rescaled
     to the outer rate (a keyframe can land between two outer frames).
   - An inner layer whose own position or scale is keyed is not cut to the inner frame edge or the nested crop.
   - A long clip animated both inside and on the nested clip is sampled into keyframes, at most 2,000 points per
@@ -45,7 +45,7 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
     between them. Such long keyframe lists export slowly, because FFmpeg evaluates the whole list on every frame
     (a 6-second clip with 2,000 keyframes on position, scale and level took about 13 seconds to export).
   - **Break Apart** goes one level deep and needs the same frame rate inside and outside.
-  - Chapters, markers and subtitle tracks inside a nested sequence are not exported (only the exported sequence's
+  - Chapters, markers and subtitle tracks inside a nested timeline are not exported (only the exported timeline's
     own), and the Subtitles panel does not show them on the outer timeline.
   - Compare lists a nested clip as one clip; it does not compare what changed inside it.
   - Nested clips show no thumbnails or waveform on the timeline, and cannot be added to the scene library.
@@ -58,10 +58,10 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **What-if experiments** disable clips and show an *estimated* runtime (V1 only, gaps not closed). **Remove
   disabled** / **Duplicate as cut** make it real, but skip clips on locked tracks.
 - **Transcript search** flags lines that are already in the cut ("on timeline") only when the scope is a
-  **Sequence**. In project, series or season scope it does not.
+  **Timeline**. In project, series or season scope it does not.
 - **Undo** keeps the last 200 steps per session. Playhead, zoom and In/Out are not undoable.
 - **Show source timecode on clips** is off by default. Turn it on in Preferences.
-- **Timecode display** follows the frame rate only: at 29.97 and 59.94 fps every timecode (sequence and source) is
+- **Timecode display** follows the frame rate only: at 29.97 and 59.94 fps every timecode (timeline and source) is
   SMPTE drop-frame (`HH:MM:SS;FF`), at every other rate non-drop. There is no setting to show non-drop timecode at
   29.97 / 59.94.
 
@@ -169,7 +169,7 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   stereo sources has them in front left / right only (no upmix to the centre or surrounds), and a stereo or mono
   track of 5.1 sources is FFmpeg's standard downmix (no custom downmix levels, §9). Matroska stores no channel layout
   for PCM tracks, only the count. Audio track sources are saved as track ids, so export settings reused on another
-  sequence lose their chosen sources (the Checks list asks for them again).
+  timeline lose their chosen sources (the Checks list asks for them again).
 - **MP4 has one audio track and no soft subtitles.** FFmpeg's MP4 muxer drops stream titles and forces the first
   `mov_text` track to default, so multi-track packaging is MKV only.
 - **Intermediates are composited in 8-bit 4:2:0.** ProRes and DNxHR are written in their 4:2:2 / 4:4:4 10-bit pixel
@@ -184,7 +184,7 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   the export's channel layout. There are no stems by content (dialogue / music / effects, §12).
 - **WAV files over 4 GB** are written as RF64, which some older programs cannot open.
 - No interchange formats (EDL, FCPXML, OTIO, AAF).
-- **Frame-rate conversion** (an export frame rate other than the sequence's) repeats or drops whole frames. There is
+- **Frame-rate conversion** (an export frame rate other than the timeline's) repeats or drops whole frames. There is
   no frame blending or motion interpolation, so 23.976 → 30 shows a regular repeat cadence and 23.976 ↔ 24 repeats
   or drops one frame about every 42 s. Duration and audio sync are not affected.
 - **Keyframes in the export:** a clip with keyframed position or scale is placed per frame with FFmpeg's
@@ -256,13 +256,13 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - **Collect Project copies, it does not move.** It needs room for a full copy of the media on the destination, and
   it does not delete or relink anything in the open project. It stops at the first file it cannot copy or verify
   (the folder is left marked incomplete); there is no resume, so collect again into an empty folder. Media not used
-  in any sequence (with **Media used in sequences only**) and offline media keep their original paths in the copy.
+  in any timeline (with **Media used in timelines only**) and offline media keep their original paths in the copy.
   Collected projects still store absolute paths (relative media roots are [roadmap §17](ROADMAP.md#17-cloud-free-collaboration)).
   A FAT32 drive cannot hold a file over 4 GB, so collecting a large remux there fails at that file.
 - **Limits on load:** timeline positions and durations are capped at 86,400,000 frames (24 h at 1000 fps, far more
-  at normal rates), clip speed at 1 %–10 000 %, nested sequences at 8 levels and at 1,000 tracks or 50,000 clips
+  at normal rates), clip speed at 1 %–10 000 %, nested timelines at 8 levels and at 1,000 tracks or 50,000 clips
   once flattened (the nested clips past either limit are made offline), and any value nested deeper than 64
-  levels in the JSON is dropped. An invalid sequence frame rate becomes 23.976.
+  levels in the JSON is dropped. An invalid timeline frame rate becomes 23.976.
 - **Repairs are lossy.** A damaged project opens with a warning that lists the repairs, and the unrepaired file is
   kept as `<file>.pre-repair-<time>`. Out-of-range items are dropped or pulled in, and overlapping clips are
   shortened at their start or moved to an extra track (at most 32 extra tracks per kind; clips beyond that are
@@ -273,18 +273,18 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 ## Scale and performance
 
 - **Measured on 7 October 2026** (release 0.3.0, Roadmap §1): a 2,500-clip, 60-media project, plus a 3-hour,
-  6,700-clip sequence at 23.976 fps, on a 4-core Linux machine with software rendering. Edits paint in 17–28 ms,
-  scrubbing runs at 57–60 fps at every zoom (the 3 h sequence included), mouse-wheel scrolling responds in about 6 ms
-  per step, switching to the big sequence takes about 50 ms, Program playback holds 24 fps, saving takes 214 ms
-  (249 ms with the 3 h sequence), opening takes 714 ms (808 ms) without freezing the window, and autosave takes about
+  6,700-clip timeline at 23.976 fps, on a 4-core Linux machine with software rendering. Edits paint in 17–28 ms,
+  scrubbing runs at 57–60 fps at every zoom (the 3 h timeline included), mouse-wheel scrolling responds in about 6 ms
+  per step, switching to the big timeline takes about 50 ms, Program playback holds 24 fps, saving takes 214 ms
+  (249 ms with the 3 h timeline), opening takes 714 ms (808 ms) without freezing the window, and autosave takes about
   190 ms without stalling playback or scrubbing. `npm run perf:check` checks these numbers (see
   [DEVELOPMENT](DEVELOPMENT.md) → Performance gate); the full record is
-  `bugs/closed/2026-10-05-perf-budgets-2500-clips.md`.
+  `https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-perf-budgets-2500-clips.md`.
 - **The reference machine** for these numbers and for the gate is that class of machine: a 4-core cloud container
   (Intel Xeon @ 2.10 GHz, 16 GB, xvfb + software GL), calibration score js 80 ms, ffmpeg 452 ms, render 242 ms
   (`tests/perf/calibrate.mjs`, lower is faster; recorded in `tests/perf/baseline.json` on 7 October 2026). Re-measured
-  then on 0.4.1 (the two quiet runs that seeded it), the 3 h sequence scrubbed at 54–57 fps at the closest zoom.
-- **A slower machine is slower.** On a 4-core host about 1.5–2× slower than the reference, scrubbing the 3 h sequence
+  then on 0.4.1 (the two quiet runs that seeded it), the 3 h timeline scrubbed at 54–57 fps at the closest zoom.
+- **A slower machine is slower.** On a 4-core host about 1.5–2× slower than the reference, scrubbing the 3 h timeline
   at the closest zoom measured about 41 fps rather than ~59, and opening and saving took about 1.1 s and 450 ms
   instead of 714 and 214 ms: open and save time scale with the host's speed.
 - Saving, autosave and open still handle the whole project each time (streamed in small pieces, so the window stays
@@ -293,9 +293,9 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 - Two timeline elements are drawn for speed rather than pixel-perfect smoothness: waveforms are filled bars aligned
   to screen pixels, and the playhead moves on its own GPU layer (positions and timing are exact). See
   `docs/attack/performance.md` → Deliberate rendering trade-offs.
-- On a heavily loaded machine, the first visit to each page while scrubbing a multi-hour sequence at the closest zoom
+- On a heavily loaded machine, the first visit to each page while scrubbing a multi-hour timeline at the closest zoom
   can still stutter briefly; later passes over the same pages are smooth.
-- Snapshots store full copies of a sequence, so many snapshots of a large sequence make the project file grow
+- Snapshots store full copies of a timeline, so many snapshots of a large timeline make the project file grow
   quickly.
 
 ## Reports in `docs/` that are out of date

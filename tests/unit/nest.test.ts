@@ -136,7 +136,7 @@ describe('nesting rules', () => {
     put(s.c.videoTracks[1], nested('back', 'a', 0, 10, 0)); // c > a closes a cycle a > b > c > a
     p.sequences = s; p.sequenceOrder = ['a', 'b', 'c']; p.activeSequenceId = 'a';
     const { project, repairs } = normalizeProjectWithReport(JSON.parse(JSON.stringify(p)));
-    expect(repairs.join('\n')).toMatch(/nested sequence that contained itself/);
+    expect(repairs.join('\n')).toMatch(/nested timeline that contained itself/);
     const all = Object.values(project.sequences).flatMap((q) => [...q.videoTracks, ...q.audioTracks].flatMap((t) => t.clips));
     expect(all.filter((c) => c.sequenceId).map((c) => c.id).sort()).toEqual(['nb', 'nc']);
     const back = all.find((c) => c.id === 'back')!;

@@ -1,6 +1,8 @@
 /**
- * Scene-cut detection via ffmpeg's `select='gt(scene,T)'` + `showinfo` on a downscaled stream.
- * Results are cached as `scenes/<key>_<threshold>.json`, stamped with SCENE_VERSION.
+ * Shot-cut detection (#149): FFmpeg decodes every frame small (SHOT_ANALYSIS_WIDTH x HEIGHT, RGB24) to stdout and
+ * prints each frame's timestamp with `showinfo`; shared/shotDetect.ts (a port of PySceneDetect's AdaptiveDetector)
+ * scores the frames and picks the cuts. Results are cached as `scenes/<key>_<threshold>.json`, stamped with
+ * SCENE_VERSION.
  */
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -11,6 +13,7 @@ import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
 import { cacheKeysForPath, cacheSubdir, findCachedFile, removeQuietly } from './cache';
 import { FfmpegError, ffmpegFileArg, runFfmpeg } from './ffmpeg';
 import { probeMedia } from './probe';
+import { AdaptiveCutter, adaptiveThresholdFor, ContentScorer, SHOT_ANALYSIS_HEIGHT, SHOT_ANALYSIS_WIDTH } from '@shared/shotDetect';
 
 export const DEFAULT_MIN_SCENE_SECONDS = 1.0;
 
@@ -18,16 +21,20 @@ export const DEFAULT_MIN_SCENE_SECONDS = 1.0;
  * Bump when the detected boundaries for the same file and threshold change, so cached results are recomputed.
  * v2: boundaries come from showinfo's integer `pts` in AV_TIME_BASE units instead of the rounded `pts_time` text.
  * v3: boundaries are relative to the container start, not to the video stream's start, on MPEG-TS / MPEG-PS too
- *     (bugs/closed/2026-10-09-ts-late-video-export-early.md).
+ *     (bugs/closed/2026-10-09-ts-late-video-export-early.md @ 59eafc6).
+ * v4: the adaptive detector (shared/shotDetect.ts) instead of FFmpeg's fixed `scene` threshold (#149).
  */
-export const SCENE_VERSION = 3;
+export const SCENE_VERSION = 4;
 
 /** FFmpeg's AV_TIME_BASE: `settb=AVTB` puts the frames into 1/1000000 s ticks before showinfo prints them. */
 export const AV_TIME_BASE = 1_000_000;
 
-/** The scene-detect filter chain. `settb=AVTB` makes showinfo's integer `pts` field microseconds. */
-export function sceneFilter(threshold: number): string {
-  return `scale=320:-2,select='gt(scene,${threshold})',settb=AVTB,showinfo`;
+/**
+ * The shot-detect filter chain: every frame scaled to the analysis size as packed RGB, and `settb=AVTB` so showinfo's
+ * integer `pts` field is microseconds.
+ */
+export function shotFilter(): string {
+  return `scale=${SHOT_ANALYSIS_WIDTH}:${SHOT_ANALYSIS_HEIGHT}:flags=area,format=rgb24,settb=AVTB,showinfo`;
 }
 
 export function sceneCachePath(key: string, threshold: number): string {
@@ -97,31 +104,57 @@ export async function runSceneDetect(req: SceneDetectRequest, ctx: JobRunContext
   }
   const startUs = Number.isFinite(startTime) && startTime > 0 ? Math.round(startTime * AV_TIME_BASE) : 0;
 
-  const rawBoundaries: number[] = [];
+  // Frames arrive on stdout in decode order, their timestamps on stderr (showinfo), each in order: frame i pairs with
+  // the i-th timestamp. The cut rule needs only frame indices, so the two streams are matched at the end.
+  const frameBytes = SHOT_ANALYSIS_WIDTH * SHOT_ANALYSIS_HEIGHT * 3;
+  const frame = new Uint8Array(frameBytes);
+  let filled = 0;
+  let index = 0;
+  const scorer = new ContentScorer(SHOT_ANALYSIS_WIDTH * SHOT_ANALYSIS_HEIGHT);
+  const cutter = new AdaptiveCutter({ adaptiveThreshold: adaptiveThresholdFor(threshold) });
+  const cutFrames: number[] = [];
+  const ptsUs: number[] = [];
+  const onStdout = (chunk: Buffer) => {
+    let off = 0;
+    while (off < chunk.length) {
+      const n = Math.min(frameBytes - filled, chunk.length - off);
+      frame.set(chunk.subarray(off, off + n), filled);
+      filled += n; off += n;
+      if (filled === frameBytes) {
+        const cut = cutter.push(index, scorer.score(frame));
+        if (cut !== null) cutFrames.push(cut);
+        index++;
+        filled = 0;
+      }
+    }
+  };
   const run = runFfmpeg(
     [
       '-copyts',
       '-i', ffmpegFileArg(req.path),
       '-map', '0:v:0',
       '-an', '-sn', '-dn',
-      '-vf', sceneFilter(threshold),
+      '-vf', shotFilter(),
       '-fps_mode', 'passthrough',
-      '-f', 'null', '-',
+      '-f', 'rawvideo', 'pipe:1',
     ],
     {
       duration: duration > 0 ? duration : undefined,
+      stdout: 'data',
+      onStdout,
       loglevel: 'info',
       signal: ctx.signal,
-      onProgress: (p) => ctx.setProgress(p, `${Math.round(p * 100)}% · ${rawBoundaries.length} cuts`),
+      onProgress: (p) => ctx.setProgress(p, `${Math.round(p * 100)}% · ${cutFrames.length} cuts`),
       onStderrLine: (line) => {
         const t = parseShowinfoPts(line);
-        if (t !== null) rawBoundaries.push((Math.round(t * AV_TIME_BASE) - startUs) / AV_TIME_BASE);
+        if (t !== null) ptsUs.push(Math.round(t * AV_TIME_BASE) - startUs);
       },
     },
   );
   ctx.onCancel(() => run.cancel());
   await run.promise;
-  if (ctx.signal.aborted) throw new FfmpegError('scene detection canceled', { canceled: true });
+  if (ctx.signal.aborted) throw new FfmpegError('shot detection canceled', { canceled: true });
+  const rawBoundaries = cutFrames.filter((i) => i < ptsUs.length).map((i) => ptsUs[i] / AV_TIME_BASE);
 
   const result: SceneDetectResult = { boundaries: enforceMinSceneGap(rawBoundaries, 0), duration };
   // cache the un-filtered list so a different minSceneSeconds can reuse it
@@ -149,7 +182,7 @@ export function startSceneDetectJob(
   if (existing) return existing;
   const job = queue.add<SceneDetectResult>({
     kind: 'sceneDetect',
-    title: `Scene detection · ${path.basename(req.path)}`,
+    title: `Shot detection · ${path.basename(req.path)}`,
     mediaId: req.mediaId,
     run: (ctx) => runSceneDetect(req, ctx),
   });

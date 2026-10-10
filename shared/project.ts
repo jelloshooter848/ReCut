@@ -3,7 +3,7 @@ import type {
   Project, Sequence, Rational, MediaItem, ProjectSettings, Bin, ID, TagVocabulary, SequenceView, Track, Clip, Transition,
   TransitionType, MediaKind, ProxyStatus, MarkerKind, Marker, StoryBlock, SequenceSubtitleTrack, SequenceSubtitleCue,
   SequenceSnapshot, SceneRecord, SubtitleTrack, ClipTransform, ClipAudio, ProxyInfo, MediaProbe, VideoStreamInfo, SourceIdentity,
-  DetectedScene,
+  DetectedScene, SceneSequence,
 } from './model';
 import { uid } from './ids';
 import { PRODUCT_NAME } from './productIdentity';
@@ -44,6 +44,7 @@ export function defaultSettings(): ProjectSettings {
     defaultTransitionFrames: 24,
     showSourceTimecodeOnClips: false,
     highlightSpokenWords: true,
+    nameShotsFromTranscript: true,
   };
 }
 
@@ -72,7 +73,7 @@ export function liveView(v: SequenceView): SequenceView {
 }
 
 export function createSequence(name: string, fps: Rational = { ...DEFAULT_SEQUENCE_FPS }, width = 1920, height = 1080): Sequence {
-  if (!isValidFps(fps)) throw new RangeError(`Invalid sequence frame rate ${describeFps(fps)}`);
+  if (!isValidFps(fps)) throw new RangeError(`Invalid timeline frame rate ${describeFps(fps)}`);
   const now = Date.now();
   return {
     id: uid('seq'), name, fps, width, height, sampleRate: 48000, channels: 2,
@@ -89,7 +90,7 @@ export const DEFAULT_BINS: { id: string; name: string }[] = [
   { id: 'bin-movies', name: 'Movies' },
   { id: 'bin-tv', name: 'TV' },
   { id: 'bin-scenes', name: 'Scenes' },
-  { id: 'bin-sequences', name: 'Sequences' },
+  { id: 'bin-sequences', name: 'Timelines' },
   { id: 'bin-audio', name: 'Audio' },
   { id: 'bin-subtitles', name: 'Subtitles' },
   { id: 'bin-graphics', name: 'Graphics' },
@@ -100,13 +101,13 @@ export function createProject(name = 'Untitled Project'): Project {
   const now = Date.now();
   const bins: Record<ID, Bin> = {};
   for (const b of DEFAULT_BINS) bins[b.id] = { id: b.id, name: b.name, parentId: null, kind: 'bin' };
-  const seq = createSequence('Sequence 01');
+  const seq = createSequence('Timeline 01');
   seq.binId = 'bin-sequences';
   return {
     formatVersion: PROJECT_FORMAT_VERSION,
     id: uid('proj'), name, createdAt: now, modifiedAt: now,
     media: {}, bins, sequences: { [seq.id]: seq }, sequenceOrder: [seq.id],
-    scenes: {}, subtitleTracks: {}, tags: emptyTags(), settings: defaultSettings(), activeSequenceId: seq.id,
+    scenes: {}, sceneSequences: {}, subtitleTracks: {}, tags: emptyTags(), settings: defaultSettings(), activeSequenceId: seq.id,
   };
 }
 
@@ -198,6 +199,7 @@ function normalizeInner(raw: unknown): Project {
     bins: p.bins ?? base.bins,
     sequences: entries(p.sequences, 'sequences', (s, id) => repairSequence(s, id, DEFAULT_SEQUENCE_FPS)),
     scenes: entries(p.scenes, 'scenes', repairScene),
+    sceneSequences: entries(p.sceneSequences, 'sceneSequences', repairSceneSequence),
     subtitleTracks: entries(p.subtitleTracks, 'subtitleTracks', repairSubtitleTrack),
     tags: repairTags(p.tags),
     settings: repairSettings(p.settings),
@@ -206,16 +208,17 @@ function normalizeInner(raw: unknown): Project {
   } as Project;
   const order = [...new Set(out.sequenceOrder)].filter((id) => Object.hasOwn(out.sequences, id));
   for (const id of Object.keys(out.sequences)) if (!order.includes(id)) order.push(id);
-  if (order.length !== out.sequenceOrder.length || order.some((id, i) => id !== out.sequenceOrder[i])) note('sequence order repaired');
+  if (order.length !== out.sequenceOrder.length || order.some((id, i) => id !== out.sequenceOrder[i])) note('timeline order repaired');
   out.sequenceOrder = order;
   if (!out.activeSequenceId || !Object.hasOwn(out.sequences, out.activeSequenceId)) {
-    if (out.activeSequenceId) note('unknown active sequence replaced');
+    if (out.activeSequenceId) note('unknown active timeline replaced');
     out.activeSequenceId = out.sequenceOrder[0] ?? null;
   }
   if (out.sequenceOrder.length === 0) {
-    const seq = createSequence('Sequence 01'); seq.binId = 'bin-sequences';
+    const seq = createSequence('Timeline 01'); seq.binId = 'bin-sequences';
     out.sequences[seq.id] = seq; out.sequenceOrder.push(seq.id); out.activeSequenceId = seq.id;
   }
+  repairSceneSequenceRefs(out);
   repairBins(out);
   repairPrototypeRefs(out);
   repairNesting(out);
@@ -413,7 +416,7 @@ function repairFps(v: unknown, fallback: Readonly<Rational>): Rational {
 
 function repairSequence(s: Obj, id: ID, fallbackFps: Readonly<Rational>): Sequence {
   keyedId(s, id);
-  const template = createSequence(str(s.name, 'Sequence'));
+  const template = createSequence(str(s.name, 'Timeline'));
   const fps = repairFps(s.fps, fallbackFps);
   const posInt = (v: unknown, d: number) => { if (isPosInt(v)) return v; if (v !== undefined) note(FIELD_RESET); return d; };
   const seq = {
@@ -810,7 +813,7 @@ function repairNesting(p: Project): void {
   for (const s of seqs) {
     for (const t of [...s.videoTracks, ...s.audioTracks]) for (const c of t.clips) {
       if (c.sequenceId === undefined) continue;
-      if (inheritedOnly(p.sequences, c.sequenceId)) { delete c.sequenceId; note('nested sequence reference that is not a sequence id cleared'); continue; }
+      if (inheritedOnly(p.sequences, c.sequenceId)) { delete c.sequenceId; note('nested timeline reference that is not a timeline id cleared'); continue; }
       any = true;
     }
   }
@@ -818,7 +821,7 @@ function repairNesting(p: Project): void {
   for (const [host, child] of nestingRepairs(p.sequences, p.sequenceOrder)) {
     const seq = p.sequences[host];
     for (const t of [...seq.videoTracks, ...seq.audioTracks]) for (const c of t.clips) {
-      if (c.sequenceId === child) { delete c.sequenceId; note('nested sequence that contained itself or was nested too deep made offline'); }
+      if (c.sequenceId === child) { delete c.sequenceId; note('nested timeline that contained itself or was nested too deep made offline'); }
     }
     // New track lists: shared/nest.ts caches the references per list.
     seq.videoTracks = [...seq.videoTracks]; seq.audioTracks = [...seq.audioTracks];
@@ -827,7 +830,7 @@ function repairNesting(p: Project): void {
   for (const [host, clipId] of nestSizeRepairs(p.sequences, p.sequenceOrder)) {
     const seq = p.sequences[host];
     for (const t of [...seq.videoTracks, ...seq.audioTracks]) for (const c of t.clips) {
-      if (c.id === clipId && c.sequenceId !== undefined) { delete c.sequenceId; note(`nested sequence that would expand to more than ${FLAT_LIMIT_TEXT} when flattened made offline`); }
+      if (c.id === clipId && c.sequenceId !== undefined) { delete c.sequenceId; note(`nested timeline that would expand to more than ${FLAT_LIMIT_TEXT} when flattened made offline`); }
     }
     sized.add(host);
   }
@@ -997,6 +1000,26 @@ function repairScene(s: Obj, id: ID): SceneRecord | null {
   s.notes = str(s.notes, ''); s.location = str(s.location, ''); s.arc = str(s.arc, '');
   s.rating = num(s.rating, 0); s.color = str(s.color, '#4d7cfe'); s.createdAt = num(s.createdAt, 0);
   return s as unknown as SceneRecord;
+}
+
+/** A sequence of scenes (#146): fields reset when wrongly typed; scene references are checked by repairSceneSequenceRefs. */
+function repairSceneSequence(s: Obj, id: ID): SceneSequence | null {
+  keyedId(s, id);
+  s.name = str(s.name, 'Sequence');
+  s.sceneIds = strList(s.sceneIds);
+  s.color = str(s.color, SCENE_SEQUENCE_COLOR); s.tags = strList(s.tags); s.notes = str(s.notes, ''); s.createdAt = num(s.createdAt, 0);
+  return s as unknown as SceneSequence;
+}
+
+/** Default colour of a new sequence of scenes. */
+export const SCENE_SEQUENCE_COLOR = '#c77dff';
+
+/** Sequences keep only scenes that exist, each once, in their order. */
+function repairSceneSequenceRefs(p: Project): void {
+  for (const q of Object.values(p.sceneSequences)) {
+    const kept = [...new Set(q.sceneIds)].filter((id) => Object.hasOwn(p.scenes, id));
+    if (kept.length !== q.sceneIds.length) { note('sequence reference to a missing scene removed'); q.sceneIds = kept; }
+  }
 }
 
 /** Optional per-word timing of a cue (#118): a list of {start, end, text} in source seconds; anything else is dropped. */

@@ -208,6 +208,7 @@ export function ProjectPanel(_props: PanelProps) {
 
   const menuEnv = useCallback((): MenuEnv => ({
     selectedMedia: useStore.getState().ui.selectedMediaIds,
+    selectedShots: navRef.current.filter((r): r is SceneRow => r.kind === 'scene' && selectedRef.current.has(r.scene.id)),
     openPanelDialog: setDialog,
     startRename: setRenamingKey,
     expandScenes: (id) => setExpanded((m) => ({ ...m, [expandKey.scenes(id)]: true })),
@@ -242,7 +243,7 @@ export function ProjectPanel(_props: PanelProps) {
     const seqIds = selSeqRef.current;
     const binId = st.ui.selectedBinId;
     if (mediaIds.length) await removeMediaConfirmed(mediaIds);
-    for (const s of scenes) useStore.getState().deleteDetectedScene(s.media.id, s.scene.id);
+    if (scenes.length) useStore.getState().batch(scenes.length > 1 ? 'Delete shots' : 'Delete shot', () => { for (const s of scenes) useStore.getState().deleteDetectedScene(s.media.id, s.scene.id); });
     if (scenes.length) useStore.getState().selectScenes([], 'set');
     for (const id of seqIds) await deleteSequenceConfirmed(id);
     if (seqIds.length) setSelSeqIds([]);
@@ -304,7 +305,9 @@ export function ProjectPanel(_props: PanelProps) {
           : [{ mediaId: row.media.id, name: row.media.name, origin: 'media' }];
         setClipDrag(e.dataTransfer, list);
       } else if (row.kind === 'scene') {
-        setClipDrag(e.dataTransfer, { mediaId: row.media.id, in: row.scene.start, out: row.scene.end, name: row.scene.name, origin: 'scene', characters: row.scene.characters, tags: row.scene.tags });
+        // A multi-selection of shots drags all of them, in list order (#143).
+        const shots = inSel ? nav.filter((r): r is SceneRow => r.kind === 'scene' && sel.has(r.scene.id)) : [row];
+        setClipDrag(e.dataTransfer, shots.map((r) => ({ mediaId: r.media.id, in: r.scene.start, out: r.scene.end, name: r.scene.name, origin: 'scene', characters: r.scene.characters, tags: r.scene.tags })));
       } else if (row.kind === 'sequence') {
         // Dropped on a timeline, the sequence is nested there (Roadmap §8); dropped on a bin, it moves.
         e.dataTransfer.setData(SEQUENCE_DND_TYPE, row.seq.id);
@@ -404,7 +407,7 @@ export function ProjectPanel(_props: PanelProps) {
       <div className="pp-toolbar">
         <Button size="sm" icon={Import} onClick={() => { void importViaDialog(selectedBinId, selectedMediaIds.length === 1 ? selectedMediaIds[0] : null); }} data-testid="import-btn">Import…</Button>
         <IconButton size="sm" icon={FolderPlus} label="New Bin" onClick={() => newBin(selectedBinId)} data-testid="new-bin" />
-        <IconButton size="sm" icon={LayersIcon} label="New Sequence…" onClick={() => st.openDialog('newSequence')} data-testid="new-sequence" />
+        <IconButton size="sm" icon={LayersIcon} label="New Timeline…" onClick={() => st.openDialog('newSequence')} data-testid="new-sequence" />
         <span className="grow" />
         <Toggle checked={useProxies} onChange={(v) => useStore.getState().setSettings({ useProxies: v })} label={<span className="text-sm">Use proxies</span>} title="Play proxies instead of originals when available (export always uses originals)" />
       </div>
