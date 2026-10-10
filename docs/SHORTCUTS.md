@@ -98,7 +98,7 @@ The default transition length is set in **Preferences › Default transition** (
 | Command | Keys |
 |---|---|
 | Zoom In / Out (timeline) | = / - |
-| Zoom to Fit Timeline | \\ |
+| Zoom to Fit Timeline (in the Source monitor with a shot or scene open: switch its scrub bar between the scene and the full file) | \\ |
 | Toggle Snapping | S |
 | Maximize / Restore Focused Panel | Ctrl+` |
 | Program Monitor Full Screen (maximizes the Program zone) | Ctrl+Shift+F |

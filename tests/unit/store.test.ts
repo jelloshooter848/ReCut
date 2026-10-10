@@ -269,6 +269,22 @@ describe('media', () => {
     expect(S().history.past.length).toBe(past);
   });
 
+  it('Source scene range: opening a range zooms to it; Full file toggles; a new media clears it (#150)', () => {
+    S().setSourceClip(media.id, 12);
+    S().setSourceView({ start: 10, end: 20 });
+    expect(S().ui.sourceClip).toMatchObject({ view: { start: 10, end: 20 }, viewFull: false });
+    S().setSourceViewFull(true);
+    expect(S().ui.sourceClip?.viewFull).toBe(true);
+    S().setSourceView({ start: 30, end: 31 }); // another scene opens zoomed again
+    expect(S().ui.sourceClip).toMatchObject({ view: { start: 30, end: 31 }, viewFull: false });
+    S().setSourceView(null);
+    expect(S().ui.sourceClip?.view).toBeNull();
+    S().setSourceViewFull(true); // nothing to toggle without a range
+    expect(S().ui.sourceClip?.viewFull).toBe(false);
+    S().setSourceView({ start: 5, end: 5 }); // empty range: no zoom
+    expect(S().ui.sourceClip?.view).toBeNull();
+  });
+
   it('a selection of detected shots survives other edits (#143)', () => {
     S().setDetectedScenes(media.id, [10, 20], 100);
     const ids = S().project.media[media.id].detectedScenes.map((x) => x.id);

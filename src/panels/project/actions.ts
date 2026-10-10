@@ -99,6 +99,8 @@ export function loadInSource(mediaId: ID, time = 0, range?: { in: number; out: n
   const st = useStore.getState();
   st.setSourceClip(mediaId, time);
   if (range) { st.setSourceIn(range.in); st.setSourceOut(range.out); }
+  // A shot opens zoomed to its range; a whole file shows its full length (#150).
+  st.setSourceView(range ? { start: range.in, end: range.out } : null);
   st.setActivePanel('source');
   useLayoutStore.getState().focusPanel('source');
 }

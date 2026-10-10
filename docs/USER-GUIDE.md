@@ -128,6 +128,11 @@ timelines.
    the review opens when it finishes. Choosing Suggest Scenes… again later reuses the analysis while the shots are
    unchanged.
 7. In the Source monitor, **↑ / ↓** jump between shot boundaries.
+8. Opening a shot or a scene (double-click, Enter or **Load in Source**, in the Project, Scenes or Sequences panel)
+   zooms the Source scrub bar to just its In to Out, so you can scrub through it. The **Scene** / **Full file** button
+   next to the timecodes (or **\\** with the Source monitor active) switches to the whole file and back; the playhead
+   and In/Out stay where they are, and the timecodes stay source timecode. Playing past Out, stepping to another shot
+   or jumping outside the range switches to the full file. Opening a whole file always shows its full length.
 
 ## 4. Import subtitles
 
