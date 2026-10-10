@@ -13,6 +13,7 @@
  */
 import React, { useLayoutEffect, useRef } from 'react';
 import { useStore, usePlayhead } from '@/state';
+import { useTimelineUi } from './timelineStore';
 import { frameToX, pageFlipScroll, playheadLayerPos } from './viewMath';
 import { RULER_H } from './types';
 import { snappedBorderPx } from './waveBars';
@@ -38,24 +39,38 @@ export function Playhead({ seqId, zoom, scroll, width, dpr, originPx = 0, suppre
   // Page flip. It runs in a store subscription, synchronously inside the setView that moved the playhead, so the
   // flip's scroll lands in the same React render and commit as the playhead move (one commit per step instead of a
   // second one from a layout effect). Only playhead / playing changes flip: scrolling away from the playhead must
-  // not snap back.
+  // not snap back. A scroll or zoom the flip did not make while playing pauses the follow (#140, useTimelineUi
+  // followPaused): the view stays put until the playhead is back in view, a new play starts, or the toolbar's
+  // Follow playhead button resumes it.
   useLayoutEffect(() => {
+    let own = false; // the flip's own setView
+    const ui = useTimelineUi.getState;
     const flip = (ph: number, isPlaying: boolean, prevScroll: number, z: number) => {
       const w = widthRef.current;
       if (w <= 0 || suppressFlip.current) return;
       const next = pageFlipScroll(ph, prevScroll, w / z);
-      if (next !== null && (isPlaying || next !== prevScroll)) useStore.getState().setView(seqId, { scroll: next });
+      if (ui().followPaused) {
+        if (next === null) ui().setFollowPaused(false); // the playhead is in view again: follow from here
+        return;
+      }
+      if (next !== null && (isPlaying || next !== prevScroll)) { own = true; try { useStore.getState().setView(seqId, { scroll: next }); } finally { own = false; } }
     };
     const v0 = useStore.getState().project.sequences[seqId]?.view;
     let lastPh = v0?.playhead ?? 0;
     let lastPlaying = useStore.getState().playback.playing;
+    let lastScroll = v0?.scroll ?? 0;
+    let lastZoom = v0?.zoom ?? 0;
     // Same as the mount-time run of the former layout effect.
     if (v0) flip(v0.playhead, lastPlaying, v0.scroll, v0.zoom);
     return useStore.subscribe((s) => {
       const v = s.project.sequences[seqId]?.view;
       if (!v) return;
       const ph = v.playhead, isPlaying = s.playback.playing;
+      const scrolled = v.scroll !== lastScroll || v.zoom !== lastZoom;
+      lastScroll = v.scroll; lastZoom = v.zoom;
+      if (scrolled && !own && isPlaying && ph === lastPh) ui().setFollowPaused(true);
       if (ph === lastPh && isPlaying === lastPlaying) return;
+      if (isPlaying && !lastPlaying) ui().setFollowPaused(false); // a new play follows again
       lastPh = ph; lastPlaying = isPlaying;
       flip(ph, isPlaying, v.scroll, v.zoom);
     });
