@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JobInfo } from '../../shared/model';
-import { WHISPER_VERBATIM_PROMPT, verbatimApplies, type TranscribeRequest, type TranscribeResult } from '../../shared/whisper';
+import { type TranscribeRequest, type TranscribeResult } from '../../shared/whisper';
 import { JobQueue } from '../../electron/jobs/jobQueue';
 import { setCacheDir } from '../../electron/media/cache';
 import { getFfmpegPath } from '../../electron/media/ffmpeg';
@@ -132,12 +132,27 @@ describe.skipIf(!hasFfmpeg)('transcription job (fake engine)', () => {
     expect((again.job.result as TranscribeResult).cues[0].words).toEqual(first.words);
   });
 
-  it('a verbatim English request passes the filler prompt to whisper-cli (#117)', async () => {
+  it('runs whisper-cli without text context or a prompt, so a hallucinated line cannot loop (#158)', async () => {
     const q = new JobQueue({ throttleMs: 0 });
-    const { job } = await run(q, req({ language: 'en', verbatim: true }), ctx());
+    const { job } = await run(q, req({ language: 'en' }), ctx());
     expect(job.status, job.error).toBe('done');
     const [call] = engineRuns();
-    expect(call.args.slice(-2)).toEqual(['--prompt', WHISPER_VERBATIM_PROMPT]);
+    expect(call.args[call.args.indexOf('-mc') + 1]).toBe('0');
+    expect(call.args).not.toContain('--prompt');
+  });
+
+  it('Transcribe again (force) ignores the cached result and replaces it (#158)', async () => {
+    const q = new JobQueue({ throttleMs: 0 });
+    const first = await run(q, req(), ctx());
+    expect(first.job.status, first.job.error).toBe('done');
+    const runs = engineRuns().length;
+    const cached = await run(q, req(), ctx());
+    expect((cached.job.result as TranscribeResult).cached).toBe(true);
+    expect(engineRuns().length).toBe(runs);
+    const again = await run(q, req({ force: true }), ctx());
+    expect(again.job.status, again.job.error).toBe('done');
+    expect((again.job.result as TranscribeResult).cached).toBeFalsy();
+    expect(engineRuns().length).toBeGreaterThan(runs);
   });
 
   it('transcribes long audio in chunks cut at a quiet moment, with the detected language passed on', async () => {
@@ -228,24 +243,18 @@ describe.skipIf(!hasFfmpeg)('transcription job (fake engine)', () => {
     const b = startTranscribeJob(q, { ...r }, ctx());
     expect(b.id).toBe(a.id);
     expect(startTranscribeJob(q, { ...r, language: 'en' }, ctx()).id).not.toBe(a.id);
-    const enJob = startTranscribeJob(q, { ...r, language: 'en' }, ctx());
-    expect(startTranscribeJob(q, { ...r, language: 'en', verbatim: true }, ctx()).id).not.toBe(enJob.id);
     q.cancelAll();
     await q.waitFor(a.id);
   });
 });
 
 describe('cache key and arguments', () => {
-  it('passes the verbatim prompt for English without translation only (#117)', () => {
-    expect(verbatimApplies({ verbatim: true, language: 'en', translate: false })).toBe(true);
-    expect(verbatimApplies({ verbatim: true, language: 'auto', translate: false })).toBe(false);
-    expect(verbatimApplies({ verbatim: true, language: 'fr', translate: false })).toBe(false);
-    expect(verbatimApplies({ verbatim: true, language: 'en', translate: true })).toBe(false);
-    expect(verbatimApplies({ verbatim: false, language: 'en', translate: false })).toBe(false);
+  it('engine arguments: no text context (-mc 0), no prompt; DTW with flash attention off (#158)', () => {
     const o = { model: 'm.bin', input: 'audio.wav', outBase: 'out', threads: 2, language: 'en', translate: false };
-    expect(whisperArgs(o)).not.toContain('--prompt');
-    const args = whisperArgs({ ...o, prompt: WHISPER_VERBATIM_PROMPT });
-    expect(args.slice(-2)).toEqual(['--prompt', WHISPER_VERBATIM_PROMPT]);
+    const args = whisperArgs(o);
+    expect(args.join(' ')).toContain('-mc 0');
+    expect(args).not.toContain('--prompt');
+    expect(whisperArgs({ ...o, dtw: 'large.v3.turbo' }).slice(-3)).toEqual(['--dtw', 'large.v3.turbo', '-nfa']);
   });
 
   it('changes with every setting that changes the result', async () => {
@@ -256,11 +265,6 @@ describe('cache key and arguments', () => {
       expect(transcriptionSettingsHash(v, 'a'.repeat(64))).not.toBe(h);
     }
     expect(transcriptionSettingsHash(base, 'b'.repeat(64))).not.toBe(h);
-    // Verbatim changes the key only where it changes the run: English, not translating (#117).
-    const en = { ...base, language: 'en' };
-    expect(transcriptionSettingsHash({ ...en, verbatim: true }, 'a'.repeat(64))).not.toBe(transcriptionSettingsHash(en, 'a'.repeat(64)));
-    expect(transcriptionSettingsHash({ ...base, verbatim: true }, 'a'.repeat(64))).toBe(h);
-    expect(transcriptionSettingsHash({ ...en, translate: true, verbatim: true }, 'a'.repeat(64))).toBe(transcriptionSettingsHash({ ...en, translate: true }, 'a'.repeat(64)));
     const f = path.join(tmp, 'key.bin');
     fs.writeFileSync(f, 'x');
     const k1 = await transcriptionMediaKey(f);
