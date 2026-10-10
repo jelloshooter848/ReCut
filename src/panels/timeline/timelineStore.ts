@@ -19,6 +19,13 @@ export interface TimelineUiState {
   markerEditRequest: { markerId: string; nonce: number } | null;
   setMarkerEditorHost(delta: 1 | -1): void;
   requestMarkerEdit(markerId: string | null): void;
+  /**
+   * Playback auto-follow is paused (#140): the user scrolled or zoomed the timeline while it played, so the view
+   * stays put. Resumes when the playhead is back in view, after a seek into view, on the next play, or by the
+   * toolbar's Follow playhead button.
+   */
+  followPaused: boolean;
+  setFollowPaused(v: boolean): void;
   /** Audio track ids whose transcript lane is collapsed to a thin line (#132); kept in local storage. */
   collapsedTranscripts: Record<string, true>;
   toggleTranscriptCollapsed(trackId: string): void;
@@ -52,6 +59,8 @@ export const useTimelineUi = create<TimelineUiState>()((set) => ({
   markerEditRequest: null,
   setMarkerEditorHost: (delta) => set((s) => ({ markerEditorHosts: Math.max(0, s.markerEditorHosts + delta) })),
   requestMarkerEdit: (markerId) => set((s) => ({ markerEditRequest: markerId ? { markerId, nonce: (s.markerEditRequest?.nonce ?? 0) + 1 } : null })),
+  followPaused: false,
+  setFollowPaused: (followPaused) => set((s) => (s.followPaused === followPaused ? s : { followPaused })),
   collapsedTranscripts: readCollapsed(),
   toggleTranscriptCollapsed: (trackId) => set((s) => {
     const next = { ...s.collapsedTranscripts };
