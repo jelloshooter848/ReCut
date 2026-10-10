@@ -208,6 +208,8 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
     let lastMedia: Record<ID, MediaItem> | null = null;
     let lastSettings: StoreState['project']['settings'] | null = null;
     let lastTracks: StoreState['project']['subtitleTracks'] | null = null;
+    /** The last frame the player wrote to the store while playing: any other playhead is a user seek (#139). */
+    let lastWritten: number | null = null;
 
     const apply = (s: StoreState) => {
       const seq = activeSequence(s);
@@ -230,6 +232,12 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
       // Paused: the store playhead is the source of truth (timeline clicks, keyboard, inspector). Publish it to the
       // frame readouts here, in the store update's task, so React renders them in the same commit as the store
       // consumers (the player's onFrame a frame later then finds the value already published: no second commit).
+      // Playing: a playhead the player didn't write (a click on the timeline or the ruler, a jump command) is a seek;
+      // the player keeps playing from there (#139). Its own write-backs (onFrame) are skipped by lastWritten.
+      if (player.isPlaying && !switched && lastWritten !== null && seq.view.playhead !== lastWritten) {
+        lastWritten = seq.view.playhead;
+        player.seek(seq.view.playhead);
+      }
       if (!player.isPlaying && seq.view.playhead !== player.currentFrame()) {
         player.seek(seq.view.playhead);
         frameSig.set(player.currentFrame(), true);
@@ -243,6 +251,7 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
       frameSig.set(f, !player.isPlaying);
       const st = useStore.getState();
       const seq = activeSequence(st);
+      lastWritten = player.isPlaying ? f : null;
       if (seq && seq.view.playhead !== f) st.setView(seq.id, { playhead: f });
       scheduleStatus();
     });
