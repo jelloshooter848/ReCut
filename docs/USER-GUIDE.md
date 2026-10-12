@@ -203,7 +203,10 @@ search use. It runs on your computer: **nothing is uploaded, and transcribing ne
    long projects) and, when a media has several audio streams, choose the stream. Choose the **Model** (installed
    ones; **Manage models…** opens the model list) and the **Language** spoken: the stream's language tag is used
    when it has one, otherwise **Auto-detect** (which listens to the start of the audio). **Translate the speech to
-   English** is off by default; a translated transcript is less exact, because filler words are dropped. A file
+   English** is off by default; a translated transcript is less exact, because filler words are dropped. **Keep other languages as spoken** (off by default, slower) is for films that switch language: the
+   audio is checked in stretches of about 10 seconds and each stretch is transcribed in the language spoken in it,
+   so a German scene in an English film stays German (each line remembers its language). Off, everything is read as
+   the chosen language, which translates other languages into it. A file
    transcribed before with the same model and settings reuses that transcript at once; tick **Transcribe again (ignore
    the saved result)** to make a new one, for example if it came out wrong.
 4. Click **Transcribe**. Each media becomes one job in the **Jobs** list with its progress; cancel it there. Long

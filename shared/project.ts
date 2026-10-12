@@ -1057,6 +1057,7 @@ function repairSubtitleTrack(t: Obj, id: ID): SubtitleTrack {
     return ok;
   }).map((c) => {
     c.id = idOr(c.id, () => uid('cue')); c.text = str(c.text, '');
+    optional(c, 'lang', isStr);
     repairWords(c);
     return c;
   });

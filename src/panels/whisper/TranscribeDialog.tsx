@@ -51,6 +51,7 @@ export function TranscribeDialog() {
   const [languageTouched, setLanguageTouched] = useState(false);
   const [translate, setTranslate] = useState(false);
   const [force, setForce] = useState(false);
+  const [keepLanguages, setKeepLanguages] = useState(false);
   const [query, setQuery] = useState('');
   const [starting, setStarting] = useState(false);
   /** Installed model ids when last seen (null right after opening): spots a model that finishes installing. */
@@ -77,6 +78,7 @@ export function TranscribeDialog() {
     setStarting(false);
     setTranslate(back ? back.translate : false);
     setForce(back ? back.force : false);
+    setKeepLanguages(back ? !!back.keepLanguages : false);
     setLanguage(back ? back.language : 'auto');
     setLanguageTouched(back ? back.languageTouched : false);
     setModel(restore?.model ?? null);
@@ -93,8 +95,8 @@ export function TranscribeDialog() {
   // Keep the choices in the store while open, so Finish in background can bring them back (#110).
   useEffect(() => {
     if (!openFor) return;
-    useWhisperUi.setState({ draft: { openFor: [...openFor], checked: [...checked], streams: { ...streams }, language, languageTouched, translate, force } });
-  }, [openFor, checked, streams, language, languageTouched, translate, force]);
+    useWhisperUi.setState({ draft: { openFor: [...openFor], checked: [...checked], streams: { ...streams }, language, languageTouched, translate, force, keepLanguages } });
+  }, [openFor, checked, streams, language, languageTouched, translate, force, keepLanguages]);
 
   // A model that finishes installing while the dialog is open is selected when none was installed before.
   const installedIds = (models ?? []).filter((m) => m.installed).map((m) => m.id).join(',');
@@ -158,7 +160,7 @@ export function TranscribeDialog() {
       const streamIndex = streamOf(m);
       if (streamIndex === undefined) continue;
       try {
-        await api.startTranscribe({ mediaId: m.id, path: m.path, streamIndex, model: selectedModel, language: lang, translate: translate && !englishOnly, force });
+        await api.startTranscribe({ mediaId: m.id, path: m.path, streamIndex, model: selectedModel, language: lang, translate: translate && !englishOnly, force, keepLanguages: keepLanguages && !englishOnly && !translate });
         queued++;
       } catch (e) {
         toast('error', `Could not start transcribing ${m.name}: ${errText(e)}`);
@@ -251,6 +253,15 @@ export function TranscribeDialog() {
         </label>
         <div className="text-dim text-sm trx-hint" data-testid="transcribe-translate-hint">
           The transcript is less exact when translating: filler words like "um" and "uh" are dropped.
+        </div>
+        <label className="row gap-6 trx-check">
+          <input type="checkbox" checked={keepLanguages && !englishOnly && !translate} disabled={englishOnly || translate}
+            onChange={(e) => setKeepLanguages(e.target.checked)} data-testid="transcribe-keep-languages" />
+          <span className="text-sm">Keep other languages as spoken (slower)</span>
+        </label>
+        <div className="text-dim text-sm trx-hint" data-testid="transcribe-keep-languages-hint">
+          {englishOnly ? 'Needs a multilingual model.' : translate ? 'Not used when translating.'
+            : 'For films that switch language: each stretch is transcribed in the language spoken in it. Otherwise lines in other languages are translated into the chosen language.'}
         </div>
         <label className="row gap-6 trx-check">
           <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} data-testid="transcribe-force" />
