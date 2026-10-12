@@ -40,8 +40,9 @@ import { PRODUCT_NAME } from '../../shared/productIdentity';
  * Bump when a change to extraction / chunking / clean-up changes the text or timing of a result.
  * v5 (#158): `-mc 0` and no verbatim prompt; v4 results could loop on hallucinated lines.
  * v6 (#160): whisper's stock phrases over music ("Thank you." over a logo) are dropped.
+ * v7 (#157): cues of a stream that starts after the file are placed at its start offset (they were early by it).
  */
-export const WHISPER_PIPELINE_VERSION = 6;
+export const WHISPER_PIPELINE_VERSION = 7;
 /** Share of the progress bar for the audio extraction. */
 const EXTRACT_SHARE = 0.1;
 
@@ -219,6 +220,8 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
   const probe = await probeMedia(req.path);
   const stream = probe.audio.find((s) => s.index === req.streamIndex);
   if (!stream) throw new Error(`${path.basename(req.path)} has no audio stream #${req.streamIndex}`);
+  /** Where the stream starts in source time (seconds after the file's start; 0 for most files). */
+  const audioStart = stream.startTime !== undefined && Number.isFinite(stream.startTime) && stream.startTime > 0 ? stream.startTime : 0;
   if (jc.signal.aborted) throw canceled();
 
   await ensureDirSafe(ctx.tempRoot);
@@ -275,7 +278,9 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
       try { json = await fsp.readFile(path.join(tmp, `${outBase}.json`)); } catch { throw new Error('whisper-cli finished without writing its result'); }
       const parsed = parseWhisperJson(json);
       if (!spoken && parsed.language && whisperLanguage(parsed.language)) spoken = parsed.language;
-      cues.push(...segmentsToCues(parsed.segments, start / info.sampleRate, seconds));
+      // The WAV starts with the stream's first sample: a stream that starts after the file does (an audio delay muxed
+      // into an MKV / TS) puts every cue that much later in the source (#157).
+      cues.push(...segmentsToCues(parsed.segments, audioStart + start / info.sampleRate, seconds));
       if (input !== 'audio.wav') await removeQuietly(path.join(tmp, input));
     }
 
