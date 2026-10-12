@@ -2,7 +2,7 @@
 
 Changes on `dev` (and on the personal branches heading there) that are not in a release yet. Every issue branch adds
 its changelog line and its QA block here in the same change, appending to the end of each list so the two personal
-branches rarely conflict. A line marked "(on devJames)" or "(on devDavid)" has not reached `dev` yet. Before a
+branches rarely conflict. A line marked "(on devJames)" or "(on devDavid)" has not reached `dev` yet; the PR into `dev` removes the marks. Before a
 release, QA runs the checklist on `dev`; the release PR turns the draft into the version's `CHANGELOG.md` section and
 resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-release)).
 
@@ -53,17 +53,17 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
   ([#138](https://github.com/jelloshooter848/ReCut/issues/138)).
 - Subtitle position: move subtitles up or down the frame per timeline (Inspector › Subtitles › **Position**,
   **Top** / **Bottom**); the Program and Source monitors and burn-in export use it
-  ([#115](https://github.com/jelloshooter848/ReCut/issues/115)) (on devJames)
+  ([#115](https://github.com/jelloshooter848/ReCut/issues/115))
 - Edit subtitle and transcript lines by hand: double-click a line on the timeline (or right-click › **Edit…**, or the
   pencil in the Subtitles panel) to change its text and timing, split, merge or delete it. Transcript edits change
   the media's transcript, so they show in every timeline and keep following the audio; word highlighting follows the
-  edited text ([#135](https://github.com/jelloshooter848/ReCut/issues/135)) (on devJames)
+  edited text ([#135](https://github.com/jelloshooter848/ReCut/issues/135))
 - A subtitle file can be a video's transcript (Media Inspector › **Transcript**, or right-click a transcript line ›
   **Transcript Source**): T lanes, the on-screen transcript, search and shot naming use it, with estimated word
-  highlighting and a warning when it runs past the end of the video ([#162](https://github.com/jelloshooter848/ReCut/issues/162)) (on devJames)
+  highlighting and a warning when it runs past the end of the video ([#162](https://github.com/jelloshooter848/ReCut/issues/162))
 - Transcribe › **Keep other languages as spoken** (slower): for films that switch language, each stretch of about 10 s
   is transcribed in the language spoken in it instead of being translated into the chosen language
-  ([#163](https://github.com/jelloshooter848/ReCut/issues/163)) (on devJames)
+  ([#163](https://github.com/jelloshooter848/ReCut/issues/163))
 
 ### Changed
 
@@ -84,12 +84,12 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
 - Transcribe dialog: a note under **Translate the speech to English** says a translated transcript is less exact
   ([#117](https://github.com/jelloshooter848/ReCut/issues/117)).
 - **Thumbnails and filmstrips are made again once**, and videos with a start offset are probed again when a project
-  opens ([#154](https://github.com/jelloshooter848/ReCut/issues/154), [#156](https://github.com/jelloshooter848/ReCut/issues/156)) (on devJames)
+  opens ([#154](https://github.com/jelloshooter848/ReCut/issues/154), [#156](https://github.com/jelloshooter848/ReCut/issues/156))
 - A subtitle cue added at the playhead over a clip now moves with that clip (**Unpin from Clip** keeps one in place);
-  transcribing media again asks before replacing a transcript you edited ([#135](https://github.com/jelloshooter848/ReCut/issues/135)) (on devJames)
+  transcribing media again asks before replacing a transcript you edited ([#135](https://github.com/jelloshooter848/ReCut/issues/135))
 - **Detect Shots asks in plain words**: Sensitivity (Fewer cuts / Normal / More cuts) instead of a threshold number, and a
   Shortest shot setting; the Media Inspector's Detect… opens the same dialog, and detecting again over shots you edited
-  warns first ([#142](https://github.com/jelloshooter848/ReCut/issues/142)) (on devJames)
+  warns first ([#142](https://github.com/jelloshooter848/ReCut/issues/142))
 
 ### Fixed
 
@@ -116,17 +116,17 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
 - Whisper wrote stock lines such as "Thank you." or "Thanks for watching!" over an opening logo or music; a spoken
   "Thank you." stays ([#160](https://github.com/jelloshooter848/ReCut/issues/160)).
 - In a file whose audio starts before its video (some FFmpeg-made MKVs), the video was placed late, so an export from
-  the first frame began black, and thumbnails were early ([#154](https://github.com/jelloshooter848/ReCut/issues/154)) (on devJames)
+  the first frame began black, and thumbnails were early ([#154](https://github.com/jelloshooter848/ReCut/issues/154))
 - Thumbnails and filmstrips of MPEG-TS / MPEG-PS files with long keyframe intervals showed the next keyframe instead
-  of the frame at that time ([#156](https://github.com/jelloshooter848/ReCut/issues/156)) (on devJames)
+  of the frame at that time ([#156](https://github.com/jelloshooter848/ReCut/issues/156))
 - Whisper transcripts of an audio stream that starts after the file does were early by that delay
-  ([#157](https://github.com/jelloshooter848/ReCut/issues/157)) (on devJames)
+  ([#157](https://github.com/jelloshooter848/ReCut/issues/157))
 - An opened shot or scene played on past its end into the rest of the file and zoomed out
-  ([#164](https://github.com/jelloshooter848/ReCut/issues/164)) (on devJames)
+  ([#164](https://github.com/jelloshooter848/ReCut/issues/164))
 - The window's title bar, menus and system dialogs are dark to match the app, also when macOS (or Windows) is set
-  to light mode ([#166](https://github.com/jelloshooter848/ReCut/issues/166)) (on devJames)
+  to light mode ([#166](https://github.com/jelloshooter848/ReCut/issues/166))
 - Editing the text of a word-timed subtitle showed the old words in the monitors, and merging subtitles kept only the
-  first one's words ([#135](https://github.com/jelloshooter848/ReCut/issues/135)) (on devJames)
+  first one's words ([#135](https://github.com/jelloshooter848/ReCut/issues/135))
 
 ### Known issues
 
@@ -139,12 +139,12 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
 - The first `npm run dev` / `npm start` from a clone fetches FFmpeg and the speech-to-text engine (`npm run setup`,
   `RECUT_SKIP_SETUP=1` skips it).
 - Cold filmstrips run as balanced FFmpeg batches in one round, further from the perf guardrail
-  ([#155](https://github.com/jelloshooter848/ReCut/issues/155)) (on devJames)
+  ([#155](https://github.com/jelloshooter848/ReCut/issues/155))
 - `docs/NEXT-RELEASE.md` keeps this draft and QA checklist ([#167](https://github.com/jelloshooter848/ReCut/issues/167)).
 
 ## QA checklist
 
-Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as described. A block marked (on devJames) or
+Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as described. A block marked or
 (on devDavid) needs that branch until it is merged into `dev`.
 
 ### #145 Sequence renamed Timeline
@@ -221,7 +221,7 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Step to another shot with ↓ → the bar shows the full file.
 - [ ] Open a whole file → its full length, as before.
 
-### #164 An opened shot or scene stops at its end (on devJames)
+### #164 An opened shot or scene stops at its end
 
 - [ ] Open a shot, press Play → it plays the shot and stops on its last frame, still zoomed.
 - [ ] Press Play again → it starts over from the shot's In.
@@ -307,7 +307,7 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Transcribe a film with a music-only opening (studio logo) → no "Thank you." or "Thanks for watching!" there.
 - [ ] A clip where someone says "Thank you." keeps that line.
 
-### #157 Transcripts of late-starting audio (on devJames)
+### #157 Transcripts of late-starting audio
 
 - [ ] Use an MKV or TS whose audio starts after its video (`ffprobe -show_streams` gives the audio a later
       `start_time` than the video). Transcribe it → in the Source monitor, lines appear as the words are spoken, not
@@ -331,7 +331,7 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Export to an exFAT-formatted USB stick or SSD → "Export complete", no "render file … was replaced by another
       file" error.
 
-### #154 Audio that starts before the video (on devJames)
+### #154 Audio that starts before the video
 
 - [ ] Use an MKV whose audio starts before its video (for example made by FFmpeg 6.1 with AAC; `ffprobe
       -show_format` gives a negative `start_time`). Insert it from its first frame and export → the export starts
@@ -348,7 +348,7 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Import a file that needs a proxy, save, let the proxy finish, then close and reopen the project → the proxy is
       ready (a toast says how many were restored), not "Needs proxy".
 
-### #156 Thumbnails of TS files (on devJames)
+### #156 Thumbnails of TS files
 
 - [ ] Import a TS recording (TV or camcorder) → each filmstrip thumbnail shows the frame at its time (compare with
       the Source monitor at the same timecode), not a frame up to a few seconds later.
@@ -360,7 +360,7 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Start again → no "Recover unsaved changes?".
 - [ ] Import a media and quit without saving → the "Save changes?" prompt appears as before.
 
-### #115 Subtitle position (on devJames)
+### #115 Subtitle position
 
 - [ ] With nothing selected, the Inspector shows the timeline; its **Subtitles** section says Position "Bottom (default)".
 - [ ] Click **Top** → subtitles move to the top of the frame in the Program monitor (and the Source monitor, for a clip with subtitles); the label reads "7 % from the top". Undo puts them back.
@@ -368,13 +368,13 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Export with **Burn in** subtitles at Top → the burned-in text is at the top of the frame, where the Program monitor showed it. Try once with **Highlight the spoken word** on too.
 - [ ] Save, close and reopen the project → the position is kept. **Bottom** returns to the default.
 
-### #166 Dark title bar (on devJames)
+### #166 Dark title bar
 
 - [ ] On macOS, set System Settings › Appearance to **Light**, then start ReCut → the window's title bar is dark like the rest of the app.
 - [ ] Open a menu and **File › Open Project…** → the menus and the file dialog are dark too.
 - [ ] Switch macOS back to **Dark** → nothing changes in ReCut.
 
-### #135 Editing subtitle and transcript lines (on devJames)
+### #135 Editing subtitle and transcript lines
 
 - [ ] Transcribe a clip, insert it, and double-click a line in its **T** lane → the editor opens and says the edit changes the media's transcript. Fix a word, Save → the T lane, the Subtitles row and both monitors show the fix; with word highlighting on, the right word lights up.
 - [ ] Change the line's **End** in the editor → it ends there on the timeline; it can't run past the clip's end.
@@ -385,7 +385,7 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] On a subtitle track, add a cue at the playhead over a clip (Subtitles panel › **Add cue at playhead**), then move the clip → the cue moves with it. Right-click the cue › **Unpin from Clip**, move the clip again → the cue stays put.
 - [ ] In the Subtitles panel, the pencil on a cue opens the same editor; typing new Start/End times moves the cue.
 
-### #142 Detect Shots settings (on devJames)
+### #142 Detect Shots settings
 
 - [ ] Right-click a video › **Detect Shots…** → Sensitivity shows **Normal** and Shortest shot **1 second**; no threshold number.
 - [ ] Detect with **Fewer cuts**, then again with **More cuts** → fewer shots, then more.
@@ -394,7 +394,7 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Select the video, Media Inspector › **Detect…** → the same dialog opens.
 - [ ] Preferences › Shot detection shows the same choices; a project from 0.8.2 with a custom threshold shows **Custom (0.40)**.
 
-### #162 A subtitle file as the transcript (on devJames)
+### #162 A subtitle file as the transcript
 
 - [ ] Import a video with a matching .srt next to it (and transcribe it with Whisper too). Insert it; the T lane shows the Whisper lines.
 - [ ] Select the video, Media Inspector › Subtitle tracks › **Transcript** › pick the SRT → the T lane, the Subtitles row and the Program and Source monitors show the SRT's lines (no `<i>` tags); with highlighting on, words light up (estimated).
@@ -402,7 +402,7 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Choose an SRT made for another version that runs past the end of the video → the Inspector warns about it.
 - [ ] With the SRT chosen, double-click a line and fix it → the fix is saved in the SRT track (it shows after reopening the project).
 
-### #163 Mixed-language audio (on devJames)
+### #163 Mixed-language audio
 
 - [ ] Transcribe a film that switches language (e.g. *The Bourne Identity*) with the language set to English and **Keep other languages as spoken** off → German / Italian lines come out in English (translated).
 - [ ] Transcribe again with the option on (and **Transcribe again** ticked) → the German police scene (about 10:50) and the Italian fishermen (about 1:55) are in German / Italian; the English stays English. It takes noticeably longer (about 4×).
