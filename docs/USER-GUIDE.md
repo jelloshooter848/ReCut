@@ -98,11 +98,15 @@ shows its state, with **Rebuild** if it failed.
 ## 3. Detect shots
 
 A **shot** runs from one cut to the next. Shots are grouped into **scenes** (the Scenes panel), and scenes into
-timelines.
+**sequences** (the Sequences panel); you edit on **timelines**.
 
-1. Right-click a video › **Detect Shots…**. Set the **Threshold** (higher means fewer, stronger cuts) and click
-   **Detect**. The Media Inspector › **Detect** button and Jobs › Proxies › **Detect shots: selected** / **All
-   without shots** do the same.
+1. Right-click a video › **Detect Shots…** (or the Media Inspector › **Detect…**). Choose the **Sensitivity**:
+   **Normal**, **Fewer cuts** (ignores weaker changes such as fast camera moves) or **More cuts** (catches soft cuts
+   and dissolves), and the **Shortest shot** to keep (cuts closer than that to the previous one are ignored; 1 s by
+   default). Click **Detect**. Detection compares each frame with the frames around it, so steady camera motion is
+   not taken for a cut. Jobs › Proxies › **Detect shots: selected** / **All without shots** use the project's
+   settings (Preferences › Shot detection). If the video's shots were renamed, merged, split, tagged or deleted, the
+   dialog warns that detecting again replaces them, and its button reads **Detect and Replace**.
 2. Detected shots appear under the media row in the Project panel. Right-click a shot to **Load in Source**,
    **Insert at Playhead**, **Make Scene from Shot…**, **Merge with Next**, **Split at Source Time…**, **Rename**,
    **Tag…**, **Add to Scene Library** or **Delete Shot**.

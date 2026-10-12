@@ -9,6 +9,7 @@ import { openTranscribeDialog } from '@/whisper/whisperUi';
 import type { BinRow, GroupRow, SceneRow, SequenceRow } from './tree';
 import type { PanelDialog } from './dialogs';
 import { openSuggestScenes } from './suggestScenes';
+import { openDetectShots } from './DetectShotsDialog';
 import {
   addSceneToLibrary, cancelMediaJob, contiguousShots, deleteSequenceConfirmed, generateProxy, importEmbedded, importSubtitlesViaDialog, importViaDialog,
   insertAllShots, insertAtPlayhead, insertRangesAtPlayhead, loadInSource, locateMedia, mergeWithNext, nameShotsFromTranscript, openSequence, removeMediaConfirmed, revealInFolder,
@@ -56,7 +57,7 @@ export function mediaMenu(m: MediaItem, env: MenuEnv): MenuItem[] {
       : { label: n(m.proxy.status === 'ready' ? 'Regenerate Proxy' : 'Generate Proxy'), disabled: m.offline || m.kind !== 'video', onSelect: () => { for (const id of ids) void generateProxy(id); } },
     sceneBusy
       ? { label: 'Cancel Shot Detection', onSelect: () => { void cancelMediaJob(m.id, 'sceneDetect'); } }
-      : { label: n('Detect Shots…'), disabled: m.offline || m.kind !== 'video', onSelect: () => { for (const id of ids) env.expandScenes(id); env.openPanelDialog({ type: 'detect', ids: ids.filter((id) => st.project.media[id]?.kind === 'video') }); } },
+      : { label: n('Detect Shots…'), disabled: m.offline || m.kind !== 'video', onSelect: () => { for (const id of ids) env.expandScenes(id); openDetectShots(ids); } },
     { label: 'Import Subtitles…', disabled: m.offline, onSelect: () => { void importSubtitlesViaDialog(m.id); } },
     {
       label: 'Embedded Subtitles', disabled: m.offline || embedded.length === 0,

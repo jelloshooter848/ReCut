@@ -33,6 +33,9 @@ export class ProjectIncompatibleError extends Error {
   constructor(message: string, readonly reason: 'newer' | 'notProject' = 'notProject') { super(message); this.name = 'ProjectIncompatibleError'; }
 }
 
+/** Longest minimum shot length the settings accept (seconds). */
+export const MAX_MIN_SHOT_SECONDS = 30;
+
 export function defaultSettings(): ProjectSettings {
   return {
     useProxies: true,
@@ -46,6 +49,7 @@ export function defaultSettings(): ProjectSettings {
     showSourceTimecodeOnClips: false,
     highlightSpokenWords: true,
     nameShotsFromTranscript: true,
+    minShotSeconds: 1,
   };
 }
 
@@ -880,6 +884,7 @@ function repairMedia(m: Obj, id: ID): MediaItem {
   m.notes = str(m.notes, '');
   m.addedAt = num(m.addedAt, 0);
   optional(m, 'sceneDetectStatus', (v) => isStr(v) && Object.hasOwn(JOB_STATES, v));
+  optional(m, 'shotsEdited', isBool);
   optional(m, 'waveformStatus', (v) => isStr(v) && Object.hasOwn(WAVEFORM_STATES, v));
   // Jobs do not survive a restart (expected, not a repair).
   if (m.sceneDetectStatus === 'running') m.sceneDetectStatus = 'none';
@@ -1094,6 +1099,7 @@ function repairSettings(v: unknown): ProjectSettings {
   s.autosaveIntervalSec = clampInt(s.autosaveIntervalSec, AUTOSAVE_INTERVAL_MIN_SEC, AUTOSAVE_INTERVAL_MAX_SEC);
   s.defaultTransitionFrames = clampInt(s.defaultTransitionFrames, DEFAULT_TRANSITION_FRAMES_MIN, DEFAULT_TRANSITION_FRAMES_MAX);
   if (!unit(s.sceneThreshold)) { s.sceneThreshold = d.sceneThreshold; note(FIELD_RESET); }
+  if (!(s.minShotSeconds >= 0 && s.minShotSeconds <= MAX_MIN_SHOT_SECONDS)) { s.minShotSeconds = d.minShotSeconds; note(FIELD_RESET); }
   return s;
 }
 

@@ -1,11 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { DetectedScene, ID, MediaItem } from '@shared/model';
-import { Button, Dialog, NumberField, TagInput, TextField, Toggle } from '@/components/ui';
+import { Button, Dialog, NumberField, TagInput, TextField } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
 import { useStore, fileNameOf } from '@/state';
 import { formatClock } from '@shared/time';
 import { parseEpisodeInfo } from './parseIdentity';
-import { detectScenes, makeSceneFromShots, nextSceneName } from './actions';
+import { makeSceneFromShots, nextSceneName } from './actions';
 import { NamePromptDialog } from '@/panels/scenes/NamePromptDialog';
 
 /** Partial identity update; store.updateMedia merges over the current identity and clears fields set to undefined. */
@@ -18,7 +18,6 @@ export type PanelDialog =
   | { type: 'collection'; ids: ID[] }
   | { type: 'tag'; mediaId: ID; sceneId: ID }
   | { type: 'split'; mediaId: ID; sceneId: ID }
-  | { type: 'detect'; ids: ID[] }
   | { type: 'makeScene'; mediaId: ID; shotIds: ID[] }
   | null;
 
@@ -150,36 +149,6 @@ export function SplitSceneDialog({ media, scene, onClose }: { media: MediaItem; 
   );
 }
 
-// ---------------------------------------------------------------- Detect shots
-
-export function DetectScenesDialog({ ids, onClose }: { ids: ID[]; onClose: () => void }) {
-  const defaultThreshold = useStore((s) => s.project.settings.sceneThreshold);
-  const [threshold, setThreshold] = useState(defaultThreshold);
-  const [saveDefault, setSaveDefault] = useState(false);
-  const nameShots = useStore((s) => s.project.settings.nameShotsFromTranscript);
-  useEffect(() => { setThreshold(defaultThreshold); }, [defaultThreshold]);
-  const run = () => {
-    if (saveDefault && threshold !== defaultThreshold) useStore.getState().setSettings({ sceneThreshold: threshold });
-    void detectScenes(ids, threshold);
-    onClose();
-  };
-  return (
-    <Dialog open title="Detect Shots" onClose={onClose} width={380}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={run} data-testid="detect-run">Detect</Button></>}>
-      <div className="pp-dialog-grid">
-        <label>Threshold</label>
-        <div className="row gap-6"><NumberField value={threshold} onChange={setThreshold} min={0.05} max={0.95} step={0.01} precision={2} /><span className="text-dim text-sm">lower = more cuts</span></div>
-        <label />
-        <Toggle checked={saveDefault} onChange={setSaveDefault} label="Save as project default" />
-        <label />
-        <Toggle checked={nameShots} onChange={(v) => useStore.getState().setSettings({ nameShotsFromTranscript: v })} label="Name shots from the transcript"
-          title="When the video has a Whisper transcript or subtitles, each shot is named from the first words spoken in it" data-testid="detect-name-shots" />
-      </div>
-      <div className="text-dim text-xs mt-8">Finds the cuts between shots in {ids.length} file{ids.length === 1 ? '' : 's'} in the background. Existing detected shots are replaced.</div>
-    </Dialog>
-  );
-}
-
 // ---------------------------------------------------------------- host
 
 export function PanelDialogs({ dialog, onClose }: { dialog: PanelDialog; onClose: () => void }) {
@@ -190,7 +159,6 @@ export function PanelDialogs({ dialog, onClose }: { dialog: PanelDialog; onClose
     if (!items.length) return null;
     return dialog.type === 'series' ? <OrganizeSeriesDialog items={items} onClose={onClose} /> : <CollectionDialog items={items} onClose={onClose} />;
   }
-  if (dialog.type === 'detect') return <DetectScenesDialog ids={dialog.ids} onClose={onClose} />;
   if (dialog.type === 'makeScene') {
     const { mediaId, shotIds } = dialog;
     return (

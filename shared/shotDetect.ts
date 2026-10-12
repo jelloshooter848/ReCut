@@ -138,3 +138,13 @@ export function adaptiveThresholdFor(setting: number): number {
   const t = Number.isFinite(setting) ? Math.min(1, Math.max(0, setting)) : 0.35;
   return Math.max(1.2, (t * 3.0) / 0.35);
 }
+
+/** Sensitivity presets of the shot threshold setting (#142): fewer, normal (PySceneDetect's default) or more cuts. */
+export const SHOT_SENSITIVITY = { fewer: 0.5, normal: 0.35, more: 0.25 } as const;
+export type ShotSensitivity = keyof typeof SHOT_SENSITIVITY;
+
+/** The preset a threshold setting is, or 'custom' for any other value. */
+export function shotSensitivityOf(threshold: number): ShotSensitivity | 'custom' {
+  for (const k of Object.keys(SHOT_SENSITIVITY) as ShotSensitivity[]) if (Math.abs(SHOT_SENSITIVITY[k] - threshold) < 1e-6) return k;
+  return 'custom';
+}

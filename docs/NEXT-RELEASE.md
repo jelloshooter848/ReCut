@@ -81,6 +81,9 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
   opens ([#154](https://github.com/jelloshooter848/ReCut/issues/154), [#156](https://github.com/jelloshooter848/ReCut/issues/156)) (on devJames)
 - A subtitle cue added at the playhead over a clip now moves with that clip (**Unpin from Clip** keeps one in place);
   transcribing media again asks before replacing a transcript you edited ([#135](https://github.com/jelloshooter848/ReCut/issues/135)) (on devJames)
+- **Detect Shots asks in plain words**: Sensitivity (Fewer cuts / Normal / More cuts) instead of a threshold number, and a
+  Shortest shot setting; the Media Inspector's Detect… opens the same dialog, and detecting again over shots you edited
+  warns first ([#142](https://github.com/jelloshooter848/ReCut/issues/142)) (on devJames)
 
 ### Fixed
 
@@ -121,9 +124,7 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
 
 ### Known issues
 
-- Shot detection on long handheld or talking-head footage is still being checked; there is no minimum shot length or
-  plain-words sensitivity setting yet, and re-detecting replaces edited shots without asking
-  ([#142](https://github.com/jelloshooter848/ReCut/issues/142)).
+- None yet.
 
 ### Development
 
@@ -377,3 +378,12 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Transcribe the same media again → a prompt asks before replacing your edits.
 - [ ] On a subtitle track, add a cue at the playhead over a clip (Subtitles panel › **Add cue at playhead**), then move the clip → the cue moves with it. Right-click the cue › **Unpin from Clip**, move the clip again → the cue stays put.
 - [ ] In the Subtitles panel, the pencil on a cue opens the same editor; typing new Start/End times moves the cue.
+
+### #142 Detect Shots settings (on devJames)
+
+- [ ] Right-click a video › **Detect Shots…** → Sensitivity shows **Normal** and Shortest shot **1 second**; no threshold number.
+- [ ] Detect with **Fewer cuts**, then again with **More cuts** → fewer shots, then more.
+- [ ] Set Shortest shot to **3 seconds** → no shot is shorter than 3 s (except possibly the last).
+- [ ] Rename a shot, then open Detect Shots again → a warning says your edits will be replaced, and the button reads **Detect and Replace**.
+- [ ] Select the video, Media Inspector › **Detect…** → the same dialog opens.
+- [ ] Preferences › Shot detection shows the same choices; a project from 0.8.2 with a custom threshold shows **Custom (0.40)**.

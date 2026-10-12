@@ -812,13 +812,14 @@ export const useStore = create<RecutStore>()((set, get) => {
         }
         m.detectedScenes = scenes;
         m.sceneDetectStatus = 'done';
+        delete m.shotsEdited;
       });
     },
     renameDetectedScene(mediaId, sceneId, name) {
-      commit('Rename scene', (d) => { const s = d.media[mediaId]?.detectedScenes.find((x) => x.id === sceneId); if (s) s.name = name; });
+      commit('Rename shot', (d) => { const m = d.media[mediaId]; const s = m?.detectedScenes.find((x) => x.id === sceneId); if (m && s) { s.name = name; m.shotsEdited = true; } });
     },
     mergeDetectedScenes(mediaId, sceneIds) {
-      commit('Merge scenes', (d) => {
+      commit('Merge shots', (d) => {
         const m = d.media[mediaId];
         if (!m || sceneIds.length < 2) return;
         const want = new Set(sceneIds);
@@ -835,10 +836,11 @@ export const useStore = create<RecutStore>()((set, get) => {
           for (const c of s.characters) if (!first.characters.includes(c)) first.characters.push(c);
         }
         m.detectedScenes = list.filter((s, i) => i === idx[0] || !want.has(s.id));
+        m.shotsEdited = true;
       });
     },
     splitDetectedScene(mediaId, sceneId, atSeconds) {
-      commit('Split scene', (d) => {
+      commit('Split shot', (d) => {
         const m = d.media[mediaId];
         if (!m) return;
         const i = m.detectedScenes.findIndex((s) => s.id === sceneId);
@@ -848,18 +850,20 @@ export const useStore = create<RecutStore>()((set, get) => {
         const tail: DetectedScene = { id: uid('dsc'), start: atSeconds, end: s.end, name: `${s.name} (2)`, tags: [...s.tags], characters: [...s.characters] };
         s.end = atSeconds;
         m.detectedScenes.splice(i + 1, 0, tail);
+        m.shotsEdited = true;
       });
     },
     tagDetectedScene(mediaId, sceneId, patch) {
-      commit('Tag scene', (d) => {
+      commit('Tag shot', (d) => {
         const s = d.media[mediaId]?.detectedScenes.find((x) => x.id === sceneId);
         if (!s) return;
         if (patch.tags) { s.tags = [...patch.tags]; addToVocab(d.tags, 'custom', patch.tags); }
         if (patch.characters) { s.characters = [...patch.characters]; addToVocab(d.tags, 'characters', patch.characters); }
+        const m = d.media[mediaId]; if (m) m.shotsEdited = true;
       });
     },
     deleteDetectedScene(mediaId, sceneId) {
-      commit('Delete scene', (d) => { const m = d.media[mediaId]; if (m) m.detectedScenes = m.detectedScenes.filter((s) => s.id !== sceneId); });
+      commit('Delete shot', (d) => { const m = d.media[mediaId]; if (m) { m.detectedScenes = m.detectedScenes.filter((s) => s.id !== sceneId); m.shotsEdited = true; } });
     },
     relinkMedia(id, newPath, stat) {
       if (get().project.media[id]) relinkAwaitingProbe.add(id);

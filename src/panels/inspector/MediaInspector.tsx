@@ -1,10 +1,11 @@
 /** Media inspector: identity / category / tags, probe summary, proxy + scene detection status and subtitle tracks. */
+import { openDetectShots } from '@/panels/project/DetectShotsDialog';
 import React, { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Play, ScanSearch, Square, X } from 'lucide-react';
 import { MEDIA_CATEGORIES, type ID, type JobInfo, type MediaCategory, type MediaItem, type SourceIdentity } from '@shared/model';
 import { fpsLabel, fpsValue } from '@shared/time';
-import { identityLabel, mediaSubtitleTracks, setMediaAudioStream, startProxy, startSceneDetect, useStore } from '@/state';
+import { identityLabel, mediaSubtitleTracks, setMediaAudioStream, startProxy, useStore } from '@/state';
 import { isDisplayableImage, isStillImage, mediaNeedsProxyForPreview, previewPlaybackLabel } from '@/playback/mediaSource';
 import type { StoreState } from '@/state';
 import { useJobsStore } from '@/app/jobsStore';
@@ -157,7 +158,7 @@ function SingleMedia({ m }: { m: MediaItem }) {
           {sceneJob ? (
             <IconButton icon={Square} label="Cancel scene detection" size="sm" onClick={() => cancelJob(sceneJob.id)} />
           ) : (
-            <Button size="sm" icon={ScanSearch} disabled={m.kind !== 'video' || m.offline || m.sceneDetectStatus === 'running'} title="Detect shot cuts" onClick={() => { void startSceneDetect(m.id); }}>Detect</Button>
+            <Button size="sm" icon={ScanSearch} disabled={m.kind !== 'video' || m.offline || m.sceneDetectStatus === 'running'} title="Detect shot cuts…" onClick={() => openDetectShots([m.id])}>Detect…</Button>
           )}
         </Row>
         <Row label="Waveform"><Value dim>{m.waveformStatus ?? 'none'}</Value></Row>

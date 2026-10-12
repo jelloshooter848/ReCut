@@ -1,4 +1,5 @@
 import { SuggestScenesHost } from '@/panels/project/SuggestScenesDialog';
+import { DetectShotsHost } from '@/panels/project/DetectShotsDialog';
 import React, { useEffect } from 'react';
 import { Keyboard, Loader2, Maximize } from 'lucide-react';
 import { Layout } from '@/components/layout';
@@ -119,6 +120,7 @@ export function App() {
       <ShortcutsDialog />
       <NewSequenceDialog />
       <SuggestScenesHost />
+      <DetectShotsHost />
       <PreferencesDialog />
       <SpeedDialog />
       <RelinkDialog />
