@@ -20,7 +20,7 @@ import { getFfmpegPath } from '../../electron/media/ffmpeg';
 import { WHISPER_CLI_NAME } from '../../electron/whisper/engine';
 import { _resetVerifiedModels, setTestWhisperModels } from '../../electron/whisper/models';
 import {
-  engineFileArg, startTranscribeJob, transcribeJobTitle, transcriptionCachePath, transcriptionMediaKey, transcriptionSettingsHash,
+  engineFileArg, parseDetectedLanguage, startTranscribeJob, transcribeJobTitle, transcriptionCachePath, transcriptionMediaKey, transcriptionSettingsHash,
   whisperArgs, type TranscribeJobContext,
 } from '../../electron/whisper/transcribeJob';
 import { readWavInfo, planChunks, wavHeader } from '../../electron/whisper/wav';
@@ -119,6 +119,25 @@ describe.skipIf(!hasFfmpeg)('transcription job (fake engine)', () => {
     expect(engineRuns()).toHaveLength(1);
   });
 
+  it('a stream that starts after the file: cues and words are placed at its start offset (#157)', async () => {
+    process.env.FAKE_WHISPER_TOKENS = '1';
+    try {
+      // The same audio muxed with a 0.5 s delay (an MKV whose audio starts after its video).
+      const late = path.join(tmp, 'late audio.mkv');
+      ffmpeg(['-f', 'lavfi', '-i', 'color=c=black:s=64x64:r=25:d=6', '-itsoffset', '0.5', '-i', media,
+        '-map', '0:v', '-map', '1:a:0', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'flac', late]);
+      const q = new JobQueue({ throttleMs: 0 });
+      const plain = (await run(q, req(), ctx())).job.result as TranscribeResult;
+      const lateRun = await run(q, req({ path: late, streamIndex: 1 }), ctx());
+      expect(lateRun.job.status, lateRun.job.error).toBe('done');
+      const shifted = lateRun.job.result as TranscribeResult;
+      const offset = shifted.cues[0].start - plain.cues[0].start;
+      expect(offset).toBeGreaterThan(0.45);
+      expect(offset).toBeLessThan(0.55);
+      expect(shifted.cues[0].words![0].start - plain.cues[0].words![0].start).toBeCloseTo(offset, 3);
+    } finally { delete process.env.FAKE_WHISPER_TOKENS; }
+  });
+
   it('keeps word timing from -ojf tokens, through the cache too (#118)', async () => {
     process.env.FAKE_WHISPER_TOKENS = '1';
     const q = new JobQueue({ throttleMs: 0 });
@@ -130,6 +149,36 @@ describe.skipIf(!hasFfmpeg)('transcription job (fake engine)', () => {
     const again = await run(q, req(), ctx());
     expect((again.job.result as TranscribeResult).cached).toBe(true);
     expect((again.job.result as TranscribeResult).cues[0].words).toEqual(first.words);
+  });
+
+  it('keep other languages (#163): each ~10 s stretch in its detected language; unsure guesses keep the main one', async () => {
+    const long = path.join(tmp, 'mixed.mkv');
+    ffmpeg(['-f', 'lavfi', '-i', 'sine=f=300:r=48000:d=70', '-c:a', 'flac', long]);
+    process.env.FAKE_WHISPER_DETECT = 'en:0.9,de:0.95,zh:0.4,en:0.9'; // the last answer repeats
+    try {
+      const q = new JobQueue({ throttleMs: 0 });
+      const { job } = await run(q, req({ path: long, language: 'auto', keepLanguages: true }), ctx());
+      expect(job.status, job.error).toBe('done');
+      const runs = engineRuns();
+      const detects = runs.filter((r) => r.args.includes('-dl')).length;
+      expect(detects).toBeGreaterThanOrEqual(6); // 70 s in stretches of about 10 s (cut at the quietest point nearby)
+      expect(detects).toBeLessThanOrEqual(10);
+      const langs = runs.filter((r) => !r.args.includes('-dl')).map((r) => r.args[r.args.indexOf('-l') + 1]);
+      expect(langs).toEqual(['en', 'de', 'en']); // the zh guess (p 0.4) keeps English, the main language
+      const res = job.result as TranscribeResult;
+      expect(res.spokenLanguage).toBe('en');
+      expect(new Set(res.cues.map((c) => c.lang))).toEqual(new Set(['en', 'de']));
+      const de = res.cues.filter((c) => c.lang === 'de');
+      expect(Math.min(...de.map((c) => c.start))).toBeGreaterThanOrEqual(8); // the second stretch: about 10 s in, cut at the quietest point ±2 s
+      expect(Math.max(...de.map((c) => c.start))).toBeLessThan(22);
+    } finally { delete process.env.FAKE_WHISPER_DETECT; }
+  }, 60_000);
+
+  it('keep other languages is part of the cache key, and ignored when translating', () => {
+    const base = { streamIndex: 1, model: 'small', language: 'en', translate: false };
+    expect(transcriptionSettingsHash({ ...base, keepLanguages: true }, 'a'.repeat(64))).not.toBe(transcriptionSettingsHash(base, 'a'.repeat(64)));
+    expect(parseDetectedLanguage(['x', 'whisper_lang_auto_detect_with_state: auto-detected language: de (p = 0.931000)'])).toEqual({ code: 'de', p: 0.931 });
+    expect(parseDetectedLanguage(['nothing here'])).toBeNull();
   });
 
   it('runs whisper-cli without text context or a prompt, so a hallucinated line cannot loop (#158)', async () => {

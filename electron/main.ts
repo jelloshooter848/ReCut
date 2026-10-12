@@ -9,7 +9,7 @@
  *  RECUT_UPDATE_CHECK=0 / RECUT_UPDATE_URL — update notice (see electron/updateIpc.ts)
  * Test-only user-data switches: electron/userDataStartup.ts.
  */
-import { app, BrowserWindow, dialog, net, protocol, screen, shell } from 'electron';
+import { app, BrowserWindow, dialog, nativeTheme, net, protocol, screen, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { IPC, MEDIA_SCHEME } from '../shared/ipc';
@@ -175,6 +175,9 @@ function rememberBounds(w: BrowserWindow, now = false): void {
 }
 
 async function createWindow(): Promise<BrowserWindow> {
+  // The app is always dark: the window's title bar, native menus and system dialogs follow it rather than the
+  // system's light / dark setting (#166; on macOS in light mode the title bar was white above the dark app).
+  nativeTheme.themeSource = 'dark';
   const prefs = await io.readPrefs(userData());
   const bounds = savedBounds(prefs);
   const workArea = screen.getPrimaryDisplay().workAreaSize;

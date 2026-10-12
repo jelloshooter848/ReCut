@@ -35,6 +35,8 @@ export interface AudioStreamInfo {
    * layoutForChannels): channels are then numbered, not named (shared/audioChannels.ts). Absent on older probes.
    */
   layoutGuessed?: boolean;
+  /** Seconds the stream starts after the file does (an audio delay muxed in, #157); absent when it starts with it. */
+  startTime?: number;
 }
 
 export interface VideoStreamInfo {
@@ -71,10 +73,20 @@ export interface MediaProbe {
   audio: AudioStreamInfo[];
   subtitles: SubtitleStreamInfo[];
   startTime: number;            // container start time (seconds), used to normalize seeking
+  /**
+   * Seconds the container starts BEFORE 0 (a negative start_time, which `startTime` clamps to 0; #154). FFmpeg's input
+   * `-ss` and `-t` count from that raw start, so they are moved by it. Absent when the file starts at or after 0.
+   */
+  startLead?: number;
   bitrate?: number;
   /** Whether Chromium can decode this file directly (container + codecs). */
   browserPlayable: boolean;
   playabilityReason?: string;
+  /**
+   * Revision of the probe that made this (PROBE_REVISION in shared/media.ts). Absent on probes from before revision 2
+   * (#154), whose stream start offsets could be measured from a negative container start.
+   */
+  probeRev?: number;
 }
 
 export type ProxyStatus = 'none' | 'queued' | 'running' | 'ready' | 'failed';
@@ -136,6 +148,13 @@ export interface MediaItem {
   proxy: ProxyInfo;
   detectedScenes: DetectedScene[];
   sceneDetectStatus?: 'none' | 'running' | 'done' | 'failed';
+  /** The detected shots were renamed, merged, split, tagged or deleted: detecting again asks before replacing them (#142). */
+  shotsEdited?: boolean;
+  /**
+   * The subtitle track used as this media's transcript (#162): T lanes, the on-screen transcript, search and naming
+   * read it. Absent (or a track that is gone): the Whisper transcript, chosen automatically.
+   */
+  transcriptTrackId?: ID;
   subtitleTrackIds: ID[];
   thumbnailTime?: number;   // poster frame time (seconds)
   notes: string;
@@ -343,6 +362,11 @@ export interface Sequence {
   videoTracks: Track[];
   audioTracks: Track[];
   subtitleTracks: SequenceSubtitleTrack[];
+  /**
+   * Where subtitles sit, as a fraction of the frame height from the top (0.05..0.95; shared/subtitlePosition.ts,
+   * #115). Used by the Program and Source monitors and burn-in export. Absent: the default position.
+   */
+  subtitlePosition?: number;
   markers: Marker[];
   storyBlocks: StoryBlock[];
   snapshots: SequenceSnapshot[];
@@ -399,6 +423,8 @@ export interface SubtitleCue {
   text: string;
   /** Per-word timing (Whisper transcripts); the words joined by spaces are `text`. */
   words?: SubtitleWord[];
+  /** Language the line was transcribed in, when it differs by stretch (Whisper, keep other languages, #163). */
+  lang?: string;
 }
 
 export interface SubtitleTrack {
@@ -416,6 +442,8 @@ export interface SubtitleTrack {
    * tracks not read from a stream.
    */
   streamIndex?: number;
+  /** Cues edited by hand (#135): transcribing the stream again asks before replacing them. */
+  edited?: boolean;
 }
 
 export interface TagVocabulary {
@@ -440,6 +468,8 @@ export interface ProjectSettings {
   highlightSpokenWords: boolean;
   /** Name newly detected shots from the media's transcript or subtitles, when it has one (#144). */
   nameShotsFromTranscript: boolean;
+  /** Shortest shot detection keeps, in seconds: cuts closer than this to the previous one are dropped (#142). */
+  minShotSeconds: number;
 }
 
 export interface Project {

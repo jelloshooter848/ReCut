@@ -98,11 +98,15 @@ shows its state, with **Rebuild** if it failed.
 ## 3. Detect shots
 
 A **shot** runs from one cut to the next. Shots are grouped into **scenes** (the Scenes panel), and scenes into
-timelines.
+**sequences** (the Sequences panel); you edit on **timelines**.
 
-1. Right-click a video › **Detect Shots…**. Set the **Threshold** (higher means fewer, stronger cuts) and click
-   **Detect**. The Media Inspector › **Detect** button and Jobs › Proxies › **Detect shots: selected** / **All
-   without shots** do the same.
+1. Right-click a video › **Detect Shots…** (or the Media Inspector › **Detect…**). Choose the **Sensitivity**:
+   **Normal**, **Fewer cuts** (ignores weaker changes such as fast camera moves) or **More cuts** (catches soft cuts
+   and dissolves), and the **Shortest shot** to keep (cuts closer than that to the previous one are ignored; 1 s by
+   default). Click **Detect**. Detection compares each frame with the frames around it, so steady camera motion is
+   not taken for a cut. Jobs › Proxies › **Detect shots: selected** / **All without shots** use the project's
+   settings (Preferences › Shot detection). If the video's shots were renamed, merged, split, tagged or deleted, the
+   dialog warns that detecting again replaces them, and its button reads **Detect and Replace**.
 2. Detected shots appear under the media row in the Project panel. Right-click a shot to **Load in Source**,
    **Insert at Playhead**, **Make Scene from Shot…**, **Merge with Next**, **Split at Source Time…**, **Rename**,
    **Tag…**, **Add to Scene Library** or **Delete Shot**.
@@ -131,7 +135,8 @@ timelines.
 8. Opening a shot or a scene (double-click, Enter or **Load in Source**, in the Project, Scenes or Sequences panel)
    zooms the Source scrub bar to just its In to Out, so you can scrub through it. The **Scene** / **Full file** button
    next to the timecodes (or **\\** with the Source monitor active) switches to the whole file and back; the playhead
-   and In/Out stay where they are, and the timecodes stay source timecode. Playing past Out, stepping to another shot
+   and In/Out stay where they are, and the timecodes stay source timecode. **Play** plays the shot or scene and stops
+   on its last frame (Play again starts it over); switch to **Full file** to play on past it. Stepping to another shot
    or jumping outside the range switches to the full file. Opening a whole file always shows its full length.
 
 ## 4. Import subtitles
@@ -198,7 +203,10 @@ search use. It runs on your computer: **nothing is uploaded, and transcribing ne
    long projects) and, when a media has several audio streams, choose the stream. Choose the **Model** (installed
    ones; **Manage models…** opens the model list) and the **Language** spoken: the stream's language tag is used
    when it has one, otherwise **Auto-detect** (which listens to the start of the audio). **Translate the speech to
-   English** is off by default; a translated transcript is less exact, because filler words are dropped. A file
+   English** is off by default; a translated transcript is less exact, because filler words are dropped. **Keep other languages as spoken** (off by default, slower) is for films that switch language: the
+   audio is checked in stretches of about 10 seconds and each stretch is transcribed in the language spoken in it,
+   so a German scene in an English film stays German (each line remembers its language). Off, everything is read as
+   the chosen language, which translates other languages into it. A file
    transcribed before with the same model and settings reuses that transcript at once; tick **Transcribe again (ignore
    the saved result)** to make a new one, for example if it came out wrong.
 4. Click **Transcribe**. Each media becomes one job in the **Jobs** list with its progress; cancel it there. Long
@@ -215,7 +223,7 @@ On the timeline, a transcribed clip's words show in a **transcript lane** under 
 already in the timeline shows at once. The Program monitor shows the transcript of the clip whose picture is on
 screen: the top visible video clip, or the next one down when that clip has no transcript (a cutaway over dialogue
 keeps the dialogue's words) or its audio is muted. The **Subtitles** row at the top of the timeline shows that same
-on-screen transcript (green), switching between clips as the edit cuts, next to any imported subtitle files (purple).
+on-screen transcript (maroon), switching between clips as the edit cuts, next to any imported subtitle files (purple).
 
 Transcribing the same stream again (for example with a bigger model) replaces that track in one undo step; repeating
 the same settings is instant, because results are cached. Whisper is good but not perfect: names, songs, shouting,
@@ -439,6 +447,25 @@ own timeline and drop it into as many cuts as you like: an edit made inside it s
   imported to a track or read by the Transcript) and writes through a temp file, so a failed export never leaves a
   truncated file.
 - The Program monitor's **Subtitles** option toggles on-screen display.
+- **A subtitle file as the transcript.** A good subtitle file (written by a person, foreign lines already
+  translated) can be a video's transcript instead of Whisper's: select the video, Media Inspector › Subtitle tracks ›
+  **Transcript**, and pick the track (or right-click a transcript line › **Transcript Source**). The T lanes, the
+  on-screen transcript, Transcript search and shot naming then use it, without its formatting tags. A subtitle file
+  has no timing for each word, so word highlighting is estimated. The Inspector warns when the file runs past the
+  end of the video: it is probably for another cut or frame rate.
+- **Editing lines by hand.** Double-click a line on the timeline (a transcript line in a **T** lane or the Subtitles
+  row, or a cue on a subtitle track), or right-click it › **Edit…**, or use the pencil on a cue in the Subtitles
+  panel. Change the text, its **Start** and **End** (timeline timecode), **Split at playhead**, **Merge with next** or
+  **Delete**. Each edit is one undo step.
+  - A **transcript** line is part of the media's transcript: the fix shows wherever that part of the media is used,
+    in every timeline, and the line keeps following its audio when you move, trim or unlink the clip. Timing stays
+    within the clip. Word highlighting follows the edit (same number of words: each keeps its timing; otherwise the
+    line's time is shared out across the new words). Transcribing that media again asks before replacing your edits.
+  - A **subtitle-track** cue added at the playhead over a clip is attached to that clip and moves with it;
+    right-click › **Unpin from Clip** keeps it where it is on the timeline instead.
+- **Where subtitles sit:** select nothing so the Inspector shows the timeline, then **Subtitles › Position**: drag
+  the slider, or use **Top** / **Bottom** (Bottom is the default). Each timeline has its own position. The Program
+  and Source monitors show it and burn-in export uses it, so the exported text sits where you saw it.
 
 ## 14. Proxies and relinking
 

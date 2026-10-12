@@ -1,4 +1,5 @@
 import { PROJECT_FORMAT_VERSION, MEDIA_CATEGORIES } from './model';
+import { isValidSubtitlePosition } from './subtitlePosition';
 import type {
   Project, Sequence, Rational, MediaItem, ProjectSettings, Bin, ID, TagVocabulary, SequenceView, Track, Clip, Transition,
   TransitionType, MediaKind, ProxyStatus, MarkerKind, Marker, StoryBlock, SequenceSubtitleTrack, SequenceSubtitleCue,
@@ -32,6 +33,9 @@ export class ProjectIncompatibleError extends Error {
   constructor(message: string, readonly reason: 'newer' | 'notProject' = 'notProject') { super(message); this.name = 'ProjectIncompatibleError'; }
 }
 
+/** Longest minimum shot length the settings accept (seconds). */
+export const MAX_MIN_SHOT_SECONDS = 30;
+
 export function defaultSettings(): ProjectSettings {
   return {
     useProxies: true,
@@ -45,6 +49,7 @@ export function defaultSettings(): ProjectSettings {
     showSourceTimecodeOnClips: false,
     highlightSpokenWords: true,
     nameShotsFromTranscript: true,
+    minShotSeconds: 1,
   };
 }
 
@@ -440,6 +445,7 @@ function repairSequence(s: Obj, id: ID, fallbackFps: Readonly<Rational>): Sequen
   } as Sequence;
   optional(seq as unknown as Obj, 'parentSequenceId', isStr);
   optional(seq as unknown as Obj, 'versionLabel', isStr);
+  optional(seq as unknown as Obj, 'subtitlePosition', isValidSubtitlePosition);
   dedupeSequenceIds(seq);
   for (const t of [...seq.videoTracks, ...seq.audioTracks]) reconcileLoadedTransitions(t);
   return seq;
@@ -878,6 +884,8 @@ function repairMedia(m: Obj, id: ID): MediaItem {
   m.notes = str(m.notes, '');
   m.addedAt = num(m.addedAt, 0);
   optional(m, 'sceneDetectStatus', (v) => isStr(v) && Object.hasOwn(JOB_STATES, v));
+  optional(m, 'shotsEdited', isBool);
+  optional(m, 'transcriptTrackId', isStr);
   optional(m, 'waveformStatus', (v) => isStr(v) && Object.hasOwn(WAVEFORM_STATES, v));
   // Jobs do not survive a restart (expected, not a repair).
   if (m.sceneDetectStatus === 'running') m.sceneDetectStatus = 'none';
@@ -946,6 +954,8 @@ function repairProbe(pr: Obj): MediaProbe {
   pr.audio = objList(pr.audio, 'probed audio stream').filter(repairAudioStream);
   pr.subtitles = objList(pr.subtitles, 'probed subtitle stream');
   optional(pr, 'bitrate', isFiniteNum); optional(pr, 'playabilityReason', isStr);
+  optional(pr, 'probeRev', (v) => Number.isSafeInteger(v) && (v as number) > 0);
+  optional(pr, 'startLead', (v) => isFiniteNum(v) && v > 0 && v <= MAX_SOURCE_SECONDS);
   if ('video' in pr) { if (isObj(pr.video)) pr.video = repairVideoStream(pr.video); else { delete pr.video; note(FIELD_RESET); } }
   return pr as unknown as MediaProbe;
 }
@@ -962,6 +972,7 @@ function repairAudioStream(a: Obj): boolean {
   a.layout = str(a.layout, '');
   a.sampleRate = num(a.sampleRate, 0, nonNeg);
   optional(a, 'language', isStr); optional(a, 'title', isStr); optional(a, 'layoutGuessed', isBool);
+  optional(a, 'startTime', (v) => isFiniteNum(v) && v >= 0 && v <= MAX_SOURCE_SECONDS);
   return true;
 }
 
@@ -1038,6 +1049,7 @@ function repairSubtitleTrack(t: Obj, id: ID): SubtitleTrack {
   t.mediaId = nullableStr(t.mediaId);
   optional(t, 'path', isStr);
   optional(t, 'streamIndex', isNonNegInt);
+  optional(t, 'edited', isBool);
   const inRange = (n: unknown) => isFiniteNum(n) && Math.abs(n) <= MAX_SOURCE_SECONDS;
   t.cues = objList(t.cues, 'subtitle cue').filter((c) => {
     const ok = inRange(c.start) && inRange(c.end);
@@ -1045,6 +1057,7 @@ function repairSubtitleTrack(t: Obj, id: ID): SubtitleTrack {
     return ok;
   }).map((c) => {
     c.id = idOr(c.id, () => uid('cue')); c.text = str(c.text, '');
+    optional(c, 'lang', isStr);
     repairWords(c);
     return c;
   });
@@ -1088,6 +1101,7 @@ function repairSettings(v: unknown): ProjectSettings {
   s.autosaveIntervalSec = clampInt(s.autosaveIntervalSec, AUTOSAVE_INTERVAL_MIN_SEC, AUTOSAVE_INTERVAL_MAX_SEC);
   s.defaultTransitionFrames = clampInt(s.defaultTransitionFrames, DEFAULT_TRANSITION_FRAMES_MIN, DEFAULT_TRANSITION_FRAMES_MAX);
   if (!unit(s.sceneThreshold)) { s.sceneThreshold = d.sceneThreshold; note(FIELD_RESET); }
+  if (!(s.minShotSeconds >= 0 && s.minShotSeconds <= MAX_MIN_SHOT_SECONDS)) { s.minShotSeconds = d.minShotSeconds; note(FIELD_RESET); }
   return s;
 }
 

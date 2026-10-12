@@ -49,6 +49,19 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => { await ctx?.app.close(); });
 
+test('timeline Inspector: subtitle position Top / Bottom (#115)', async () => {
+  await expect(insp()).toHaveAttribute('data-mode', 'sequence');
+  const pos = () => getState<number | null>(page, 's => s.project.sequences[s.project.activeSequenceId].subtitlePosition ?? null');
+  const label = insp().getByTestId('subtitle-position-label');
+  await expect(label).toHaveText('Bottom (default)');
+  await insp().getByTestId('subtitle-position-top').click();
+  await expect.poll(pos).toBe(0.07);
+  await expect(label).toHaveText('7 % from the top');
+  await insp().getByTestId('subtitle-position-bottom').click();
+  await expect.poll(pos).toBeNull();
+  await expect(label).toHaveText('Bottom (default)');
+});
+
 test('shows the sequence inspector when nothing is selected', async () => {
   const inspector = insp();
   await expect(inspector).toHaveAttribute('data-mode', 'sequence');

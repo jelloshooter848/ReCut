@@ -5,6 +5,7 @@
  * visible video clip's, falling through to the next clip down when that clip has no transcript or is not heard.
  * Pure: no DOM, no Node.
  */
+import { spreadWords } from './cueEdit';
 import type { Clip, ID, MediaItem, Project, Sequence, SubtitleTrack, Track } from './model';
 import { clipEnd } from './timeline';
 
@@ -28,11 +29,14 @@ export interface TranscriptIndex {
 }
 
 /**
- * The Whisper track that holds `clip`'s transcript: the media's Whisper track for the clip's audio stream (the clip's
- * stream, else the media's preferred one, else its first), the latest one when there are several (other languages).
+ * The track that holds `clip`'s transcript: the subtitle track chosen as the media's transcript (#162), else the
+ * media's Whisper track for the clip's audio stream (the clip's stream, else the media's preferred one, else its
+ * first), the latest one when there are several (other languages).
  */
 export function clipTranscriptTrack(clip: Clip, media: MediaItem | undefined, tracks: Record<ID, SubtitleTrack>): SubtitleTrack | null {
   if (!media) return null;
+  const chosen = media.transcriptTrackId ? tracks[media.transcriptTrackId] : undefined;
+  if (chosen && chosen.cues.length > 0 && media.subtitleTrackIds.includes(chosen.id)) return chosen;
   const stream = clip.audioStream ?? media.preferredAudioStream ?? media.probe?.audio[0]?.index;
   let found: SubtitleTrack | null = null;
   for (const id of media.subtitleTrackIds) {
@@ -40,6 +44,17 @@ export function clipTranscriptTrack(clip: Clip, media: MediaItem | undefined, tr
     if (t && t.origin === 'whisper' && t.cues.length > 0 && (t.streamIndex === undefined || t.streamIndex === stream)) found = t;
   }
   return found;
+}
+
+/** A subtitle line as transcript text: tags (`<i>`, `{\\an8}`) removed, spaces tidied (#162). */
+export function transcriptDisplayText(text: string): string {
+  return text.replace(/<[^>]*>/g, '').replace(/\{[^}]*\}/g, '').replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').trim();
+}
+
+/** Estimated word timing of a line without any (a subtitle file): its time shared out by word length (#162). */
+export function estimateWords(text: string, start: number, end: number): { start: number; end: number; text: string }[] | undefined {
+  const words = text.split(/\s+/).filter(Boolean);
+  return words.length ? spreadWords(words, start, end) : undefined;
 }
 
 /** `clip`'s transcript cues in sequence frames: the track's cues over the clip's source range, clamped to the clip. */
@@ -53,9 +68,13 @@ export function clipTranscriptCues(clip: Clip, track: SubtitleTrack, fps: { num:
     const s = Math.max(clip.start, frameOf(c.start));
     const e = Math.min(end, frameOf(c.end));
     if (e <= s) continue;
-    const words = c.words?.map((w) => ({ start: Math.max(s, frameOf(w.start)), end: Math.min(e, frameOf(w.end)), text: w.text }))
+    // A subtitle file used as the transcript (#162) has no word timing: its words are shared out over each line's
+    // time (by length) so the monitors can still highlight them; its markup is not shown.
+    const text = track.origin === 'whisper' ? c.text : transcriptDisplayText(c.text);
+    const src = c.words?.length ? c.words : track.origin === 'whisper' ? undefined : estimateWords(text, c.start, c.end);
+    const words = src?.map((w) => ({ start: Math.max(s, frameOf(w.start)), end: Math.min(e, frameOf(w.end)), text: w.text }))
       .filter((w) => w.end > w.start);
-    out.push({ id: `${clip.id}:${c.id}`, clipId: clip.id, start: s, end: e, text: c.text, ...(words?.length ? { words } : {}) });
+    out.push({ id: `${clip.id}:${c.id}`, clipId: clip.id, start: s, end: e, text, ...(words?.length ? { words } : {}) });
   }
   return out.sort((a, b) => a.start - b.start);
 }

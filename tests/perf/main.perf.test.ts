@@ -81,7 +81,7 @@ describe('main-process media layer', () => {
     ms('thumbs', 'thumbnail cache HIT (p95)', hit.p95, 10, undefined, GUARDRAIL);
     const times48 = Array.from({ length: 48 }, (_, i) => 5 + i * 1.1);
     const t = now(); const urls = await getFilmstrip({ path: SRC, times: times48, width: 128 }); const dt = now() - t;
-    ms('thumbs', 'filmstrip 48 frames cold (4 ffmpeg batches of 12, 3 concurrent)', dt, 3000, undefined, GUARDRAIL);
+    ms('thumbs', 'filmstrip 48 frames cold (3 ffmpeg batches of 16, 3 concurrent)', dt, 3000, undefined, GUARDRAIL);
     record({ section: 'thumbs', metric: 'filmstrip 48 frames produced', value: urls.filter(Boolean).length, unit: '/48', pass: urls.filter(Boolean).length === 48 }, GUARDRAIL);
     const t2 = now(); await getFilmstrip({ path: SRC, times: times48, width: 128 }); const dt2 = now() - t2;
     ms('thumbs', 'filmstrip 48 frames warm (all cached)', dt2, 50, undefined, GUARDRAIL);

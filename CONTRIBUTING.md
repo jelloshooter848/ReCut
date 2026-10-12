@@ -163,15 +163,25 @@ Before you open a PR into `dev`, check:
       one for a new limitation).
 - [ ] If it completes a [Roadmap](docs/ROADMAP.md) entry, it updates [docs/ROADMAP.md](docs/ROADMAP.md): the entry's
       **Status** line and its row in the Progress table.
+- [ ] It adds its changelog-draft line and QA block to [docs/NEXT-RELEASE.md](docs/NEXT-RELEASE.md) (see
+      [The changelog](#the-changelog)).
 - [ ] It does **not** change the version. Feature and bug PRs never touch `version` in `package.json` or
       `package-lock.json`; only a release-prep PR changes it ([docs/RELEASING.md](docs/RELEASING.md)).
 
 ### The changelog
 
-Don't edit [CHANGELOG.md](CHANGELOG.md) in a feature or bug PR. Each release PR adds the new version's section,
-written from the merged changes since the previous release and from the bug issues closed since then
-([RELEASING › What goes in the changelog](docs/RELEASING.md#what-goes-in-the-changelog)). Help it by giving your PR a
-title and description that say what a user will notice, and by linking the issue it fixes (`Fixes #N`).
+Don't edit [CHANGELOG.md](CHANGELOG.md) in a feature or bug PR. Add your entries to
+[docs/NEXT-RELEASE.md](docs/NEXT-RELEASE.md) instead, in the same PR as the change:
+
+- a line in its **Changelog draft**, under Added, Changed, Fixed or Known issues, written for users and linking the
+  issue ([RELEASING › What goes in the changelog](docs/RELEASING.md#what-goes-in-the-changelog));
+- a block in its **QA checklist**: a few tick-box steps that someone who didn't work on it can follow on a `dev` build,
+  and what they should see.
+
+Append to the end of each list and leave other entries alone, so the two personal branches rarely conflict there. The
+entries travel with the code into `dev`. Before a release, QA runs the checklist on `dev`; the release PR writes the
+version's `CHANGELOG.md` section from the draft (checked against `git log`) and resets NEXT-RELEASE.md. Also give your
+PR a title and description that say what a user will notice, and link the issue it fixes (`Fixes #N`).
 
 ## Reporting bugs
 

@@ -182,6 +182,12 @@ export interface TranscribeRequest {
   translate?: boolean;
   /** Transcribe again even when a result for the same file and settings is cached (#158). Default false. */
   force?: boolean;
+  /**
+   * Mixed-language audio (#163): detect the language of each stretch (about 10 s, cut at quiet moments) and transcribe
+   * it in that language, so lines in other languages are kept as spoken. Off: everything is read as the chosen
+   * language, which translates other languages into it. Ignored when translating or with an English-only model.
+   */
+  keepLanguages?: boolean;
 }
 
 /** whisper.cpp's `--dtw` alignment preset of a model (word timing, #118), or null when it has none. */

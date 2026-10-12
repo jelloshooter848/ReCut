@@ -15,6 +15,8 @@ import type { StoreState } from '@/state';
 import { SourcePlayer, resolvePlaybackPath, mediaFps, mediaSize, type SourcePlayerStatus } from '@/playback';
 import { isStillImage, previewPlayable, previewReason } from '@/playback/mediaSource';
 import { activeWordIndex } from '@/playback/subtitleWrap';
+import { subtitleAnchor } from '@shared/subtitlePosition';
+import { estimateWords, transcriptDisplayText } from '@shared/transcripts';
 import { resumeAudio } from '@/app/media';
 import { registerTransport, setActiveTransport, shuttle, useActiveTransportId, type Transport } from '@/app/transport';
 import { setClipDrag } from '@/app/dnd';
@@ -120,13 +122,29 @@ export function SourcePanel({ focused, active }: PanelProps) {
   const durationFrames = Number.isFinite(duration) && duration > 0 ? Math.max(1, secondsToFrames(duration, fps)) : 0;
   const cues: SubtitleCue[] = useMemo(() => {
     if (!media) return [];
+    // A subtitle track chosen as the transcript (#162) is the one shown, as transcript text with estimated word timing.
+    const chosen = media.transcriptTrackId && media.subtitleTrackIds.includes(media.transcriptTrackId) ? subtitleTracks[media.transcriptTrackId] : undefined;
+    if (chosen && chosen.origin !== 'whisper') {
+      return chosen.cues.map((c) => {
+        const text = transcriptDisplayText(c.text);
+        const words = c.words?.length ? c.words : estimateWords(text, c.start, c.end);
+        return { ...c, text, ...(words ? { words } : {}) };
+      }).sort((a, b) => a.start - b.start);
+    }
     const out: SubtitleCue[] = [];
-    for (const tid of media.subtitleTrackIds) { const t = subtitleTracks[tid]; if (t) out.push(...t.cues); }
+    for (const tid of chosen ? [chosen.id] : media.subtitleTrackIds) { const t = subtitleTracks[tid]; if (t) out.push(...t.cues); }
     return out.sort((a, b) => a.start - b.start);
   }, [media, subtitleTracks]);
   const currentCue = useMemo(() => cues.find((c) => c.start <= time && time < c.end) ?? null, [cues, time]);
   const highlightWords = useStore((s) => s.project.settings.highlightSpokenWords);
   const activeWord = highlightWords ? activeWordIndex(currentCue?.words, time) : -1;
+  // Subtitle position (#115): the active timeline's, so the Source monitor matches Program and the export.
+  const subtitlePosition = useStore((s) => (s.project.activeSequenceId ? s.project.sequences[s.project.activeSequenceId]?.subtitlePosition : undefined));
+  const subtitleStyle = useMemo((): React.CSSProperties | undefined => {
+    const a = subtitleAnchor(subtitlePosition);
+    if (!a) return undefined;
+    return a.edge === 'bottom' ? { bottom: `${(a.margin * 100).toFixed(2)}%` } : { top: `${(a.margin * 100).toFixed(2)}%`, bottom: 'auto' };
+  }, [subtitlePosition]);
 
   // Scene range (#150): the bar shows the opened shot / scene until Full file is chosen or the playhead leaves the range
   // (playing past Out, stepping to another shot, typing a time). It arms once the playhead has been inside the range,
@@ -143,9 +161,12 @@ export function SourcePanel({ focused, active }: PanelProps) {
   }, [time, sceneView, viewFull, fps]);
 
   // ------------------------------------------------------------- refs shared with the transport / callbacks
-  const live = useRef({ inPoint, outPoint, duration, fps, loop, isImage, mediaId: media?.id ?? null, playRange: null as { in: number; out: number } | null });
+  const live = useRef({ inPoint, outPoint, duration, fps, loop, isImage, mediaId: media?.id ?? null, playRange: null as { in: number; out: number } | null,
+    sceneRange: null as { start: number; end: number } | null });
   live.current.inPoint = inPoint; live.current.outPoint = outPoint; live.current.duration = duration; live.current.fps = fps;
   live.current.loop = loop; live.current.isImage = isImage; live.current.mediaId = media?.id ?? null;
+  // The opened shot / scene while the scrub bar shows it (#150): Play stops at its end (#164).
+  live.current.sceneRange = sceneView && !viewFull ? sceneView : null;
   const lastReported = useRef<number>(-1);
   const lastReportAt = useRef(0);
 
@@ -228,14 +249,16 @@ export function SourcePanel({ focused, active }: PanelProps) {
     const sp = getPlayer();
     void resumeAudio();
     live.current.playRange = null;
-    if (live.current.loop) {
-      // Loop on: play In → Out (or the whole clip) and wrap at the Out point.
+    const scene = live.current.sceneRange;
+    if (live.current.loop || scene) {
+      // Loop on: play In → Out (or the whole clip) and wrap at the Out point. An opened shot / scene shown in the scrub
+      // bar plays to its end and stops there (#164); from its end, Play starts it again.
       const { inPoint: i, outPoint: o, duration: d } = live.current;
-      const range = { in: i ?? 0, out: o ?? d };
+      const range = scene ? { in: scene.start, out: scene.end } : { in: i ?? 0, out: o ?? d };
       if (range.out > range.in) {
         live.current.playRange = range;
         const t = sp.currentTime();
-        if (t < range.in || t >= range.out - 1e-4) sp.seek(range.in);
+        if (t < range.in - 1e-4 || t >= range.out - framesToSeconds(1, live.current.fps) - 1e-4) sp.seek(range.in);
       }
     }
     if (sp.playbackRate <= 0) sp.setRate(1);
@@ -389,7 +412,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
             {size ? <span className="source-badge" title="Source resolution">{size.width}×{size.height}</span> : null}
           </div>
           {currentCue ? (
-            <div className="source-subtitle" data-testid="source-subtitle">
+            <div className="source-subtitle" data-testid="source-subtitle" style={subtitleStyle}>
               {currentCue.words?.length
                 ? currentCue.words.map((w, i) => (
                   <React.Fragment key={i}>{i ? ' ' : ''}<span className={i === activeWord ? 'source-word active' : 'source-word'}>{w.text}</span></React.Fragment>
