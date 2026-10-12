@@ -9,6 +9,7 @@ import type { FilmstripRequest, ThumbnailRequest } from '@shared/ipc';
 import { cacheKeysForPath, cacheSubdir, ensureDir, fileExists, findCachedFile, getCacheDir, removeQuietly, type MediaCacheKeys } from './cache';
 import { ffmpegFileArg, fmtSeconds, runFfmpeg } from './ffmpeg';
 import { probeMedia, type ProbedVideoStreamInfo } from './probe';
+import { EXACT_SEEK_CONTAINERS } from '@shared/media';
 
 const DEFAULT_WIDTH = 160;
 const MAX_CONCURRENT = 3;
@@ -102,7 +103,7 @@ function timeKey(time: number): number {
  * written by an older extraction are never served again: before M-10 they held the frame AFTER a mid-frame time
  * (v2), before v3 an anamorphic source's thumbnail had its stored (squeezed) shape.
  */
-// v4 (#154): frames of a file with a negative container start were one frame early.
+// v4 (#154, #156): frames of a file with a negative container start were early; MPEG-TS / PS frames were the next keyframe.
 export const THUMB_VERSION = 'covering-frame-display-shape-v4';
 function thumbDirName(key: string): string {
   return createHash('sha1').update(`${key}|${THUMB_VERSION}`).digest('hex');
@@ -170,8 +171,14 @@ async function validOutput(p: string): Promise<boolean> {
 /** CFR frame grid of a file's video stream: fps and the first frame's container-relative time. */
 export interface FrameGrid { fps: number; start: number }
 
-/** What a seek into `file` needs: its frame grid (null for VFR, stills or unknown) and its start lead (#154). */
-interface SeekInfo { grid: FrameGrid | null; lead: number }
+/**
+ * What a seek into `file` needs: its frame grid (null for VFR, stills or unknown), its start lead (#154), its
+ * container start (pts of source second 0 under `-copyts`) and whether its container seeks frame-exactly (#156).
+ */
+export interface SeekInfo { grid: FrameGrid | null; lead: number; start: number; exact: boolean }
+
+/** Seconds decoded before the target in a container whose seek is not frame-exact (as the export's inputPreroll). */
+const THUMB_PREROLL = 1;
 
 const gridCache = new Map<string, Promise<SeekInfo>>();
 
@@ -185,10 +192,11 @@ function seekInfo(file: string): Promise<SeekInfo> {
   if (!p) {
     p = probeMedia(file).then((pr): SeekInfo => {
       const lead = typeof pr.startLead === 'number' && pr.startLead > 0 ? pr.startLead : 0;
+      const base = { lead, start: pr.startTime > 0 ? pr.startTime : 0, exact: EXACT_SEEK_CONTAINERS.has(pr.container) };
       const v = pr.video as ProbedVideoStreamInfo | undefined;
-      if (!v || v.isVfr || !(pr.duration > 0) || !(v.fps.num > 0 && v.fps.den > 0)) return { grid: null, lead };
-      return { grid: { fps: v.fps.num / v.fps.den, start: typeof v.startTime === 'number' && v.startTime > 0 ? v.startTime : 0 }, lead };
-    }).catch(() => ({ grid: null, lead: 0 }));
+      if (!v || v.isVfr || !(pr.duration > 0) || !(v.fps.num > 0 && v.fps.den > 0)) return { grid: null, ...base };
+      return { grid: { fps: v.fps.num / v.fps.den, start: typeof v.startTime === 'number' && v.startTime > 0 ? v.startTime : 0 }, ...base };
+    }).catch(() => ({ grid: null, lead: 0, start: 0, exact: true }));
     gridCache.set(file, p);
     if (gridCache.size > 256) gridCache.delete(gridCache.keys().next().value as string);
   }
@@ -205,6 +213,18 @@ export function frameSeekTime(time: number, grid: FrameGrid | null): number {
   const j = Math.floor((time - grid.start) * grid.fps + 1e-6);
   if (j <= 0) return 0;
   return Math.max(0, grid.start + (j - 0.25) / grid.fps);
+}
+
+/**
+ * `-ss` value and filter prefix that give the frame covering source second `time`. A frame-exact container seeks
+ * straight to it. Others (MPEG-TS / PS: the seek can land after the target and start at the next keyframe, #156)
+ * seek THUMB_PREROLL earlier and drop decoded frames before the target with `select`, on the pts `-copyts` keeps
+ * (source second s has pts s + the container start).
+ */
+export function thumbSeek(time: number, info: SeekInfo): { ss: number; filter: string } {
+  const at = frameSeekTime(time, info.grid);
+  if (info.exact || !Number.isFinite(at)) return { ss: at + info.lead, filter: '' };
+  return { ss: Math.max(0, at + info.lead - THUMB_PREROLL), filter: `select='gte(t,${fmtSeconds(at + info.start)})',` };
 }
 
 /**
@@ -230,16 +250,15 @@ export function thumbScaleFilter(width: number): string {
  */
 async function extractOne(file: string, time: number, width: number, out: string, signal?: AbortSignal): Promise<boolean> {
   const part = `${out}.part`;
-  const { grid, lead } = await seekInfo(file);
-  const seek = frameSeekTime(time, grid) + lead;
+  const seek = thumbSeek(time, await seekInfo(file));
   const args = [
     '-copyts',
-    '-ss', fmtSeconds(seek),
+    '-ss', fmtSeconds(seek.ss),
     '-i', ffmpegFileArg(file),
     '-an', '-sn', '-dn',
     '-map', '0:v:0',
     '-frames:v', '1',
-    '-vf', thumbScaleFilter(width),
+    '-vf', seek.filter + thumbScaleFilter(width),
     '-q:v', '4',
     '-f', 'mjpeg',
     ffmpegFileArg(part),
@@ -413,14 +432,15 @@ async function extractBatch(file: string, width: number, batch: [string, number]
     return;
   }
   const args: string[] = ['-copyts']; // as in extractOne
-  const { grid, lead } = await seekInfo(file);
-  for (const [, t] of batch) args.push('-ss', fmtSeconds(frameSeekTime(t, grid) + lead), '-i', ffmpegFileArg(file));
+  const info = await seekInfo(file);
+  const seeks = batch.map(([, t]) => thumbSeek(t, info));
+  for (const s of seeks) args.push('-ss', fmtSeconds(s.ss), '-i', ffmpegFileArg(file));
   batch.forEach(([out], idx) => {
     args.push(
       '-map', `${idx}:v:0`,
       '-an', '-sn', '-dn',
       '-frames:v', '1',
-      '-vf', thumbScaleFilter(width),
+      '-vf', seeks[idx].filter + thumbScaleFilter(width),
       '-q:v', '4',
       '-f', 'mjpeg',
       ffmpegFileArg(`${out}.part`),
