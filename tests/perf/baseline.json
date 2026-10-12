@@ -745,7 +745,7 @@
       "unit": "ms",
       "threshold": "<= 10 ms"
     },
-    "main|thumbs|filmstrip 48 frames cold (4 ffmpeg batches of 12, 3 concurrent)": {
+    "main|thumbs|filmstrip 48 frames cold (3 ffmpeg batches of 16, 3 concurrent)": {
       "tier": "guardrail",
       "median": 2983.76,
       "min": 2786.79,

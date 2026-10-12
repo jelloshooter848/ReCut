@@ -329,7 +329,13 @@ Each run has a timing pass and a counting pass.
   - `filmstrip 48 frames warm` read 5.6 and 13.8 ms against 5.2 ms. It is noise: the node suite is unchanged, and
     three locked reruns read 4.35, 4.73 and 3.65 ms.
 - `filmstrip 48 frames cold` passed at 2,528 and 2,706 ms but stays borderline:
-  [#155](https://github.com/jelloshooter848/ReCut/issues/155).
+  [#155](https://github.com/jelloshooter848/ReCut/issues/155). Fixed later: the 48 frames ran as 4 batches of 12
+  through 3 slots, so the 4th ran alone (two rounds of wall time). They now run as balanced batches that fill the
+  slots in as few rounds as possible, 8 to 16 frames each (`filmstripBatches`: 3 batches of 16, one round). The row is renamed
+  `filmstrip 48 frames cold (3 ffmpeg batches of 16, 3 concurrent)` and keeps the old baseline until it is re-seeded
+  on the reference machine. On an 8-core Mac (not the reference) three runs each read 1,394 / 1,309 / 1,130 ms
+  before and 1,113 / 1,032 / 1,051 ms after (median -20 %); the saving should be larger on a 4-core host, where the
+  lone 4th batch cost a whole round.
 
 **Side finding.** In 1 of 11 runs (possibly 2) the Program monitor issued no seeks during the whole scrub:
 `https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md` (fixed below).
