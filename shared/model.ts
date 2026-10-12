@@ -423,6 +423,8 @@ export interface SubtitleCue {
   text: string;
   /** Per-word timing (Whisper transcripts); the words joined by spaces are `text`. */
   words?: SubtitleWord[];
+  /** Language the line was transcribed in, when it differs by stretch (Whisper, keep other languages, #163). */
+  lang?: string;
 }
 
 export interface SubtitleTrack {

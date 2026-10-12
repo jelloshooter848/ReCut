@@ -533,7 +533,7 @@ describe('test models and argument checks', () => {
     expect(() => assertWhisperModelId(5)).toThrow();
     const abs = path.resolve('/media/film.mkv');
     const good = { mediaId: 'm1', path: abs, streamIndex: 1, model: 'small', language: 'auto', translate: true, extra: 'dropped' };
-    expect(parseTranscribeRequest(good)).toEqual({ mediaId: 'm1', path: abs, streamIndex: 1, model: 'small', language: 'auto', translate: true, force: false });
+    expect(parseTranscribeRequest(good)).toEqual({ mediaId: 'm1', path: abs, streamIndex: 1, model: 'small', language: 'auto', translate: true, force: false, keepLanguages: false });
     expect(parseTranscribeRequest({ ...good, translate: undefined }).translate).toBe(false);
     expect(parseTranscribeRequest({ ...good, force: true }).force).toBe(true);
     expect(parseTranscribeRequest({ ...good, verbatim: true })).not.toHaveProperty('verbatim'); // removed in #158, ignored

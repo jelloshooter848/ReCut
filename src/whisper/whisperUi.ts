@@ -19,6 +19,8 @@ export interface TranscribeDraft {
   translate: boolean;
   /** Transcribe again: ignore a saved result (#158). */
   force: boolean;
+  /** Keep other languages as spoken (#163). */
+  keepLanguages?: boolean;
 }
 
 export interface WhisperUiState {

@@ -61,6 +61,9 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
 - A subtitle file can be a video's transcript (Media Inspector › **Transcript**, or right-click a transcript line ›
   **Transcript Source**): T lanes, the on-screen transcript, search and shot naming use it, with estimated word
   highlighting and a warning when it runs past the end of the video ([#162](https://github.com/jelloshooter848/ReCut/issues/162)) (on devJames)
+- Transcribe › **Keep other languages as spoken** (slower): for films that switch language, each stretch of about 10 s
+  is transcribed in the language spoken in it instead of being translated into the chosen language
+  ([#163](https://github.com/jelloshooter848/ReCut/issues/163)) (on devJames)
 
 ### Changed
 
@@ -398,3 +401,9 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Right-click a transcript line › **Transcript Source** › **Whisper (automatic)** → back to Whisper.
 - [ ] Choose an SRT made for another version that runs past the end of the video → the Inspector warns about it.
 - [ ] With the SRT chosen, double-click a line and fix it → the fix is saved in the SRT track (it shows after reopening the project).
+
+### #163 Mixed-language audio (on devJames)
+
+- [ ] Transcribe a film that switches language (e.g. *The Bourne Identity*) with the language set to English and **Keep other languages as spoken** off → German / Italian lines come out in English (translated).
+- [ ] Transcribe again with the option on (and **Transcribe again** ticked) → the German police scene (about 10:50) and the Italian fishermen (about 1:55) are in German / Italian; the English stays English. It takes noticeably longer (about 4×).
+- [ ] With an English-only model, or with **Translate** on, the option is disabled and says why.
