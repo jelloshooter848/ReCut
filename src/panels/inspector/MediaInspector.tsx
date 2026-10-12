@@ -3,7 +3,7 @@ import { openDetectShots } from '@/panels/project/DetectShotsDialog';
 import React, { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Play, ScanSearch, Square, X } from 'lucide-react';
-import { MEDIA_CATEGORIES, type ID, type JobInfo, type MediaCategory, type MediaItem, type SourceIdentity } from '@shared/model';
+import { MEDIA_CATEGORIES, type ID, type JobInfo, type MediaCategory, type MediaItem, type SourceIdentity, type SubtitleTrack } from '@shared/model';
 import { fpsLabel, fpsValue } from '@shared/time';
 import { identityLabel, mediaSubtitleTracks, setMediaAudioStream, startProxy, useStore } from '@/state';
 import { isDisplayableImage, isStillImage, mediaNeedsProxyForPreview, previewPlaybackLabel } from '@/playback/mediaSource';
@@ -166,6 +166,7 @@ function SingleMedia({ m }: { m: MediaItem }) {
 
       <Section id="media-subtitles" title="Subtitle tracks" badge={subs.length ? `${subs.length}` : undefined}>
         {subs.length === 0 ? <div className="insp-empty">No subtitle tracks attached.</div> : null}
+        {subs.length ? <TranscriptSourceRow m={m} subs={subs} /> : null}
         {subs.map((t) => (
           <div key={t.id} className="insp-tr" data-testid="media-subtitle">
             <div className="insp-tr-name" title={t.path ?? t.origin}>
@@ -177,6 +178,28 @@ function SingleMedia({ m }: { m: MediaItem }) {
           </div>
         ))}
       </Section>
+    </>
+  );
+}
+
+/**
+ * Which track is this media's transcript (#162): the Whisper transcript (automatic) or one of its subtitle tracks.
+ * A subtitle file that runs past the end of the video is probably for another cut or frame rate: say so.
+ */
+function TranscriptSourceRow({ m, subs }: { m: MediaItem; subs: SubtitleTrack[] }) {
+  const chosen = m.transcriptTrackId ? subs.find((t) => t.id === m.transcriptTrackId) : undefined;
+  const duration = m.probe?.duration ?? 0;
+  const lastEnd = chosen ? Math.max(0, ...chosen.cues.map((c) => c.end)) : 0;
+  const late = !!chosen && duration > 0 && lastEnd > duration + 1;
+  const options = [{ value: '', label: 'Whisper (automatic)' }, ...subs.map((t) => ({ value: t.id, label: `${t.name} (${t.origin})` }))];
+  return (
+    <>
+      <Row label="Transcript" prop="transcript-source" title="The track the T lanes, the on-screen transcript, Transcript search and shot naming use">
+        <Select size="sm" value={chosen?.id ?? ''} options={options} data-testid="transcript-source"
+          onChange={(v) => useStore.getState().setTranscriptSource(m.id, v || null)} />
+      </Row>
+      {chosen && chosen.origin !== 'whisper' ? <div className="insp-note">Word highlighting is estimated: a subtitle file has no timing for each word.</div> : null}
+      {late ? <div className="insp-note warn" data-testid="transcript-source-late">These subtitles run past the end of the video ({Math.round(lastEnd - duration)} s): they may be for another version or frame rate.</div> : null}
     </>
   );
 }

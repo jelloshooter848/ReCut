@@ -58,6 +58,9 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
   pencil in the Subtitles panel) to change its text and timing, split, merge or delete it. Transcript edits change
   the media's transcript, so they show in every timeline and keep following the audio; word highlighting follows the
   edited text ([#135](https://github.com/jelloshooter848/ReCut/issues/135)) (on devJames)
+- A subtitle file can be a video's transcript (Media Inspector › **Transcript**, or right-click a transcript line ›
+  **Transcript Source**): T lanes, the on-screen transcript, search and shot naming use it, with estimated word
+  highlighting and a warning when it runs past the end of the video ([#162](https://github.com/jelloshooter848/ReCut/issues/162)) (on devJames)
 
 ### Changed
 
@@ -387,3 +390,11 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Rename a shot, then open Detect Shots again → a warning says your edits will be replaced, and the button reads **Detect and Replace**.
 - [ ] Select the video, Media Inspector › **Detect…** → the same dialog opens.
 - [ ] Preferences › Shot detection shows the same choices; a project from 0.8.2 with a custom threshold shows **Custom (0.40)**.
+
+### #162 A subtitle file as the transcript (on devJames)
+
+- [ ] Import a video with a matching .srt next to it (and transcribe it with Whisper too). Insert it; the T lane shows the Whisper lines.
+- [ ] Select the video, Media Inspector › Subtitle tracks › **Transcript** › pick the SRT → the T lane, the Subtitles row and the Program and Source monitors show the SRT's lines (no `<i>` tags); with highlighting on, words light up (estimated).
+- [ ] Right-click a transcript line › **Transcript Source** › **Whisper (automatic)** → back to Whisper.
+- [ ] Choose an SRT made for another version that runs past the end of the video → the Inspector warns about it.
+- [ ] With the SRT chosen, double-click a line and fix it → the fix is saved in the SRT track (it shows after reopening the project).

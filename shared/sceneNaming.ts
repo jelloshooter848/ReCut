@@ -60,12 +60,16 @@ export function nameFromSpeech(cues: readonly Pick<SubtitleCue, 'start' | 'end' 
 }
 
 /**
- * The cues to name a media item's shots and scenes from: its latest Whisper transcript (of its preferred audio
- * stream when there are several), else its first subtitle track with cues; null when it has neither.
+ * The cues to name a media item's shots and scenes from: the track chosen as its transcript (#162), else its latest
+ * Whisper transcript (of its preferred audio stream when there are several), else its first subtitle track with cues;
+ * null when it has none.
  */
 export function mediaSpeechCues(media: MediaItem | undefined, tracks: Record<ID, SubtitleTrack>): SubtitleCue[] | null {
   if (!media) return null;
   const own = media.subtitleTrackIds.map((id) => tracks[id]).filter((t): t is SubtitleTrack => !!t && t.cues.length > 0);
+  // The subtitle track chosen as the transcript comes first (#162).
+  const chosen = own.find((t) => t.id === media.transcriptTrackId);
+  if (chosen) return chosen.cues;
   const stream = media.preferredAudioStream ?? media.probe?.audio[0]?.index;
   const whisper = own.filter((t) => t.origin === 'whisper');
   const pick = whisper.filter((t) => t.streamIndex === undefined || t.streamIndex === stream).at(-1) ?? whisper.at(-1) ?? own[0];

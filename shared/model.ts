@@ -150,6 +150,11 @@ export interface MediaItem {
   sceneDetectStatus?: 'none' | 'running' | 'done' | 'failed';
   /** The detected shots were renamed, merged, split, tagged or deleted: detecting again asks before replacing them (#142). */
   shotsEdited?: boolean;
+  /**
+   * The subtitle track used as this media's transcript (#162): T lanes, the on-screen transcript, search and naming
+   * read it. Absent (or a track that is gone): the Whisper transcript, chosen automatically.
+   */
+  transcriptTrackId?: ID;
   subtitleTrackIds: ID[];
   thumbnailTime?: number;   // poster frame time (seconds)
   notes: string;
