@@ -13,7 +13,10 @@ import { EXACT_SEEK_CONTAINERS } from '@shared/media';
 
 const DEFAULT_WIDTH = 160;
 const MAX_CONCURRENT = 3;
-const FILMSTRIP_BATCH = 12;
+/** Most frames one filmstrip FFmpeg process extracts (filmstripBatches). */
+const FILMSTRIP_BATCH = 16;
+/** Fewest frames worth a process of their own: below this, starting FFmpeg costs more than it saves. */
+const FILMSTRIP_MIN_BATCH = 8;
 /** A JPEG smaller than this is treated as a failed/garbage frame. */
 const MIN_JPEG_BYTES = 200;
 
@@ -328,6 +331,27 @@ export async function getThumbnail(req: ThumbnailRequest): Promise<string> {
  * dropped before it spawns ffmpeg, a running one has its ffmpeg killed (so it does not keep the CPU busy after the
  * view moved on).
  */
+/**
+ * Splits a filmstrip's uncached frames (in time order) into balanced batches, one FFmpeg process each, that fill the
+ * MAX_CONCURRENT slots in as few rounds as possible: rounds = ceil(n / (slots x FILMSTRIP_BATCH)), then up to
+ * slots x rounds batches of near-equal size, none smaller than FILMSTRIP_MIN_BATCH (a short filmstrip stays one
+ * process). 48 frames are 3 batches of 16 in one round; they were 4 of 12, the 4th running alone after the first
+ * three (two rounds of wall time, #155).
+ */
+export function filmstripBatches<T>(entries: readonly T[]): T[][] {
+  const n = entries.length;
+  if (n === 0) return [];
+  const rounds = Math.ceil(n / (MAX_CONCURRENT * FILMSTRIP_BATCH));
+  const count = Math.max(1, Math.min(MAX_CONCURRENT * rounds, Math.floor(n / FILMSTRIP_MIN_BATCH)));
+  const out: T[][] = [];
+  for (let b = 0, from = 0; b < count; b++) {
+    const size = Math.floor(n / count) + (b < n % count ? 1 : 0);
+    out.push(entries.slice(from, from + size));
+    from += size;
+  }
+  return out;
+}
+
 export async function getFilmstrip(req: FilmstripRequest, signal?: AbortSignal): Promise<string[]> {
   // Register synchronously (before any await) so a cancel arriving right behind this request finds it.
   if (req.requestId && !signal) {
@@ -368,8 +392,7 @@ async function filmstripInner(req: FilmstripRequest, signal: AbortSignal | undef
   if (signal?.aborted) { leaveBatches(joined); return outs.map(() => ''); }
 
   const entries = [...pending.entries()].sort((a, b) => a[1] - b[1]);
-  const batches: [string, number][][] = [];
-  for (let i = 0; i < entries.length; i += FILMSTRIP_BATCH) batches.push(entries.slice(i, i + FILMSTRIP_BATCH));
+  const batches = filmstripBatches(entries);
 
   const batchPromises = batches.map((batch) => {
     const shared: SharedBatch = { controller: new AbortController(), refs: 0 };
