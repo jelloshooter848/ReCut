@@ -1043,6 +1043,7 @@ function repairSubtitleTrack(t: Obj, id: ID): SubtitleTrack {
   t.mediaId = nullableStr(t.mediaId);
   optional(t, 'path', isStr);
   optional(t, 'streamIndex', isNonNegInt);
+  optional(t, 'edited', isBool);
   const inRange = (n: unknown) => isFiniteNum(n) && Math.abs(n) <= MAX_SOURCE_SECONDS;
   t.cues = objList(t.cues, 'subtitle cue').filter((c) => {
     const ok = inRange(c.start) && inRange(c.end);

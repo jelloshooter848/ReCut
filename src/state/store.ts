@@ -16,6 +16,7 @@ import type {
   SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock, SubtitleTrack, Track, Transition, TransitionType, TagVocabulary, SequenceView,
 } from '../../shared/model';
 import { withoutCopiedTranscripts } from '../../shared/transcripts';
+import { mergeCueText, rescaleWords, retextWords, splitCueText } from '../../shared/cueEdit';
 import { isValidSubtitlePosition } from '../../shared/subtitlePosition';
 import { uid } from '../../shared/ids';
 import { fpsEquals, isValidFps, secondsToFrames } from '../../shared/time';
@@ -210,6 +211,9 @@ function keyframeTargets(d: Project, seqId: ID, clipIds: ID[], group: KeyframeGr
   const kind = group === 'volume' ? 'audio' : 'video';
   return clipsWithIds(seq, clipIds).filter((c) => c.kind === kind && !findClip(seq, c.id)?.track.locked);
 }
+
+/** Shortest media cue a timing edit leaves (seconds). */
+const MIN_MEDIA_CUE_SEC = 0.1;
 
 /** Resolved [start,end) frames of a sequence subtitle cue, or null when it cannot be placed. */
 function cueFrames(seq: Sequence, cue: SequenceSubtitleCue): { start: number; end: number; clip?: Clip } | null {
@@ -907,6 +911,7 @@ export const useStore = create<RecutStore>()((set, get) => {
         const cur = existing ? d.subtitleTracks[existing.id] : undefined;
         if (cur) {
           cur.cues = track.cues; cur.name = track.name;
+          delete cur.edited; // a fresh transcript has no hand edits (#135)
         } else {
           d.subtitleTracks[id] = { ...track, id, origin: 'whisper' };
         }
@@ -1578,7 +1583,12 @@ export const useStore = create<RecutStore>()((set, get) => {
         const seq = d.sequences[seqId];
         const f = seq && findCue(seq, cueId);
         if (!f) return;
-        if (patch.text !== undefined) f.cue.text = patch.text;
+        if (patch.text !== undefined) {
+          f.cue.text = patch.text;
+          // Word timing follows the new text (#135): the monitors and burn-in draw the words, not the text.
+          const w = f.cue.srcStart !== undefined && f.cue.srcEnd !== undefined ? retextWords(f.cue.words, patch.text, f.cue.srcStart, f.cue.srcEnd) : undefined;
+          if (w) f.cue.words = w; else delete f.cue.words;
+        }
         if (patch.offset !== undefined && Number.isFinite(patch.offset)) {
           // A nudge may not move the cue before the sequence start: start + offset >= 0.
           const base = cueFrames(seq, { ...f.cue, offset: 0 });
@@ -1590,9 +1600,21 @@ export const useStore = create<RecutStore>()((set, get) => {
     addManualCue(seqId, trackId, cue) {
       const id = uid('scue');
       const ok = commit('Add subtitle', (d) => {
-        const t = d.sequences[seqId]?.subtitleTracks.find((x) => x.id === trackId);
-        if (!t) return;
-        t.cues.push({ id, start: Math.max(0, Math.round(cue.start)), duration: Math.max(1, Math.round(cue.duration)), offset: 0, text: cue.text });
+        const seq = d.sequences[seqId];
+        const t = seq?.subtitleTracks.find((x) => x.id === trackId);
+        if (!seq || !t) return;
+        const start = Math.max(0, Math.round(cue.start));
+        const duration = Math.max(1, Math.round(cue.duration));
+        const c: SequenceSubtitleCue = { id, start, duration, offset: 0, text: cue.text };
+        // Over a clip, the cue is attached to it so it follows the clip when it moves (#135): the topmost picture clip,
+        // else an audio clip, under its start; it ends with the clip at the latest.
+        const at = (tracks: Track[]) => { for (const tr of tracks) for (const cl of tr.clips) if (cl.start <= start && start < clipEnd(cl)) return cl; return undefined; };
+        const clip = at([...seq.videoTracks].reverse()) ?? at(seq.audioTracks);
+        if (clip) {
+          const sec = (f: number) => clip.sourceIn + ((f - clip.start) * seq.fps.den / seq.fps.num) * clip.speed;
+          c.clipId = clip.id; c.srcStart = sec(start); c.srcEnd = sec(Math.min(start + duration, clipEnd(clip)));
+        }
+        t.cues.push(c);
         t.cues.sort((a, b) => a.start - b.start);
       });
       return ok ? id : null;
@@ -1656,13 +1678,148 @@ export const useStore = create<RecutStore>()((set, get) => {
           cue.clipId = undefined; cue.srcStart = undefined; cue.srcEnd = undefined;
           cue.start = start; cue.duration = Math.max(1, end - start); cue.offset = 0;
         }
-        cue.text = text;
+        // Every cue's words are kept (they used to be the first cue's only, #135); text then follows the words.
+        const merged = sameClip ? mergeCueText(resolved.map((x) => x.f.cue)) : { text };
+        cue.text = merged.words ? merged.text : text;
+        if (merged.words) cue.words = merged.words; else delete cue.words;
         const drop = new Set(resolved.slice(1).map((x) => x.f.cue.id));
         for (const t of seq.subtitleTracks) t.cues = t.cues.filter((c) => !drop.has(c.id));
       });
     },
     removeCue(seqId, cueId) {
       commit('Remove subtitle', (d) => { const seq = d.sequences[seqId]; if (seq) for (const t of seq.subtitleTracks) t.cues = t.cues.filter((c) => c.id !== cueId); });
+    },
+    setCueTiming(seqId, cueId, startFrame, endFrame) {
+      commit('Retime subtitle', (d) => {
+        const seq = d.sequences[seqId];
+        const f = seq && findCue(seq, cueId);
+        if (!seq || !f || !Number.isFinite(startFrame) || !Number.isFinite(endFrame)) return;
+        let a = Math.max(0, Math.round(startFrame)), b = Math.round(endFrame);
+        const r = cueFrames(seq, f.cue);
+        if (r?.clip) {
+          // Attached: the new range in source seconds, within the clip (the cue keeps following it).
+          const clip = r.clip;
+          a = Math.max(clip.start, a); b = Math.min(clipEnd(clip), b);
+          if (b <= a) return;
+          const sec = (fr: number) => clip.sourceIn + ((fr - clip.start) * seq.fps.den / seq.fps.num) * clip.speed;
+          const from: [number, number] = [f.cue.srcStart ?? sec(r.start), f.cue.srcEnd ?? sec(r.end)];
+          f.cue.srcStart = sec(a); f.cue.srcEnd = sec(b); f.cue.offset = 0;
+          const w = rescaleWords(f.cue.words, from, [f.cue.srcStart, f.cue.srcEnd]);
+          if (w) f.cue.words = w;
+        } else {
+          if (b <= a) return;
+          f.cue.start = a; f.cue.duration = b - a; f.cue.offset = 0;
+        }
+      });
+    },
+    unpinCue(seqId, cueId) {
+      commit('Unpin subtitle', (d) => {
+        const seq = d.sequences[seqId];
+        const f = seq && findCue(seq, cueId);
+        if (!seq || !f || !f.cue.clipId) return;
+        const r = cueFrames(seq, f.cue);
+        if (!r) return;
+        f.cue.start = Math.max(0, r.start); f.cue.duration = Math.max(1, r.end - r.start); f.cue.offset = 0;
+        delete f.cue.clipId; delete f.cue.srcStart; delete f.cue.srcEnd; delete f.cue.words;
+      });
+    },
+
+    // ---------------------------------------------------------------- media cues (transcripts), by hand (#135)
+    editMediaCue(trackId, cueId, patch) {
+      commit(patch.text !== undefined ? 'Edit transcript line' : 'Retime transcript line', (d) => {
+        const t = d.subtitleTracks[trackId];
+        if (!t) return;
+        t.cues.sort((a, b) => a.start - b.start);
+        const i = t.cues.findIndex((c) => c.id === cueId);
+        if (i < 0) return;
+        const c = t.cues[i];
+        if (patch.text !== undefined && !patch.text.trim()) { t.cues.splice(i, 1); t.edited = true; return; }
+        // Kept off its neighbours: never a new overlap (an overlap the file already had is left as it was).
+        const prev = t.cues[i - 1], next = t.cues[i + 1];
+        const lo = prev ? Math.min(prev.end, c.start) : 0;
+        const hi = next ? Math.max(next.start, c.end) : Infinity;
+        let start = patch.start !== undefined && Number.isFinite(patch.start) ? patch.start : c.start;
+        let end = patch.end !== undefined && Number.isFinite(patch.end) ? patch.end : c.end;
+        start = Math.max(lo, start); end = Math.min(hi, end);
+        if (end - start < MIN_MEDIA_CUE_SEC) { if (patch.start !== undefined) start = Math.max(lo, end - MIN_MEDIA_CUE_SEC); else end = Math.min(hi, start + MIN_MEDIA_CUE_SEC); }
+        if (end <= start) return;
+        if (start !== c.start || end !== c.end) {
+          const w = rescaleWords(c.words, [c.start, c.end], [start, end]);
+          c.start = start; c.end = end;
+          if (w) c.words = w;
+        }
+        if (patch.text !== undefined) {
+          c.text = patch.text.trim();
+          const w = retextWords(c.words, c.text, c.start, c.end);
+          if (w) c.words = w; else delete c.words;
+        }
+        t.edited = true;
+      });
+    },
+    addMediaCue(trackId, cue) {
+      const id = uid('cue');
+      const ok = commit('Add transcript line', (d) => {
+        const t = d.subtitleTracks[trackId];
+        if (!t || !cue.text.trim()) return;
+        t.cues.sort((a, b) => a.start - b.start);
+        // Into the gap at cue.start: after the cue ending last before it, before the next one.
+        const prev = [...t.cues].reverse().find((c) => c.start <= cue.start);
+        const next = t.cues.find((c) => c.start > cue.start);
+        const start = Math.max(cue.start, prev ? prev.end : 0);
+        const end = Math.min(cue.end, next ? next.start : Infinity);
+        if (end - start < MIN_MEDIA_CUE_SEC) return;
+        t.cues.push({ id, start, end, text: cue.text.trim() });
+        t.cues.sort((a, b) => a.start - b.start);
+        t.edited = true;
+      });
+      return ok ? id : null;
+    },
+    splitMediaCue(trackId, cueId, atSeconds) {
+      const id = uid('cue');
+      const ok = commit('Split transcript line', (d) => {
+        const t = d.subtitleTracks[trackId];
+        const i = t ? t.cues.findIndex((c) => c.id === cueId) : -1;
+        if (!t || i < 0) return;
+        const c = t.cues[i];
+        const parts = splitCueText(c.text, c.words, c.start, c.end, atSeconds);
+        if (!parts) return;
+        // With word timing the cut falls between the words; without, at the time asked for.
+        const cut = parts.b.words ? parts.b.words[0].start : atSeconds;
+        const second = { id, start: cut, end: c.end, text: parts.b.text, ...(parts.b.words ? { words: parts.b.words } : {}) };
+        c.end = cut; c.text = parts.a.text;
+        if (parts.a.words) c.words = parts.a.words; else delete c.words;
+        t.cues.splice(i + 1, 0, second);
+        t.edited = true;
+      });
+      return ok ? id : null;
+    },
+    mergeMediaCues(trackId, cueIds) {
+      if (cueIds.length < 2) return;
+      commit('Merge transcript lines', (d) => {
+        const t = d.subtitleTracks[trackId];
+        if (!t) return;
+        t.cues.sort((a, b) => a.start - b.start);
+        const want = new Set(cueIds);
+        const idx = t.cues.map((c, k) => (want.has(c.id) ? k : -1)).filter((k) => k >= 0);
+        if (idx.length < 2 || idx.some((k, n) => n > 0 && k !== idx[n - 1] + 1)) return; // consecutive only
+        const parts = idx.map((k) => t.cues[k]);
+        const first = parts[0];
+        const merged = mergeCueText(parts);
+        first.end = Math.max(...parts.map((c) => c.end));
+        first.text = merged.text;
+        if (merged.words) first.words = merged.words; else delete first.words;
+        const drop = new Set(parts.slice(1).map((c) => c.id));
+        t.cues = t.cues.filter((c) => !drop.has(c.id));
+        t.edited = true;
+      });
+    },
+    removeMediaCue(trackId, cueId) {
+      commit('Delete transcript line', (d) => {
+        const t = d.subtitleTracks[trackId];
+        if (!t || !t.cues.some((c) => c.id === cueId)) return;
+        t.cues = t.cues.filter((c) => c.id !== cueId);
+        t.edited = true;
+      });
     },
 
     // ---------------------------------------------------------------- scenes library

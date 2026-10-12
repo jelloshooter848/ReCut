@@ -137,6 +137,21 @@ export function TranscribeDialog() {
 
   const start = async () => {
     if (!api || !canStart || !selectedModel) return;
+    // A transcript edited by hand (#135) is replaced by a new one: ask first.
+    const tracks = useStore.getState().project.subtitleTracks;
+    const edited = chosen.filter((m) => m.subtitleTrackIds.some((id) => {
+      const t = tracks[id];
+      return !!t && t.origin === 'whisper' && t.edited === true && (t.streamIndex === undefined || t.streamIndex === streamOf(m));
+    }));
+    if (edited.length) {
+      const choice = await api.message({
+        type: 'warning', title: 'Replace edited transcript',
+        message: edited.length === 1 ? `${edited[0].name} has a transcript you edited by hand.` : `${edited.length} of these have transcripts you edited by hand.`,
+        detail: 'Transcribing again replaces it, and your edits are lost (Undo brings them back).',
+        buttons: ['Transcribe again', 'Cancel'], defaultId: 1, cancelId: 1,
+      }).catch(() => 1);
+      if (choice !== 0) return;
+    }
     setStarting(true);
     let queued = 0;
     for (const m of chosen) {

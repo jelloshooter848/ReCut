@@ -433,6 +433,8 @@ export interface SubtitleTrack {
    * tracks not read from a stream.
    */
   streamIndex?: number;
+  /** Cues edited by hand (#135): transcribing the stream again asks before replacing them. */
+  edited?: boolean;
 }
 
 export interface TagVocabulary {
