@@ -229,7 +229,10 @@ describe('exported frames: a TS whose video starts 0.5 s after its audio, and so
     expect(Number(j.streams.find((x) => x.codec_type === 'video')!.start_time)).toBeCloseTo(0, 3);
     expect(Number(j.streams.find((x) => x.codec_type === 'audio')!.start_time)).toBeCloseTo(-0.1, 3);
     expect(negMkv.probe!.startTime).toBe(0);
-    expect(negMkv.probe!.video!.startTime).toBeCloseTo(0.1, 3);
+    // The video starts at source 0 (#154: it used to read 0.1, measured from the negative start); FFmpeg's -ss / -t
+    // count from the raw start, 0.1 s before 0.
+    expect(negMkv.probe!.video!.startTime ?? 0).toBe(0);
+    expect(negMkv.probe!.startLead).toBeCloseTo(0.1, 3);
   });
 
   for (const c of cases) {

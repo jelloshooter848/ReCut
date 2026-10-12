@@ -102,7 +102,8 @@ function timeKey(time: number): number {
  * written by an older extraction are never served again: before M-10 they held the frame AFTER a mid-frame time
  * (v2), before v3 an anamorphic source's thumbnail had its stored (squeezed) shape.
  */
-const THUMB_VERSION = 'covering-frame-display-shape-v3';
+// v4 (#154): frames of a file with a negative container start were one frame early.
+export const THUMB_VERSION = 'covering-frame-display-shape-v4';
 function thumbDirName(key: string): string {
   return createHash('sha1').update(`${key}|${THUMB_VERSION}`).digest('hex');
 }
@@ -169,17 +170,25 @@ async function validOutput(p: string): Promise<boolean> {
 /** CFR frame grid of a file's video stream: fps and the first frame's container-relative time. */
 export interface FrameGrid { fps: number; start: number }
 
-const gridCache = new Map<string, Promise<FrameGrid | null>>();
+/** What a seek into `file` needs: its frame grid (null for VFR, stills or unknown) and its start lead (#154). */
+interface SeekInfo { grid: FrameGrid | null; lead: number }
 
-/** Frame grid of `file` (null for VFR, stills or unknown: then thumbnails seek to the raw time). */
-function frameGrid(file: string): Promise<FrameGrid | null> {
+const gridCache = new Map<string, Promise<SeekInfo>>();
+
+/**
+ * Frame grid and start lead of `file`. Thumbnails without a grid seek to the raw time. The lead (MediaProbe
+ * startLead: how far a negative container start lies before 0) is added to every `-ss`, which FFmpeg counts from the
+ * raw start: without it a file whose audio starts first gave thumbnails that much early.
+ */
+function seekInfo(file: string): Promise<SeekInfo> {
   let p = gridCache.get(file);
   if (!p) {
-    p = probeMedia(file).then((pr) => {
+    p = probeMedia(file).then((pr): SeekInfo => {
+      const lead = typeof pr.startLead === 'number' && pr.startLead > 0 ? pr.startLead : 0;
       const v = pr.video as ProbedVideoStreamInfo | undefined;
-      if (!v || v.isVfr || !(pr.duration > 0) || !(v.fps.num > 0 && v.fps.den > 0)) return null;
-      return { fps: v.fps.num / v.fps.den, start: typeof v.startTime === 'number' && v.startTime > 0 ? v.startTime : 0 };
-    }).catch(() => null);
+      if (!v || v.isVfr || !(pr.duration > 0) || !(v.fps.num > 0 && v.fps.den > 0)) return { grid: null, lead };
+      return { grid: { fps: v.fps.num / v.fps.den, start: typeof v.startTime === 'number' && v.startTime > 0 ? v.startTime : 0 }, lead };
+    }).catch(() => ({ grid: null, lead: 0 }));
     gridCache.set(file, p);
     if (gridCache.size > 256) gridCache.delete(gridCache.keys().next().value as string);
   }
@@ -221,7 +230,8 @@ export function thumbScaleFilter(width: number): string {
  */
 async function extractOne(file: string, time: number, width: number, out: string, signal?: AbortSignal): Promise<boolean> {
   const part = `${out}.part`;
-  const seek = frameSeekTime(time, await frameGrid(file));
+  const { grid, lead } = await seekInfo(file);
+  const seek = frameSeekTime(time, grid) + lead;
   const args = [
     '-copyts',
     '-ss', fmtSeconds(seek),
@@ -403,8 +413,8 @@ async function extractBatch(file: string, width: number, batch: [string, number]
     return;
   }
   const args: string[] = ['-copyts']; // as in extractOne
-  const grid = await frameGrid(file);
-  for (const [, t] of batch) args.push('-ss', fmtSeconds(frameSeekTime(t, grid)), '-i', ffmpegFileArg(file));
+  const { grid, lead } = await seekInfo(file);
+  for (const [, t] of batch) args.push('-ss', fmtSeconds(frameSeekTime(t, grid) + lead), '-i', ffmpegFileArg(file));
   batch.forEach(([out], idx) => {
     args.push(
       '-map', `${idx}:v:0`,
