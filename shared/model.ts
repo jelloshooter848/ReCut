@@ -73,10 +73,20 @@ export interface MediaProbe {
   audio: AudioStreamInfo[];
   subtitles: SubtitleStreamInfo[];
   startTime: number;            // container start time (seconds), used to normalize seeking
+  /**
+   * Seconds the container starts BEFORE 0 (a negative start_time, which `startTime` clamps to 0; #154). FFmpeg's input
+   * `-ss` and `-t` count from that raw start, so they are moved by it. Absent when the file starts at or after 0.
+   */
+  startLead?: number;
   bitrate?: number;
   /** Whether Chromium can decode this file directly (container + codecs). */
   browserPlayable: boolean;
   playabilityReason?: string;
+  /**
+   * Revision of the probe that made this (PROBE_REVISION in shared/media.ts). Absent on probes from before revision 2
+   * (#154), whose stream start offsets could be measured from a negative container start.
+   */
+  probeRev?: number;
 }
 
 export type ProxyStatus = 'none' | 'queued' | 'running' | 'ready' | 'failed';

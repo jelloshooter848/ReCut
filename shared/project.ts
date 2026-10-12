@@ -946,6 +946,8 @@ function repairProbe(pr: Obj): MediaProbe {
   pr.audio = objList(pr.audio, 'probed audio stream').filter(repairAudioStream);
   pr.subtitles = objList(pr.subtitles, 'probed subtitle stream');
   optional(pr, 'bitrate', isFiniteNum); optional(pr, 'playabilityReason', isStr);
+  optional(pr, 'probeRev', (v) => Number.isSafeInteger(v) && (v as number) > 0);
+  optional(pr, 'startLead', (v) => isFiniteNum(v) && v > 0 && v <= MAX_SOURCE_SECONDS);
   if ('video' in pr) { if (isObj(pr.video)) pr.video = repairVideoStream(pr.video); else { delete pr.video; note(FIELD_RESET); } }
   return pr as unknown as MediaProbe;
 }

@@ -7,7 +7,7 @@
 import { useStore } from '@/state/store';
 import {
   DEFAULT_PROJECT_NAME, autosaveProject, openProject, projectFromReply, projectNameFromPath, recutApi, repairedMessage, saveProject,
-  setAutosaveRequester, verifyMediaOnline, restoreCachedProxies,
+  setAutosaveRequester, verifyMediaOnline, restoreCachedProxies, refreshStaleProbes,
 } from '@/state/mediaActions';
 import { activeSequence } from '@/state/selectors';
 import { projectHasUserWork } from '@shared/project';
@@ -129,6 +129,7 @@ export async function checkMissingMedia(): Promise<string[]> {
   try {
     const missing = await verifyMediaOnline();
     void restoreCachedProxies(); // proxies that finished after the last save (#136)
+    void refreshStaleProbes(); // stored probes an older build measured wrongly (#154)
     if (missing.length) {
       toast('warn', `${missing.length} media file${missing.length === 1 ? ' is' : 's are'} offline`);
       useStore.getState().openDialog('relink');

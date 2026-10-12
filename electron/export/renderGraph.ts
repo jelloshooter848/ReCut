@@ -329,6 +329,12 @@ function containerStart(m: MediaItem): number {
   return typeof st === 'number' && Number.isFinite(st) && st > 0 ? st : 0;
 }
 
+/** How far the media's container starts before 0 (MediaProbe startLead, #154); 0 for most files. */
+function startLead(m: MediaItem): number {
+  const l = m.probe?.startLead;
+  return typeof l === 'number' && Number.isFinite(l) && l > 0 ? l : 0;
+}
+
 /** `PTS-x/TB` with a signed offset (x may be negative). */
 function ptsMinus(x: number, ptsName = 'PTS'): string {
   return x >= 0 ? `${ptsName}-${sec(x)}/TB` : `${ptsName}+${sec(-x)}/TB`;
@@ -380,9 +386,11 @@ function addInput(ctx: Ctx, seg: ClipSeg, kind: 'video' | 'audio'): InputInfo {
   const from = Math.max(0, readStart - lead);
   const seek = Math.max(0, from - inputPreroll(seg.media));
   const t0 = containerStart(seg.media);
+  // FFmpeg counts `-ss` and `-t` from the raw container start: a negative one lies startLead before source 0 (#154).
+  const sl = startLead(seg.media);
   const args: string[] = ['-copyts'];
-  if (seek > 0) args.push('-ss', sec(seek));
-  args.push('-t', sec((readStart - seek) + readLen + 0.25), '-i', seg.media.path);
+  if (seek > 0) args.push('-ss', sec(seek + sl));
+  args.push('-t', sec((readStart - seek) + readLen + 0.25 + (seek > 0 ? 0 : sl)), '-i', seg.media.path);
   const key = args.join('\u0000');
   const same = ctx.inputKeys.get(key) ?? [];
   const shared = same.find((e) => !e.kinds.has(kind));
