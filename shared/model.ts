@@ -35,6 +35,8 @@ export interface AudioStreamInfo {
    * layoutForChannels): channels are then numbered, not named (shared/audioChannels.ts). Absent on older probes.
    */
   layoutGuessed?: boolean;
+  /** Seconds the stream starts after the file does (an audio delay muxed in, #157); absent when it starts with it. */
+  startTime?: number;
 }
 
 export interface VideoStreamInfo {
