@@ -132,7 +132,7 @@ export interface TrackFlagsPatch {
 
 export interface ContinuityNoteInput { time: number; name: string; note: string; category?: string; clipId?: ID; duration?: number }
 
-export type SequenceSettingsPatch = Partial<Pick<Sequence, 'name' | 'fps' | 'width' | 'height' | 'sampleRate' | 'channels' | 'binId' | 'versionLabel'>>;
+export type SequenceSettingsPatch = Partial<Pick<Sequence, 'name' | 'fps' | 'width' | 'height' | 'sampleRate' | 'channels' | 'binId' | 'versionLabel' | 'subtitlePosition'>>;
 
 export interface MediaRelinkStat { size?: number; mtimeMs?: number }
 

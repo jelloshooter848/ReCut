@@ -15,6 +15,7 @@ import type { StoreState } from '@/state';
 import { SourcePlayer, resolvePlaybackPath, mediaFps, mediaSize, type SourcePlayerStatus } from '@/playback';
 import { isStillImage, previewPlayable, previewReason } from '@/playback/mediaSource';
 import { activeWordIndex } from '@/playback/subtitleWrap';
+import { subtitleAnchor } from '@shared/subtitlePosition';
 import { resumeAudio } from '@/app/media';
 import { registerTransport, setActiveTransport, shuttle, useActiveTransportId, type Transport } from '@/app/transport';
 import { setClipDrag } from '@/app/dnd';
@@ -127,6 +128,13 @@ export function SourcePanel({ focused, active }: PanelProps) {
   const currentCue = useMemo(() => cues.find((c) => c.start <= time && time < c.end) ?? null, [cues, time]);
   const highlightWords = useStore((s) => s.project.settings.highlightSpokenWords);
   const activeWord = highlightWords ? activeWordIndex(currentCue?.words, time) : -1;
+  // Subtitle position (#115): the active timeline's, so the Source monitor matches Program and the export.
+  const subtitlePosition = useStore((s) => (s.project.activeSequenceId ? s.project.sequences[s.project.activeSequenceId]?.subtitlePosition : undefined));
+  const subtitleStyle = useMemo((): React.CSSProperties | undefined => {
+    const a = subtitleAnchor(subtitlePosition);
+    if (!a) return undefined;
+    return a.edge === 'bottom' ? { bottom: `${(a.margin * 100).toFixed(2)}%` } : { top: `${(a.margin * 100).toFixed(2)}%`, bottom: 'auto' };
+  }, [subtitlePosition]);
 
   // Scene range (#150): the bar shows the opened shot / scene until Full file is chosen or the playhead leaves the range
   // (playing past Out, stepping to another shot, typing a time). It arms once the playhead has been inside the range,
@@ -394,7 +402,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
             {size ? <span className="source-badge" title="Source resolution">{size.width}×{size.height}</span> : null}
           </div>
           {currentCue ? (
-            <div className="source-subtitle" data-testid="source-subtitle">
+            <div className="source-subtitle" data-testid="source-subtitle" style={subtitleStyle}>
               {currentCue.words?.length
                 ? currentCue.words.map((w, i) => (
                   <React.Fragment key={i}>{i ? ' ' : ''}<span className={i === activeWord ? 'source-word active' : 'source-word'}>{w.text}</span></React.Fragment>

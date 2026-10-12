@@ -51,6 +51,9 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
   switches to the whole file and back ([#150](https://github.com/jelloshooter848/ReCut/issues/150)).
 - HEVC media plays in the monitors without a proxy on machines that decode it (macOS, Windows with HEVC support)
   ([#138](https://github.com/jelloshooter848/ReCut/issues/138)).
+- Subtitle position: move subtitles up or down the frame per timeline (Inspector › Subtitles › **Position**,
+  **Top** / **Bottom**); the Program and Source monitors and burn-in export use it
+  ([#115](https://github.com/jelloshooter848/ReCut/issues/115)) (on devJames)
 
 ### Changed
 
@@ -340,3 +343,10 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Start again → no "Recover unsaved changes?".
 - [ ] Import a media and quit without saving → the "Save changes?" prompt appears as before.
 
+### #115 Subtitle position (on devJames)
+
+- [ ] With nothing selected, the Inspector shows the timeline; its **Subtitles** section says Position "Bottom (default)".
+- [ ] Click **Top** → subtitles move to the top of the frame in the Program monitor (and the Source monitor, for a clip with subtitles); the label reads "7 % from the top". Undo puts them back.
+- [ ] Drag the Position slider to the middle → the subtitles follow when you release it.
+- [ ] Export with **Burn in** subtitles at Top → the burned-in text is at the top of the frame, where the Program monitor showed it. Try once with **Highlight the spoken word** on too.
+- [ ] Save, close and reopen the project → the position is kept. **Bottom** returns to the default.

@@ -1,4 +1,5 @@
 import { PROJECT_FORMAT_VERSION, MEDIA_CATEGORIES } from './model';
+import { isValidSubtitlePosition } from './subtitlePosition';
 import type {
   Project, Sequence, Rational, MediaItem, ProjectSettings, Bin, ID, TagVocabulary, SequenceView, Track, Clip, Transition,
   TransitionType, MediaKind, ProxyStatus, MarkerKind, Marker, StoryBlock, SequenceSubtitleTrack, SequenceSubtitleCue,
@@ -440,6 +441,7 @@ function repairSequence(s: Obj, id: ID, fallbackFps: Readonly<Rational>): Sequen
   } as Sequence;
   optional(seq as unknown as Obj, 'parentSequenceId', isStr);
   optional(seq as unknown as Obj, 'versionLabel', isStr);
+  optional(seq as unknown as Obj, 'subtitlePosition', isValidSubtitlePosition);
   dedupeSequenceIds(seq);
   for (const t of [...seq.videoTracks, ...seq.audioTracks]) reconcileLoadedTransitions(t);
   return seq;
