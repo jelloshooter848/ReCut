@@ -108,6 +108,8 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
   ([#157](https://github.com/jelloshooter848/ReCut/issues/157)) (on devJames)
 - An opened shot or scene played on past its end into the rest of the file and zoomed out
   ([#164](https://github.com/jelloshooter848/ReCut/issues/164)) (on devJames)
+- The window's title bar, menus and system dialogs are dark to match the app, also when macOS (or Windows) is set
+  to light mode ([#166](https://github.com/jelloshooter848/ReCut/issues/166)) (on devJames)
 
 ### Known issues
 
@@ -350,3 +352,9 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Drag the Position slider to the middle → the subtitles follow when you release it.
 - [ ] Export with **Burn in** subtitles at Top → the burned-in text is at the top of the frame, where the Program monitor showed it. Try once with **Highlight the spoken word** on too.
 - [ ] Save, close and reopen the project → the position is kept. **Bottom** returns to the default.
+
+### #166 Dark title bar (on devJames)
+
+- [ ] On macOS, set System Settings › Appearance to **Light**, then start ReCut → the window's title bar is dark like the rest of the app.
+- [ ] Open a menu and **File › Open Project…** → the menus and the file dialog are dark too.
+- [ ] Switch macOS back to **Dark** → nothing changes in ReCut.
