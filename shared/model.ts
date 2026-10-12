@@ -148,6 +148,8 @@ export interface MediaItem {
   proxy: ProxyInfo;
   detectedScenes: DetectedScene[];
   sceneDetectStatus?: 'none' | 'running' | 'done' | 'failed';
+  /** The detected shots were renamed, merged, split, tagged or deleted: detecting again asks before replacing them (#142). */
+  shotsEdited?: boolean;
   subtitleTrackIds: ID[];
   thumbnailTime?: number;   // poster frame time (seconds)
   notes: string;
@@ -459,6 +461,8 @@ export interface ProjectSettings {
   highlightSpokenWords: boolean;
   /** Name newly detected shots from the media's transcript or subtitles, when it has one (#144). */
   nameShotsFromTranscript: boolean;
+  /** Shortest shot detection keeps, in seconds: cuts closer than this to the previous one are dropped (#142). */
+  minShotSeconds: number;
 }
 
 export interface Project {

@@ -1,11 +1,11 @@
 /** Preferences dialog (ui.dialogs.preferences): project settings + read-only app info. */
+import { SHOT_SENSITIVITY, shotSensitivityOf, type ShotSensitivity } from '@shared/shotDetect';
 import React, { useEffect, useState } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { Toggle } from '@/components/ui/Toggle';
 import { Select } from '@/components/ui/Select';
 import { NumberField } from '@/components/ui/NumberField';
-import { Slider } from '@/components/ui/Slider';
 import { useStore } from '@/state/store';
 import { recutApi } from '@/state/mediaActions';
 import { resetAllLayouts } from '@/components/layout/layoutStore';
@@ -66,8 +66,6 @@ export function PreferencesDialog() {
   const open = useStore((s) => s.ui.dialogs.preferences);
   const settings = useStore((s) => s.project.settings);
   const [info, setInfo] = useState<AppInfo | null>(null);
-  const [threshold, setThreshold] = useState(settings.sceneThreshold);
-  useEffect(() => { if (open) setThreshold(settings.sceneThreshold); }, [open, settings.sceneThreshold]);
   const ocrLanguages = useOcrStatus((s) => s.languages);
   useEffect(() => { if (open) void useOcrStatus.getState().refresh(); }, [open]);
   const whisperModels = useWhisperStatus((s) => s.models);
@@ -97,9 +95,14 @@ export function PreferencesDialog() {
           <Row label="Playback resolution">
             <Select value={settings.playbackResolution} options={PLAYBACK_RES} onChange={(v) => set({ playbackResolution: v as ProjectSettings['playbackResolution'] })} />
           </Row>
-          <Row label="Shot detection threshold" hint="Higher values detect fewer, stronger cuts">
-            <Slider value={threshold} min={0.05} max={0.95} step={0.01} onChange={setThreshold} onCommit={(v) => set({ sceneThreshold: v })} className="grow" />
-            <span className="mono text-dim" style={{ width: 36, textAlign: 'right' }}>{threshold.toFixed(2)}</span>
+          <Row label="Shot detection" hint="How many cuts Detect Shots finds, and the shortest shot it keeps">
+            <Select value={shotSensitivityOf(settings.sceneThreshold)} data-testid="prefs-shot-sensitivity"
+              options={[{ value: 'fewer', label: 'Fewer cuts' }, { value: 'normal', label: 'Normal' }, { value: 'more', label: 'More cuts' },
+                ...(shotSensitivityOf(settings.sceneThreshold) === 'custom' ? [{ value: 'custom', label: `Custom (${settings.sceneThreshold.toFixed(2)})` }] : [])]}
+              onChange={(v) => { if (v !== 'custom') set({ sceneThreshold: SHOT_SENSITIVITY[v as ShotSensitivity] }); }} />
+            <Select value={String(settings.minShotSeconds)} data-testid="prefs-min-shot"
+              options={[0.5, 1, 2, 3, 5].map((s) => ({ value: String(s), label: `≥ ${s} s` }))}
+              onChange={(v) => set({ minShotSeconds: Number(v) })} />
           </Row>
         </Section>
 

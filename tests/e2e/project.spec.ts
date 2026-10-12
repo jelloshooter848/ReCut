@@ -197,6 +197,18 @@ test('detects scenes through the context menu and lists scene rows under the med
   await scenes.first().click({ button: 'right' });
   await page.locator('.menu-item', { hasText: 'Merge with Next' }).click();
   await expect(scenes).toHaveCount(n - 1);
+
+  // Detecting again over edited shots warns before replacing them (#142); the dialog is in plain words.
+  await row.click({ button: 'right' });
+  await page.locator('.menu-item', { hasText: 'Detect Shots' }).click();
+  const dialog = page.getByTestId('detect-shots-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(page.getByTestId('detect-sensitivity')).toHaveValue('normal');
+  await expect(page.getByTestId('detect-min-shot')).toHaveValue('1');
+  await expect(page.getByTestId('detect-replace-warning')).toContainText('renamed, merged');
+  await expect(page.getByTestId('detect-run')).toHaveText('Detect and Replace');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
 });
 
 test('several selected shots: Insert N Shots places all in order as one undo step; Make Scene; Merge (#143)', async () => {

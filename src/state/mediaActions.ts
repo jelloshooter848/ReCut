@@ -396,7 +396,10 @@ export async function startSceneDetect(mediaId: ID, threshold?: number): Promise
   const m = st.project.media[mediaId];
   if (!api || !m) return null;
   st.setSceneDetectStatus(mediaId, 'running');
-  return api.startSceneDetect({ mediaId, path: m.path, threshold: threshold ?? st.project.settings.sceneThreshold, duration: m.probe?.duration ?? 0 });
+  return api.startSceneDetect({
+    mediaId, path: m.path, threshold: threshold ?? st.project.settings.sceneThreshold, duration: m.probe?.duration ?? 0,
+    minSceneSeconds: st.project.settings.minShotSeconds,
+  });
 }
 
 /** Read an .srt/.vtt file and attach it to a media item as a subtitle track. Returns parse warnings. */
