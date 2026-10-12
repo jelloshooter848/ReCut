@@ -440,6 +440,16 @@ own timeline and drop it into as many cuts as you like: an edit made inside it s
   imported to a track or read by the Transcript) and writes through a temp file, so a failed export never leaves a
   truncated file.
 - The Program monitor's **Subtitles** option toggles on-screen display.
+- **Editing lines by hand.** Double-click a line on the timeline (a transcript line in a **T** lane or the Subtitles
+  row, or a cue on a subtitle track), or right-click it › **Edit…**, or use the pencil on a cue in the Subtitles
+  panel. Change the text, its **Start** and **End** (timeline timecode), **Split at playhead**, **Merge with next** or
+  **Delete**. Each edit is one undo step.
+  - A **transcript** line is part of the media's transcript: the fix shows wherever that part of the media is used,
+    in every timeline, and the line keeps following its audio when you move, trim or unlink the clip. Timing stays
+    within the clip. Word highlighting follows the edit (same number of words: each keeps its timing; otherwise the
+    line's time is shared out across the new words). Transcribing that media again asks before replacing your edits.
+  - A **subtitle-track** cue added at the playhead over a clip is attached to that clip and moves with it;
+    right-click › **Unpin from Clip** keeps it where it is on the timeline instead.
 - **Where subtitles sit:** select nothing so the Inspector shows the timeline, then **Subtitles › Position**: drag
   the slider, or use **Top** / **Bottom** (Bottom is the default). Each timeline has its own position. The Program
   and Source monitors show it and burn-in export uses it, so the exported text sits where you saw it.

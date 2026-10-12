@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Captions, Download, Eraser, Eye, EyeOff, FileUp, ListPlus, LocateFixed, Merge, Minus, Plus, Scissors, Trash2 } from 'lucide-react';
+import { Captions, Download, Eraser, Eye, EyeOff, FileUp, ListPlus, LocateFixed, Merge, Minus, Pencil, Plus, Scissors, Trash2 } from 'lucide-react';
 import type { ID, Sequence, SequenceSubtitleCue } from '../../../shared/model';
 import { formatSequenceTimecode, secondsToFrames } from '../../../shared/time';
 import { allTracks, type ResolvedCue } from '../../../shared/timeline';
@@ -8,6 +8,7 @@ import { Button, EmptyState, IconButton, MenuButton, Select, toast, type MenuIte
 import type { PanelProps } from '../registry';
 import { VirtualList, type VirtualListHandle } from '../transcript/VirtualList';
 import { exportSubtitlesDialog, importSubtitlesToTrack, orphanCues, removeOrphanCues, resolveAllTracks } from './exportSubtitles';
+import { CueEditDialog, type CueRef } from '../timeline/CueEditDialog';
 
 const ROW_H = 64;
 
@@ -36,6 +37,7 @@ interface RowProps {
 }
 
 function CueRow({ seq, cue, raw, next, originLabel, current }: RowProps) {
+  const [editing, setEditing] = useState<CueRef | null>(null);
   const st = useStore.getState;
   const fps = seq.fps;
   const nudge = (dir: 1 | -1, e: React.MouseEvent) => {
@@ -57,11 +59,13 @@ function CueRow({ seq, cue, raw, next, originLabel, current }: RowProps) {
       <div className="st-side" onClick={(e) => e.stopPropagation()}>
         <span className={['st-origin', 'ellipsis', cue.clipId ? 'clip' : 'manual'].join(' ')} title={cue.clipId ? `Attached to clip "${originLabel}"` : 'Manual cue'}>{originLabel}</span>
         <div className="row gap-0">
+          <IconButton size="sm" icon={Pencil} label="Edit text and timing…" onClick={() => setEditing({ kind: 'subtitle', seqId: seq.id, cueId: cue.id })} data-testid="subtitle-cue-edit" />
           <IconButton size="sm" icon={Minus} label="Nudge earlier (−1 frame, Shift −10)" onClick={(e) => nudge(-1, e)} />
           <IconButton size="sm" icon={Plus} label="Nudge later (+1 frame, Shift +10)" onClick={(e) => nudge(1, e)} />
           <IconButton size="sm" icon={Scissors} label="Split at playhead" disabled={!canSplit} onClick={() => st().splitCue(seq.id, cue.id, playheadNow())} />
           <IconButton size="sm" icon={Merge} label="Merge with next" disabled={!next} onClick={() => next && st().mergeCues(seq.id, [cue.id, next.id])} />
           <IconButton size="sm" icon={Trash2} label="Delete cue" onClick={() => st().removeCue(seq.id, cue.id)} />
+          {editing ? <CueEditDialog cue={editing} onClose={() => setEditing(null)} /> : null}
         </div>
       </div>
     </div>

@@ -54,6 +54,10 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
 - Subtitle position: move subtitles up or down the frame per timeline (Inspector › Subtitles › **Position**,
   **Top** / **Bottom**); the Program and Source monitors and burn-in export use it
   ([#115](https://github.com/jelloshooter848/ReCut/issues/115)) (on devJames)
+- Edit subtitle and transcript lines by hand: double-click a line on the timeline (or right-click › **Edit…**, or the
+  pencil in the Subtitles panel) to change its text and timing, split, merge or delete it. Transcript edits change
+  the media's transcript, so they show in every timeline and keep following the audio; word highlighting follows the
+  edited text ([#135](https://github.com/jelloshooter848/ReCut/issues/135)) (on devJames)
 
 ### Changed
 
@@ -75,6 +79,8 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
   ([#117](https://github.com/jelloshooter848/ReCut/issues/117)).
 - **Thumbnails and filmstrips are made again once**, and videos with a start offset are probed again when a project
   opens ([#154](https://github.com/jelloshooter848/ReCut/issues/154), [#156](https://github.com/jelloshooter848/ReCut/issues/156)) (on devJames)
+- A subtitle cue added at the playhead over a clip now moves with that clip (**Unpin from Clip** keeps one in place);
+  transcribing media again asks before replacing a transcript you edited ([#135](https://github.com/jelloshooter848/ReCut/issues/135)) (on devJames)
 
 ### Fixed
 
@@ -110,6 +116,8 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
   ([#164](https://github.com/jelloshooter848/ReCut/issues/164)) (on devJames)
 - The window's title bar, menus and system dialogs are dark to match the app, also when macOS (or Windows) is set
   to light mode ([#166](https://github.com/jelloshooter848/ReCut/issues/166)) (on devJames)
+- Editing the text of a word-timed subtitle showed the old words in the monitors, and merging subtitles kept only the
+  first one's words ([#135](https://github.com/jelloshooter848/ReCut/issues/135)) (on devJames)
 
 ### Known issues
 
@@ -358,3 +366,14 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] On macOS, set System Settings › Appearance to **Light**, then start ReCut → the window's title bar is dark like the rest of the app.
 - [ ] Open a menu and **File › Open Project…** → the menus and the file dialog are dark too.
 - [ ] Switch macOS back to **Dark** → nothing changes in ReCut.
+
+### #135 Editing subtitle and transcript lines (on devJames)
+
+- [ ] Transcribe a clip, insert it, and double-click a line in its **T** lane → the editor opens and says the edit changes the media's transcript. Fix a word, Save → the T lane, the Subtitles row and both monitors show the fix; with word highlighting on, the right word lights up.
+- [ ] Change the line's **End** in the editor → it ends there on the timeline; it can't run past the clip's end.
+- [ ] Move or trim the audio clip (and unlink it from its video) → the edited line goes with the audio.
+- [ ] Use the same part of the media in a second timeline → the fix is there too.
+- [ ] Right-click a line › **Split at Playhead**, then **Edit…** › **Merge with next**, then **Delete Line**; Undo after each one restores it.
+- [ ] Transcribe the same media again → a prompt asks before replacing your edits.
+- [ ] On a subtitle track, add a cue at the playhead over a clip (Subtitles panel › **Add cue at playhead**), then move the clip → the cue moves with it. Right-click the cue › **Unpin from Clip**, move the clip again → the cue stays put.
+- [ ] In the Subtitles panel, the pencil on a cue opens the same editor; typing new Start/End times moves the cue.

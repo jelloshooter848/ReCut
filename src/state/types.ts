@@ -311,6 +311,19 @@ export interface StoreActions {
   splitCue(seqId: ID, cueId: ID, atFrame: number): ID | null;
   mergeCues(seqId: ID, cueIds: ID[]): void;
   removeCue(seqId: ID, cueId: ID): void;
+  /** Set a timeline cue's start and end (timeline frames); an attached cue stays attached, within its clip (#135). */
+  setCueTiming(seqId: ID, cueId: ID, startFrame: number, endFrame: number): void;
+  /** Detach a timeline cue from its clip: it stays where it is on the timeline (#135). */
+  unpinCue(seqId: ID, cueId: ID): void;
+
+  // ---- media subtitle / transcript cues, edited by hand (#135): source seconds, so edits follow the audio ----
+  /** Text and / or start / end of a media cue; empty text removes it. Kept off its neighbours (no new overlap). */
+  editMediaCue(trackId: ID, cueId: ID, patch: { text?: string; start?: number; end?: number }): void;
+  addMediaCue(trackId: ID, cue: { start: number; end: number; text: string }): ID | null;
+  splitMediaCue(trackId: ID, cueId: ID, atSeconds: number): ID | null;
+  /** Merge consecutive cues of one track into the first. */
+  mergeMediaCues(trackId: ID, cueIds: ID[]): void;
+  removeMediaCue(trackId: ID, cueId: ID): void;
 
   // ---- scenes library ----
   addScene(record: SceneRecord): void;

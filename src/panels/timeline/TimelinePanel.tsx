@@ -25,6 +25,7 @@ import { Ruler } from './Ruler';
 import { Playhead } from './Playhead';
 import { useDevicePixelRatio } from './useDevicePixelRatio';
 import { TrackHeader, SubtitleLaneHeader, TranscriptLaneHeader } from './TrackHeader';
+import { CueEditDialog, transcriptCueRef, type CueRef } from './CueEditDialog';
 import { onScreenTranscript, transcriptIndex } from '@shared/transcripts';
 import { TimelineHeader } from './TimelineHeader';
 import { MarkerEditor, PropertiesPopover, RenameDialog, SpeedDialog, TagsDialog } from './dialogs';
@@ -192,6 +193,35 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
   const fullSeq = () => useStore.getState().project.sequences[seqId];
   const snapCandidates = useCallback(() => { const s = fullSeq(); return s ? snapTargets(s) : []; }, [seqId]); // eslint-disable-line react-hooks/exhaustive-deps
   const focusPanel = (id: string) => { useStore.getState().setActivePanel(id); useLayoutStore.getState().focusPanel(id); };
+
+  // ---- editing subtitle / transcript lines (#135)
+  const [editCue, setEditCue] = useState<CueRef | null>(null);
+  const openCueEditor = useCallback((ref: CueRef) => setEditCue(ref), []);
+  const closeCueEditor = useCallback(() => { setEditCue(null); rootRef.current?.focus({ preventScroll: true }); }, []);
+  const transcriptRef = (timelineCueId: string): CueRef | null => {
+    const s = seqId ? useStore.getState().project.sequences[seqId] : undefined;
+    return s ? transcriptCueRef(s, timelineCueId) : null;
+  };
+  const editTranscriptCue = (timelineCueId: string) => { const r = transcriptRef(timelineCueId); if (r) openCueEditor(r); };
+  const cueMenu = (e: React.MouseEvent, ref: CueRef) => {
+    e.preventDefault(); e.stopPropagation();
+    const st = useStore.getState();
+    const ph = seqId ? st.project.sequences[seqId]?.view.playhead ?? 0 : 0;
+    const items: MenuItem[] = [{ label: 'Edit…', onSelect: () => openCueEditor(ref) }];
+    if (ref.kind === 'subtitle') {
+      items.push({ label: 'Split at Playhead', onSelect: () => st.splitCue(ref.seqId, ref.cueId, ph) });
+      const pinned = st.project.sequences[ref.seqId]?.subtitleTracks.some((t) => t.cues.some((c) => c.id === ref.cueId && c.clipId));
+      if (pinned) items.push({ label: 'Unpin from Clip', title: 'Keep this subtitle where it is on the timeline when its clip moves', onSelect: () => st.unpinCue(ref.seqId, ref.cueId) });
+      items.push({ separator: true }, { label: 'Delete', onSelect: () => st.removeCue(ref.seqId, ref.cueId) });
+    } else {
+      items.push({ label: 'Split at Playhead', onSelect: () => {
+        const s = st.project.sequences[ref.seqId]; const clip = s ? findClip(s, ref.clipId)?.clip : undefined;
+        if (s && clip) st.splitMediaCue(ref.trackId, ref.cueId, clip.sourceIn + ((ph - clip.start) * s.fps.den / s.fps.num) * clip.speed);
+      } }, { separator: true }, { label: 'Delete Line', onSelect: () => st.removeMediaCue(ref.trackId, ref.cueId) });
+    }
+    openContextMenu(items, e);
+  };
+  const transcriptCueMenu = (e: React.MouseEvent, timelineCueId: string) => { const r = transcriptRef(timelineCueId); if (r) cueMenu(e, r); };
   const doZoomToFit = useCallback(() => { const s = fullSeq(); if (!s || width <= 0) return; setView({ zoom: zoomToFit(Math.max(1, sequenceDuration(s)), width), scroll: 0 }); }, [width, setView]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Idle-time mounting ahead of an incremental scroll (see PREFETCH_LOW_PX). Checked after every commit; the callback
@@ -733,21 +763,24 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
                     return (
                       <div key={c.id} className={['tl-cue', c.orphan ? 'orphan' : ''].filter(Boolean).join(' ')} style={{ left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={c.text}
                         onPointerDown={(e) => { e.stopPropagation(); if (e.button !== 0) return; const r = contentRef.current!.getBoundingClientRect(); setView({ playhead: xToFrameInt(e.clientX - r.left, zoom, scroll) }); }}
-                        onDoubleClick={(e) => { e.stopPropagation(); focusPanel('subtitles'); }}>
+                        onDoubleClick={(e) => { e.stopPropagation(); openCueEditor({ kind: 'subtitle', seqId: seqId!, cueId: c.id }); }}
+                        onContextMenu={(e) => cueMenu(e, { kind: 'subtitle', seqId: seqId!, cueId: c.id })} data-subtitle-cue={c.id}>
                         {c.text}
                       </div>
                     );
                   }) : null}
                   {itemsInRange(onScreen, Math.max(0, viewX0 / zoom), viewX1 / zoom, cueStart, cueEnd).map((c) => (
                     <div key={`os:${c.id}`} className="tl-cue transcript" style={{ left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={c.text} data-onscreen-cue
-                      onPointerDown={(e) => { e.stopPropagation(); if (e.button !== 0) return; const b = contentRef.current!.getBoundingClientRect(); setView({ playhead: xToFrameInt(e.clientX - b.left, zoom, scroll) }); }}>
+                      onPointerDown={(e) => { e.stopPropagation(); if (e.button !== 0) return; const b = contentRef.current!.getBoundingClientRect(); setView({ playhead: xToFrameInt(e.clientX - b.left, zoom, scroll) }); }}
+                      onDoubleClick={(e) => { e.stopPropagation(); editTranscriptCue(c.id); }} onContextMenu={(e) => transcriptCueMenu(e, c.id)}>
                       {c.text}
                     </div>
                   ))}
                   {layout.transcripts.map((r) => itemsInRange(transcripts?.lanes.get(r.trackId) ?? [], Math.max(0, viewX0 / zoom), viewX1 / zoom, cueStart, cueEnd).map((c) => (r.collapsed
                     ? <div key={c.id} className="tl-cue-line" style={{ top: r.top + (r.height - 3) / 2, left: c.start * zoom, width: Math.max(2, (c.end - c.start) * zoom) }} title={c.text} />
-                    : <div key={c.id} className="tl-cue transcript" style={{ top: r.top + 7, left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={c.text} data-transcript-cue
-                      onPointerDown={(e) => { e.stopPropagation(); if (e.button !== 0) return; const b = contentRef.current!.getBoundingClientRect(); setView({ playhead: xToFrameInt(e.clientX - b.left, zoom, scroll) }); }}>
+                    : <div key={c.id} className="tl-cue transcript" style={{ top: r.top + 7, left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={c.text} data-transcript-cue={c.id}
+                      onPointerDown={(e) => { e.stopPropagation(); if (e.button !== 0) return; const b = contentRef.current!.getBoundingClientRect(); setView({ playhead: xToFrameInt(e.clientX - b.left, zoom, scroll) }); }}
+                      onDoubleClick={(e) => { e.stopPropagation(); editTranscriptCue(c.id); }} onContextMenu={(e) => transcriptCueMenu(e, c.id)}>
                       {c.text}
                     </div>
                   )))}
@@ -789,6 +822,7 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
       {dialog?.kind === 'tags' && dialogClip ? <TagsDialog seqId={seqId} clip={dialogClip.clip} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'props' && dialogClip ? <LivePropertiesPopover seqId={seqId} clip={dialogClip.clip} track={dialogClip.track} media={media[dialogClip.clip.mediaId]} fps={fps} x={dialog.x} y={dialog.y} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'marker' && dialogMarker ? <MarkerEditor seqId={seqId} marker={dialogMarker} fps={fps} x={dialog.x} y={dialog.y} onClose={() => setDialog(null)} /> : null}
+      {editCue ? <CueEditDialog cue={editCue} onClose={closeCueEditor} /> : null}
       {dialog?.kind === 'renameTrack' ? (() => { const t = trackById.get(dialog.trackId); return t ? <RenameDialog title="Rename Track" value={t.name} onClose={() => setDialog(null)} onCommit={(v) => useStore.getState().setTrackFlags(seqId, t.id, { name: v })} /> : null; })() : null}
     </div>
   );
