@@ -444,6 +444,12 @@ own timeline and drop it into as many cuts as you like: an edit made inside it s
   imported to a track or read by the Transcript) and writes through a temp file, so a failed export never leaves a
   truncated file.
 - The Program monitor's **Subtitles** option toggles on-screen display.
+- **A subtitle file as the transcript.** A good subtitle file (written by a person, foreign lines already
+  translated) can be a video's transcript instead of Whisper's: select the video, Media Inspector › Subtitle tracks ›
+  **Transcript**, and pick the track (or right-click a transcript line › **Transcript Source**). The T lanes, the
+  on-screen transcript, Transcript search and shot naming then use it, without its formatting tags. A subtitle file
+  has no timing for each word, so word highlighting is estimated. The Inspector warns when the file runs past the
+  end of the video: it is probably for another cut or frame rate.
 - **Editing lines by hand.** Double-click a line on the timeline (a transcript line in a **T** lane or the Subtitles
   row, or a cue on a subtitle track), or right-click it › **Edit…**, or use the pencil on a cue in the Subtitles
   panel. Change the text, its **Start** and **End** (timeline timecode), **Split at playhead**, **Merge with next** or

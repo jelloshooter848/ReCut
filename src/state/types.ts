@@ -218,6 +218,8 @@ export interface StoreActions {
    */
   putWhisperSubtitleTrack(track: SubtitleTrack): ID;
   removeMediaSubtitleTrack(trackId: ID): void;
+  /** Use one of the media's subtitle tracks as its transcript (#162), or null for the Whisper transcript. */
+  setTranscriptSource(mediaId: ID, trackId: ID | null): void;
 
   // ---- sequences ----
   addSequence(seq: Sequence, opts?: { activate?: boolean }): void;

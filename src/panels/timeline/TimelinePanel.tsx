@@ -218,6 +218,16 @@ function TimelineBody({ seqId, active }: { seqId: ID; active: boolean }) {
         const s = st.project.sequences[ref.seqId]; const clip = s ? findClip(s, ref.clipId)?.clip : undefined;
         if (s && clip) st.splitMediaCue(ref.trackId, ref.cueId, clip.sourceIn + ((ph - clip.start) * s.fps.den / s.fps.num) * clip.speed);
       } }, { separator: true }, { label: 'Delete Line', onSelect: () => st.removeMediaCue(ref.trackId, ref.cueId) });
+      // Transcript source of this clip's media (#162): Whisper, or one of its subtitle tracks.
+      const s = st.project.sequences[ref.seqId]; const clip = s ? findClip(s, ref.clipId)?.clip : undefined;
+      const m = clip ? st.project.media[clip.mediaId] : undefined;
+      if (m && m.subtitleTrackIds.length > 1) {
+        items.push({ separator: true }, {
+          label: 'Transcript Source',
+          submenu: [{ id: '', name: 'Whisper (automatic)' }, ...m.subtitleTrackIds.map((id) => st.project.subtitleTracks[id]).filter(Boolean).map((t) => ({ id: t!.id, name: `${t!.name} (${t!.origin})` }))]
+            .map((o) => ({ label: o.name, checked: (m.transcriptTrackId ?? '') === o.id, onSelect: () => st.setTranscriptSource(m.id, o.id || null) })),
+        });
+      }
     }
     openContextMenu(items, e);
   };

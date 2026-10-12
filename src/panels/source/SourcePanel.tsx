@@ -16,6 +16,7 @@ import { SourcePlayer, resolvePlaybackPath, mediaFps, mediaSize, type SourcePlay
 import { isStillImage, previewPlayable, previewReason } from '@/playback/mediaSource';
 import { activeWordIndex } from '@/playback/subtitleWrap';
 import { subtitleAnchor } from '@shared/subtitlePosition';
+import { estimateWords, transcriptDisplayText } from '@shared/transcripts';
 import { resumeAudio } from '@/app/media';
 import { registerTransport, setActiveTransport, shuttle, useActiveTransportId, type Transport } from '@/app/transport';
 import { setClipDrag } from '@/app/dnd';
@@ -121,8 +122,17 @@ export function SourcePanel({ focused, active }: PanelProps) {
   const durationFrames = Number.isFinite(duration) && duration > 0 ? Math.max(1, secondsToFrames(duration, fps)) : 0;
   const cues: SubtitleCue[] = useMemo(() => {
     if (!media) return [];
+    // A subtitle track chosen as the transcript (#162) is the one shown, as transcript text with estimated word timing.
+    const chosen = media.transcriptTrackId && media.subtitleTrackIds.includes(media.transcriptTrackId) ? subtitleTracks[media.transcriptTrackId] : undefined;
+    if (chosen && chosen.origin !== 'whisper') {
+      return chosen.cues.map((c) => {
+        const text = transcriptDisplayText(c.text);
+        const words = c.words?.length ? c.words : estimateWords(text, c.start, c.end);
+        return { ...c, text, ...(words ? { words } : {}) };
+      }).sort((a, b) => a.start - b.start);
+    }
     const out: SubtitleCue[] = [];
-    for (const tid of media.subtitleTrackIds) { const t = subtitleTracks[tid]; if (t) out.push(...t.cues); }
+    for (const tid of chosen ? [chosen.id] : media.subtitleTrackIds) { const t = subtitleTracks[tid]; if (t) out.push(...t.cues); }
     return out.sort((a, b) => a.start - b.start);
   }, [media, subtitleTracks]);
   const currentCue = useMemo(() => cues.find((c) => c.start <= time && time < c.end) ?? null, [cues, time]);

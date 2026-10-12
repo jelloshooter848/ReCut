@@ -885,6 +885,7 @@ function repairMedia(m: Obj, id: ID): MediaItem {
   m.addedAt = num(m.addedAt, 0);
   optional(m, 'sceneDetectStatus', (v) => isStr(v) && Object.hasOwn(JOB_STATES, v));
   optional(m, 'shotsEdited', isBool);
+  optional(m, 'transcriptTrackId', isStr);
   optional(m, 'waveformStatus', (v) => isStr(v) && Object.hasOwn(WAVEFORM_STATES, v));
   // Jobs do not survive a restart (expected, not a repair).
   if (m.sceneDetectStatus === 'running') m.sceneDetectStatus = 'none';

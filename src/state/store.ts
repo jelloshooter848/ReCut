@@ -927,7 +927,18 @@ export const useStore = create<RecutStore>()((set, get) => {
     removeMediaSubtitleTrack(trackId) {
       commit('Remove subtitles', (d) => {
         delete d.subtitleTracks[trackId];
-        for (const m of Object.values(d.media)) m.subtitleTrackIds = m.subtitleTrackIds.filter((id) => id !== trackId);
+        for (const m of Object.values(d.media)) {
+          m.subtitleTrackIds = m.subtitleTrackIds.filter((id) => id !== trackId);
+          if (m.transcriptTrackId === trackId) delete m.transcriptTrackId;
+        }
+      });
+    },
+    setTranscriptSource(mediaId, trackId) {
+      commit('Transcript source', (d) => {
+        const m = d.media[mediaId];
+        if (!m) return;
+        if (trackId && m.subtitleTrackIds.includes(trackId) && d.subtitleTracks[trackId]) m.transcriptTrackId = trackId;
+        else delete m.transcriptTrackId;
       });
     },
 
