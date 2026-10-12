@@ -440,6 +440,9 @@ own timeline and drop it into as many cuts as you like: an edit made inside it s
   imported to a track or read by the Transcript) and writes through a temp file, so a failed export never leaves a
   truncated file.
 - The Program monitor's **Subtitles** option toggles on-screen display.
+- **Where subtitles sit:** select nothing so the Inspector shows the timeline, then **Subtitles › Position**: drag
+  the slider, or use **Top** / **Bottom** (Bottom is the default). Each timeline has its own position. The Program
+  and Source monitors show it and burn-in export uses it, so the exported text sits where you saw it.
 
 ## 14. Proxies and relinking
 

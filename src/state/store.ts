@@ -16,6 +16,7 @@ import type {
   SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock, SubtitleTrack, Track, Transition, TransitionType, TagVocabulary, SequenceView,
 } from '../../shared/model';
 import { withoutCopiedTranscripts } from '../../shared/transcripts';
+import { isValidSubtitlePosition } from '../../shared/subtitlePosition';
 import { uid } from '../../shared/ids';
 import { fpsEquals, isValidFps, secondsToFrames } from '../../shared/time';
 import { createProject, createSequence, LiveView, SCENE_SEQUENCE_COLOR } from '../../shared/project';
@@ -71,6 +72,7 @@ export function isValidSequenceSettingsPatch(patch: SequenceSettingsPatch): bool
       case 'width': case 'height': case 'sampleRate': case 'channels': if (!isPosInt(v)) return false; break;
       case 'name': if (typeof v !== 'string') return false; break;
       case 'versionLabel': if (v !== undefined && typeof v !== 'string') return false; break;
+      case 'subtitlePosition': if (v !== undefined && !isValidSubtitlePosition(v)) return false; break;
       case 'binId': if (v !== null && typeof v !== 'string') return false; break;
       default: return false;
     }

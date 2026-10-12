@@ -7,7 +7,8 @@ import { sequenceDuration } from '@shared/timeline';
 import { fpsLabel } from '@shared/time';
 import { useStore } from '@/state';
 import type { StoreState } from '@/state';
-import { Button, IconButton, NumberField, Select, TextField } from '@/components/ui';
+import { Button, IconButton, NumberField, Select, Slider, TextField } from '@/components/ui';
+import { SUBTITLE_POSITION_DEFAULT, SUBTITLE_POSITION_MAX, SUBTITLE_POSITION_MIN, SUBTITLE_POSITION_TOP } from '@shared/subtitlePosition';
 import { Row, Section, Value, dbFromLinear, finish, framesLabel, linearFromDb, pluralize, transient } from './primitives';
 
 const SAMPLE_RATES = [{ value: '44100', label: '44.1 kHz' }, { value: '48000', label: '48 kHz' }, { value: '96000', label: '96 kHz' }];
@@ -22,7 +23,7 @@ export function SequenceInspector({ seqId }: { seqId: ID }) {
     const q = s.project.sequences[seqId];
     return q ? {
       name: q.name, fps: q.fps, width: q.width, height: q.height, sampleRate: q.sampleRate, channels: q.channels, versionLabel: q.versionLabel,
-      parentSequenceId: q.parentSequenceId, snapshots: q.snapshots, videoTracks: q.videoTracks, audioTracks: q.audioTracks, markers: q.markers,
+      parentSequenceId: q.parentSequenceId, subtitlePosition: q.subtitlePosition, snapshots: q.snapshots, videoTracks: q.videoTracks, audioTracks: q.audioTracks, markers: q.markers,
       subtitleTracks: q.subtitleTracks, storyBlocks: q.storyBlocks, createdAt: q.createdAt, modifiedAt: q.modifiedAt,
     } : null;
   }));
@@ -93,6 +94,8 @@ export function SequenceInspector({ seqId }: { seqId: ID }) {
           <TextField size="sm" value={seq.versionLabel ?? ''} placeholder="e.g. v2 – shorter act 2" commitOnBlur onChange={(v) => { if ((seq.versionLabel ?? '') !== v.trim()) updateSequenceSettings(seqId, { versionLabel: v.trim() || undefined }); }} />
         </Row>
       </Section>
+
+      <SubtitlePositionSection seqId={seqId} position={seq.subtitlePosition} />
 
       <Section id="seq-stats" title="Contents">
         <Row label="Duration"><Value copy={String(stats.duration)}>{framesLabel(stats.duration, fps)}</Value></Row>
@@ -166,5 +169,30 @@ function TrackRow({ seqId, t, setTrackFlags }: { seqId: ID; t: Track; setTrackFl
         </span>
       </div>
     </div>
+  );
+}
+
+/**
+ * Where subtitles sit (#115): the timeline's subtitle position, used by the Program and Source monitors and burn-in
+ * export. The slider commits one undo step on release; Bottom goes back to the default.
+ */
+function SubtitlePositionSection({ seqId, position }: { seqId: ID; position: number | undefined }) {
+  const [drag, setDrag] = useState<number | null>(null);
+  const set = (v: number | undefined) => useStore.getState().updateSequenceSettings(seqId, { subtitlePosition: v });
+  const value = drag ?? position ?? SUBTITLE_POSITION_DEFAULT;
+  const label = position === undefined && drag === null ? 'Bottom (default)' : `${Math.round(value * 100)} % from the top`;
+  return (
+    <Section id="seq-subtitles" title="Subtitles">
+      <Row label="Position" prop="subtitle-position" title="Where subtitles sit in the frame: Program and Source monitors and burn-in export">
+        <Slider value={value} min={SUBTITLE_POSITION_MIN} max={SUBTITLE_POSITION_MAX} step={0.01} className="grow" title={label}
+          onChange={setDrag}
+          onCommit={(v) => { setDrag(null); set(Math.min(SUBTITLE_POSITION_MAX, Math.max(SUBTITLE_POSITION_MIN, Math.round(v * 100) / 100))); }} />
+      </Row>
+      <Row label="">
+        <span className="text-dim text-sm grow" data-testid="subtitle-position-label">{label}</span>
+        <Button size="sm" onClick={() => set(SUBTITLE_POSITION_TOP)} data-testid="subtitle-position-top">Top</Button>
+        <Button size="sm" onClick={() => set(undefined)} data-testid="subtitle-position-bottom" title="The default position">Bottom</Button>
+      </Row>
+    </Section>
   );
 }

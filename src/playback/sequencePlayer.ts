@@ -15,6 +15,7 @@
  * The canvas internal resolution is the sequence size scaled by `playbackResolution`; CSS sizing
  * is the caller's responsibility.
  */
+import { SUBTITLE_POSITION_DEFAULT, subtitleAnchor } from '@shared/subtitlePosition';
 import type { ID, MediaItem, Rational, Sequence, SubtitleTrack, VideoStreamInfo } from '../../shared/model';
 import { cuesAt, onScreenTranscript, transcriptIndex, type TranscriptCue } from '../../shared/transcripts';
 import { secondsToFramesFloor, framesToSeconds, fpsValue } from '../../shared/time';
@@ -1283,7 +1284,12 @@ export class SequencePlayer {
     ctx.lineWidth = Math.max(2, size * 0.14);
     ctx.strokeStyle = 'rgba(0,0,0,0.9)';
     const lineH = size * 1.2;
-    let y = seq.height * 0.93;
+    // Position (#115): the default puts the last line's baseline at 93 % of the height. A set position puts the text
+    // block's bottom (lower half) or top (upper half) at that height; the first line's baseline is a cap height down.
+    const anchor = subtitleAnchor(seq.subtitlePosition);
+    let y = !anchor ? seq.height * SUBTITLE_POSITION_DEFAULT
+      : anchor.edge === 'bottom' ? seq.height * (1 - anchor.margin) - size * 0.25
+        : seq.height * anchor.margin + size * 0.95 + (lines.length - 1) * lineH;
     for (let i = lines.length - 1; i >= 0; i--) {
       let x = (seq.width - measure(lines[i].map((r) => r[0]).join(''))) / 2;
       for (const [text, hot] of lines[i]) {

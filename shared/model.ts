@@ -355,6 +355,11 @@ export interface Sequence {
   videoTracks: Track[];
   audioTracks: Track[];
   subtitleTracks: SequenceSubtitleTrack[];
+  /**
+   * Where subtitles sit, as a fraction of the frame height from the top (0.05..0.95; shared/subtitlePosition.ts,
+   * #115). Used by the Program and Source monitors and burn-in export. Absent: the default position.
+   */
+  subtitlePosition?: number;
   markers: Marker[];
   storyBlocks: StoryBlock[];
   snapshots: SequenceSnapshot[];

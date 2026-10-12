@@ -17,6 +17,7 @@ import { framesToSeconds, isValidFps } from '@shared/time';
 import { serializeSrt } from '@shared/subtitles';
 import { flatOrigin, flattenSequence, flattenWarnings, trackGroupId } from '@shared/nest';
 import { EXACT_SEEK_CONTAINERS, videoDisplaySize } from '@shared/media';
+import { ASS_PLAY_RES_Y, assSubtitlePosition } from '@shared/subtitlePosition';
 import { audioStreamInfo, channelPanFilter, channelSelectionLabel, channelSelectionProblem } from '@shared/audioChannels';
 import { evaluateKeyframes, exprNum, hasMotionKeyframes, keyframeRange, keyframesExpr, keyframesOf, MIN_KEYFRAME_SCALE } from '@shared/keyframes';
 import {
@@ -1240,13 +1241,28 @@ const AC3_SAMPLE_RATES = [32000, 44100, 48000];
  * The ASS header FFmpeg itself uses when it burns in an SRT (`ffmpeg -i x.srt x.ass`, FFmpeg 8.1): with it, a line
  * without a highlight renders pixel-identical to the SRT burn-in, so turning highlighting on only changes colours.
  */
-const BURN_IN_ASS_HEADER = [
-  '[Script Info]', 'ScriptType: v4.00+', 'PlayResX: 384', 'PlayResY: 288', 'ScaledBorderAndShadow: yes', 'YCbCr Matrix: None', '',
-  '[V4+ Styles]',
-  'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-  'Style: Default,Arial,16,&Hffffff,&Hffffff,&H0,&H0,0,0,0,0,100,100,0,0,1,1,0,2,10,10,10,1', '',
-  '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
-].join('\n');
+/** The burn-in ASS header: FFmpeg's default SRT style, placed at the timeline's subtitle position when it has one (#115). */
+function burnInAssHeader(position: number | undefined): string {
+  const pos = assSubtitlePosition(position);
+  return [
+    '[Script Info]', 'ScriptType: v4.00+', 'PlayResX: 384', `PlayResY: ${ASS_PLAY_RES_Y}`, 'ScaledBorderAndShadow: yes', 'YCbCr Matrix: None', '',
+    '[V4+ Styles]',
+    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+    `Style: Default,Arial,16,&Hffffff,&Hffffff,&H0,&H0,0,0,0,0,100,100,0,0,1,1,0,${pos?.alignment ?? 2},10,10,${pos?.marginV ?? 10},1`, '',
+    '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+  ].join('\n');
+}
+
+/**
+ * The `subtitles=` filter for the burn-in file. A plain SRT gets the timeline's subtitle position through libass's
+ * force_style (#115); the karaoke ASS carries it in its own style. force_style reads Alignment in the legacy SSA
+ * numbering (2 bottom centre, 6 top centre), not the ASS numpad one (2, 8) the ASS style uses.
+ */
+export function burnInFilter(file: string, position: number | undefined, ass: boolean): string {
+  const pos = ass ? null : assSubtitlePosition(position);
+  const legacy = pos ? (pos.alignment === 8 ? 6 : 2) : 0;
+  return `subtitles=filename=${file}${pos ? `:force_style='Alignment=${legacy},MarginV=${pos.marginV}'` : ''}`;
+}
 
 /** The highlight colour of the spoken word (SUBTITLE_HIGHLIGHT, #ffd84d) as an ASS colour (&HBBGGRR&). */
 const ASS_HIGHLIGHT = '&H4DD8FF&';
@@ -1296,7 +1312,7 @@ export function buildBurnInAss(req: ExportRequest, startF: number, endF: number)
   }
   if (!events.length) return null;
   events.sort((x, y) => x.a - y.a);
-  return `${BURN_IN_ASS_HEADER}\n${events.map((e) => e.line).join('\n')}\n`;
+  return `${burnInAssHeader(req.sequence.subtitlePosition)}\n${events.map((e) => e.line).join('\n')}\n`;
 }
 
 function buildBurnInSrt(req: ExportRequest, startF: number, endF: number): string | null {
@@ -1437,7 +1453,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
       const srt = highlight ? buildBurnInAss(req, startF, endF) : buildBurnInSrt(req, startF, endF);
       if (srt) {
         subtitleContent = srt;
-        if (opts.subtitleFilePath) finalVideo.push(`subtitles=filename=${escapeFilterPath(opts.subtitleFilePath)}`);
+        if (opts.subtitleFilePath) finalVideo.push(burnInFilter(escapeFilterPath(opts.subtitleFilePath), seq.subtitlePosition, highlight));
         else warnings.push('Subtitle burn-in requested but no subtitle file path was provided; subtitles are not burned in.');
       }
     }
