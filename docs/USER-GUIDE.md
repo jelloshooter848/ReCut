@@ -131,7 +131,8 @@ timelines.
 8. Opening a shot or a scene (double-click, Enter or **Load in Source**, in the Project, Scenes or Sequences panel)
    zooms the Source scrub bar to just its In to Out, so you can scrub through it. The **Scene** / **Full file** button
    next to the timecodes (or **\\** with the Source monitor active) switches to the whole file and back; the playhead
-   and In/Out stay where they are, and the timecodes stay source timecode. Playing past Out, stepping to another shot
+   and In/Out stay where they are, and the timecodes stay source timecode. **Play** plays the shot or scene and stops
+   on its last frame (Play again starts it over); switch to **Full file** to play on past it. Stepping to another shot
    or jumping outside the range switches to the full file. Opening a whole file always shows its full length.
 
 ## 4. Import subtitles

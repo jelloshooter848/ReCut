@@ -50,6 +50,22 @@ test('a shot opens with the scrub bar zoomed to it; toggle, scrub inside, leave 
   await page.keyboard.press('End');
   await expect(bar).toHaveAttribute('data-zoomed', 'full');
 
+  // Play stops at the shot's end and stays zoomed to it (#164); Play again starts the shot over.
+  await shots.nth(1).dblclick();
+  await expect(bar).toHaveAttribute('data-zoomed', 'scene');
+  const play = page.locator('.source-transport .play');
+  await play.click();
+  await expect(play).toHaveAttribute('aria-label', /Pause/);
+  await expect(play).toHaveAttribute('aria-label', /^Play/, { timeout: 15_000 });
+  const end = dur / 2;
+  const stopped = await getState<number>(page, '(s) => s.ui.sourceClip.time');
+  expect(stopped).toBeGreaterThan(end - 0.2);
+  expect(stopped).toBeLessThan(end);
+  await expect(bar).toHaveAttribute('data-zoomed', 'scene');
+  await play.click();
+  await expect.poll(() => getState<number>(page, '(s) => s.ui.sourceClip.time')).toBeLessThan(dur / 4 + 1);
+  await play.click();
+
   // Opening the whole file shows its full length, with no toggle.
   await mediaRow.dblclick();
   await expect(bar).toHaveAttribute('data-zoomed', 'full');

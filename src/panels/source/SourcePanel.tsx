@@ -143,9 +143,12 @@ export function SourcePanel({ focused, active }: PanelProps) {
   }, [time, sceneView, viewFull, fps]);
 
   // ------------------------------------------------------------- refs shared with the transport / callbacks
-  const live = useRef({ inPoint, outPoint, duration, fps, loop, isImage, mediaId: media?.id ?? null, playRange: null as { in: number; out: number } | null });
+  const live = useRef({ inPoint, outPoint, duration, fps, loop, isImage, mediaId: media?.id ?? null, playRange: null as { in: number; out: number } | null,
+    sceneRange: null as { start: number; end: number } | null });
   live.current.inPoint = inPoint; live.current.outPoint = outPoint; live.current.duration = duration; live.current.fps = fps;
   live.current.loop = loop; live.current.isImage = isImage; live.current.mediaId = media?.id ?? null;
+  // The opened shot / scene while the scrub bar shows it (#150): Play stops at its end (#164).
+  live.current.sceneRange = sceneView && !viewFull ? sceneView : null;
   const lastReported = useRef<number>(-1);
   const lastReportAt = useRef(0);
 
@@ -228,14 +231,16 @@ export function SourcePanel({ focused, active }: PanelProps) {
     const sp = getPlayer();
     void resumeAudio();
     live.current.playRange = null;
-    if (live.current.loop) {
-      // Loop on: play In → Out (or the whole clip) and wrap at the Out point.
+    const scene = live.current.sceneRange;
+    if (live.current.loop || scene) {
+      // Loop on: play In → Out (or the whole clip) and wrap at the Out point. An opened shot / scene shown in the scrub
+      // bar plays to its end and stops there (#164); from its end, Play starts it again.
       const { inPoint: i, outPoint: o, duration: d } = live.current;
-      const range = { in: i ?? 0, out: o ?? d };
+      const range = scene ? { in: scene.start, out: scene.end } : { in: i ?? 0, out: o ?? d };
       if (range.out > range.in) {
         live.current.playRange = range;
         const t = sp.currentTime();
-        if (t < range.in || t >= range.out - 1e-4) sp.seek(range.in);
+        if (t < range.in - 1e-4 || t >= range.out - framesToSeconds(1, live.current.fps) - 1e-4) sp.seek(range.in);
       }
     }
     if (sp.playbackRate <= 0) sp.setRate(1);
