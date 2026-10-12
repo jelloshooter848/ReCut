@@ -228,6 +228,7 @@ npm run dev                         # hot-reloads the renderer; restart after ch
 | [FORMATS](docs/FORMATS.md) | Import formats, preview vs proxy, audio layouts, subtitles, export formats |
 | [LIMITATIONS](docs/LIMITATIONS.md) | Known limitations and open bugs |
 | [ROADMAP](docs/ROADMAP.md) | Deferred capabilities and why |
+| [NEXT-RELEASE](docs/NEXT-RELEASE.md) | What is on `dev` but not released yet: changelog draft and QA checklist |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | Processes, store, playback engine, export pipeline, timing model |
 | [DEVELOPMENT](docs/DEVELOPMENT.md) | Repo layout, scripts, tests, conventions |
 | [project-format](docs/project-format.md) | The `.recut` JSON format |
