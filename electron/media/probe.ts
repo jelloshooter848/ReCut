@@ -252,6 +252,7 @@ export function probeFromFfprobe(raw: FfprobeOutput, filePath: string, fileSize?
         sampleRate: num(s.sample_rate) ?? 0,
         language: s.tags?.language && s.tags.language !== 'und' ? s.tags.language : undefined,
         title: s.tags?.title,
+        ...(streamStartOffset(s, format) > 0 ? { startTime: streamStartOffset(s, format) } : {}),
       });
     } else if (s.codec_type === 'subtitle') {
       subtitles.push({

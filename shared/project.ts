@@ -959,6 +959,7 @@ function repairAudioStream(a: Obj): boolean {
   a.layout = str(a.layout, '');
   a.sampleRate = num(a.sampleRate, 0, nonNeg);
   optional(a, 'language', isStr); optional(a, 'title', isStr); optional(a, 'layoutGuessed', isBool);
+  optional(a, 'startTime', (v) => isFiniteNum(v) && v >= 0 && v <= MAX_SOURCE_SECONDS);
   return true;
 }
 

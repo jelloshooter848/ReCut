@@ -119,6 +119,25 @@ describe.skipIf(!hasFfmpeg)('transcription job (fake engine)', () => {
     expect(engineRuns()).toHaveLength(1);
   });
 
+  it('a stream that starts after the file: cues and words are placed at its start offset (#157)', async () => {
+    process.env.FAKE_WHISPER_TOKENS = '1';
+    try {
+      // The same audio muxed with a 0.5 s delay (an MKV whose audio starts after its video).
+      const late = path.join(tmp, 'late audio.mkv');
+      ffmpeg(['-f', 'lavfi', '-i', 'color=c=black:s=64x64:r=25:d=6', '-itsoffset', '0.5', '-i', media,
+        '-map', '0:v', '-map', '1:a:0', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'flac', late]);
+      const q = new JobQueue({ throttleMs: 0 });
+      const plain = (await run(q, req(), ctx())).job.result as TranscribeResult;
+      const lateRun = await run(q, req({ path: late, streamIndex: 1 }), ctx());
+      expect(lateRun.job.status, lateRun.job.error).toBe('done');
+      const shifted = lateRun.job.result as TranscribeResult;
+      const offset = shifted.cues[0].start - plain.cues[0].start;
+      expect(offset).toBeGreaterThan(0.45);
+      expect(offset).toBeLessThan(0.55);
+      expect(shifted.cues[0].words![0].start - plain.cues[0].words![0].start).toBeCloseTo(offset, 3);
+    } finally { delete process.env.FAKE_WHISPER_TOKENS; }
+  });
+
   it('keeps word timing from -ojf tokens, through the cache too (#118)', async () => {
     process.env.FAKE_WHISPER_TOKENS = '1';
     const q = new JobQueue({ throttleMs: 0 });
