@@ -31,7 +31,8 @@ Only a **release PR** (the release-prep PR into `dev`, see [How to cut a release
 `package-lock.json` versions or `CHANGELOG.md` release headings. A release PR contains only:
 
 1. The version bump: `npm version <x.y.z> --no-git-tag-version` (updates `package.json` and `package-lock.json`).
-2. A new dated section at the top of `CHANGELOG.md`: `## [x.y.z] - YYYY-MM-DD`.
+2. A new dated section at the top of `CHANGELOG.md`: `## [x.y.z] - YYYY-MM-DD`, written from the changelog draft in
+   [NEXT-RELEASE.md](NEXT-RELEASE.md), and that file reset to its empty template.
 3. Doc lines that name the current version, if any (prefer wording that does not name a version).
 4. The saved-project fixture of the new version, `tests/fixtures/projects/recut-<x.y.z>.recut`, made with
    `node scripts/make-project-fixture.mjs` after the bump (see [the fixtures' README](../tests/fixtures/projects/README.md)).
@@ -52,9 +53,14 @@ Releases are published automatically by CI when the release is merged into `main
 release by hand: agents cannot push tags (their git proxy drops tag pushes), and the owner works in the GitHub web UI.
 A release takes two PRs: the **release PR** into `dev`, then the **release merge**, one PR from `dev` into `main`.
 
-1. **Release PR into `dev`.** Branch from `dev` (for example `claude/release-0.3.0`), after everything the release
+1. **QA on `dev`.** Once everything the release ships has been merged into `dev`, run the QA checklist in
+   [NEXT-RELEASE.md](NEXT-RELEASE.md) on a `dev` build and tick each item. A failing item is fixed (an issue and a
+   normal PR) or, with the owner's agreement, moved to the draft's **Known issues** before the release PR.
+2. **Release PR into `dev`.** Branch from `dev` (for example `claude/release-0.3.0`), after everything the release
    ships has been merged into `dev`. Bump the version with `npm version 0.3.0 --no-git-tag-version` and add the
-   `## [0.3.0] - YYYY-MM-DD` section to `CHANGELOG.md` (see below). Update [LIMITATIONS](LIMITATIONS.md) if what it
+   `## [0.3.0] - YYYY-MM-DD` section to `CHANGELOG.md`, written from NEXT-RELEASE.md's changelog draft (see
+   [What goes in the changelog](#what-goes-in-the-changelog)). Then reset NEXT-RELEASE.md to its
+   [empty template](#the-empty-next-releasemd). Update [LIMITATIONS](LIMITATIONS.md) if what it
    lists changed. Check `docs/ROADMAP.md`: every roadmap entry this release ships has its **Status** line and its row
    in the Progress table marked done with this version (the feature PR sets them; the release PR fixes any that are
    missing or still name an older version). Add the version's saved-project fixture:
@@ -62,10 +68,10 @@ A release takes two PRs: the **release PR** into `dev`, then the **release merge
    code (the unit suite fails while the fixture of a stable version in `package.json` is missing; a pre-release such
    as `1.0.0-rc.1` needs none). Never edit or regenerate an older fixture. Run `npm run typecheck` and `npm test`.
    Open the PR against `dev`. Its CI run is a test build; the owner merges it once it is green.
-2. **Release merge: one PR from `dev` into `main`.** Open it once the release PR is merged and the `dev` push run of
+3. **Release merge: one PR from `dev` into `main`.** Open it once the release PR is merged and the `dev` push run of
    that merge is green. It contains nothing but `dev`'s commits since the last release. Merging it is the whole
    release step. Don't merge anything else into `dev` between the two, or it ships too.
-3. **CI publishes.** The merge is a push to `main`, so `.github/workflows/windows.yml` runs. Its first step sees that
+4. **CI publishes.** The merge is a push to `main`, so `.github/workflows/windows.yml` runs. Its first step sees that
    the `package.json` version (`0.3.0`) has a `## [0.3.0]` section in `CHANGELOG.md` and that no tag `v0.3.0` exists
    yet, and makes this run a release. It then builds, smoke-tests the unpacked app, installs and uninstalls the
    installer and launches the portable exe, while the Windows unit tests, end-to-end tests and launcher check, the
@@ -77,7 +83,7 @@ A release takes two PRs: the **release PR** into `dev`, then the **release merge
    exe, the AppImage and both dmgs attached. (A release candidate such as `1.0.0-rc.1` is published the same way,
    signed and notarized dmgs included, but marked pre-release and never Latest; see
    [Release candidates](#release-candidates).) See [What gates a release](#what-gates-a-release).
-4. Check the release page: both `.exe` files, the `.AppImage` and both `.dmg` files are attached and the notes read
+5. Check the release page: both `.exe` files, the `.AppImage` and both `.dmg` files are attached and the notes read
    correctly. In the installer, linux and macos jobs' logs, the smoke tests list the licence files the builds ship
    (see [Licence files every release ships](#licence-files-every-release-ships)).
 
@@ -360,13 +366,46 @@ section uses these headings (leave out empty ones):
 Rules:
 
 - Describe what users see, not how it was implemented. One line per item where possible. No marketing.
-- Build the section from `git log --oneline <previous tag>..origin/dev` and from the bug issues closed since the
-  previous release (label `bug`, or `done on dev`).
+- Write the section from the changelog draft in [NEXT-RELEASE.md](NEXT-RELEASE.md), which each issue's PR fills in
+  as it goes. Check it against `git log --oneline <previous tag>..origin/dev` and the bug issues closed since the
+  previous release (label `bug`, or `done on dev`): add what is missing, drop "(on devJames)" / "(on devDavid)"
+  marks, and tidy the wording. The draft's **Development** items go under the section's own **Development** heading.
 - Link repository files with relative links (`docs/...`). CI rewrites them to absolute links at
   the release tag for the GitHub release notes.
 - Mention a project `formatVersion` change explicitly.
 - CI copies everything between `## [x.y.z]` and the next `## [` heading into the release notes, so keep that section
   self-contained.
+
+### The empty NEXT-RELEASE.md
+
+The release PR resets [NEXT-RELEASE.md](NEXT-RELEASE.md) to this template (keep the intro paragraph as it is in the
+file), so the next release starts from an empty draft:
+
+```markdown
+# Next release
+
+Changes on `dev` (and on the personal branches heading there) that are not in a release yet. ...
+
+## Changelog draft
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Known issues
+
+### Development
+
+## QA checklist
+
+Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as described. A block marked (on devJames) or
+(on devDavid) needs that branch until it is merged into `dev`.
+```
+
+A hotfix does not touch NEXT-RELEASE.md: its fix is released at once and gets its changelog line in the hotfix's own
+section.
 
 ## Build names
 
