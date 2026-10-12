@@ -16,7 +16,7 @@ import { activeTracks, planTrackSegments, widenRangeForTransitions, type ClipSeg
 import { framesToSeconds, isValidFps } from '@shared/time';
 import { serializeSrt } from '@shared/subtitles';
 import { flatOrigin, flattenSequence, flattenWarnings, trackGroupId } from '@shared/nest';
-import { videoDisplaySize } from '@shared/media';
+import { EXACT_SEEK_CONTAINERS, videoDisplaySize } from '@shared/media';
 import { audioStreamInfo, channelPanFilter, channelSelectionLabel, channelSelectionProblem } from '@shared/audioChannels';
 import { evaluateKeyframes, exprNum, hasMotionKeyframes, keyframeRange, keyframesExpr, keyframesOf, MIN_KEYFRAME_SCALE } from '@shared/keyframes';
 import {
@@ -292,9 +292,6 @@ interface Ctx {
 }
 
 function newLabel(ctx: Ctx, prefix: string): string { return `[${prefix}${ctx.labelCounter++}]`; }
-
-/** Containers whose input seek (`-ss` before `-i`) is frame-exact in ffmpeg: no decoder pre-roll needed. */
-const EXACT_SEEK_CONTAINERS = new Set(['mp4', 'mov', 'm4v', 'm4a', 'matroska', 'webm']);
 
 /** Seconds of pre-roll decoded before the trim point (a small margin for exact containers, 1 s otherwise). */
 function inputPreroll(m: MediaItem): number {

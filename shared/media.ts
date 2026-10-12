@@ -130,3 +130,10 @@ function hevcProfileOk(pix: string, s: DecodeSupport): boolean {
  * refreshStaleProbes). 2 (#154): stream start offsets are measured from the container start clamped to 0.
  */
 export const PROBE_REVISION = 2;
+
+/**
+ * Containers whose input seek (`-ss` before `-i`) is frame-exact in FFmpeg: no decoder pre-roll needed. Others
+ * (MPEG-TS, MPEG-PS, AVI, …) can land after the target and start at the next keyframe, so the export (renderGraph
+ * inputPreroll) and thumbnails (thumbs.ts, #156) seek earlier and drop frames up to the target.
+ */
+export const EXACT_SEEK_CONTAINERS: ReadonlySet<string> = new Set(['mp4', 'mov', 'm4v', 'm4a', 'matroska', 'webm']);
