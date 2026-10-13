@@ -41,13 +41,30 @@ function jobIf(block: string): string | undefined {
   return /^ {4}if: (.+)$/m.exec(block)?.[1].trim();
 }
 
+/**
+ * Evaluates a GitHub Actions expression made only of ==, !=, &&, ||, parentheses, string literals, startsWith()
+ * and format() over the given context values (enough for the if: and concurrency expressions checked here).
+ */
+function evaluate(expr: string, ctx: Record<string, string | number>): unknown {
+  const names = Object.keys(ctx).sort((a, b) => b.length - a.length);
+  let js = expr.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
+  for (const n of names) js = js.split(n).join(`ctx[${JSON.stringify(n)}]`);
+  expect(js.replace(/ctx\["[^"]+"\]/g, ''), `unknown identifier in: ${expr}`).not.toMatch(/\b(github|needs|inputs|steps|secrets)\./);
+  const fn = new Function('ctx', 'startsWith', 'format', `return (${js});`);
+  return fn(
+    ctx,
+    (s: string, p: string) => String(s).startsWith(p),
+    (f: string, ...a: unknown[]) => f.replace(/\{(\d+)\}/g, (_, i) => String(a[Number(i)])),
+  );
+}
+
 describe('Windows workflow: no dev prereleases', () => {
   const publish = code(job('publish'));
   const installer = code(job('installer'));
 
   it('the publish job runs only for a real release and only after every gate passed', () => {
     expect(jobIf(publish)).toBe(
-      "github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && needs.installer.outputs.release == 'true'",
+      "github.event_name == 'push' && ((github.ref == 'refs/heads/main' && needs.installer.outputs.prerelease == 'false') || (github.ref == 'refs/heads/rc' && needs.installer.outputs.prerelease == 'true') || startsWith(github.ref, 'refs/tags/v')) && needs.installer.outputs.release == 'true'",
     );
     expect(publish).toMatch(/^ {4}needs: \[installer, tests, e2e, launcher, linux, macos, macos-e2e\]$/m);
     // No status function: the implicit success() keeps a red, cancelled or skipped gate from publishing.
@@ -72,7 +89,7 @@ describe('Windows workflow: no dev prereleases', () => {
     expect(publish).toMatch(/- name: Publish GitHub Release\n\s+if: steps\.pub\.outputs\.publish == 'true'\n\s+uses: softprops\/action-gh-release/);
   });
 
-  it('only the tag-push fallback and the automatic release on main set release=true', () => {
+  it('only the tag-push fallback and the automatic release on main or rc set release=true', () => {
     expect(installer).toContain('release: ${{ steps.rel.outputs.release }}');
     expect(installer).toContain("$release = 'false'; $auto = 'false'");
     expect(installer.match(/\$release = 'true'/g)).toHaveLength(2);
@@ -100,11 +117,12 @@ describe('Windows workflow: no dev prereleases', () => {
   });
 });
 
-// The dev-branch workflow (owner's decision, 9 October 2026; CONTRIBUTING.md "Branches and pull requests",
-// docs/RELEASING.md): main holds released code only, dev is the integration branch, devDavid and devJames are personal
-// branches. Pushes to main and dev and pull requests into dev, devDavid and devJames run the workflow; only a push to
-// main or of a v tag can publish; only pull_request runs are ever cancelled by a newer run.
-describe('Windows workflow: dev branch, pull requests and concurrency', () => {
+// The branch workflow (owner's decisions, 9 and 12-13 October 2026; CONTRIBUTING.md "Branches and pull requests",
+// docs/RELEASING.md "Branches and roles"): main holds released code only, rc the release candidates, dev is the
+// integration branch, devDavid and devJames are personal branches. Pushes to main, rc and dev and pull requests into
+// main, rc, dev, devDavid and devJames run the workflow; only a push of a v tag, a push to main of a stable version or
+// a push to rc of a release candidate can publish; only pull_request runs are ever cancelled by a newer run.
+describe('Windows workflow: branches (main, rc, dev), pull requests and concurrency', () => {
   const header = workflow.slice(0, workflow.indexOf('\njobs:\n'));
   const publish = code(job('publish'));
   const installer = code(job('installer'));
@@ -122,67 +140,67 @@ describe('Windows workflow: dev branch, pull requests and concurrency', () => {
   }
   const list = (v: string | undefined) => [...(v ?? '').matchAll(/'([^']+)'|([^\s,[\]']+)/g)].map((m) => m[1] ?? m[2]);
 
-  /**
-   * Evaluates a GitHub Actions expression made only of ==, !=, &&, ||, parentheses, string literals, startsWith()
-   * and format() over the given context values (enough for the if: and concurrency expressions checked here).
-   */
-  function evaluate(expr: string, ctx: Record<string, string | number>): unknown {
-    const names = Object.keys(ctx).sort((a, b) => b.length - a.length);
-    let js = expr.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
-    for (const n of names) js = js.split(n).join(`ctx[${JSON.stringify(n)}]`);
-    expect(js.replace(/ctx\["[^"]+"\]/g, ''), `unknown identifier in: ${expr}`).not.toMatch(/\b(github|needs|inputs|steps|secrets)\./);
-    const fn = new Function('ctx', 'startsWith', 'format', `return (${js});`);
-    return fn(
-      ctx,
-      (s: string, p: string) => String(s).startsWith(p),
-      (f: string, ...a: unknown[]) => f.replace(/\{(\d+)\}/g, (_, i) => String(a[Number(i)])),
-    );
-  }
-
-  it('runs on pushes to main and dev, release tags, pull requests into dev / devDavid / devJames, and by hand', () => {
+  it('runs on pushes to main, rc and dev, release tags, pull requests into main / rc / dev / devDavid / devJames, and by hand', () => {
     const push = trigger('push');
-    expect(list(push.branches)).toEqual(['main', 'dev']);
+    expect(list(push.branches)).toEqual(['main', 'rc', 'dev']);
     expect(list(push.tags)).toEqual(['v[0-9]+.[0-9]+.[0-9]+', 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+']);
     expect(list(push['paths-ignore'])).toEqual(['**/*.md', 'docs/**']);
     const pr = trigger('pull_request');
-    expect(list(pr.branches)).toEqual(['dev', 'devDavid', 'devJames']);
+    expect(list(pr.branches)).toEqual(['main', 'rc', 'dev', 'devDavid', 'devJames']);
     expect(list(pr.types)).toEqual(['opened', 'synchronize', 'reopened', 'ready_for_review']);
     expect(pr['paths-ignore']).toBe(push['paths-ignore']);
     // Never pull_request_target: it would run with secrets and a writable token in the base repository's context.
     expect(header).not.toMatch(/pull_request_target|workflow_run/);
     expect(header).toMatch(/^ {2}workflow_dispatch:\n {4}inputs:\n {6}installer_stress:\n/m);
-    // The CI bring-up branch is gone; main is not a pull_request base (releases arrive as a dev -> main PR whose
-    // tree dev's push run has built).
+    // The CI bring-up branch is gone. PRs into main (rc -> main, hotfixes) and rc (promotions, release prep) are
+    // test builds like any other pull request run.
     expect(header).not.toMatch(/^ {4}branches: .*claude\/build-recut/m);
-    expect(list(pr.branches)).not.toContain('main');
   });
 
-  it('publishing is impossible on a pull_request run, a dev push or a manual run', () => {
+  it('publishing is impossible on a pull_request run, a dev push, a manual run, a pre-release on main or a stable version on rc', () => {
     const cond = jobIf(publish)!;
-    const run = (event: string, ref: string, release = 'true') =>
-      evaluate(cond, { 'github.event_name': event, 'github.ref': ref, 'needs.installer.outputs.release': release });
+    const run = (event: string, ref: string, release = 'true', prerelease = 'false') =>
+      evaluate(cond, {
+        'github.event_name': event,
+        'github.ref': ref,
+        'needs.installer.outputs.release': release,
+        'needs.installer.outputs.prerelease': prerelease,
+      });
     expect(run('push', 'refs/heads/main')).toBe(true);
+    expect(run('push', 'refs/heads/rc', 'true', 'true')).toBe(true);
     expect(run('push', 'refs/tags/v1.0.0')).toBe(true);
-    expect(run('push', 'refs/tags/v1.0.0-rc.1')).toBe(true);
+    expect(run('push', 'refs/tags/v1.0.0-rc.1', 'true', 'true')).toBe(true);
     expect(run('push', 'refs/heads/main', 'false')).toBe(false);
-    // Even with a (wrong) release output of 'true':
+    expect(run('push', 'refs/heads/rc', 'false', 'true')).toBe(false);
+    // main never publishes a pre-release and rc never a stable version, even with a (wrong) release output of 'true'.
+    expect(run('push', 'refs/heads/main', 'true', 'true')).toBe(false);
+    expect(run('push', 'refs/heads/rc', 'true', 'false')).toBe(false);
+    // Every other event and branch publishes nothing, even with (wrong) release outputs of 'true':
     for (const [event, ref] of [
       ['pull_request', 'refs/pull/7/merge'],
       ['pull_request', 'refs/heads/main'],
+      ['pull_request', 'refs/heads/rc'],
       ['push', 'refs/heads/dev'],
       ['push', 'refs/heads/devDavid'],
+      ['push', 'refs/heads/devJames'],
+      ['push', 'refs/heads/claude/some-task'],
       ['workflow_dispatch', 'refs/heads/main'],
+      ['workflow_dispatch', 'refs/heads/rc'],
       ['workflow_dispatch', 'refs/tags/v1.0.0'],
     ]) {
-      expect(run(event, ref), `${event} ${ref}`).toBe(false);
+      for (const prerelease of ['true', 'false']) expect(run(event, ref, 'true', prerelease), `${event} ${ref} ${prerelease}`).toBe(false);
     }
-    // The installer job's release decision needs a push as well: a tag push, or a push to main.
+    // The installer job's release decision needs a push as well: a tag push, or a push to main or rc.
     expect(installer).toContain("if ($env:EVENT_NAME -eq 'push' -and $env:REF_TYPE -eq 'tag') {");
-    expect(installer).toContain("} elseif ($env:EVENT_NAME -eq 'push' -and $env:REF -eq 'refs/heads/main') {");
+    expect(installer).toContain(
+      "} elseif ($env:EVENT_NAME -eq 'push' -and ($env:REF -ceq 'refs/heads/main' -or $env:REF -ceq 'refs/heads/rc')) {",
+    );
     expect(installer).not.toMatch(/refs\/heads\/dev|pull_request/);
     // So does the macos job's (which decides whether a release must be signed).
     expect(macos).toContain('if [ "$EVENT_NAME" = push ] && [ "$REF_TYPE" = tag ]; then');
-    expect(macos).toContain('elif [ "$EVENT_NAME" = push ] && [ "$REF" = refs/heads/main ] && [ "$section" = true ]; then');
+    expect(macos).toContain('elif [ "$EVENT_NAME" = push ] && [ "$REF" = refs/heads/main ] && [[ "$v" != *-* ]] && [ "$section" = true ]; then');
+    expect(macos).toContain('elif [ "$EVENT_NAME" = push ] && [ "$REF" = refs/heads/rc ] && [[ "$v" =~ $rc_version ]] && [ "$section" = true ]; then');
+    expect(macos).not.toMatch(/refs\/heads\/dev/);
   });
 
   it('runs only with a read-only token, except the publish job', () => {
@@ -206,7 +224,7 @@ describe('Windows workflow: dev branch, pull requests and concurrency', () => {
     expect(macos).toMatch(/if \[ "\$release" != true \]; then\n(?:.*\n)\s+exit 0\n\s+fi\n\s+missing=''/);
   });
 
-  it('cancels a superseded run only for pull requests, never on main, a tag or dev', () => {
+  it('cancels a superseded run only for pull requests, never on main, rc, a tag or dev', () => {
     const group = /^concurrency:\n {2}group: (.+)\n {2}cancel-in-progress: (.+)$/m.exec(header);
     expect(group).not.toBeNull();
     const [, groupExpr, cancelExpr] = group!;
@@ -220,10 +238,12 @@ describe('Windows workflow: dev branch, pull requests and concurrency', () => {
       evaluate(groupExpr.replace(/^windows-\$\{\{\s*(.*?)\s*\}\}$/, "'windows-' + ($1)"), ctx(event, ref, pr));
     for (const [event, ref] of [
       ['push', 'refs/heads/main'],
+      ['push', 'refs/heads/rc'],
       ['push', 'refs/tags/v1.0.0'],
       ['push', 'refs/tags/v1.0.0-rc.1'],
       ['push', 'refs/heads/dev'],
       ['workflow_dispatch', 'refs/heads/main'],
+      ['workflow_dispatch', 'refs/heads/rc'],
       ['workflow_dispatch', 'refs/heads/claude/some-task'],
     ]) {
       expect(cancels(event, ref), `${event} ${ref}`).toBe(false);
@@ -232,9 +252,339 @@ describe('Windows workflow: dev branch, pull requests and concurrency', () => {
     // One group per pull request, separate from every branch's and tag's group.
     expect(groupOf('pull_request', 'refs/pull/12/merge', 12)).toBe('windows-pr-12');
     expect(groupOf('push', 'refs/heads/main')).toBe('windows-refs/heads/main');
+    expect(groupOf('push', 'refs/heads/rc')).toBe('windows-refs/heads/rc');
     expect(groupOf('push', 'refs/tags/v1.0.0')).toBe('windows-refs/tags/v1.0.0');
     expect(groupOf('push', 'refs/heads/dev')).toBe('windows-refs/heads/dev');
   });
+});
+
+// The release matrix (owner's decision, 12-13 October 2026; docs/RELEASING.md "Branches and roles"): every
+// combination of event x ref x package.json version is either a release or a test build, and only three publish: a
+// push to main of a stable version X.Y.Z, a push to rc of a release candidate X.Y.Z-rc.N (N from 1), each with its
+// changelog section and no v<version> tag yet, and the tag-push fallback. These tests run the workflow's own step
+// scripts: the installer job's "Release metadata" and the publish job's "Final release check" with PowerShell (pwsh;
+// skipped where it is not installed, but the Windows, Linux and macOS CI runners have it) and the macos job's
+// "Release run?" with bash (not on Windows). A stub replaces git: `git ls-remote --exit-code` answers as if the tag
+// existed (FAKE_TAG_EXIT=0) or not (2).
+describe('Windows workflow: the release matrix (event x ref x version)', () => {
+  const hasPwsh = (() => {
+    const r = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.Major'], { encoding: 'utf8' });
+    return r.status === 0 && Number(r.stdout.trim()) >= 7;
+  })();
+  const hasBash = process.platform !== 'win32' && spawnSync('bash', ['-c', 'true']).status === 0;
+
+  /** The `run: |` script of step `name` in job `jobName`, as the runner gets it (dedented, comments kept). */
+  function stepScript(jobName: string, name: string): string {
+    const lines = job(jobName).split('\n');
+    const at = lines.findIndex((l) => l.trim() === `- name: ${name}`);
+    expect(at, name).toBeGreaterThan(-1);
+    const runAt = lines.findIndex((l, i) => i > at && /^\s+run: \|$/.test(l));
+    expect(runAt, `${name}: run: |`).toBeGreaterThan(at);
+    expect(lines.slice(at + 1, runAt).some((l) => /^\s+- (name|uses):/.test(l)), `${name}: run: | belongs to another step`).toBe(false);
+    const indent = /^ */.exec(lines[runAt + 1])![0].length;
+    const out: string[] = [];
+    for (const l of lines.slice(runAt + 1)) {
+      if (l.trim() && /^ */.exec(l)![0].length < indent) break;
+      out.push(l.slice(indent));
+    }
+    return out.join('\n').replace(/\n+$/, '\n');
+  }
+
+  interface Job { cwd: string; env: Record<string, string> }
+  interface Result { code: number; log: string; outputs: Record<string, string> }
+
+  function readOutputs(file: string): Record<string, string> {
+    const out: Record<string, string> = {};
+    if (!fs.existsSync(file)) return out;
+    for (const l of fs.readFileSync(file, 'utf8').replace(/^﻿/, '').split(/\r?\n/)) {
+      const i = l.indexOf('=');
+      if (i > 0) out[l.slice(0, i)] = l.slice(i + 1);
+    }
+    return out;
+  }
+
+  /** Runs a PowerShell step once per job in one pwsh process (`exit` in a script file ends only that script). */
+  function runPwsh(script: string, jobs: Job[]): Result[] {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-wf-ps-'));
+    try {
+      const step = path.join(tmp, 'step.ps1');
+      fs.writeFileSync(step, script);
+      const files = jobs.map((_, i) => ({ out: path.join(tmp, `out-${i}.txt`), log: path.join(tmp, `log-${i}.txt`), code: path.join(tmp, `code-${i}.txt`) }));
+      fs.writeFileSync(path.join(tmp, 'jobs.json'), JSON.stringify(jobs.map((j, i) => ({ ...j, ...files[i] }))));
+      fs.writeFileSync(
+        path.join(tmp, 'driver.ps1'),
+        [
+          'param([string]$Jobs, [string]$Step)',
+          "$ErrorActionPreference = 'Stop'",
+          'function global:git { $global:LASTEXITCODE = [int]$env:FAKE_TAG_EXIT }',
+          'foreach ($j in @(Get-Content -Raw -LiteralPath $Jobs | ConvertFrom-Json)) {',
+          '  foreach ($p in $j.env.PSObject.Properties) { [Environment]::SetEnvironmentVariable($p.Name, [string]$p.Value) }',
+          '  [Environment]::SetEnvironmentVariable(\'GITHUB_OUTPUT\', $j.out)',
+          '  Set-Location -LiteralPath $j.cwd',
+          '  $global:LASTEXITCODE = 0',
+          '  try { $text = & $Step 6>&1 2>&1 | Out-String; $code = $LASTEXITCODE } catch { $text = "THREW: $_"; $code = 99 }',
+          '  Set-Content -LiteralPath $j.log -Value $text -Encoding utf8',
+          '  Set-Content -LiteralPath $j.code -Value $code',
+          '}',
+        ].join('\n'),
+      );
+      const r = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', path.join(tmp, 'driver.ps1'), path.join(tmp, 'jobs.json'), step], { encoding: 'utf8' });
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      return files.map((f) => ({
+        code: Number(fs.readFileSync(f.code, 'utf8').trim()),
+        log: fs.readFileSync(f.log, 'utf8'),
+        outputs: readOutputs(f.out),
+      }));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  /** Runs a bash step once per job (each in a subshell) in one bash process, with GitHub's bash options. */
+  function runBash(script: string, jobs: Job[]): Result[] {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-wf-sh-'));
+    try {
+      const step = path.join(tmp, 'step.sh');
+      fs.writeFileSync(step, script);
+      const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+      const files = jobs.map((_, i) => ({ out: path.join(tmp, `out-${i}.txt`), log: path.join(tmp, `log-${i}.txt`), code: path.join(tmp, `code-${i}.txt`) }));
+      const driver = [
+        'git() { return "$FAKE_TAG_EXIT"; }',
+        `export PATH=${q(path.dirname(process.execPath))}:"$PATH"`,
+        ...jobs.map((j, i) =>
+          `( set -eo pipefail; cd ${q(j.cwd)}; ${Object.entries({ ...j.env, GITHUB_OUTPUT: files[i].out }).map(([k, v]) => `export ${k}=${q(v)}`).join('; ')}; . ${q(step)} ) > ${q(files[i].log)} 2>&1; echo $? > ${q(files[i].code)}`,
+        ),
+      ].join('\n');
+      fs.writeFileSync(path.join(tmp, 'driver.sh'), driver);
+      const r = spawnSync('bash', ['--noprofile', '--norc', path.join(tmp, 'driver.sh')], { encoding: 'utf8' });
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      return files.map((f) => ({
+        code: Number(fs.readFileSync(f.code, 'utf8').trim()),
+        log: fs.readFileSync(f.log, 'utf8'),
+        outputs: readOutputs(f.out),
+      }));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // The versions: stable, a release candidate, rc.0 (not a candidate: N counts from 1) and another pre-release.
+  const versions = { stable: '1.4.0', rc: '1.4.0-rc.2', rc0: '1.4.0-rc.0', beta: '1.4.0-beta.1' } as const;
+  type Kind = keyof typeof versions;
+  // fresh: the version has its changelog section and no tag; tagged: v<version> already exists on origin;
+  // nosection: CHANGELOG.md has no section for it.
+  type State = 'fresh' | 'tagged' | 'nosection';
+  interface Case { event: string; ref: string; refType: 'branch' | 'tag'; kind: Kind; state: State }
+
+  const tagPatterns = [...(/^on:\n {2}push:\n(?: {4}.*\n)*? {4}tags: \[(.*)\]$/m.exec(workflow)?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const tagStartsRun = (tag: string) => tagPatterns.some((p) => new RegExp('^' + p.replace(/\./g, '\\.') + '$').test(tag));
+
+  const cases: Case[] = [];
+  for (const event of ['push', 'pull_request', 'workflow_dispatch']) {
+    for (const kind of Object.keys(versions) as Kind[]) {
+      const refs: { ref: string; refType: 'branch' | 'tag' }[] = ['main', 'rc', 'dev', 'devDavid', 'devJames', 'claude/some-task'].map((b) => ({
+        ref: `refs/heads/${b}`,
+        refType: 'branch',
+      }));
+      if (event === 'pull_request') refs.push({ ref: 'refs/pull/7/merge', refType: 'branch' });
+      // A tag push starts a run only for the tag patterns of on.push.tags (and a manual run can be started on a tag).
+      if (tagStartsRun(`v${versions[kind]}`)) refs.push({ ref: `refs/tags/v${versions[kind]}`, refType: 'tag' });
+      for (const r of refs) {
+        const autoBranch = event === 'push' && (r.ref === 'refs/heads/main' || r.ref === 'refs/heads/rc');
+        // The tag-push fallback fails a version without a changelog section (an error, not a test build).
+        const states: State[] = autoBranch ? ['fresh', 'tagged', 'nosection'] : event === 'push' && r.refType === 'tag' ? ['fresh', 'tagged'] : ['fresh'];
+        for (const state of states) cases.push({ event, ...r, kind, state });
+      }
+    }
+  }
+  const label = (c: Case) => `${c.event} ${c.ref} ${versions[c.kind]} (${c.state})`;
+
+  /** The owner's rule: what publishes. Everything else is a test build. */
+  const publishes = (c: Case) =>
+    c.event === 'push' &&
+    (c.refType === 'tag' ||
+      (c.state === 'fresh' && ((c.ref === 'refs/heads/main' && c.kind === 'stable') || (c.ref === 'refs/heads/rc' && c.kind === 'rc'))));
+  /** A push to main with a pre-release, or to rc with a pre-release that is not a candidate, warns. */
+  const warns = (c: Case) =>
+    c.event === 'push' && ((c.ref === 'refs/heads/main' && c.kind !== 'stable') || (c.ref === 'refs/heads/rc' && (c.kind === 'rc0' || c.kind === 'beta')));
+
+  /** One checkout per version and changelog state. */
+  function checkouts(root: string): (c: Case) => string {
+    const dirs = new Map<string, string>();
+    for (const kind of Object.keys(versions) as Kind[]) {
+      for (const section of [true, false]) {
+        const dir = path.join(root, `${kind}-${section}`);
+        fs.mkdirSync(path.join(dir, 'tmp'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'recut', version: versions[kind] }));
+        const head = section ? `## [${versions[kind]}] - 2026-11-01\n\n### Fixed\n\n- A fix.\n\n` : '';
+        fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), `# Changelog\n\n${head}## [1.3.0] - 2026-10-01\n\n- Older.\n`);
+        dirs.set(`${kind}-${section}`, dir);
+      }
+    }
+    return (c) => dirs.get(`${c.kind}-${c.state !== 'nosection'}`)!;
+  }
+  const ghEnv = (c: Case, root: string): Record<string, string> => ({
+    EVENT_NAME: c.event,
+    REF: c.ref,
+    REF_TYPE: c.refType,
+    REF_NAME: c.ref.replace(/^refs\/(heads|tags)\//, ''),
+    RUN_NUMBER: '42',
+    REPO: 'owner/repo',
+    SHA: '0123456789abcdef0123456789abcdef01234567',
+    RUNNER_TEMP: root,
+    FAKE_TAG_EXIT: c.state === 'tagged' ? '0' : '2',
+  });
+
+  it('covers every event, branch and version kind', () => {
+    expect(tagPatterns.length).toBeGreaterThan(0);
+    expect(new Set(cases.map((c) => c.event))).toEqual(new Set(['push', 'pull_request', 'workflow_dispatch']));
+    for (const k of Object.keys(versions)) expect(cases.some((c) => c.kind === k && c.ref === 'refs/heads/rc')).toBe(true);
+    expect(cases.filter(publishes).map(label).sort()).toEqual(
+      [
+        'push refs/heads/main 1.4.0 (fresh)',
+        'push refs/heads/rc 1.4.0-rc.2 (fresh)',
+        'push refs/tags/v1.4.0 1.4.0 (fresh)',
+        'push refs/tags/v1.4.0 1.4.0 (tagged)',
+        'push refs/tags/v1.4.0-rc.0 1.4.0-rc.0 (fresh)',
+        'push refs/tags/v1.4.0-rc.0 1.4.0-rc.0 (tagged)',
+        'push refs/tags/v1.4.0-rc.2 1.4.0-rc.2 (fresh)',
+        'push refs/tags/v1.4.0-rc.2 1.4.0-rc.2 (tagged)',
+      ].sort(),
+    );
+  });
+
+  it.skipIf(!hasPwsh)('installer "Release metadata" + publish if: + "Final release check": only the owner\'s three cases publish', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-wf-matrix-'));
+    try {
+      const dirOf = checkouts(root);
+      const meta = runPwsh(stepScript('installer', 'Release metadata (release or test build, changelog notes)'), cases.map((c) => ({ cwd: dirOf(c), env: ghEnv(c, path.join(dirOf(c), 'tmp')) })));
+      const cond = jobIf(code(job('publish')))!;
+      const toPublish: { c: Case; o: Record<string, string> }[] = [];
+      cases.forEach((c, i) => {
+        const r = meta[i];
+        expect(r.code, `${label(c)}\n${r.log}`).toBe(0);
+        const o = r.outputs;
+        expect(o.release, `${label(c)}\n${r.log}`).toBe(publishes(c) ? 'true' : 'false');
+        expect(o.prerelease, label(c)).toBe(c.kind === 'stable' ? 'false' : 'true');
+        expect(/::warning::/.test(r.log), `${label(c)}\n${r.log}`).toBe(warns(c));
+        if (o.release === 'true') {
+          expect(o.tag, label(c)).toBe(`v${versions[c.kind]}`);
+          expect(o.auto, label(c)).toBe(c.refType === 'tag' ? 'false' : 'true');
+        } else {
+          expect(o.tag, label(c)).toBe('');
+          expect(o.name, label(c)).toContain('test build');
+        }
+        const runsPublish = evaluate(cond, {
+          'github.event_name': c.event,
+          'github.ref': c.ref,
+          'needs.installer.outputs.release': o.release,
+          'needs.installer.outputs.prerelease': o.prerelease,
+        });
+        expect(runsPublish, label(c)).toBe(publishes(c));
+        if (runsPublish) toPublish.push({ c, o });
+      });
+      // The publish job's last check, with no tag appearing during the build: publishes exactly these.
+      const final = runPwsh(
+        stepScript('publish', 'Final release check'),
+        toPublish.map(({ c, o }) => ({
+          cwd: root,
+          env: { REF: c.ref, AUTO: o.auto, PRERELEASE: o.prerelease, TAG: o.tag, NAME: o.name, NOTES: 'notes.md', FAKE_TAG_EXIT: '2' },
+        })),
+      );
+      toPublish.forEach(({ c }, i) => {
+        expect(final[i].code, `${label(c)}\n${final[i].log}`).toBe(0);
+        expect(final[i].outputs.publish, label(c)).toBe('true');
+        expect(final[i].outputs.make_latest, label(c)).toBe(c.kind === 'stable' ? 'true' : 'false');
+      });
+      expect(toPublish.length).toBe(cases.filter(publishes).length);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it.skipIf(!hasPwsh)('"Final release check" refuses a pre-release from main and anything but vX.Y.Z-rc.N from rc, whatever the installer said', () => {
+    const jobs: [string, string, string, number][] = [
+      ['refs/heads/main', 'v1.4.0-rc.2', 'true', 1],
+      ['refs/heads/main', 'v1.4.0', 'false', 0],
+      ['refs/heads/rc', 'v1.4.0', 'false', 1],
+      ['refs/heads/rc', 'v1.4.0-beta.1', 'true', 1],
+      ['refs/heads/rc', 'v1.4.0-rc.0', 'true', 1],
+      ['refs/heads/rc', 'v1.4.0-rc.10', 'true', 0],
+      ['refs/tags/v1.4.0-rc.0', 'v1.4.0-rc.0', 'true', 0],
+    ];
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-wf-final-'));
+    try {
+      const r = runPwsh(
+        stepScript('publish', 'Final release check'),
+        jobs.map(([ref, tag, pre]) => ({ cwd: tmp, env: { REF: ref, AUTO: 'false', PRERELEASE: pre, TAG: tag, NAME: 'x', NOTES: 'n', FAKE_TAG_EXIT: '2' } })),
+      );
+      jobs.forEach(([ref, tag, , want], i) => {
+        expect(r[i].code, `${ref} ${tag}\n${r[i].log}`).toBe(want);
+        if (want) expect(r[i].log, `${ref} ${tag}`).toContain('::error::Refusing to publish');
+        else expect(r[i].outputs.publish, `${ref} ${tag}`).toBe('true');
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it.skipIf(!hasBash)('macos "Release run?" decides every case as the installer job does, so a release is always signed', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-wf-matrix-'));
+    try {
+      const dirOf = checkouts(root);
+      const have = Object.fromEntries(['CSC_LINK', 'CSC_KEY_PASSWORD', 'APPLE_API_KEY', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER'].map((s) => [`HAVE_${s}`, 'true']));
+      const results = runBash(
+        stepScript('macos', 'Release run? (a release must be signed)'),
+        cases.map((c) => ({ cwd: dirOf(c), env: { ...ghEnv(c, root), ...have } })),
+      );
+      cases.forEach((c, i) => {
+        expect(results[i].code, `${label(c)}\n${results[i].log}`).toBe(0);
+        expect(results[i].outputs.release, `${label(c)}\n${results[i].log}`).toBe(publishes(c) ? 'true' : 'false');
+      });
+      // A release run without the signing secrets fails; a test build does not need them.
+      const noSecrets = Object.fromEntries(Object.keys(have).map((k) => [k, 'false']));
+      const pick = (want: boolean) => cases.find((c) => publishes(c) === want && c.ref === 'refs/heads/rc')!;
+      const [rel, test] = runBash(
+        stepScript('macos', 'Release run? (a release must be signed)'),
+        [pick(true), pick(false)].map((c) => ({ cwd: dirOf(c), env: { ...ghEnv(c, root), ...noSecrets } })),
+      );
+      expect(rel.code, rel.log).toBe(1);
+      expect(rel.log).toContain('a release must be signed and notarized');
+      expect(test.code, test.log).toBe(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it.skipIf(!hasPwsh)('the install check passes -UpgradeFrom only to an install-check.ps1 that declares it (rc and main before #129 is promoted)', () => {
+    const script = stepScript('installer', 'Install check (installer x5, upgrade, uninstall, portable exe)');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-wf-upgrade-'));
+    try {
+      const params = {
+        with: "param([string]$Release = 'release', [int]$Attempts = 5, [int]$SmokeAttempts = 1, [switch]$SkipPortable, [string]$UpgradeFrom = '')",
+        without: "param([string]$Release = 'release', [int]$Attempts = 5, [int]$SmokeAttempts = 1, [switch]$SkipPortable)",
+      };
+      const dirs = Object.entries(params).map(([name, param]) => {
+        const dir = path.join(root, name);
+        fs.mkdirSync(path.join(dir, 'scripts', 'windows'), { recursive: true });
+        fs.writeFileSync(
+          path.join(dir, 'scripts', 'windows', 'install-check.ps1'),
+          `${param}\nSet-Content -LiteralPath (Join-Path $PSScriptRoot 'called.txt') -Value "Release=$Release Attempts=$Attempts Smoke=$SmokeAttempts Upgrade=[$UpgradeFrom] Args=[$args]"\nexit 0\n`,
+        );
+        return dir;
+      });
+      const r = runPwsh(script, dirs.map((cwd) => ({ cwd, env: { UPGRADE_FROM: path.join(root, 'prev', 'Setup-0.8.2.exe') } })));
+      const called = dirs.map((d) => fs.readFileSync(path.join(d, 'scripts', 'windows', 'called.txt'), 'utf8').trim());
+      expect(r[0].code, r[0].log).toBe(0);
+      expect(called[0]).toBe(`Release=release Attempts=5 Smoke=1 Upgrade=[${path.join(root, 'prev', 'Setup-0.8.2.exe')}] Args=[]`);
+      expect(r[0].log).not.toContain('::notice::');
+      expect(r[1].code, r[1].log).toBe(0);
+      expect(called[1]).toBe('Release=release Attempts=5 Smoke=1 Upgrade=[] Args=[]');
+      expect(r[1].log).toContain('has no -UpgradeFrom: the upgrade cycle is skipped');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
 
 // The Linux AppImage gate (docs/ROADMAP.md §19, release 0.6.1): a required job in the same workflow, whose AppImage
@@ -434,12 +784,15 @@ describe('Windows workflow: the macOS dmg gate', () => {
   });
 
   it('a release run must be signed: the macos job decides release like the installer job and fails without the secrets', () => {
-    // The decision, made first: a tag push, or a push to main with a non-empty changelog section and no tag on origin.
+    // The decision, made first: a tag push, or a push to main (stable version) or rc (release candidate) with a
+    // non-empty changelog section and no tag on origin.
     const rel = /- name: Release run\? \(a release must be signed\)\n\s+id: rel\n([\s\S]*?)\n\n/.exec(macos)?.[1];
     expect(rel).toBeDefined();
     expect(macos.indexOf('- name: Release run?')).toBeLessThan(macos.indexOf('npm ci'));
     expect(rel).toContain('if [ "$EVENT_NAME" = push ] && [ "$REF_TYPE" = tag ]; then\n            release=true');
-    expect(rel).toContain('elif [ "$EVENT_NAME" = push ] && [ "$REF" = refs/heads/main ] && [ "$section" = true ]; then');
+    expect(rel).toContain('elif [ "$EVENT_NAME" = push ] && [ "$REF" = refs/heads/main ] && [[ "$v" != *-* ]] && [ "$section" = true ]; then');
+    expect(rel).toContain('elif [ "$EVENT_NAME" = push ] && [ "$REF" = refs/heads/rc ] && [[ "$v" =~ $rc_version ]] && [ "$section" = true ]; then');
+    expect(rel).toContain("rc_version='^[0-9]+\\.[0-9]+\\.[0-9]+-rc\\.[1-9][0-9]*$'");
     expect(rel).toContain('git ls-remote --exit-code --tags origin "refs/tags/v$v" || rc=$?');
     expect(rel).toMatch(/if \[ "\$rc" -eq 2 \]; then\n\s+release=true\n\s+elif \[ "\$rc" -ne 0 \]; then\n\s+echo "::error::git ls-remote failed/);
     // The same changelog rule as the installer job's Get-ChangelogSection.
@@ -715,7 +1068,7 @@ describe('Windows workflow: release candidates', () => {
     expect(installer).toContain("$core = ($v -split '-', 2)[0]");
     expect(installer).toContain('prerelease: ${{ steps.rel.outputs.prerelease }}');
     expect(installer).toMatch(/"prerelease=\$prerelease"/);
-    // The release itself is decided exactly as before: the tag-push fallback and the automatic release on main.
+    // The release itself is decided by the tag-push fallback and the automatic release on main or rc.
     expect(installer.match(/\$release = 'true'/g)).toHaveLength(2);
     // A pre-release's notes start with a note saying what it is.
     expect(installer).toMatch(/\$preNote = "\*\*Pre-release: a release candidate of ReCut \$core, for testing\.\*\*/);
@@ -802,7 +1155,7 @@ describe('Windows workflow: release candidates', () => {
     expect(rel).toBeDefined();
     // Any tag push that starts the workflow (vX.Y.Z or vX.Y.Z-rc.N) is a release run.
     expect(rel).toContain('if [ "$EVENT_NAME" = push ] && [ "$REF_TYPE" = tag ]; then\n            release=true');
-    // On main: run the step's own changelog check with a candidate version.
+    // On rc: run the step's own changelog check with a candidate version.
     const script = /node -e '\n([\s\S]*?)\n\s*'\)/.exec(rel!)?.[1];
     expect(script).toBeDefined();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recut-rc-macos-'));

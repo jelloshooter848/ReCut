@@ -89,12 +89,12 @@ The media attack suite, the QA repro suite, the acceptance gauntlet and the perf
 about 25 minutes on a quiet machine) are described in [DEVELOPMENT › Test suites](docs/DEVELOPMENT.md#test-suites).
 You don't need them for most changes; a maintainer will ask if a change could affect them.
 
-CI (`.github/workflows/windows.yml`) runs on every push to `main` or `dev` and on every pull request into `dev`,
-`devDavid` or `devJames` that changes more than Markdown and `docs/`: it typechecks, runs the unit and end-to-end
-suites on Windows, macOS and Linux, and builds and smoke-tests the Windows installer, the Linux AppImage and both macOS
-dmgs. A pull request run is a test build: it never publishes anything. A new push to the pull request's branch
-cancels the older run. It takes a while, so run the checks locally first; a maintainer can also start it by hand on a
-branch.
+CI (`.github/workflows/windows.yml`) runs on every push to `main`, `rc` or `dev` and on every pull request into
+`main`, `rc`, `dev`, `devDavid` or `devJames` that changes more than Markdown and `docs/`: it typechecks, runs the
+unit and end-to-end suites on Windows, macOS and Linux, and builds and smoke-tests the Windows installer, the Linux
+AppImage and both macOS dmgs. A pull request run is a test build: it never publishes anything. A new push to the pull
+request's branch cancels the older run. It takes a while, so run the checks locally first; a maintainer can also start
+it by hand on a branch.
 
 ## Code conventions
 
@@ -120,8 +120,9 @@ These matter more than style, and reviewers will ask about them. The full list i
 
 | Branch | What it holds | Who writes to it |
 |---|---|---|
-| `main` | Released code only: it moves only when a release or a hotfix is merged. | The owner merges PRs from `dev` (releases) and hotfix PRs. |
-| `dev` | The shared integration branch: everything that is finished and reviewed. | The owner merges PRs into it. Nobody pushes to it. |
+| `main` | Released code only: it moves only when a release or a hotfix is merged. | The owner only: the `rc` → `main` PR of a release, and hotfix PRs. |
+| `rc` | The next release: changes promoted from `dev`, and its release candidates (pre-releases). | The owner only: promotion PRs from `dev`, release-prep PRs, `main` merged back. |
+| `dev` | The shared integration branch: everything that is finished and reviewed. **Contributors, James and agents open their PRs here.** | James (write access) or the owner merges PRs into it. Nobody pushes to it. |
 | `devDavid`, `devJames` | Each person's long-lived branch: David's (the owner) and James's. | Their owner, through PRs from task branches. |
 | task branches (`fix-…`, `claude/…`) | One task: one fix, or one slice of a feature. | Whoever does the task. |
 
@@ -138,16 +139,21 @@ The flow:
    CI green.
 4. **Large features go in slices.** Each slice is its own PR into `dev`; a slice that leaves the feature half-done
    goes behind a setting, so `dev` always works.
-5. **Releases** are a release-prep PR into `dev`, then one PR from `dev` into `main`; a **hotfix** branches from `main`
-   and PRs into `main`, and `main` is then merged into `dev`. See [docs/RELEASING.md](docs/RELEASING.md).
+5. **Releases** go `dev` → `rc` → `main`: changes are promoted from `dev` to `rc` (a merge of `dev` up to a commit,
+   or `-x` cherry-picks of `dev` PRs), pre-releases `X.Y.Z-rc.N` are published from `rc`, and the final release is an
+   `rc` → `main` PR. A **hotfix** branches from `main` and PRs into `main`; `main` is then merged into `rc` and `dev`.
+   All of that is the owner's: see [docs/RELEASING.md](docs/RELEASING.md#branches-and-roles).
 
-Only the owner merges into `dev` and `main`. James and his bot push only to `devJames` and their own task branches,
-and open PRs. Nobody pushes to `dev` or `main` directly, and nobody pushes to another person's branch.
+James (write access) or the owner merges PRs into `dev`. `rc` and `main` are owner-only: only the owner merges into
+them, and nobody opens a PR into them unless the owner asks (agents: only when the coordinator asks). James and his
+bot push only to `devJames` and their own task branches, and open PRs. Nobody pushes to `dev`, `rc` or `main`
+directly, and nobody pushes to another person's branch.
 
 A daily overlap check (run by the owner's coordinating session) test-merges `dev`, `devDavid`, `devJames` and the open
 PR branches and reports where they touch the same code.
 
-**Outside contributors:** fork the repository, branch from `dev`, and open the PR against `dev`. Never target `main`.
+**Outside contributors:** fork the repository, branch from `dev`, and open the PR against `dev`. Never target `rc` or
+`main`.
 
 Before you open a PR into `dev`, check:
 
@@ -166,7 +172,7 @@ Before you open a PR into `dev`, check:
 - [ ] It adds its changelog-draft line and QA block to [docs/NEXT-RELEASE.md](docs/NEXT-RELEASE.md) (see
       [The changelog](#the-changelog)).
 - [ ] It does **not** change the version. Feature and bug PRs never touch `version` in `package.json` or
-      `package-lock.json`; only a release-prep PR changes it ([docs/RELEASING.md](docs/RELEASING.md)).
+      `package-lock.json`; only a release-prep PR into `rc` (or a hotfix) changes it ([docs/RELEASING.md](docs/RELEASING.md)).
 
 ### The changelog
 
@@ -179,9 +185,10 @@ Don't edit [CHANGELOG.md](CHANGELOG.md) in a feature or bug PR. Add your entries
   and what they should see.
 
 Append to the end of each list and leave other entries alone, so the two personal branches rarely conflict there. The
-entries travel with the code into `dev`. Before a release, QA runs the checklist on `dev`; the release PR writes the
-version's `CHANGELOG.md` section from the draft (checked against `git log`) and resets NEXT-RELEASE.md. Also give your
-PR a title and description that say what a user will notice, and link the issue it fixes (`Fixes #N`).
+entries travel with the code into `dev`, and with promotions into `rc`. QA runs the checklist on the release
+candidates published from `rc`; the release-prep PR into `rc` writes the version's `CHANGELOG.md` section from the
+draft (checked against `git log`) and removes the entries it used from NEXT-RELEASE.md. Also give your PR a title and
+description that say what a user will notice, and link the issue it fixes (`Fixes #N`).
 
 ## Reporting bugs
 
@@ -219,8 +226,8 @@ AI coding agents (Claude, via Claude Code) working on tasks the owner defines. T
 in what order; the [Roadmap](docs/ROADMAP.md) records those decisions.
 
 <!-- OWNER: describe how you review changes -->
-Changes reach `dev`, and from there `main`, through pull requests that the owner merges. CI runs the unit and
-end-to-end suites on Windows, macOS and Linux.
+Changes reach `dev` through pull requests, and from there `rc` and then `main` through pull requests that the owner
+merges. CI runs the unit and end-to-end suites on Windows, macOS and Linux.
 
 Because of how it is built, ReCut leans on automated checks: release builds are installed or launched and
 smoke-tested on all three systems before anything is published, media "attack" suites measure exported frames and
