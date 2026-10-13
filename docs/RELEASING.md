@@ -34,8 +34,8 @@ promotion PRs that bring them to `rc`, never touch `package.json` `version`, `pa
 1. The version bump: `npm version <x.y.z>-rc.<N> --no-git-tag-version` for a candidate, `npm version <x.y.z>
    --no-git-tag-version` for the final release (updates `package.json` and `package-lock.json`).
 2. A new dated section at the top of `CHANGELOG.md`, `## [x.y.z-rc.N] - YYYY-MM-DD` or `## [x.y.z] - YYYY-MM-DD`,
-   written from the changelog draft in [NEXT-RELEASE.md](NEXT-RELEASE.md), and the entries it used removed from that
-   file (on `rc` that leaves its [empty template](#the-empty-next-releasemd)).
+   written from the changelog draft in [NEXT-RELEASE.md](NEXT-RELEASE.md). A candidate's release-prep PR leaves the
+   draft as it is; the final release's resets it to its [empty template](#the-empty-next-releasemd).
 3. Doc lines that name the current version, if any (prefer wording that does not name a version).
 4. The saved-project fixture of the new version, `tests/fixtures/projects/recut-<x.y.z>.recut`, made with
    `node scripts/make-project-fixture.mjs` after the bump (see [the fixtures' README](../tests/fixtures/projects/README.md)).
@@ -144,8 +144,9 @@ conflict was resolved (in favour of what `dev` has). Its CI run is a test build;
 1. **Release-prep PR into `rc`**, once what the candidate ships is on `rc`: branch `claude/release-X.Y.Z-rc.N` from
    `rc`, run `npm version X.Y.Z-rc.N --no-git-tag-version`, and add `## [X.Y.Z-rc.N] - YYYY-MM-DD` at the top of
    `CHANGELOG.md`, listing the changes since the previous candidate (for `rc.1`: since the last stable release; see
-   [What goes in the changelog](#what-goes-in-the-changelog)). No saved-project fixture, and no roadmap **Status** or
-   Progress change (they name stable releases). Run `npm run typecheck` and `npm test`, then open the PR against `rc`.
+   [What goes in the changelog](#what-goes-in-the-changelog)). It does not reset [NEXT-RELEASE.md](NEXT-RELEASE.md):
+   the draft keeps growing until the stable release. No saved-project fixture, and no roadmap **Status** or Progress
+   change (they name stable releases). Run `npm run typecheck` and `npm test`, then open the PR against `rc`.
 2. **The owner merges it.** The merge is a push to `rc`, so `.github/workflows/windows.yml` runs. Its first step sees
    a release-candidate version (`X.Y.Z-rc.N`, N from 1) that has its changelog section and no tag yet, and makes the
    run a release. After the same seven gates as a stable release ([What gates a release](#what-gates-a-release)) the
@@ -166,8 +167,9 @@ release-prep PR is merged.
 1. **Release-prep PR into `rc`**, once the last candidate has passed QA: branch `claude/release-X.Y.Z` from `rc`, run
    `npm version X.Y.Z --no-git-tag-version` and add the full `## [X.Y.Z] - YYYY-MM-DD` section at the top of
    `CHANGELOG.md`, written for people coming from the last stable release (everything since then, the candidates'
-   changes included; the `## [X.Y.Z-rc.N]` sections stay below it unchanged, as history). Update
-   [LIMITATIONS](LIMITATIONS.md) if what it lists changed. Check `docs/ROADMAP.md`: every roadmap entry this release
+   changes included; the `## [X.Y.Z-rc.N]` sections stay below it unchanged, as history), written from the whole
+   draft in [NEXT-RELEASE.md](NEXT-RELEASE.md); then reset that file to its
+   [empty template](#the-empty-next-releasemd). Update [LIMITATIONS](LIMITATIONS.md) if what it lists changed. Check `docs/ROADMAP.md`: every roadmap entry this release
    ships has its **Status** line and its row in the Progress table marked done with this version (the feature PR sets
    them; the release-prep PR fixes any that are missing or still name an older version). Add the version's
    saved-project fixture: `node scripts/make-project-fixture.mjs` writes `tests/fixtures/projects/recut-X.Y.Z.recut`
@@ -202,9 +204,9 @@ release's version, changelog section and fixture (and a hotfix's fix), and the n
 
 1. **`main` into `rc`:** branch `claude/merge-main-X.Y.Z` from `rc`, `git merge origin/main`, PR into `rc`. The owner
    merges it. Its push run is a test build (`rc` now has a stable version).
-2. **`main` into `dev`:** branch `claude/merge-main-X.Y.Z-dev` from `dev`, `git merge origin/main`, PR into `dev`. In
-   [NEXT-RELEASE.md](NEXT-RELEASE.md) keep the entries of `dev` changes that were not released and drop the ones the
-   release shipped.
+2. **`main` into `dev`:** branch `claude/merge-main-X.Y.Z-dev` from `dev`, `git merge origin/main`, PR into `dev`.
+   This brings the reset [NEXT-RELEASE.md](NEXT-RELEASE.md) from `main`: keep the entries of `dev` changes that were
+   not promoted to `rc` (they are not released yet) and drop the ones the release shipped.
 
 Merge, never rebase: the merge commits are what let later cuts and picks apply cleanly.
 
@@ -484,7 +486,8 @@ Rules:
   `done on dev`) that were promoted: add what is missing, drop "(on devJames)" / "(on devDavid)" marks, and tidy the
   wording. The draft's **Development** items go under the section's own **Development** heading.
 - A candidate's section (`## [X.Y.Z-rc.N]`) lists the changes since the previous candidate (`rc.1`: since the last
-  stable release). The final `## [X.Y.Z]` section covers everything since the last stable release.
+  stable release). Candidates do not reset the draft, so take the entries the previous candidate's section does not
+  have yet. The final `## [X.Y.Z]` section covers everything since the last stable release.
 - Link repository files with relative links (`docs/...`). CI rewrites them to absolute links at
   the release tag for the GitHub release notes.
 - Mention a project `formatVersion` change explicitly.
@@ -493,10 +496,10 @@ Rules:
 
 ### The empty NEXT-RELEASE.md
 
-Once a release-prep PR has moved the entries into `CHANGELOG.md`, [NEXT-RELEASE.md](NEXT-RELEASE.md) on `rc` is
-back to this template (keep the intro paragraph as it is in the file), so the next candidate or release starts from
-an empty draft. On `dev` the file keeps the entries of changes not promoted yet (see
-[After a release](#after-a-release-merge-main-back)):
+[NEXT-RELEASE.md](NEXT-RELEASE.md) is reset once per stable release: the final release-prep PR into `rc` resets it
+to this template (keep the intro paragraph as it is in the file), the `rc` → `main` merge takes the reset to `main`,
+and merging `main` back brings it to `rc` and `dev` (where the entries of changes not promoted yet are kept, see
+[After a release](#after-a-release-merge-main-back)). A candidate (`X.Y.Z-rc.N`) never resets it. The template:
 
 ```markdown
 # Next release

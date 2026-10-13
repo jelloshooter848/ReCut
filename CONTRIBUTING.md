@@ -187,8 +187,9 @@ Don't edit [CHANGELOG.md](CHANGELOG.md) in a feature or bug PR. Add your entries
 Append to the end of each list and leave other entries alone, so the two personal branches rarely conflict there. The
 entries travel with the code into `dev`, and with promotions into `rc`. QA runs the checklist on the release
 candidates published from `rc`; the release-prep PR into `rc` writes the version's `CHANGELOG.md` section from the
-draft (checked against `git log`) and removes the entries it used from NEXT-RELEASE.md. Also give your PR a title and
-description that say what a user will notice, and link the issue it fixes (`Fixes #N`).
+draft (checked against `git log`). Candidates leave the draft as it is; it is reset to its empty template once per
+stable release, and the reset reaches `dev` from `main`. Also give your PR a title and description that say what a
+user will notice, and link the issue it fixes (`Fixes #N`).
 
 ## Reporting bugs
 
