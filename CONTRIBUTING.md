@@ -115,7 +115,7 @@ These matter more than style, and reviewers will ask about them. The full list i
 | Branch | What it holds | Who merges into it |
 |---|---|---|
 | `dev` | The integration branch: everything finished and reviewed. **Contributors, James and agents open their PRs here.** | James (write access) or the owner. |
-| `rc` | The next release: changes promoted from `dev`, and its release candidates (pre-releases). | The owner only. |
+| `rc` | The next release: changes promoted from `dev`, its release-prep PRs, and its release candidates (pre-releases) when it has them. | The owner only. |
 | `main` | Released code only. | The owner only. |
 
 `rc` and `main` are owner-only: nobody else pushes to them or opens PRs into them unless the owner asks (promotions
