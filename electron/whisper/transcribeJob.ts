@@ -30,11 +30,10 @@ import { cacheKeyForPath, cacheSubdir, fileExists, removeQuietly } from '../medi
 import { FfmpegError, ffmpegFileArg, lineSplitter, runFfmpeg } from '../media/ffmpeg';
 import { probeMedia } from '../media/probe';
 import { ensureDirSafe } from '../safeMkdir';
-import { getWhisperCliPath, killTree, whisperThreads } from './engine';
+import { getWhisperCliPath, killTree, whisperMissingMessage, whisperThreads } from './engine';
 import { findWhisperModel, verifyModel } from './models';
 import { parseProgressLine, parseSegmentLine, parseWhisperJson, segmentsToCues } from './output';
 import { CHUNK_SECONDS, planChunks, readWavInfo, writeWavChunk } from './wav';
-import { PRODUCT_NAME } from '../../shared/productIdentity';
 
 /**
  * Bump when a change to extraction / chunking / clean-up changes the text or timing of a result.
@@ -224,7 +223,7 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
   if (!verified.ok) throw new Error(verified.error);
   if (jc.signal.aborted) throw canceled();
   const bin = ctx.enginePath === undefined ? getWhisperCliPath() : ctx.enginePath;
-  if (!bin) throw new Error(`The speech-to-text engine (whisper-cli) is not included in this build of ${PRODUCT_NAME}.`);
+  if (!bin) throw new Error(whisperMissingMessage());
 
   const fileKey = await transcriptionMediaKey(req.path);
   const cacheFile = transcriptionCachePath(fileKey, req, model.sha256);

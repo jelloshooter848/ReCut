@@ -437,6 +437,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The launcher compiles the speech-to-text engine itself when resources/whisper is missing (the runner has cmake
+      # and Visual Studio C++). Restore the engine the other jobs cache so most runs skip the compile; on a miss the
+      # launcher builds it. Either way the smoke check then requires "whisper engine=<version> ok" (#170).
+      - name: Speech-to-text engine cache (restore only)
+        uses: actions/cache/restore@v4
+        with:
+          path: resources/whisper
+          key: whisper-windows-${{ hashFiles('scripts/whisper-source.mjs', 'scripts/windows/get-whisper.ps1') }}
       - name: Run the launcher in self-test mode
         shell: cmd
         run: call "Start ReCut.cmd" -Smoke

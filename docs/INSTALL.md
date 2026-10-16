@@ -20,8 +20,12 @@ code-signed.
   Builds are unsigned: if SmartScreen says "Windows protected your PC", choose **More info › Run anyway**.
 - **From a cloned repository:** double-click `Start ReCut.cmd`. It runs `scripts/windows/start-recut.ps1`, which
   checks for Node.js 20+ (offers `winget install OpenJS.NodeJS.LTS`), runs `npm ci` when the lockfile changed,
-  rebuilds when the checked-out commit changed, downloads FFmpeg into `resources\ffmpeg` if none is installed, and
-  launches the app. `Start ReCut.cmd -Rebuild` forces a clean install and build.
+  rebuilds when the checked-out commit changed, downloads FFmpeg into `resources\ffmpeg` if none is installed,
+  compiles the speech-to-text engine into `resources\whisper` (`scripts/setup-dev.mjs`, the same step `npm run dev`
+  and `npm start` run), and launches the app. `Start ReCut.cmd -Rebuild` forces a clean install and build. The engine
+  needs cmake and Visual Studio 2022 or newer with the "Desktop development with C++" workload; without them the
+  launcher prints what to install and ReCut starts without speech-to-text (install them and run the launcher again,
+  or set `RECUT_WHISPER_CLI` to an existing `whisper-cli.exe`).
 
 Releases are produced by `.github/workflows/windows.yml`, which builds on `windows-latest`, bundles the current FFmpeg release (gyan.dev essentials, BtbN as fallback;
 see `scripts/windows/get-ffmpeg.ps1`) together with its licence and source information (`FFMPEG-LICENSE.txt`, `FFMPEG-BUILD.txt`), smoke-tests both the unpacked app and a silent install (media protocol, FFmpeg encode + probe,

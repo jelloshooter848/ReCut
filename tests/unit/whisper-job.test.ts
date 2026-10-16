@@ -424,3 +424,15 @@ describe.skipIf(!hasEngine || !hasFfmpeg)('transcription with the bundled whispe
     expect(text).toMatch(/test/);
   }, 300_000);
 });
+
+describe('missing engine message (#170)', () => {
+  it('an installed build says it is not included; a run from source says how to set it up', async () => {
+    const { whisperMissingMessage } = await import('../../electron/whisper/engine');
+    expect(whisperMissingMessage(false)).toMatch(/not included in this build/);
+    const src = whisperMissingMessage(true);
+    expect(src).toMatch(/runs from source/);
+    expect(src).toMatch(/npm run setup/);
+    expect(src).toMatch(/RECUT_WHISPER_CLI/);
+    expect(src).not.toMatch(/not included/);
+  });
+});

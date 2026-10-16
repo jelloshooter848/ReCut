@@ -139,6 +139,9 @@ Footage: *Tears of Steel* and *Sintel* © Blender Foundation, [CC BY 3.0](https:
 - **From a clone:** double-click **`Start ReCut.cmd`** in the repository folder. The first run checks for Node.js
   (offering to install it with winget), installs dependencies, builds the app and downloads FFmpeg into
   `resources\ffmpeg`; later runs just launch ReCut. Run it again after `git pull` and it rebuilds automatically.
+  For speech-to-text it also compiles the Whisper engine into `resources\whisper` (a few minutes, once), which needs
+  **cmake** and **Visual Studio 2022 or newer with "Desktop development with C++"**. Without them it says what to
+  install and ReCut starts without speech-to-text; install them and double-click `Start ReCut.cmd` again.
 
 Both are built and smoke-tested on a Windows machine by [`.github/workflows/windows.yml`](.github/workflows/windows.yml)
 on every push.
