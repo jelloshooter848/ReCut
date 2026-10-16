@@ -63,9 +63,22 @@ export function parseWhisperVersion(out: string): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * What to tell the user when there is no engine. An installed build simply does not include it. A run from source
+ * (`electron .`: the Windows launcher, npm start, npm run dev; Electron sets `process.defaultApp`) has no engine until it
+ * is compiled, so say how (#170).
+ */
+export function whisperMissingMessage(fromSource = !!(process as unknown as { defaultApp?: boolean }).defaultApp): string {
+  if (!fromSource) return `The speech-to-text engine (whisper-cli) is not included in this build of ${PRODUCT_NAME}.`;
+  return `The speech-to-text engine (whisper-cli) is not set up in this copy of ${PRODUCT_NAME}, which runs from source. `
+    + 'It is compiled once from source: install cmake and a C++ compiler (Windows: Visual Studio with "Desktop development with C++"), '
+    + `then run "npm run setup" in the repository folder (on Windows, double-clicking "Start ${PRODUCT_NAME}.cmd" again also does it), `
+    + 'or set RECUT_WHISPER_CLI to an existing whisper-cli.';
+}
+
 /** Run `whisper-cli --version` (no model needed). Rejects with a readable error when it does not run. */
 export function whisperCliVersion(bin = getWhisperCliPath()): Promise<string> {
-  if (!bin) return Promise.reject(new Error(`The speech-to-text engine (whisper-cli) is not included in this build of ${PRODUCT_NAME}.`));
+  if (!bin) return Promise.reject(new Error(whisperMissingMessage()));
   return new Promise((resolve, reject) => {
     execFile(bin, ['--version'], { timeout: 20_000, windowsHide: true, cwd: path.dirname(bin) }, (err, stdout, stderr) => {
       const v = parseWhisperVersion(`${stdout}\n${stderr}`);

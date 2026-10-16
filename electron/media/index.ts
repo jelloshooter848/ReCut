@@ -21,7 +21,7 @@ import { installFromFile, removeLanguage, startInstallJob } from '../ocr/languag
 import { startOcrJob } from '../ocr/ocrJob';
 import type { TranscribeRequest, WhisperEngineInfo, WhisperModelState } from '@shared/whisper';
 import { parseLoopbackBaseUrl } from '../net/download';
-import { getWhisperCliPath, whisperCliVersion } from '../whisper/engine';
+import { getWhisperCliPath, whisperCliVersion, whisperMissingMessage } from '../whisper/engine';
 import {
   installModelFromFile, listWhisperModels, parseTestModelSpec, removeModel, setTestWhisperModels, startModelInstallJob,
   whisperDir, whisperModelsDir,
@@ -43,7 +43,6 @@ import { startSceneDetectJob } from './sceneDetect';
 import { startSuggestScenesJob } from './suggestScenes';
 import { extractSubtitles } from './subtitlesExtract';
 import { envVar } from '../env';
-import { PRODUCT_NAME } from '../../shared/productIdentity';
 
 export type { MediaHandlers, MediaContext } from '../ipc';
 
@@ -208,7 +207,7 @@ export const mediaHandlers: MediaHandlers = {
   async whisperEngine(): Promise<WhisperEngineInfo> {
     const { modelsDir } = whisperContext();
     const bin = getWhisperCliPath();
-    if (!bin) return { path: null, version: null, modelsDir, error: `The speech-to-text engine (whisper-cli) is not included in this build of ${PRODUCT_NAME}.` };
+    if (!bin) return { path: null, version: null, modelsDir, error: whisperMissingMessage() };
     engineVersion ??= whisperCliVersion(bin);
     try {
       return { path: bin, version: await engineVersion, modelsDir };

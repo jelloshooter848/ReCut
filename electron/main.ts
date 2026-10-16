@@ -313,7 +313,8 @@ async function runSmoke(): Promise<void> {
   // Speech-to-text: the bundled whisper-cli (resources/whisper) runs and reports its version; no model needed.
   // "whisper engine=FAILED" fails the CI smoke checks (.github/workflows/windows.yml, scripts/windows/install-check.ps1),
   // which require "whisper engine=<version> ok" from every package. A run from source (the Windows launcher script, npm start)
-  // has no engine unless scripts/<platform>/get-whisper.* was run, which is not a failure there.
+  // has no engine unless scripts/setup-dev.mjs could compile it (needs cmake and a C++ compiler), which is not a failure
+  // there; the launcher's smoke check requires the engine only when it was set up (#170).
   const whisperBin = getWhisperCliPath();
   if (!whisperBin && !app.isPackaged) {
     log('smoke: whisper engine=absent (not bundled in a source run)');
