@@ -7,7 +7,8 @@
     4. downloads FFmpeg into resources\ffmpeg if FFmpeg is not already installed,
     5. compiles the speech-to-text engine (whisper.cpp) into resources\whisper with scripts/setup-dev.mjs, the same
        step npm run dev and npm start run, when cmake and Visual Studio with the C++ workload are installed; without
-       them it prints what to install and ReCut starts without speech-to-text,
+       them it prints what to install (and the first time waits for Enter, so it can be read) and ReCut starts without
+       speech-to-text,
   then launches ReCut. Later runs skip the steps that are already done and just launch.
 
   Options:
@@ -97,7 +98,25 @@ if (-not $env:RECUT_WHISPER_CLI -and -not (Test-Path $whisperCli)) {
 }
 $haveWhisper = [bool]$env:RECUT_WHISPER_CLI -or (Test-Path $whisperCli)
 if (-not $haveWhisper) {
-  Say "Speech-to-text (Whisper) is not set up, so ReCut starts without it. See the message above for what to install."
+  # Say exactly what is missing, and (once) wait for Enter: this window closes when ReCut opens, which would hide it.
+  $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+  $haveVs = (Test-Path $vswhere) -and [bool](& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null)
+  $haveCmake = [bool](Get-Command cmake -ErrorAction SilentlyContinue)
+  Write-Host ""
+  Write-Host "[ReCut] Speech-to-text (Whisper) is not set up, so ReCut will start without it." -ForegroundColor Yellow
+  if ($haveVs -and $haveCmake) {
+    Write-Host "[ReCut] cmake and Visual Studio C++ are installed, but building the engine failed: see the errors above."
+  } else {
+    Write-Host "[ReCut] The engine is compiled once on this PC. Install what is missing:"
+    if (-not $haveCmake) { Write-Host "[ReCut]   - CMake: winget install Kitware.CMake  (or https://cmake.org/download)" }
+    if (-not $haveVs) { Write-Host "[ReCut]   - Visual Studio 2022 or newer (the free Community edition) with the workload 'Desktop development with C++': https://visualstudio.microsoft.com/downloads" }
+    Write-Host "[ReCut] Then double-click 'Start ReCut.cmd' again; it builds the engine (a few minutes, once)."
+  }
+  $notice = Join-Path $Root 'node_modules\.recut-whisper-notice'
+  if (-not $Smoke -and -not (Test-Path $notice)) {
+    Read-Host "Press Enter to start ReCut without speech-to-text" | Out-Null
+    New-Item -ItemType File -Force -Path $notice | Out-Null
+  }
 }
 
 # --- 6. Launch ---------------------------------------------------------------
