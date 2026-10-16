@@ -129,7 +129,7 @@ resets this file to its empty template ([RELEASING](RELEASING.md#how-to-cut-a-re
   first one's words ([#135](https://github.com/jelloshooter848/ReCut/issues/135))
 - `Start ReCut.cmd` (Windows, from a clone) now sets up speech-to-text: it compiles the Whisper engine when cmake and
   Visual Studio C++ are installed, and otherwise says what to install. Run from source without the engine, the
-  Whisper dialogs explain how to set it up instead of saying it is "not included in this build" (on devJames)
+  Whisper dialogs explain how to set it up instead of saying it is "not included in this build"
   ([#170](https://github.com/jelloshooter848/ReCut/issues/170))
 
 ### Known issues
@@ -412,7 +412,7 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 - [ ] Transcribe again with the option on (and **Transcribe again** ticked) → the German police scene (about 10:50) and the Italian fishermen (about 1:55) are in German / Italian; the English stays English. It takes noticeably longer (about 4×).
 - [ ] With an English-only model, or with **Translate** on, the option is disabled and says why.
 
-### #170 Speech-to-text from Start ReCut.cmd (on devJames)
+### #170 Speech-to-text from Start ReCut.cmd
 
 - [ ] On Windows without cmake or Visual Studio C++, run `Start ReCut.cmd` from a clone with no `resources\whisper` → the console says speech-to-text is not set up and what to install; ReCut still starts. Open **Transcribe with Whisper** → the message says how to set the engine up (not "not included in this build").
 - [ ] Install cmake and Visual Studio with "Desktop development with C++", run `Start ReCut.cmd` again → it compiles the engine (a few minutes), then ReCut starts and **Transcribe** works.
