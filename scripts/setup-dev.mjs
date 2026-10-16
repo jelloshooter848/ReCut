@@ -10,6 +10,7 @@
 //
 //   node scripts/setup-dev.mjs          (npm run setup; also run first by npm run dev and npm start)
 //   RECUT_SKIP_SETUP=1 npm run dev      skip it
+//   RECUT_SETUP_RETRY="<what to run>"   how the "run it again" hints say to retry (the Windows launcher sets it)
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
@@ -20,6 +21,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const win = process.platform === 'win32';
 const exe = (name) => (win ? `${name}.exe` : name);
 const log = (msg) => console.log(`[setup] ${msg}`);
+const retry = process.env.RECUT_SETUP_RETRY || 'npm run setup';
 const jobs = String(Math.max(2, (os.availableParallelism?.() ?? os.cpus().length) - 1));
 
 function onPath(cmd) {
@@ -60,7 +62,7 @@ function setupFfmpeg() {
   const dir = path.join(root, 'resources', 'ffmpeg');
   if (existsSync(path.join(dir, exe('ffmpeg'))) && existsSync(path.join(dir, exe('ffprobe')))) return;
   if (onPath('ffmpeg') && onPath('ffprobe')) return;
-  run('ffmpeg', 'FFmpeg', 'npm run setup');
+  run('ffmpeg', 'FFmpeg', retry);
 }
 
 function setupWhisper() {
@@ -68,18 +70,18 @@ function setupWhisper() {
   if (existsSync(path.join(root, 'resources', 'whisper', exe('whisper-cli')))) return;
   // The engine is compiled from source; check the build tools first so a missing one costs no time.
   if (process.platform === 'darwin' && !onPath('cmake')) {
-    log('Skipping the speech-to-text engine: it is compiled with cmake, which is not installed. Install it (brew install cmake), then run: npm run setup');
+    log(`Skipping the speech-to-text engine: it is compiled with cmake, which is not installed. Install it (brew install cmake), then run: ${retry}`);
     return;
   }
   if (process.platform === 'linux' && !onPath('cmake') && !onPath('make')) {
-    log('Skipping the speech-to-text engine: it needs cmake (or make) and a C++ compiler. Install them, then run: npm run setup');
+    log(`Skipping the speech-to-text engine: it needs cmake (or make) and a C++ compiler. Install them, then run: ${retry}`);
     return;
   }
   if (win && !(onPath('cmake') && hasVisualStudioCpp())) {
-    log('Skipping the speech-to-text engine: it needs cmake and Visual Studio 2022 or newer with the "Desktop development with C++" workload. Install them, then run: npm run setup');
+    log(`Skipping the speech-to-text engine: it needs cmake and Visual Studio 2022 or newer with the "Desktop development with C++" workload. Install them, then run: ${retry}`);
     return;
   }
-  run('whisper', 'the speech-to-text engine (whisper.cpp, a few minutes)', 'npm run setup');
+  run('whisper', 'the speech-to-text engine (whisper.cpp, a few minutes)', retry);
 }
 
 /** A Visual Studio with the C++ x64 tools, found with vswhere as scripts/windows/get-whisper.ps1 finds it. */
