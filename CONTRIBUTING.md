@@ -121,7 +121,7 @@ These matter more than style, and reviewers will ask about them. The full list i
 | Branch | What it holds | Who writes to it |
 |---|---|---|
 | `main` | Released code only: it moves only when a release or a hotfix is merged. | The owner only: the `rc` → `main` PR of a release, and hotfix PRs. |
-| `rc` | The next release: changes promoted from `dev`, and its release candidates (pre-releases). | The owner only: promotion PRs from `dev`, release-prep PRs, `main` merged back. |
+| `rc` | The next release: changes promoted from `dev`, its release-prep PRs, and its release candidates (pre-releases) when it has them. | The owner only: promotion PRs from `dev`, release-prep PRs, `main` merged back. |
 | `dev` | The shared integration branch: everything that is finished and reviewed. **Contributors, James and agents open their PRs here.** | James (write access) or the owner merges PRs into it. Nobody pushes to it. |
 | `devDavid`, `devJames` | Each person's long-lived branch: David's (the owner) and James's. | Their owner, through PRs from task branches. |
 | task branches (`fix-…`, `claude/…`) | One task: one fix, or one slice of a feature. | Whoever does the task. |
@@ -140,8 +140,9 @@ The flow:
 4. **Large features go in slices.** Each slice is its own PR into `dev`; a slice that leaves the feature half-done
    goes behind a setting, so `dev` always works.
 5. **Releases** go `dev` → `rc` → `main`: changes are promoted from `dev` to `rc` (a merge of `dev` up to a commit,
-   or `-x` cherry-picks of `dev` PRs), pre-releases `X.Y.Z-rc.N` are published from `rc`, and the final release is an
-   `rc` → `main` PR. A **hotfix** branches from `main` and PRs into `main`; `main` is then merged into `rc` and `dev`.
+   or `-x` cherry-picks of `dev` PRs), a release-prep PR into `rc` sets the version (its `rc` build is the test build to
+   smoke-test), and the release is an `rc` → `main` PR. Pre-releases `X.Y.Z-rc.N` from `rc` come first only for a
+   MAJOR release, or a MINOR one when the owner decides it needs testing in person. A **hotfix** branches from `main` and PRs into `main`; `main` is then merged into `rc` and `dev`.
    All of that is the owner's: see [docs/RELEASING.md](docs/RELEASING.md#branches-and-roles).
 
 James (write access) or the owner merges PRs into `dev`. `rc` and `main` are owner-only: only the owner merges into
@@ -185,9 +186,9 @@ Don't edit [CHANGELOG.md](CHANGELOG.md) in a feature or bug PR. Add your entries
   and what they should see.
 
 Append to the end of each list and leave other entries alone, so the two personal branches rarely conflict there. The
-entries travel with the code into `dev`, and with promotions into `rc`. QA runs the checklist on the release
-candidates published from `rc`; the release-prep PR into `rc` writes the version's `CHANGELOG.md` section from the
-draft (checked against `git log`). Candidates leave the draft as it is; it is reset to its empty template once per
+entries travel with the code into `dev`, and with promotions into `rc`. QA runs the checklist on the `rc` build
+of the release (its release candidates, when it has them); the release-prep PR into `rc` writes the version's `CHANGELOG.md` section from the
+draft (checked against `git log`). Candidates, if any, leave the draft as it is; it is reset to its empty template once per
 stable release, and the reset reaches `dev` from `main`. Also give your PR a title and description that say what a
 user will notice, and link the issue it fixes (`Fixes #N`).
 

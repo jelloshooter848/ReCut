@@ -49,7 +49,7 @@ Code moves `dev` → `rc` → `main` (owner's decision, 12–13 October 2026):
 | Branch | What it holds | PRs into it come from | Who merges | What a push to it publishes |
 |---|---|---|---|---|
 | `dev` | The integration branch: everything finished and reviewed. | Contributors, James and agents (task branches, `devDavid`, `devJames`). | James (write access) or the owner. | Nothing: always a [test build](#test-builds). |
-| `rc` | The next release: the changes promoted from `dev`, and its release-prep PRs. It was created from `main` at 0.8.2. | [Promotion PRs](#promoting-dev-to-rc-cut--pick), release-prep PRs, `main` merged back. | The owner only. | A **pre-release** when `package.json` has a release-candidate version `X.Y.Z-rc.N` (N from 1) with its changelog section and no tag yet. With a stable version (the normal state just before `rc` → `main`) a test build. |
+| `rc` | The next release: the changes promoted from `dev`, and its release-prep PRs. It was created from `main` at 0.8.2. | [Promotion PRs](#promoting-dev-to-rc-cut--pick), release-prep PRs, `main` merged back. | The owner only. | A **pre-release** when `package.json` has a release-candidate version `X.Y.Z-rc.N` (N from 1) with its changelog section and no tag yet. With a stable version (the normal state just before `rc` → `main`) a test build: the installers to smoke-test before that PR. |
 | `main` | Released code only. | The `rc` → `main` PR of a final release, and [hotfix](#hotfixes) PRs. | The owner only. | The **stable release** when `package.json` has a stable version `X.Y.Z` with its changelog section and no tag yet. With a pre-release version a test build, with a warning. |
 | `devDavid`, `devJames`, task branches | Work in progress ([CONTRIBUTING › Branches and pull requests](../CONTRIBUTING.md#branches-and-pull-requests)). | Task branches. | Their owner. | Nothing (their pushes do not run CI; their PRs make test builds). |
 
@@ -67,11 +67,26 @@ Releases are published automatically by CI. Nobody pushes a tag or creates a rel
 1. **Promote** what the release ships from `dev` to `rc`, in one or more promotion PRs into `rc`
    ([Promoting dev to rc](#promoting-dev-to-rc-cut--pick)). On request, the coordinator first writes a
    [review of dev for rc](#review-dev-for-rc-report-format) that ends with a promotion plan.
-2. **Pre-release** candidates `X.Y.Z-rc.1`, `rc.2`, … from `rc` ([Pre-releases from rc](#pre-releases-from-rc)). Fixes
-   go into `dev` first and are picked into `rc`, then the next candidate.
-3. **Final release:** a release-prep PR into `rc` sets `X.Y.Z`, then the `rc` → `main` PR publishes it
+2. **Optional: pre-release candidates** `X.Y.Z-rc.1`, `rc.2`, … from `rc`, only for a release that gets them (see
+   below; [Pre-releases from rc](#pre-releases-from-rc)). Fixes go into `dev` first and are picked into `rc`, then the
+   next candidate. Most releases skip this step.
+3. **Final release:** a release-prep PR into `rc` sets `X.Y.Z` (version, changelog section, saved-project fixture, and
+   so on). Its merge is a push to `rc` with a stable version: a [test build](#test-builds), whose installers (the
+   run's artifacts) the owner can smoke-test. Then the `rc` → `main` PR publishes it
    ([Final release](#final-release-rc--main)).
 4. **Merge `main` back** into `rc` and `dev` ([After a release](#after-a-release-merge-main-back)).
+
+**Release candidates are not a standard step** (owner's decision, 16 October 2026). A release gets candidates:
+
+| Release | Candidates (`X.Y.Z-rc.N`) |
+|---|---|
+| MAJOR (`1.0.0`, `2.0.0`, …) | Always. |
+| MINOR | Only when the owner decides it needs testing in person, for example a risky behaviour change or a data (project format) migration. |
+| PATCH | Never. |
+
+So the normal path for a MINOR or PATCH release has no pre-release: promote `dev` to `rc`, merge the release-prep PR
+that sets `X.Y.Z` (its `rc` push run is the test build to smoke-test), merge the `rc` → `main` PR (which publishes),
+and merge `main` back into `rc` and `dev`.
 
 A fix for a published release that cannot wait takes the [hotfix](#hotfixes) path from `main` instead.
 
@@ -141,6 +156,10 @@ conflict was resolved (in favour of what `dev` has). Its CI run is a test build;
 
 ### Pre-releases from rc
 
+Only for a release that gets candidates: always a MAJOR release, and a MINOR release when the owner decides it needs
+testing in person ([How to cut a release](#how-to-cut-a-release)). Every other release skips this section and goes
+straight to the [final release](#final-release-rc--main).
+
 1. **Release-prep PR into `rc`**, once what the candidate ships is on `rc`: branch `claude/release-X.Y.Z-rc.N` from
    `rc`, run `npm version X.Y.Z-rc.N --no-git-tag-version`, and add `## [X.Y.Z-rc.N] - YYYY-MM-DD` at the top of
    `CHANGELOG.md`, listing the changes since the previous candidate (for `rc.1`: since the last stable release; see
@@ -164,10 +183,11 @@ release-prep PR is merged.
 
 ### Final release (rc → main)
 
-1. **Release-prep PR into `rc`**, once the last candidate has passed QA: branch `claude/release-X.Y.Z` from `rc`, run
+1. **Release-prep PR into `rc`**, once what the release ships is on `rc` (for a release with candidates, once the last
+   candidate has passed QA): branch `claude/release-X.Y.Z` from `rc`, run
    `npm version X.Y.Z --no-git-tag-version` and add the full `## [X.Y.Z] - YYYY-MM-DD` section at the top of
-   `CHANGELOG.md`, written for people coming from the last stable release (everything since then, the candidates'
-   changes included; the `## [X.Y.Z-rc.N]` sections stay below it unchanged, as history), written from the whole
+   `CHANGELOG.md`, written for people coming from the last stable release (everything since then, any candidates'
+   changes included; their `## [X.Y.Z-rc.N]` sections stay below it unchanged, as history), written from the whole
    draft in [NEXT-RELEASE.md](NEXT-RELEASE.md); then reset that file to its
    [empty template](#the-empty-next-releasemd). Update [LIMITATIONS](LIMITATIONS.md) if what it lists changed. Check `docs/ROADMAP.md`: every roadmap entry this release
    ships has its **Status** line and its row in the Progress table marked done with this version (the feature PR sets
@@ -175,11 +195,19 @@ release-prep PR is merged.
    saved-project fixture: `node scripts/make-project-fixture.mjs` writes `tests/fixtures/projects/recut-X.Y.Z.recut`
    with this checkout's own code (the unit suite fails while the fixture of a stable version in `package.json` is
    missing). Never edit or regenerate an older fixture. Run `npm run typecheck` and `npm test`, then open the PR
-   against `rc`. Its merge is a push to `rc` with a stable version: a test build, which publishes nothing.
-2. **Release merge: one PR from `rc` into `main`.** Open it once the release-prep PR is merged and the `rc` push run of
-   that merge is green. It contains nothing but `rc`'s commits since the last release. Merging it is the release step.
-   Don't merge anything else into `rc` between the two, or it ships too.
-3. **CI publishes.** The merge is a push to `main`, so `.github/workflows/windows.yml` runs. Its first step sees that
+   against `rc`. Its merge is a push to `rc` with a stable version: a [test build](#test-builds), which publishes
+   nothing.
+2. **Smoke-test the `rc` test build.** The artifacts of that `rc` push run (`ReCut-windows`, `ReCut-linux`,
+   `ReCut-macos-arm64`, `ReCut-macos-x64`) are the installers of `X.Y.Z` as it will ship, already named for the
+   version. The owner can install them and smoke-test them (or run the QA checklist in [NEXT-RELEASE.md](NEXT-RELEASE.md))
+   before the next step; for a release without candidates this is the build tested before publishing. A problem found
+   here is fixed in `dev` and picked into `rc` like any fix; the version is still unreleased, so no new release-prep PR
+   is needed, and the `rc` push run of the pick is the new build to test.
+3. **Release merge: one PR from `rc` into `main`.** Open it once the release-prep PR is merged, the `rc` push run of
+   that merge (or of a later fix) is green and its installers have been smoke-tested. It contains nothing but `rc`'s
+   commits since the last release. Merging it is the release step. Don't merge anything else into `rc` between the
+   two, or it ships too.
+4. **CI publishes.** The merge is a push to `main`, so `.github/workflows/windows.yml` runs. Its first step sees that
    the `package.json` version (for example `0.3.0`) is stable, has a `## [0.3.0]` section in `CHANGELOG.md` and that
    no tag `v0.3.0` exists yet, and makes this run a release. It then builds, smoke-tests the unpacked app, installs and
    uninstalls the installer and launches the portable exe, while the Windows unit tests, end-to-end tests and launcher
@@ -189,10 +217,10 @@ release-prep PR is merged.
    on the merge commit (created by the publish job), name `ReCut 0.3.0`, not a prerelease, marked **Latest**, body =
    that version's changelog section plus the install / SmartScreen / AppImage / dmg note, with the installer, the
    portable exe, the AppImage and both dmgs attached. See [What gates a release](#what-gates-a-release).
-4. Check the release page: both `.exe` files, the `.AppImage` and both `.dmg` files are attached and the notes read
+5. Check the release page: both `.exe` files, the `.AppImage` and both `.dmg` files are attached and the notes read
    correctly. In the installer, linux and macos jobs' logs, the smoke tests list the licence files the builds ship
    (see [Licence files every release ships](#licence-files-every-release-ships)).
-5. [Merge `main` back](#after-a-release-merge-main-back) into `rc` and `dev`.
+6. [Merge `main` back](#after-a-release-merge-main-back) into `rc` and `dev`.
 
 Every later push to `main` finds `v0.3.0` already tagged and makes a [test build](#test-builds) (all gates, installers
 kept as a CI artifact, nothing published) until the next release is merged into `main`.
@@ -238,8 +266,13 @@ PR's merge sha appears in a `(cherry picked from commit …)` line on `rc`). For
 | **Verdict** | **safe**, **needs testing** or **hold**. |
 
 It ends with a **promotion plan**: the promotion PRs in order (a cut up to a named `dev` commit, or the picks), how
-they map to versions (the largest type since the last stable release decides MINOR or PATCH), and the sequence from
-`X.Y.Z-rc.1` through any further candidates to `X.Y.Z`.
+they map to versions (the largest type since the last stable release decides MINOR or PATCH), and, for each planned
+release, whether it gets release candidates and why ([How to cut a release](#how-to-cut-a-release)): a MAJOR release
+always does; a PATCH release never does; a MINOR release does only when the owner decides it needs testing in person,
+so the report says whether it recommends candidates for it and the reason (for example a risky behaviour change or a
+project-format migration, or nothing that needs it). A release with candidates lists the sequence from `X.Y.Z-rc.1`
+through any further candidates to `X.Y.Z`; one without goes from its release-prep PR (whose `rc` test build is
+smoke-tested) straight to the `rc` → `main` PR.
 
 ### What gates a release
 
@@ -376,8 +409,10 @@ it.
 ## Release candidates
 
 Candidates are published from `rc` ([Pre-releases from rc](#pre-releases-from-rc)), stable releases from `main`.
+They are not a standard step: every MAJOR release is preceded by candidates, a MINOR release only when the owner
+decides it needs testing in person, and a PATCH release never ([How to cut a release](#how-to-cut-a-release)).
 1.0.0 is preceded by release candidates `1.0.0-rc.1`, `1.0.0-rc.2`, … ([ROADMAP → Release
-candidates](ROADMAP.md#release-candidates-100-rc1-rc2-)). A candidate is a real release: it has its own release-prep
+candidates](ROADMAP.md#release-candidates-100-rc1-rc2-)); the examples below use it. A candidate is a real release: it has its own release-prep
 PR, version, changelog section, tag and release page, it runs every gate, and it ships the same files. Only these
 things differ from a stable release:
 
@@ -539,8 +574,8 @@ section.
 | Push to `dev`, a pull request into `main`, `rc`, `dev`, `devDavid` or `devJames`, or a manual run (`workflow_dispatch`) | none | [Test build](#test-builds): `ReCut-windows`, `ReCut-linux`, `ReCut-macos-arm64` and `ReCut-macos-x64` CI artifacts only |
 
 A release is published only when all seven gates pass ([What gates a release](#what-gates-a-release)), release
-candidates included, and its dmgs are always signed and notarized. Only real versions (`0.4.0`, `0.5.0`, …, and the
-release candidates `1.0.0-rc.N`) ever appear on the Releases page: there are no dev or test-build prereleases.
+candidates included, and its dmgs are always signed and notarized. Only real versions (`0.4.0`, `0.5.0`, …, and
+release candidates such as `1.0.0-rc.N`) ever appear on the Releases page: there are no dev or test-build prereleases.
 
 ### Test builds
 
@@ -549,9 +584,10 @@ Every run that is not a release is a test build of an unreleased commit. It runs
 jobs), but creates no tag and publishes nothing. Its installer and portable exe are kept only as the run's
 `ReCut-windows` workflow artifact, its AppImage as the `ReCut-linux` artifact and its dmgs as the `ReCut-macos-arm64`
 and `ReCut-macos-x64` artifacts, for 14 days. Its dmgs are signed and notarized only if the signing secrets are set;
-otherwise they are ad-hoc signed and need the first-launch steps in [INSTALL.md](INSTALL.md#macos). The file names carry the last released
-version (the version in `package.json` on that commit), so `ReCut-Setup-0.5.0.exe` from a test build is a build made
-after 0.5.0, not 0.5.0 itself.
+otherwise they are ad-hoc signed and need the first-launch steps in [INSTALL.md](INSTALL.md#macos). The file names carry the
+version in `package.json` on that commit. Usually that is the last released version, so `ReCut-Setup-0.5.0.exe` from
+a test build is a build made after 0.5.0, not 0.5.0 itself; on `rc` after a final release-prep PR it is the version
+about to be released.
 
 To download a test build: open the repository's **Actions** tab → **Windows build** → the run (its summary says
 "Test build: download the installers from this run's Artifacts (ReCut-windows)") → **Artifacts** → **ReCut-windows**.
@@ -563,7 +599,9 @@ dmg. Use a test build only if the seven required jobs of its run (installer, tes
 macos-e2e) are green. Users should install the release marked **Latest**.
 
 The newest unreleased code is on `dev`: the latest green run of the `dev` branch has its test builds. The next
-release's code is on `rc`: its latest green run has test builds of it between candidates. A pull request into `main`,
+release's code is on `rc`: its latest green run has test builds of it. Once the final release-prep PR is merged, that
+run is the build of `X.Y.Z` to smoke-test before the `rc` → `main` PR ([Final release](#final-release-rc--main)). A
+pull request into `main`,
 `rc`, `dev`, `devDavid` or `devJames` makes a test build of the pull request's merge result. To make a test build of
 any other branch, run the workflow by hand (*Run workflow*, `workflow_dispatch`) on that branch.
 
