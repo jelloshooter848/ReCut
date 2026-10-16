@@ -83,10 +83,12 @@ The media attack suite, the QA repro suite, the acceptance gauntlet and the perf
 about 25 minutes on a quiet machine) are described in [DEVELOPMENT › Test suites](docs/DEVELOPMENT.md#test-suites).
 You don't need them for most changes; a maintainer will ask if a change could affect them.
 
-CI (`.github/workflows/windows.yml`) runs on every push to `main` that changes more than Markdown and `docs/`: it
-typechecks, runs the unit and end-to-end suites on Windows, macOS and Linux, and builds and smoke-tests the Windows
-installer, the Linux AppImage and both macOS dmgs. It does not run automatically on pull requests, so your local
-results matter; a maintainer can start it on a branch.
+CI (`.github/workflows/windows.yml`) runs on every push to `main`, `rc` or `dev` and on every pull request into
+`main`, `rc`, `dev`, `devDavid` or `devJames` that changes more than Markdown and `docs/`: it typechecks, runs the
+unit and end-to-end suites on Windows, macOS and Linux, and builds and smoke-tests the Windows installer, the Linux
+AppImage and both macOS dmgs. A pull request run is a test build: it never publishes anything. A new push to the pull
+request's branch cancels the older run. It takes a while, so run the checks locally first; a maintainer can also
+start it by hand on a branch.
 
 ## Code conventions
 
@@ -110,8 +112,18 @@ These matter more than style, and reviewers will ask about them. The full list i
 
 ## Branches and pull requests
 
-- Fork the repository (or, with write access, push a branch), branch from `main`, and open the PR against `main`.
-  Use a short descriptive branch name, for example `fix-collect-fat32-message`.
+| Branch | What it holds | Who merges into it |
+|---|---|---|
+| `dev` | The integration branch: everything finished and reviewed. **Contributors, James and agents open their PRs here.** | James (write access) or the owner. |
+| `rc` | The next release: changes promoted from `dev`, its release-prep PRs, and its release candidates (pre-releases) when it has them. | The owner only. |
+| `main` | Released code only. | The owner only. |
+
+`rc` and `main` are owner-only: nobody else pushes to them or opens PRs into them unless the owner asks (promotions
+from `dev`, releases and hotfixes, see [docs/RELEASING.md](docs/RELEASING.md#branches-and-roles)). Nobody pushes to
+`dev` directly either: changes reach it through pull requests.
+
+- Fork the repository (or, with write access, push a branch), branch from `dev`, and open the PR against `dev`.
+  Never target `rc` or `main`. Use a short descriptive branch name, for example `fix-collect-fat32-message`.
 - Keep a PR to one change. Explain **what** and **why**, and how you tested it (commands and results). Link the issue
   it closes (`Closes #123`).
 - A bug fix comes with a **regression test** that fails before the fix. Never weaken, skip or delete an existing test
@@ -122,11 +134,11 @@ These matter more than style, and reviewers will ask about them. The full list i
 - A PR that completes a [Roadmap](docs/ROADMAP.md) entry updates [docs/ROADMAP.md](docs/ROADMAP.md) in the same PR:
   the entry's **Status** line and its row in the Progress table.
 - **Feature and bug PRs never change the version.** Don't touch `version` in `package.json` or `package-lock.json`.
-  Only a release PR changes it ([docs/RELEASING.md](docs/RELEASING.md)).
+  Only a release-prep PR into `rc` (or a hotfix) changes it ([docs/RELEASING.md](docs/RELEASING.md)).
 
 ### The changelog
 
-Don't edit [CHANGELOG.md](CHANGELOG.md) in a feature or bug PR. Each release PR adds the new version's section,
+Don't edit [CHANGELOG.md](CHANGELOG.md) in a feature or bug PR. Each release-prep PR adds the new version's section,
 written from the merged changes since the previous release and from the bug reports moved to `bugs/closed/`
 ([RELEASING › What goes in the changelog](docs/RELEASING.md#what-goes-in-the-changelog)). Help it by giving your PR a
 title and description that say what a user will notice, and by linking the bug report it fixes.
@@ -167,8 +179,8 @@ AI coding agents (Claude, via Claude Code) working on tasks the owner defines. T
 in what order; the [Roadmap](docs/ROADMAP.md) records those decisions.
 
 <!-- OWNER: describe how you review changes -->
-Changes reach `main` through pull requests that the owner merges. CI runs the unit and end-to-end suites on Windows,
-macOS and Linux.
+Changes reach `dev` through pull requests, move to `rc` and from there to `main` through pull requests that the owner
+merges. CI runs the unit and end-to-end suites on Windows, macOS and Linux.
 
 Because of how it is built, ReCut leans on automated checks: release builds are installed or launched and
 smoke-tested on all three systems before anything is published, media "attack" suites measure exported frames and

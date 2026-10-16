@@ -42,7 +42,8 @@ build.
 ### Releases require signing
 
 Both dmgs (Apple Silicon and Intel) are attached to every ReCut release, and a release is never published with an
-unsigned dmg. On a release run (the merge of a release PR, see [RELEASING.md](RELEASING.md)) each leg of the `macos`
+unsigned dmg. On a release run (the merge of the `rc` → `main` PR of a stable release, or, for a release that has
+candidates, of a release candidate's release-prep PR into `rc`, see [RELEASING.md](RELEASING.md)) each leg of the `macos`
 job checks, in its first step, that all five secrets are set and fails at once if any is missing; later it fails
 unless electron-builder signed the app with the Developer ID, Apple notarized it, Gatekeeper accepts it as
 "Notarized Developer ID" and the ticket is stapled. A failed `macos` leg stops the whole release: nothing is
