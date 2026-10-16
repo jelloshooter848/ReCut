@@ -418,7 +418,7 @@ Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as 
 
 ### #170 Speech-to-text from Start ReCut.cmd
 
-- [ ] On Windows without cmake or Visual Studio C++, run `Start ReCut.cmd` from a clone with no `resources\whisper` → the console says speech-to-text is not set up and what to install; ReCut still starts. Open **Transcribe with Whisper** → the message says how to set the engine up (not "not included in this build").
+- [ ] On Windows without cmake or Visual Studio C++, run `Start ReCut.cmd` from a clone with no `resources\whisper` → the window lists what is missing (CMake and/or Visual Studio C++) and waits for Enter, then ReCut starts. On the next launch it doesn't wait. Open **Transcribe with Whisper** → the message says how to set the engine up (not "not included in this build").
 - [ ] Install cmake and Visual Studio with "Desktop development with C++", run `Start ReCut.cmd` again → it compiles the engine (a few minutes), then ReCut starts and **Transcribe** works.
 - [ ] Run `Start ReCut.cmd` once more → no engine step; it just launches.
 - [ ] The installed app (Setup or Portable exe) still transcribes as before.
