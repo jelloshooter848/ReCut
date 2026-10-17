@@ -13,7 +13,12 @@
 
   Options:
     -Rebuild   force a fresh dependency install and build
-    -Smoke     CI self-test: launch with RECUT_SMOKE=1, wait for exit, print the smoke report
+    -Smoke     CI self-test: launch with RECUT_SMOKE=1, wait for exit, print the smoke report and check it with
+               scripts/check-smoke.mjs against scripts/smoke-requirements.json (mode "launcher", the list the
+               installer's smoke test shares). It requires the speech-to-text engine in resources\whisper and OCR,
+               so a run that skipped or failed the engine fails (the CI runner has cmake and Visual Studio C++).
+  The launcher only waits for Enter when someone can press it: never with -Smoke, in CI (CI is set) or when the
+  console input is redirected.
 #>
 param([switch]$Rebuild, [switch]$Smoke)
 
@@ -22,11 +27,16 @@ $ProgressPreference = 'SilentlyContinue'   # makes Invoke-WebRequest much faster
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 Set-Location $Root
 
+# Whether a prompt (Read-Host) can be answered. Not with -Smoke, not in CI (GitHub Actions sets CI=true), and not when
+# there is no console to type into (input redirected, non-interactive session): a prompt there would hang the run.
+$Interactive = (-not $Smoke) -and (-not $env:CI) -and [Environment]::UserInteractive
+try { if ([Console]::IsInputRedirected) { $Interactive = $false } } catch { }
+
 function Say([string]$msg) { Write-Host "[ReCut] $msg" }
 function Fail([string]$msg) {
   Write-Host ""
   Write-Host "[ReCut] $msg" -ForegroundColor Red
-  if (-not $Smoke) { Read-Host "Press Enter to close" | Out-Null }
+  if ($Interactive) { Read-Host "Press Enter to close" | Out-Null }
   exit 1
 }
 
@@ -39,7 +49,7 @@ $nodeMajor = Get-NodeMajor
 if ($nodeMajor -lt 20) {
   if ($nodeMajor -gt 0) { Say "Node.js $nodeMajor found, but ReCut needs Node.js 20 or newer." } else { Say "Node.js was not found." }
   if (Get-Command winget -ErrorAction SilentlyContinue) {
-    $answer = if ($Smoke) { 'n' } else { Read-Host "Install Node.js LTS now with winget? [Y/n]" }
+    $answer = if (-not $Interactive) { 'n' } else { Read-Host "Install Node.js LTS now with winget? [Y/n]" }
     if ($answer -eq '' -or $answer -match '^[Yy]') {
       winget install -e --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements
       Fail "Node.js was installed. Close this window and double-click 'Start ReCut.cmd' again so Windows picks up the new PATH."
@@ -90,6 +100,8 @@ if (-not $haveBundled -and -not $haveSystem) {
 # scripts/setup-dev.mjs skips the engine when it is already there or RECUT_WHISPER_CLI is set, checks for the build
 # tools first and never fails the launch: a missing tool or a failed build prints what to do (#170).
 $whisperCli = Join-Path $Root 'resources\whisper\whisper-cli.exe'
+# -Smoke checks the engine this launcher sets up in resources\whisper, so an engine found elsewhere must not stand in.
+if ($Smoke) { Remove-Item Env:RECUT_WHISPER_CLI -ErrorAction SilentlyContinue }
 if (-not $env:RECUT_WHISPER_CLI -and -not (Test-Path $whisperCli)) {
   Say "Setting up speech-to-text (Whisper)..."
   $env:RECUT_SETUP_RETRY = "double-click 'Start ReCut.cmd' again"
@@ -113,10 +125,15 @@ if (-not $haveWhisper) {
     Write-Host "[ReCut] Then double-click 'Start ReCut.cmd' again; it builds the engine (a few minutes, once)."
   }
   $notice = Join-Path $Root 'node_modules\.recut-whisper-notice'
-  if (-not $Smoke -and -not (Test-Path $notice)) {
+  if ($Interactive -and -not (Test-Path $notice)) {
     Read-Host "Press Enter to start ReCut without speech-to-text" | Out-Null
     New-Item -ItemType File -Force -Path $notice | Out-Null
   }
+}
+# -Smoke runs only in CI, whose runner has cmake and Visual Studio C++: there the engine is required, as the installer
+# bundles it, and a run that skipped or failed it fails here (#170). A double-click start goes on without it.
+if ($Smoke -and -not (Test-Path $whisperCli)) {
+  Fail "Smoke test failed: the speech-to-text engine (resources\whisper\whisper-cli.exe) was not set up; see the output above. -Smoke requires it."
 }
 
 # --- 6. Launch ---------------------------------------------------------------
@@ -131,11 +148,10 @@ if ($Smoke) {
   if (-not $p.WaitForExit(120000)) { $p.Kill(); Fail "Smoke test timed out." }
   if (-not (Test-Path $out)) { Fail "Smoke test produced no report." }
   Get-Content $out
-  $report = Get-Content $out -Raw
-  if ($report -cmatch 'FAILED|layout=MISSING' -or $report -notmatch 'encode\+probe ok' -or $report -notmatch 'status=206') { Fail "Smoke test failed." }
-  # Speech-to-text: when the engine was set up, the app must find and run it; without it, say so plainly.
-  if ($haveWhisper -and $report -notmatch 'whisper engine=[0-9.]+ ok') { Fail "Smoke test failed: the speech-to-text engine is set up but the app did not run it." }
-  if (-not $haveWhisper) { Say "Speech-to-text engine: not set up (see the setup output above); the smoke test passes without it." }
+  # The required lines are shared with the installer's smoke test (.github/workflows/windows.yml):
+  # scripts/smoke-requirements.json, mode "launcher" (media protocol, FFmpeg, OCR, the speech-to-text engine, the window).
+  & node (Join-Path $Root 'scripts\check-smoke.mjs') --mode launcher $out
+  if ($LASTEXITCODE -ne 0) { Fail "Smoke test failed." }
   Say "Smoke test passed."
   exit 0
 }

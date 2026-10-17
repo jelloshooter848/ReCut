@@ -12,7 +12,9 @@ name: Windows build
 #              the release-notes artifact, and decide the release metadata (job outputs)
 #   tests      unit tests (vitest) on Windows
 #   e2e        end-to-end tests (Playwright + Electron) on Windows
-#   launcher   "Start ReCut.cmd" self-test from a fresh clone
+#   launcher   "Start ReCut.cmd" self-test from a fresh clone (the launcher compiles the speech-to-text engine itself
+#              unless the engine cache restores it); its smoke check and the installer's share one list of required
+#              lines, scripts/smoke-requirements.json (scripts/check-smoke.mjs), so both require the engine and OCR
 #   linux      on ubuntu-22.04: typecheck, the download redirect check (scripts/check-model-redirects.mjs, also in
 #              macos), unit tests and the e2e suite (xvfb) with the bundled FFmpeg and speech-to-text
 #              engine, the x86-64 AppImage (scripts/linux/get-ffmpeg.sh bundles FFmpeg and its licence files,
@@ -364,10 +366,11 @@ jobs:
           $p = Start-Process -FilePath release/win-unpacked/ReCut.exe -PassThru
           if (-not $p.WaitForExit(180000)) { $p.Kill(); throw 'smoke test timed out' }
           Get-Content $out
-          $r = Get-Content $out -Raw
-          # "ocr core=<variant> ok worker=<path>": the OCR worker started from app.asar.unpacked and loaded the Tesseract core.
-          # "whisper engine=<version> ok path=<path>": the bundled whisper-cli.exe ran (--version, no model needed).
-          if ($r -cmatch 'FAILED|layout=MISSING' -or $r -notmatch 'encode\+probe ok' -or $r -notmatch 'status=206' -or $r -notmatch 'resources\\ffmpeg' -or $r -notmatch 'ocr core=(relaxedsimd-lstm|lstm) ok worker=.*app\.asar\.unpacked' -or $r -notmatch 'whisper engine=[0-9.]+ ok path=.*resources\\whisper\\whisper-cli\.exe') { throw 'smoke test failed' }
+          # The required lines (no failure; media protocol; FFmpeg encode + probe from resources\ffmpeg; the OCR worker from
+          # app.asar.unpacked; the bundled resources\whisper\whisper-cli.exe; the window) are scripts/smoke-requirements.json,
+          # mode installer: the one list shared with the launcher job's "Start ReCut.cmd -Smoke" (mode launcher), #170.
+          node scripts/check-smoke.mjs --mode installer $out
+          if ($LASTEXITCODE -ne 0) { throw 'smoke test failed' }
 
       # Uploaded on every run (release or test build), before the install check so a failed install can still be
       # inspected, and so the installer-stress and publish jobs can reuse the build. On a test build this artifact is
@@ -473,8 +476,9 @@ jobs:
         with:
           node-version: 22
       # The launcher compiles the speech-to-text engine itself when resources/whisper is missing (the runner has cmake
-      # and Visual Studio C++). Restore the engine the other jobs cache so most runs skip the compile; on a miss the
-      # launcher builds it. Either way the smoke check then requires "whisper engine=<version> ok" (#170).
+      # and Visual Studio C++). Restore the engine the other jobs cache (same key) so most runs skip the compile; on a
+      # miss the launcher builds it. Either way "-Smoke" then requires the engine and OCR (scripts/smoke-requirements.json,
+      # mode launcher; #170): a run that skipped or failed the engine fails, and -Smoke never waits for input.
       - name: Speech-to-text engine cache (restore only)
         uses: actions/cache/restore@v4
         with:

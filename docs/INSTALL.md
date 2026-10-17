@@ -34,7 +34,11 @@ UI mounted), and publishes a release automatically: the stable release `v<versio
 when a candidate (version bump + changelog entry) is merged into `rc` (see [RELEASING.md](RELEASING.md)). Every other run is a test build: nothing is published to the Releases page,
 and its installers are only the run's `ReCut-windows` artifact (Actions → the run → Artifacts → ReCut-windows, kept
 14 days; see [RELEASING.md](RELEASING.md#test-builds)). On every build the same workflow also checks `Start ReCut.cmd`
-from a fresh clone and runs the unit and end-to-end suites on Windows. Publishing is a separate last job that runs only
+from a fresh clone and runs the unit and end-to-end suites on Windows. The launcher check (`Start ReCut.cmd -Smoke`)
+and the installer's smoke test read one list of required results, `scripts/smoke-requirements.json`
+(`scripts/check-smoke.mjs`), so the launcher must set up and run the speech-to-text engine and OCR just as the installer
+ships them; `tests/unit/launcher-parity.test.ts` fails when the installer bundles a `resources/` folder the launcher does
+not set up. Publishing is a separate last job that runs only
 for a release and only when the build, smoke and install checks, both test suites and the launcher check have all
 passed; a release run with any failure publishes nothing.
 
