@@ -149,6 +149,10 @@ reset to its empty template once per stable release: the final release-prep PR r
 - Cold filmstrips run as balanced FFmpeg batches in one round, further from the perf guardrail
   ([#155](https://github.com/jelloshooter848/ReCut/issues/155))
 - `docs/NEXT-RELEASE.md` keeps this draft and QA checklist ([#167](https://github.com/jelloshooter848/ReCut/issues/167)).
+- CI keeps `Start ReCut.cmd` in step with the installer: both smoke checks read one list of required results
+  (`scripts/smoke-requirements.json`), `Start ReCut.cmd -Smoke` requires the speech-to-text engine and OCR and never waits
+  for Enter, and a unit test fails when the installer bundles a `resources/` folder the launcher does not set up. The
+  Windows engine build also runs under Windows PowerShell 5.1 ([#170](https://github.com/jelloshooter848/ReCut/issues/170)).
 
 ## QA checklist
 
