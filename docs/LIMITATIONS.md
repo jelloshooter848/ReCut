@@ -1,6 +1,6 @@
 # Known limitations
 
-This page describes ReCut 0.8.2 as of 9 October 2026. Every item was checked against the code. Items marked **bug** are
+This page describes ReCut 0.9.0 as of 17 October 2026. Every item was checked against the code. Items marked **bug** are
 defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.md)).
 
 ## Editing and effects
@@ -99,9 +99,10 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
 ## Preview (Chromium) and proxies
 
 - The monitors are Chromium `<video>` elements composited on a 2D canvas, so only browser codecs play directly
-  (H.264 8-bit 4:2:0, VP8/9, AV1 with AAC/MP3/Opus/Vorbis/FLAC/PCM in MP4/MOV/MKV/WebM/Ogg). HEVC, AC-3, DTS, TS and
-  similar files need a **proxy**. With proxies on (the default), they are generated automatically on import. See
-  [FORMATS](FORMATS.md).
+  (H.264 8-bit 4:2:0, VP8/9, AV1 with AAC/MP3/Opus/Vorbis/FLAC/PCM in MP4/MOV/MKV/WebM/Ogg). HEVC plays directly only
+  where this machine's Chromium decodes it (macOS, and Windows with HEVC hardware or the HEVC Video Extensions; 8- or
+  10-bit 4:2:0 in MP4 / MOV), never on Linux. Other HEVC, AC-3, DTS, TS and similar files need a **proxy**. With
+  proxies on (the default), they are generated automatically on import. See [FORMATS](FORMATS.md).
 - **Proxies off does not mean originals only.** For an original Chromium cannot decode, a ready proxy is still used
   (Program shows the **Proxy** chip). This is deliberate. "Needs proxy" appears only when no proxy exists.
 - **Still images** in PNG, JPEG, WebP, GIF and BMP are drawn directly. Every other still is previewed from a PNG
@@ -139,9 +140,12 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   are encoder measurements with generated models of the real sizes: no real model could be downloaded on that
   machine, so end-to-end times with real models are still to be measured.
 - Whisper's text is an approximation: names, songs, shouting, overlapping voices, heavy accents, music and effects
-  under the dialogue can be misheard or dropped, and it sometimes repeats a line or invents one in silence. It does
-  not tell speakers apart (no diarisation). Timing is per phrase, not per word. Auto-detect decides the language
-  from the start of the audio, so a film that opens with music may be detected wrongly: choose the language instead.
+  under the dialogue can be misheard or dropped, and it sometimes invents a line over music or silence (stock lines
+  such as "Thank you." are dropped there, unless they sound spoken). Filler words ("um", "uh") and stutters are
+  usually left out. It does not tell speakers apart (no diarisation). Each word's start comes from the engine's
+  alignment (in testing 0–0.3 s after the word is heard) and its end is estimated from its length. Auto-detect
+  decides the language from the start of the audio, so a film that opens with music may be detected wrongly: choose
+  the language instead.
 - A long media is transcribed in parts of up to 30 minutes, cut at the quietest moment near each boundary; a line
   spoken across a cut can still be split in two.
 - Models are downloaded from Hugging Face only when you click Install, and only from the pinned files; if Hugging

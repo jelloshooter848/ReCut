@@ -5,6 +5,109 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
+## [0.9.0] - 2026-10-17
+
+Transcripts on the timeline: Whisper transcripts are word-timed, shown in transcript lanes under the audio tracks
+and in the monitors with the spoken word highlighted, and can be included in exports. HEVC previews without a proxy
+where the computer can decode it, and fixes for Whisper transcripts that looped on invented lines or came out early,
+exports to exFAT drives, proxies after reopening a project, clip drops on V2 and clicking or scrolling the timeline
+while playing. Project files stay `formatVersion` 1: the new settings are optional, and projects from earlier
+releases open unchanged.
+
+### Added
+
+- Transcripts are word-timed and split into short lines; the Source and Program monitors highlight each word as it
+  is spoken (karaoke style), and a short line stays on screen through a pause of up to a second
+  ([#118](https://github.com/jelloshooter848/ReCut/issues/118), [#119](https://github.com/jelloshooter848/ReCut/issues/119);
+  part of [#113](https://github.com/jelloshooter848/ReCut/issues/113)).
+- A highlighter button on the timeline's subtitle lane header turns the word highlighting on and off; it is saved
+  with the project ([#119](https://github.com/jelloshooter848/ReCut/issues/119)).
+- Transcript lanes on the timeline: **T1** under A1, **T2** under A2, showing each clip's transcript live from its
+  media, so a clip transcribed after it was inserted shows at once. The Program monitor shows the transcript of the
+  clip on screen ([#125](https://github.com/jelloshooter848/ReCut/issues/125); part of
+  [#112](https://github.com/jelloshooter848/ReCut/issues/112)).
+- The timeline's Subtitles row shows the on-screen transcript, the same text the Program monitor shows
+  ([#126](https://github.com/jelloshooter848/ReCut/issues/126)).
+- Export › **Include transcripts as subtitles** adds the on-screen transcript as a subtitle track named "Transcript"
+  (burn-in, sidecar .srt or MKV soft track) ([#127](https://github.com/jelloshooter848/ReCut/issues/127)).
+- Export › **Highlight the spoken word** burns transcripts in karaoke style
+  ([#134](https://github.com/jelloshooter848/ReCut/issues/134)).
+- Transcript cues have their own colour (maroon) and transcript lanes can be collapsed with the chevron on their
+  header ([#132](https://github.com/jelloshooter848/ReCut/issues/132)).
+- HEVC media plays in the monitors without a proxy on machines that decode it (macOS, Windows with HEVC support);
+  Linux still uses a proxy ([#138](https://github.com/jelloshooter848/ReCut/issues/138)).
+
+### Changed
+
+- **Inserting a clip no longer copies its Whisper transcript into a timeline subtitle track**; opening a project
+  removes the copies older versions made (imported and edited subtitles are kept). A project saved by 0.9.0 shows no
+  transcript on its timeline when opened in an earlier version
+  ([#125](https://github.com/jelloshooter848/ReCut/issues/125)).
+- **Transcripts cached by earlier versions are not reused**: transcribing again makes a new, word-timed one;
+  transcript tracks already in a project stay as they are ([#117](https://github.com/jelloshooter848/ReCut/issues/117),
+  [#118](https://github.com/jelloshooter848/ReCut/issues/118), [#158](https://github.com/jelloshooter848/ReCut/issues/158)).
+- Transcribe dialog: a note under **Translate the speech to English** says a translated transcript is less exact
+  ([#117](https://github.com/jelloshooter848/ReCut/issues/117)).
+
+### Fixed
+
+- A blank untitled project was offered for recovery at the next start, and File › Open / New / Quit then asked to
+  save it ([#111](https://github.com/jelloshooter848/ReCut/issues/111)).
+- The Program monitor drew a long subtitle as one line running off both edges; it now wraps to the frame
+  ([#114](https://github.com/jelloshooter848/ReCut/issues/114)).
+- Whisper repeated a line echoed by the engine; a line said again later is kept
+  ([#117](https://github.com/jelloshooter848/ReCut/issues/117)).
+- Dropping a clip on V2 put its audio on A1 (overwriting what was there); the audio now goes to A2, adding the track
+  if needed ([#120](https://github.com/jelloshooter848/ReCut/issues/120)).
+- Every export to an exFAT drive failed at the end with "The render file … was replaced by another file"
+  ([#133](https://github.com/jelloshooter848/ReCut/issues/133)).
+- Proxies that finished after the last save showed "Needs proxy" again when the project was reopened
+  ([#136](https://github.com/jelloshooter848/ReCut/issues/136)).
+- Clicking the timeline while playing did not move the playhead; it now jumps there and keeps playing
+  ([#139](https://github.com/jelloshooter848/ReCut/issues/139)).
+- Scrolling the timeline while playing snapped back to the playhead; it now pauses following until the playhead is
+  back in view or you click **Follow playhead** ([#140](https://github.com/jelloshooter848/ReCut/issues/140)).
+- Whisper transcripts could get stuck repeating an invented line ("Thank you." hundreds of times) over music or
+  silence; they no longer loop. Transcribing again with the same settings returned the saved result: the Transcribe
+  dialog's new **Transcribe again (ignore the saved result)** makes a new transcript and replaces it
+  ([#158](https://github.com/jelloshooter848/ReCut/issues/158)).
+- Whisper wrote stock lines such as "Thank you." or "Thanks for watching!" over an opening logo or music; they are
+  dropped, and a spoken "Thank you." stays ([#160](https://github.com/jelloshooter848/ReCut/issues/160)).
+- Whisper transcripts of a file whose audio starts after its video (an audio track muxed with a delay) were early by
+  that delay; they are now placed where the words are spoken
+  ([#157](https://github.com/jelloshooter848/ReCut/issues/157)).
+
+### Development
+
+- The first `npm run dev` / `npm start` from a clone fetches FFmpeg and builds the speech-to-text engine when they
+  are missing (`npm run setup`; `RECUT_SKIP_SETUP=1` skips it). On Windows it checks for cmake and Visual Studio's
+  C++ tools first and says what to install.
+- Releases go `dev` → `rc` → `main`: changes are promoted from `dev` to `rc`, and the stable release is published
+  from `main` (release candidates, for the releases that have them, from `rc`). CI runs on pull requests into
+  `main`, `rc`, `dev` and the personal branches ([RELEASING](docs/RELEASING.md)).
+- Groundwork for a later change of the app's identity: one product-identity module, a user-data folder migration
+  that does nothing while the name is unchanged, and a pinned Windows installer GUID so such a change upgrades in
+  place. The Windows install check also installs each build over the latest release.
+- A saved-project fixture for 0.9.0 (`tests/fixtures/projects/recut-0.9.0.recut`).
+- No new npm dependencies.
+
+### Known issues
+
+- Thumbnails and filmstrips of an MPEG-TS file with long keyframe intervals can show the next keyframe instead of
+  the frame at that time; the preview and the export are right
+  ([report](bugs/open/2026-10-09-ts-thumbnail-next-keyframe.md),
+  [#156](https://github.com/jelloshooter848/ReCut/issues/156)).
+- In a file that starts slightly before zero (some FFmpeg-made MKVs with AAC audio), thumbnails are one frame early,
+  and a clip that starts at the file's first frame exports that frame black; trimming one frame works around it
+  ([report](bugs/open/2026-10-09-negative-start-video-start-offset.md),
+  [#154](https://github.com/jelloshooter848/ReCut/issues/154)).
+- Run from source on Windows, `Start ReCut.cmd` does not set up the speech-to-text engine, so Transcribe stays
+  unavailable; run `npm run setup` once instead. The installed app is not affected
+  ([#170](https://github.com/jelloshooter848/ReCut/issues/170)).
+- Unchanged from 0.8.0: the Intel dmg is tested only under Rosetta 2
+  ([LIMITATIONS](docs/LIMITATIONS.md#platform-and-packaging)), unsigned Windows builds (SmartScreen), NSIS 3.0.4
+  (CVE-2025-43715, only when an installer runs as SYSTEM).
+
 ## [0.8.2] - 2026-10-09
 
 Bug fixes: the cache folder on Windows and macOS, exports of MPEG-TS files whose video starts after the audio, and a
