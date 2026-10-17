@@ -18,5 +18,6 @@ export function parseTranscribeRequest(v: unknown): TranscribeRequest {
   const model = assertWhisperModelId(r.model);
   if (!isWhisperLanguageCode(r.language)) throw new Error(`unknown language: ${JSON.stringify(typeof r.language === 'string' ? r.language.slice(0, 20) : r.language)}`);
   if (r.translate !== undefined && typeof r.translate !== 'boolean') throw new Error('Expected translate to be a boolean');
-  return { mediaId: r.mediaId, path, streamIndex: r.streamIndex as number, model, language: r.language, translate: r.translate === true };
+  if (r.verbatim !== undefined && typeof r.verbatim !== 'boolean') throw new Error('Expected verbatim to be a boolean');
+  return { mediaId: r.mediaId, path, streamIndex: r.streamIndex as number, model, language: r.language, translate: r.translate === true, verbatim: r.verbatim === true };
 }

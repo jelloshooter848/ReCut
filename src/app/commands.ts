@@ -34,6 +34,7 @@ import { openOcrLanguages } from '@/ocr/ocrUi';
 import { openWhisperModels } from '@/whisper/whisperUi';
 import { openCollectDialog } from '@/panels/collect/collectUi';
 import type { Tool } from '@/state/types';
+import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@shared/productIdentity';
 
 /** Command ids implemented here that are not part of the shell's COMMAND_IDS (menu names match electron/menu.ts). */
 export const EXTRA_COMMAND_IDS = {
@@ -85,7 +86,7 @@ const EXTRA_META: Record<string, { title: string; category: string; keys: string
   [EXTRA_COMMAND_IDS.takeSnapshot]: { title: 'Take Sequence Snapshot…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.renameSequence]: { title: 'Rename Sequence…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.sequenceSettings]: { title: 'Sequence Settings…', category: 'File', keys: [] },
-  [EXTRA_COMMAND_IDS.about]: { title: 'About ReCut', category: 'Help', keys: [] },
+  [EXTRA_COMMAND_IDS.about]: { title: `About ${PRODUCT_NAME}`, category: 'Help', keys: [] },
   [EXTRA_COMMAND_IDS.extractCentreChannel]: { title: 'Extract Centre Channel (Dialogue)', category: 'Editing', keys: [] },
   [EXTRA_COMMAND_IDS.makeCompoundClip]: { title: 'Make Compound Clip', category: 'Editing', keys: [] },
   [EXTRA_COMMAND_IDS.openInTimeline]: { title: 'Open in Timeline', category: 'Editing', keys: [] },
@@ -96,8 +97,8 @@ const EXTRA_META: Record<string, { title: string; category: string; keys: string
  * The About dialog's licence line. Every release build (Windows installer, Linux AppImage, both macOS dmgs) bundles a
  * GPL-3.0-or-later FFmpeg build: see THIRD_PARTY_NOTICES.md.
  */
-export const ABOUT_LICENCE_TEXT = 'ReCut is free software under the MIT License. FFmpeg is a separate program with its own licence '
-  + '(the FFmpeg bundled with every ReCut release build is GPL-3.0-or-later); see Licences.';
+export const ABOUT_LICENCE_TEXT = `${PRODUCT_NAME} is free software under the MIT License. FFmpeg is a separate program with its own licence `
+  + `(the FFmpeg bundled with every ${PRODUCT_NAME} release build is GPL-3.0-or-later); see Licences.`;
 
 // ------------------------------------------------------------------
 // Helpers
@@ -601,19 +602,19 @@ export function buildEditingCommands(): CommandInput[] {
     // ---- help ----
     cmd(X.about, async () => {
       const api = recutApi();
-      if (!api) { toast('info', 'ReCut — fan-edit video editor'); return; }
+      if (!api) { toast('info', `${PRODUCT_NAME} — ${PRODUCT_TAGLINE}`); return; }
       const info = await api.appInfo();
       const files = await api.licenceFiles?.().catch(() => []) ?? [];
       const licence = ABOUT_LICENCE_TEXT;
       const choice = await api.message({
-        type: 'info', title: 'About ReCut', message: `ReCut ${info.version}`,
+        type: 'info', title: `About ${PRODUCT_NAME}`, message: `${PRODUCT_NAME} ${info.version}`,
         detail: `${licence}\n\nFFmpeg: ${info.ffmpegVersion ?? 'not found'}\n${info.ffmpegPath ?? ''}\nCache: ${info.cacheDir}`,
         buttons: files.length ? ['OK', 'Licences…'] : ['OK'], defaultId: 0, cancelId: 0,
       });
       if (choice !== 1 || !files.length) return;
       const pick = await api.message({
         type: 'none', title: 'Licences', message: 'Licences and notices',
-        detail: 'Choose a file to open. ReCut is MIT-licensed; the third-party notices list everything ReCut ships with, '
+        detail: `Choose a file to open. ${PRODUCT_NAME} is MIT-licensed; the third-party notices list everything ${PRODUCT_NAME} ships with, `
           + 'and the FFmpeg files describe the bundled FFmpeg build and where to get its source.',
         buttons: [...files.map((f) => f.label), 'Close'], defaultId: files.length, cancelId: files.length,
       });

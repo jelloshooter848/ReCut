@@ -1,7 +1,7 @@
 /**
  * OCR of bitmap subtitle streams (PGS / VobSub / DVB / XSUB): the shared contract.
  *
- * - Which subtitle codecs are bitmaps ReCut can read with OCR (`OCR_SUBTITLE_CODECS`).
+ * - Which subtitle codecs are bitmaps the app can read with OCR (`OCR_SUBTITLE_CODECS`).
  * - The language-data manifest (`OCR_LANGUAGES`): Tesseract `tessdata_fast` files, pinned to one commit,
  *   with their exact size and SHA-256 (regenerate with `node scripts/ocr-manifest.mjs --write`).
  * - Request / result / language-state types used over IPC (shared/ipc.ts).
@@ -11,7 +11,7 @@
  */
 import type { ID, SubtitleCue } from './model';
 
-/** Subtitle codecs (ffprobe `codec_name`) that carry images, which ReCut turns into text with OCR. */
+/** Subtitle codecs (ffprobe `codec_name`) that carry images, which the app turns into text with OCR. */
 export const OCR_SUBTITLE_CODECS = ['hdmv_pgs_subtitle', 'dvd_subtitle', 'dvb_subtitle', 'xsub'] as const;
 export type OcrSubtitleCodec = (typeof OCR_SUBTITLE_CODECS)[number];
 

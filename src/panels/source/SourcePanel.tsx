@@ -13,7 +13,8 @@ import { pathToMediaUrl } from '@shared/ipc';
 import { useStore, identityLabel, startProxy } from '@/state';
 import type { StoreState } from '@/state';
 import { SourcePlayer, resolvePlaybackPath, mediaFps, mediaSize, type SourcePlayerStatus } from '@/playback';
-import { isStillImage } from '@/playback/mediaSource';
+import { isStillImage, previewPlayable, previewReason } from '@/playback/mediaSource';
+import { activeWordIndex } from '@/playback/subtitleWrap';
 import { resumeAudio } from '@/app/media';
 import { registerTransport, setActiveTransport, shuttle, useActiveTransportId, type Transport } from '@/app/transport';
 import { setClipDrag } from '@/app/dnd';
@@ -43,7 +44,7 @@ function selectMedia(s: StoreState): MediaItem | undefined {
 export function selectLoadKey(s: StoreState): string {
   const m = selectMedia(s);
   if (!m) return '';
-  return [m.id, m.path, m.kind, m.offline ? 1 : 0, m.probe ? 1 : 0, m.probe?.browserPlayable ? 1 : 0, m.proxy.status, m.proxy.path ?? '', s.project.settings.useProxies ? 1 : 0, m.preferredAudioStream ?? ''].join('|');
+  return [m.id, m.path, m.kind, m.offline ? 1 : 0, m.probe ? 1 : 0, previewPlayable(m) ? 1 : 0, m.proxy.status, m.proxy.path ?? '', s.project.settings.useProxies ? 1 : 0, m.preferredAudioStream ?? ''].join('|');
 }
 
 /**
@@ -57,7 +58,7 @@ export function describeDecodeProblem(media: MediaItem | undefined): string {
     const m = /\.([^./\\]+)$/.exec(media!.path);
     return `${m ? m[1].toUpperCase() : 'This'} image needs a preview proxy`;
   }
-  const reason = p.playabilityReason?.trim();
+  const reason = previewReason(media)?.trim();
   if (reason) {
     const audio = /audio codec\s+([\w.-]+)/i.exec(reason);
     if (audio) return `${codecName(audio[1])} audio can't be decoded for preview`;
@@ -115,6 +116,8 @@ export function SourcePanel({ focused, active }: PanelProps) {
     return out.sort((a, b) => a.start - b.start);
   }, [media, subtitleTracks]);
   const currentCue = useMemo(() => cues.find((c) => c.start <= time && time < c.end) ?? null, [cues, time]);
+  const highlightWords = useStore((s) => s.project.settings.highlightSpokenWords);
+  const activeWord = highlightWords ? activeWordIndex(currentCue?.words, time) : -1;
 
   // ------------------------------------------------------------- refs shared with the transport / callbacks
   const live = useRef({ inPoint, outPoint, duration, fps, loop, isImage, mediaId: media?.id ?? null, playRange: null as { in: number; out: number } | null });
@@ -361,7 +364,15 @@ export function SourcePanel({ focused, active }: PanelProps) {
             {media.offline ? <span className="source-badge offline"><WifiOff /> Offline</span> : null}
             {size ? <span className="source-badge" title="Source resolution">{size.width}×{size.height}</span> : null}
           </div>
-          {currentCue ? <div className="source-subtitle">{currentCue.text}</div> : null}
+          {currentCue ? (
+            <div className="source-subtitle" data-testid="source-subtitle">
+              {currentCue.words?.length
+                ? currentCue.words.map((w, i) => (
+                  <React.Fragment key={i}>{i ? ' ' : ''}<span className={i === activeWord ? 'source-word active' : 'source-word'}>{w.text}</span></React.Fragment>
+                ))
+                : currentCue.text}
+            </div>
+          ) : null}
           {loading && !errored ? <div className="source-spinner"><LoaderCircle className="spin" /></div> : null}
           {errored ? (
             <div className="source-error-card" role="alert">

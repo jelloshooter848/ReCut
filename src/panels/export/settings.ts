@@ -829,6 +829,8 @@ export function checklistBlocks(items: ChecklistItem[]): boolean {
 // Persistence (localStorage), guarded so this module stays importable under node.
 // ---------------------------------------------------------------------------------------------------
 
+// frozen: changing this would reset every user's saved export settings per project (the key is read from the browser storage the
+// user-data folder carries along; it is invisible to users).
 const STORAGE_PREFIX = 'recut.export.v1.';
 export interface SavedExportSettings { sequenceId: ID; settings: ExportSettings }
 

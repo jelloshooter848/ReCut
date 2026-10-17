@@ -4,7 +4,7 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import type { AudioStreamInfo, MediaKind, MediaProbe, Rational, SubtitleStreamInfo, VideoStreamInfo } from '@shared/model';
-import { STILL_IMAGE_CODECS, STILL_IMAGE_EXTS } from '@shared/media';
+import { STILL_IMAGE_CODECS, STILL_IMAGE_EXTS, evaluatePlayability } from '@shared/media';
 import { assertAbsoluteMediaPath, ffmpegFileArg, runFfprobeJson } from './ffmpeg';
 
 // ------------------------------------------------------------------
@@ -189,34 +189,8 @@ function isStillSource(container: string, formatName: string | undefined, filePa
 // ------------------------------------------------------------------
 // Playability
 // ------------------------------------------------------------------
-const PLAYABLE_CONTAINERS = new Set(['mp4', 'mov', 'm4v', 'm4a', 'webm', 'matroska', 'mp3', 'wav', 'flac', 'ogg']);
-const PLAYABLE_VIDEO = new Set(['h264', 'vp8', 'vp9', 'av1']);
-const PLAYABLE_AUDIO = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac', 'pcm_s16le', 'pcm_s24le', 'pcm_f32le']);
-
-export function evaluatePlayability(p: { container: string; video?: VideoStreamInfo; audio: AudioStreamInfo[] }): { ok: boolean; reason?: string } {
-  if (!PLAYABLE_CONTAINERS.has(p.container)) {
-    return { ok: false, reason: `container ${p.container} not supported by Chromium` };
-  }
-  if (p.video) {
-    const codec = p.video.codec;
-    const theoraOk = codec === 'theora' && p.container === 'ogg';
-    if (!PLAYABLE_VIDEO.has(codec) && !theoraOk) {
-      return { ok: false, reason: `video codec ${codec} not supported by Chromium` };
-    }
-    const pix = p.video.pixFmt ?? '';
-    if (codec === 'h264') {
-      if (/444/.test(pix)) return { ok: false, reason: 'h264 4:4:4 (yuv444p) not supported by Chromium' };
-      if (/422/.test(pix)) return { ok: false, reason: 'h264 4:2:2 not supported by Chromium' };
-      if (/(10|12|14|16)(le|be)?$/.test(pix)) return { ok: false, reason: `h264 ${pix} (high bit depth) not supported by Chromium` };
-    }
-  }
-  for (const a of p.audio) {
-    if (!PLAYABLE_AUDIO.has(a.codec)) {
-      return { ok: false, reason: `audio codec ${a.codec} not supported by Chromium` };
-    }
-  }
-  return { ok: true };
-}
+// The rule lives in shared/media.ts so the renderer can re-check it with what this machine decodes (HEVC, #138).
+export { evaluatePlayability };
 
 // ------------------------------------------------------------------
 // probeMedia

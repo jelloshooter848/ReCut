@@ -24,7 +24,7 @@ import {
   activeTranscribeJob, audioStreamLabel, chooseWhisperModel, closeTranscribeDialog, defaultAudioStream, defaultSpokenLanguage,
   openWhisperModels, transcribeUnavailableReason, useWhisperUi,
 } from '@/whisper/whisperUi';
-import { WHISPER_LANGUAGES, whisperTrackName } from '@shared/whisper';
+import { WHISPER_LANGUAGES, verbatimApplies, whisperTrackName } from '@shared/whisper';
 import type { ID, MediaItem } from '@shared/model';
 import './whisper.css';
 
@@ -49,6 +49,7 @@ export function TranscribeDialog() {
   const [language, setLanguage] = useState('auto');
   const [languageTouched, setLanguageTouched] = useState(false);
   const [translate, setTranslate] = useState(false);
+  const [verbatim, setVerbatim] = useState(true);
   const [query, setQuery] = useState('');
   const [starting, setStarting] = useState(false);
   const api = recutApi();
@@ -69,6 +70,7 @@ export function TranscribeDialog() {
     setQuery('');
     setStarting(false);
     setTranslate(false);
+    setVerbatim(true);
     setLanguageTouched(false);
     setModel(null);
     setLastModel(undefined);
@@ -93,6 +95,8 @@ export function TranscribeDialog() {
     return tags.size === 1 ? [...tags][0] : 'auto';
   }, [chosen.map((m) => `${m.id}:${streamOf(m)}`).join('|')]);
   const lang = englishOnly ? 'en' : languageTouched ? language : defaultLanguage;
+  const verbatimPossible = verbatimApplies({ verbatim: true, language: lang, translate: translate && !englishOnly });
+  const verbatimOn = verbatim && verbatimPossible;
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -117,7 +121,7 @@ export function TranscribeDialog() {
       const streamIndex = streamOf(m);
       if (streamIndex === undefined) continue;
       try {
-        await api.startTranscribe({ mediaId: m.id, path: m.path, streamIndex, model: selectedModel, language: lang, translate: translate && !englishOnly });
+        await api.startTranscribe({ mediaId: m.id, path: m.path, streamIndex, model: selectedModel, language: lang, translate: translate && !englishOnly, verbatim });
         queued++;
       } catch (e) {
         toast('error', `Could not start transcribing ${m.name}: ${errText(e)}`);
@@ -192,9 +196,20 @@ export function TranscribeDialog() {
             disabled={englishOnly} onChange={(v) => { setLanguage(v); setLanguageTouched(true); }} data-testid="transcribe-language" aria-label="Spoken language" />
         </label>
         <label className="row gap-6 trx-check">
+          <input type="checkbox" checked={verbatimOn} disabled={!verbatimPossible} onChange={(e) => setVerbatim(e.target.checked)} data-testid="transcribe-verbatim" />
+          <span className="text-sm">Verbatim (exact)</span>
+        </label>
+        <div className="text-dim text-sm trx-hint" data-testid="transcribe-verbatim-hint">
+          {verbatimPossible ? 'Keeps every word as spoken, including "um", "uh", stutters and repeats, so they can be found and cut.'
+            : 'Available when transcribing English without translating. Choose English as the language.'}
+        </div>
+        <label className="row gap-6 trx-check">
           <input type="checkbox" checked={translate && !englishOnly} disabled={englishOnly} onChange={(e) => setTranslate(e.target.checked)} data-testid="transcribe-translate" />
           <span className="text-sm">Translate the speech to English</span>
         </label>
+        <div className="text-dim text-sm trx-hint" data-testid="transcribe-translate-hint">
+          The transcript is less exact when translating: filler words like "um" and "uh" are dropped.
+        </div>
         {blocked && blocked !== 'Install a transcription model first.' ? <div className="text-sm text-accent-2" data-testid="transcribe-blocked">{blocked}</div> : null}
         {running.length ? <div className="text-sm text-dim">{running.length === 1 ? `${running[0].name} is already being transcribed; starting again joins that job.` : `${running.length} of these are already being transcribed.`}</div> : null}
         <p className="text-dim text-sm trx-note">

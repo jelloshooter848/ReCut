@@ -38,6 +38,7 @@ promotion PRs that bring them to `rc`, never touch `package.json` `version`, `pa
 4. The saved-project fixture of the new version, `tests/fixtures/projects/recut-<x.y.z>.recut`, made with
    `node scripts/make-project-fixture.mjs` after the bump (see [the fixtures' README](../tests/fixtures/projects/README.md)).
    A release candidate has none ([Release candidates](#release-candidates)).
+5. [LIMITATIONS](LIMITATIONS.md) brought up to date for what the release ships, if it changed.
 
 ## Branches and roles
 
@@ -183,7 +184,8 @@ release-prep PR is merged.
    last candidate has been tested): branch `claude/release-X.Y.Z` from `rc`,
    run `npm version X.Y.Z --no-git-tag-version` and add the full `## [X.Y.Z] - YYYY-MM-DD` section at the top of
    `CHANGELOG.md`, written for people coming from the last stable release (everything since then, any candidates'
-   changes included; their `## [X.Y.Z-rc.N]` sections stay below it unchanged, as history). Check `docs/ROADMAP.md`:
+   changes included; their `## [X.Y.Z-rc.N]` sections stay below it unchanged, as history). Update
+   [LIMITATIONS](LIMITATIONS.md) if what it lists changed. Check `docs/ROADMAP.md`:
    every roadmap entry this release ships has its **Status** line and its row in the Progress table marked done with
    this version (the feature PR sets them; the release-prep PR fixes any that are missing or still name an older
    version). Add the version's

@@ -183,6 +183,10 @@ Continuity issues are markers with `kind: 'continuity'`; the Continuity panel ag
 Sequence subtitle cues can be **attached to a clip** (`clipId`, `srcStart`, `srcEnd` in source seconds,
 plus a frame `offset`). Their timeline position is derived from the clip's current position, so cues move
 with clips through ripple edits, trims and speed changes. Cues without `clipId` use absolute `start`/`duration`.
+A clip-attached cue copied from a word-timed media track also has `words: [{ start, end, text }]`, in source seconds
+like `srcStart` / `srcEnd` (see below). Whisper transcripts are not copied into sequences: the timeline and Program
+monitor read them live from the media (`shared/transcripts.ts`). Copies made by builds before that are removed when a
+project is opened (a clip-attached cue with the same text and source start as a Whisper cue of the clip's media).
 
 A sequence subtitle track has `{ id, name, language, enabled, cues, sourcePaths? }`. `sourcePaths` lists the
 subtitle files whose cues were imported into it (**Import to track…**, or carried in from media subtitles). Exports
@@ -194,7 +198,10 @@ never write over these files.
 
 ## SubtitleTrack (media)
 
-`{ id, name, language, path?, mediaId, origin: 'srt'|'vtt'|'ocr'|'whisper'|'manual', streamIndex?, cues: [{ id, start, end, text }] }`.
+`{ id, name, language, path?, mediaId, origin: 'srt'|'vtt'|'ocr'|'whisper'|'manual', streamIndex?, cues: [{ id, start, end, text, words? }] }`.
+`words` (optional, Whisper transcripts) is the timing of each word of the cue: `[{ start, end, text }]` in source
+seconds, in order, the texts joined by spaces giving `text`. It is optional and additive: projects without it load as
+before (`formatVersion` stays 1), and the loader drops a malformed list (with a repair note) but keeps the cue.
 `path` is the file the cues came from, including a sidecar read by the Transcript's subtitle-file provider. Exports
 never write over it. `origin: 'ocr'` marks a track read from a bitmap subtitle stream with OCR; `streamIndex` is that
 stream's absolute ffprobe index in the media file (a non-negative integer; the loader drops any other value). Reading

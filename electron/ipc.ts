@@ -24,11 +24,13 @@ import type { AppPreferences, ID, JobInfo, MediaProbe, Project } from '../shared
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import type {
   AppInfo, ExportRequest, ExportStartResult, FilmstripRequest, LicenceFile, LoadReply, MessageOptions, OpenFilesOptions, OpenLicenceResult,
-  ChannelProxyRequest, ProxyRequest, RecoveryReply, RecutApi, RelinkScanRequest, SaveFileOptions, SaveResult, SceneDetectRequest, ThumbnailRequest, WaveformData,
+  ChannelProxyRequest, ProxyLookup, ProxyRequest, RecoveryReply, RecutApi, RelinkScanRequest, SaveFileOptions, SaveResult, SceneDetectRequest, ThumbnailRequest, WaveformData,
 } from '../shared/ipc';
 import { encodeProjectWire, isAutosaveStreamRef, SAVE_STREAM_IPC as IPC_SAVE, type SaveBeginResult } from '../shared/projectWire';
 import * as io from './project/io';
 import * as fsApi from './fs';
+import { legacyPathRoots } from '../shared/legacyPaths';
+import { createLegacyPathRemapper } from './legacyPathRemap';
 
 // ------------------------------------------------------------------
 // Media / jobs / export contract (implemented by electron/media/index.ts)
@@ -67,6 +69,7 @@ export interface MediaHandlers {
   cancelThumbnails(requestIds: string[]): Promise<void>;
   waveform(path: string, mediaId?: ID, streamIndex?: number): Promise<WaveformData>;
   startProxy(req: ProxyRequest): Promise<JobInfo>;
+  lookupProxy(req: ProxyRequest): Promise<ProxyLookup | null>;
   startChannelProxy(req: ChannelProxyRequest): Promise<JobInfo>;
   startSceneDetect(req: SceneDetectRequest): Promise<JobInfo>;
   extractSubtitles(path: string, streamIndex: number): Promise<string>;
@@ -100,7 +103,7 @@ export interface MediaHandlers {
 }
 
 // Compile-time check: MediaHandlers must stay in sync with the RecutApi surface.
-type MediaApiKeys = 'probe' | 'thumbnail' | 'filmstrip' | 'cancelThumbnails' | 'waveform' | 'startProxy' | 'startChannelProxy' | 'startSceneDetect' | 'extractSubtitles'
+type MediaApiKeys = 'probe' | 'thumbnail' | 'filmstrip' | 'cancelThumbnails' | 'waveform' | 'startProxy' | 'lookupProxy' | 'startChannelProxy' | 'startSceneDetect' | 'extractSubtitles'
   | 'startOcr' | 'ocrLanguages' | 'ocrInstallLanguage' | 'ocrRemoveLanguage' | 'ocrInstallLanguageFromFile'
   | 'startTranscribe' | 'whisperEngine' | 'whisperModels' | 'whisperInstallModel' | 'whisperRemoveModel' | 'whisperInstallModelFromFile'
   | 'listJobs' | 'cancelJob' | 'clearJobs' | 'startExport' | 'cancelExport' | 'previewExportCommand'
@@ -117,6 +120,7 @@ export function registerMediaIpc(h: MediaHandlers): void {
   ipcMain.handle(IPC.mediaWaveform, (_e, p: string, mediaId?: ID, streamIndex?: unknown) =>
     h.waveform(assertString(p, 'path'), mediaId, typeof streamIndex === 'number' && Number.isInteger(streamIndex) && streamIndex >= 0 ? streamIndex : undefined));
   ipcMain.handle(IPC.mediaProxyStart, (_e, req: ProxyRequest) => h.startProxy(req));
+  ipcMain.handle(IPC.mediaProxyLookup, (_e, req: ProxyRequest) => h.lookupProxy(req));
   ipcMain.handle(IPC.mediaChannelProxyStart, (_e, req: ChannelProxyRequest) => h.startChannelProxy(req));
   ipcMain.handle(IPC.mediaSceneDetectStart, (_e, req: SceneDetectRequest) => h.startSceneDetect(req));
   ipcMain.handle(IPC.mediaExtractSubtitles, (_e, p: string, streamIndex: number) => h.extractSubtitles(assertString(p, 'path'), Number(streamIndex)));
@@ -159,6 +163,8 @@ export interface IpcDeps {
   /** The renderer chose to stay open (Cancel / failed save). */
   cancelQuit?(): void;
   userData: string;
+  /** Legacy user-data folders other than `userData` (electron/userDataStartup.ts); their cache paths are remapped. */
+  legacyUserData?: string[];
   isDev: boolean;
   /** Called whenever the recent-projects list changes (menu rebuild). */
   onRecentChanged?(): void;
@@ -442,6 +448,15 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.subtitlesExport, (_e, p: unknown, content: unknown, protectedPaths: unknown) =>
     fsApi.writeSubtitleFile(p as string, content as string, protectedPaths as string[]));
   ipcMain.handle(IPC.fsListDir, (_e, p: string) => fsApi.listDir(assertString(p, 'path')));
+  // Built once (the cache folder is resolved from prefs): no legacy folder, no remapping.
+  let remap: Promise<(p: string) => string | null> | null = null;
+  ipcMain.handle(IPC.fsRelocateLegacyPath, async (_e, p: string) => {
+    assertString(p, 'path');
+    const legacy = deps.legacyUserData ?? [];
+    if (!legacy.length) return null;
+    remap ??= resolveCacheDir(userData).then((cacheDir) => createLegacyPathRemapper(legacyPathRoots(legacy, userData, cacheDir)));
+    return (await remap)(p);
+  });
   ipcMain.handle(IPC.fsScanForRelink, (_e, req: RelinkScanRequest) => fsApi.scanForRelink(req));
 
   // --- media url (pure; preload also computes this synchronously) ---

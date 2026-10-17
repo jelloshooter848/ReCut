@@ -19,7 +19,8 @@ ReCut is an Electron + React + TypeScript non-linear video editor for fan edits.
 - Bugs are filed and closed as Markdown files under `bugs/` (see `bugs/README.md`, copy `bugs/TEMPLATE.md`).
 - A PR that completes a roadmap entry updates `docs/ROADMAP.md` in the same PR: the entry's **Status** line and its row in the Progress table.
 - Versioning and releases: see docs/RELEASING.md. Feature and bug PRs never change the version.
-- Branches: `dev` is the integration branch (contributors, James and agents open PRs into it), `rc` holds the next release (and its release candidates, when it has them: always for a MAJOR release, for a MINOR one only when the owner decides) and `main` released code; only the owner merges into `rc` and `main` (docs/RELEASING.md "Branches and roles").
+- Branches (CONTRIBUTING.md "Branches and pull requests"): branch from the personal branch you're working for (`devDavid` or `devJames`), or `dev` if told, and PR back into it. One task per branch, one PR. Never target `main` except when the owner asks (the `rc` → `main` release PR or a hotfix). Don't push to `dev`, `rc`, `main` or the other person's branch. Merge `dev` into your branch before opening a PR into `dev`.
+- Release branches: `dev` is the integration branch (contributors, James and agents open PRs into it), `rc` holds the next release (and its release candidates, when it has them: always for a MAJOR release, for a MINOR one only when the owner decides) and `main` released code; only the owner merges into `rc` and `main` (docs/RELEASING.md "Branches and roles").
 - Agents never push to `rc` or `main`. Open a PR into `rc` only when the coordinator asks, as `git cherry-pick -x -m 1 <dev PR merge>` picks in dev order or a merge of a `dev` commit, on a `claude/promote-<topic>` branch from `rc` (docs/RELEASING.md "Promoting dev to rc").
 
 ## Commands

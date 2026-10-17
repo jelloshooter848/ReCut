@@ -6,6 +6,7 @@ import type {
   DetectedScene,
 } from './model';
 import { uid } from './ids';
+import { PRODUCT_NAME } from './productIdentity';
 import { makeTrack, defaultTransform, defaultAudio, reconcileTransitions, SPEED_PERCENT_MIN, SPEED_PERCENT_MAX } from './timeline';
 import { isValidFps, parseFps } from './time';
 import { saneSar } from './media';
@@ -22,8 +23,8 @@ import {
 export const DEFAULT_SEQUENCE_FPS: Readonly<Rational> = Object.freeze({ num: 24000, den: 1001 });
 
 /**
- * The project cannot be opened by this build: it was saved by a newer ReCut (`reason: 'newer'`), or its
- * formatVersion is missing / not a positive integer (`reason: 'notProject'`: not a ReCut project). This is a
+ * The project cannot be opened by this build: it was saved by a newer version (`reason: 'newer'`), or its
+ * formatVersion is missing / not a positive integer (`reason: 'notProject'`: not a project file). This is a
  * refusal, not damage: the loader reports it and never substitutes a backup. Every other error out of
  * normalizeProject means the content is damaged.
  */
@@ -42,6 +43,7 @@ export function defaultSettings(): ProjectSettings {
     snapping: true,
     defaultTransitionFrames: 24,
     showSourceTimecodeOnClips: false,
+    highlightSpokenWords: true,
   };
 }
 
@@ -108,6 +110,22 @@ export function createProject(name = 'Untitled Project'): Project {
   };
 }
 
+/**
+ * Whether a project holds anything a user would want back: media, scenes, subtitle tracks, tags, a name other than
+ * the default, more than one sequence, or a sequence with clips, markers, story blocks, snapshots or subtitles.
+ * Empty bins, track layout and settings do not count. An untitled project without user work is not autosaved, not
+ * offered for recovery and closes without a "Save changes?" prompt (#111).
+ */
+export function projectHasUserWork(p: Project): boolean {
+  if (p.name !== 'Untitled Project') return true;
+  if (Object.keys(p.media).length || Object.keys(p.scenes).length || Object.keys(p.subtitleTracks).length) return true;
+  if (Object.values(p.tags).some((list) => list.length > 0)) return true;
+  const seqs = Object.values(p.sequences);
+  if (seqs.length > 1) return true;
+  return seqs.some((s) => s.markers.length > 0 || s.storyBlocks.length > 0 || s.snapshots.length > 0 || s.subtitleTracks.length > 0
+    || [...s.videoTracks, ...s.audioTracks].some((t) => t.clips.length > 0));
+}
+
 export function createMediaItem(path: string, name: string): MediaItem {
   return {
     id: uid('med'), name, path, kind: 'unknown', category: 'Other', identity: {}, binId: null,
@@ -119,7 +137,7 @@ export function createMediaItem(path: string, name: string): MediaItem {
 /**
  * Validate + migrate a parsed project JSON, and say what had to be repaired.
  *
- * - Throws ProjectIncompatibleError when formatVersion is missing / not a positive integer (not a ReCut project)
+ * - Throws ProjectIncompatibleError when formatVersion is missing / not a positive integer (not a project file)
  *   or newer than this build reads.
  * - Throws a plain Error for damage it cannot repair without losing work: a top-level collection holding user
  *   work (media / sequences / scenes / subtitleTracks) that is present but not an object (the loader then
@@ -161,11 +179,11 @@ function normalizeInner(raw: unknown): Project {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Project file is not a JSON object');
   const p = raw as Obj;
   const fv = p.formatVersion;
-  if (fv === undefined || fv === null) throw new ProjectIncompatibleError('Missing formatVersion; not a ReCut project', 'notProject');
+  if (fv === undefined || fv === null) throw new ProjectIncompatibleError(`Missing formatVersion; not a ${PRODUCT_NAME} project`, 'notProject');
   if (typeof fv !== 'number' || !Number.isInteger(fv) || fv < 1) {
-    throw new ProjectIncompatibleError(`Invalid formatVersion ${describeValue(fv)}; not a ReCut project`, 'notProject');
+    throw new ProjectIncompatibleError(`Invalid formatVersion ${describeValue(fv)}; not a ${PRODUCT_NAME} project`, 'notProject');
   }
-  if (fv > PROJECT_FORMAT_VERSION) throw new ProjectIncompatibleError(`Project was saved by a newer ReCut (format ${fv}); this build reads ${PROJECT_FORMAT_VERSION}`, 'newer');
+  if (fv > PROJECT_FORMAT_VERSION) throw new ProjectIncompatibleError(`Project was saved by a newer ${PRODUCT_NAME} (format ${fv}); this build reads ${PROJECT_FORMAT_VERSION}`, 'newer');
   note(`value nested more than ${MAX_PROJECT_DEPTH} levels deep removed`, pruneDeepValues(p));
   const base = createProject(str(p.name, 'Untitled Project'));
   const out = {
@@ -667,6 +685,7 @@ function repairSequenceCue(c: Obj): SequenceSubtitleCue | null {
   else if (!isFiniteNum(c.offset) || Math.abs(Math.round(c.offset)) > MAX_TIMELINE_FRAMES) { note(FIELD_RESET); c.offset = 0; }
   else if (Math.round(c.offset) !== c.offset) { note(ROUNDED); c.offset = Math.round(c.offset) + 0; }
   c.text = str(c.text, '');
+  repairWords(c);
   return c as unknown as SequenceSubtitleCue;
 }
 
@@ -980,6 +999,16 @@ function repairScene(s: Obj, id: ID): SceneRecord | null {
   return s as unknown as SceneRecord;
 }
 
+/** Optional per-word timing of a cue (#118): a list of {start, end, text} in source seconds; anything else is dropped. */
+function repairWords(c: Obj): void {
+  if (c.words === undefined) return;
+  const ok = (w: unknown): boolean => isObj(w) && isFiniteNum(w.start) && isFiniteNum(w.end) && Math.abs(w.start) <= MAX_SOURCE_SECONDS
+    && Math.abs(w.end) <= MAX_SOURCE_SECONDS && typeof w.text === 'string';
+  const list = Array.isArray(c.words) ? c.words.filter(ok).map((w) => ({ start: (w as Obj).start, end: (w as Obj).end, text: (w as Obj).text })) : [];
+  if (!Array.isArray(c.words) || list.length !== c.words.length) note('subtitle word timing without a usable time removed');
+  if (list.length) c.words = list; else delete c.words;
+}
+
 function repairSubtitleTrack(t: Obj, id: ID): SubtitleTrack {
   keyedId(t, id);
   t.name = str(t.name, ''); t.language = str(t.language, 'und'); t.origin = str(t.origin, 'srt');
@@ -993,6 +1022,7 @@ function repairSubtitleTrack(t: Obj, id: ID): SubtitleTrack {
     return ok;
   }).map((c) => {
     c.id = idOr(c.id, () => uid('cue')); c.text = str(c.text, '');
+    repairWords(c);
     return c;
   });
   return t as unknown as SubtitleTrack;

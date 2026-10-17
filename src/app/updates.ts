@@ -8,6 +8,7 @@ import { registerCommand } from '@/keyboard/shortcuts';
 import { recutApi } from '@/state/mediaActions';
 import { toast } from '@/components/ui/toastStore';
 import { confirmInApp } from './dialogs/ConfirmDialog';
+import { PRODUCT_NAME } from '@shared/productIdentity';
 import { RELEASES_PAGE_URL, type UpdateCheckResult, type UpdateCheckSetting, type UpdateRelease, type UpdateStatus } from '@shared/update';
 
 export const CHECK_FOR_UPDATES_COMMAND = 'help.checkForUpdates';
@@ -82,8 +83,8 @@ export async function checkForUpdatesNow(): Promise<UpdateCheckResult | null> {
     useUpdateStore.setState((s) => (s.dismissed === version ? { dismissed: null } : {}));
     const choice = await confirmInApp({
       type: 'info', title: 'Check for Updates', testId: 'update-check-result',
-      message: `ReCut ${version} is available.`,
-      detail: `You have ReCut ${result.current}. ReCut does not update itself: download the new version from its release page and install it over this one. Your projects and preferences are kept.`,
+      message: `${PRODUCT_NAME} ${version} is available.`,
+      detail: `You have ${PRODUCT_NAME} ${result.current}. ${PRODUCT_NAME} does not update itself: download the new version from its release page and install it over this one. Your projects and preferences are kept.`,
       buttons: ['Release notes', 'Skip this version', 'Close'], defaultId: 0, cancelId: 2,
     });
     if (choice === 0) await openReleasePage(url);
@@ -91,7 +92,7 @@ export async function checkForUpdatesNow(): Promise<UpdateCheckResult | null> {
   } else if (result.kind === 'current') {
     await confirmInApp({
       type: 'info', title: 'Check for Updates', testId: 'update-check-result',
-      message: `ReCut ${result.current} is up to date.`,
+      message: `${PRODUCT_NAME} ${result.current} is up to date.`,
       detail: `The latest release on GitHub is ${result.latestVersion}.`,
       buttons: ['OK'], defaultId: 0, cancelId: 0,
     });

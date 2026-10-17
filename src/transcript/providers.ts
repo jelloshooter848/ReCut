@@ -99,7 +99,7 @@ export class SubtitleFileProvider implements TranscriptProvider {
 }
 
 /**
- * On-device speech recognition with the whisper.cpp engine built into ReCut (Roadmap §5). Available when the engine
+ * On-device speech recognition with the whisper.cpp engine built into the app (Roadmap §5). Available when the engine
  * runs (`whisperEngine()` reports a version); a model is chosen, and installed if needed, in the Transcribe dialog.
  * Transcription is a main-process job ('transcribe'), so the panel calls `openDialog()`; the jobs router attaches each
  * result as a SubtitleTrack with `origin: 'whisper'` (src/app/jobsRouter.ts).

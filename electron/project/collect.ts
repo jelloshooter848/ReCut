@@ -8,7 +8,7 @@
  *  - Each file is streamed to `<name>.part` (byte progress, cancellable), checked (same size as the original, same
  *    fast fingerprint at start / middle / end, electron/media/identity.ts), then renamed and given the original's
  *    modification time.
- *  - Only after every copy is verified is `<Project name>.recut` written, with paths rewritten to the copies. So an
+ *  - Only after every copy is verified is `<Project name>.<project extension>` written, with paths rewritten to the copies. So an
  *    incomplete folder never holds a project file pointing into it.
  *  - Originals are only read. The open project is not changed (the renderer sends a serialized copy).
  *  - Missing (offline) media are skipped and reported; their items keep their original paths.
@@ -31,6 +31,7 @@ import type { JobQueue, JobRunContext } from '../jobs/jobQueue';
 import { fingerprintFile } from '../media/identity';
 import { ensureDirSafe } from '../safeMkdir';
 import { atomicWriteFile } from './io';
+import { PRODUCT_NAME } from '../../shared/productIdentity';
 
 /** Copy `src` to `dest` (a new file), reporting bytes as they are written; rejects when `signal` aborts. */
 export type CollectCopyFn = (src: string, dest: string, o: { signal: AbortSignal; onBytes(n: number): void }) => Promise<void>;
@@ -158,7 +159,7 @@ export async function collectPreflight(req: CollectRequest, deps: CollectDeps = 
 
 function markerText(projectName: string, state: string): string {
   return [
-    `This folder is an UNFINISHED copy of the ReCut project "${projectName}" (File > Collect Project).`,
+    `This folder is an UNFINISHED copy of the ${PRODUCT_NAME} project "${projectName}" (File > Collect Project).`,
     '',
     state,
     '',
