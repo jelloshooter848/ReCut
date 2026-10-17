@@ -4,6 +4,8 @@ import type { ID, Project, Sequence } from '@shared/model';
 import { Button, EmptyState, IconButton, SearchField, Select, Toggle, useContextMenu } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
 import { pathOfDroppedFile, setClipDrag, SEQUENCE_DND_TYPE, type ClipDragPayload } from '@/app/dnd';
+import { requestOpenProject } from '@/app/project';
+import { isProjectFilePath } from '@shared/productIdentity';
 import { isEditableTarget } from '@/keyboard/useShortcuts';
 import { useStore, seriesTree, verifyMediaOnline, onMediaImported } from '@/state';
 import type { PanelProps } from '../registry';
@@ -225,6 +227,9 @@ export function ProjectPanel(_props: PanelProps) {
     if (dt.files.length) {
       const paths = filePaths(dt);
       if (!paths.length) { toast('warn', 'Dropped files carry no filesystem path (preload needs webUtils.getPathForFile)'); return; }
+      // A dropped project file (any project extension) opens instead of being imported as media.
+      const project = paths.find(isProjectFilePath);
+      if (project) { void requestOpenProject(project); return; }
       void importPaths(paths, binId);
     }
   }, []);

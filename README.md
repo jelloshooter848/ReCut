@@ -152,7 +152,8 @@ on every push.
   or run it with `--appimage-extract-and-run`. See [docs/INSTALL.md](docs/INSTALL.md#linux-in-one-step).
 - **From source:** see the quick start below.
 
-The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow on every push.
+The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow on every push to `main` and `dev` and
+on every pull request into `dev`.
 
 ## macOS (Apple Silicon and Intel): download and run
 
@@ -164,23 +165,30 @@ The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow 
   needed. On Intel Macs speech-to-text runs on the CPU only (no Metal), so it is slower; Intel support may be retired
   after 1.0. See [docs/INSTALL.md](docs/INSTALL.md#macos).
 
-Both dmgs are built, signed, notarized and launched from the mounted dmg by the same workflow on every push, on an
-Apple Silicon runner (the Intel one under Rosetta 2). Builds of unreleased commits are the **ReCut-macos-arm64** and
-**ReCut-macos-x64** artifacts of a CI run (Actions › Windows build › the run › Artifacts); see
+Both dmgs are built, signed, notarized and launched from the mounted dmg by the same workflow on every push to `main`
+and `dev` and on every pull request into `dev`, on an Apple Silicon runner (the Intel one under Rosetta 2). The newest
+unreleased code is on the `dev` branch: its builds are the **ReCut-macos-arm64** and **ReCut-macos-x64** artifacts of
+the latest green `dev` run (Actions › Windows build › filter by branch `dev` › the run › Artifacts); see
 [macOS test builds](docs/INSTALL.md#macos-test-builds).
 
 ## Quick start (from source, any OS)
 
-Requires Node.js 20+ (22 recommended) and FFmpeg 6+ (`ffmpeg` and `ffprobe` on `PATH`, or set `RECUT_FFMPEG` /
-`RECUT_FFPROBE`). ReCut shows a banner at startup when it cannot find them. See [docs/INSTALL.md](docs/INSTALL.md),
-which also explains how to bundle FFmpeg into a package.
+Requires Node.js 20+ (22 recommended). For speech-to-text, also install **cmake** and a C++ compiler (macOS: Xcode
+command line tools and `brew install cmake`; Linux: `cmake` and `g++`; Windows: Visual Studio with the C++ workload).
+
+The first `npm run dev` or `npm start` sets up what the release installers bundle: it downloads FFmpeg into
+`resources/ffmpeg/` (unless `ffmpeg` and `ffprobe` are already on `PATH`) and compiles the speech-to-text engine into
+`resources/whisper/`, which takes a few minutes once. Later runs skip both. Without cmake the engine is skipped and
+ReCut still runs, but it says the engine is not included; install cmake and run `npm run setup`. Set
+`RECUT_SKIP_SETUP=1` to skip setup. See [docs/INSTALL.md](docs/INSTALL.md) for FFmpeg details and
+[Development setup in CONTRIBUTING.md](CONTRIBUTING.md#development-setup) for tests and conventions.
 
 ```bash
 git clone <this repo> ReCut && cd ReCut
 npm install
-npm run dev            # Vite + Electron with hot reload
+npm run dev            # first run: gets FFmpeg and the speech-to-text engine; then Vite + Electron with hot reload
 # or
-npm start              # production build, then launch
+npm start              # same setup, then a production build and launch
 ```
 
 To try it without your own media, generate synthetic test files (requires FFmpeg):
@@ -191,6 +199,24 @@ scripts/make-test-media.sh ./test-media        # movies, TV episodes, SRTs, 5.1 
 
 Then press **Ctrl+I** (Cmd+I on macOS) to import, double-click a clip, mark **I** / **O**, and press **,** to insert it.
 The [User Guide](docs/USER-GUIDE.md) walks through a complete fan edit.
+
+## Testing unreleased changes
+
+To try what is on `main` (or a pull request) before it is released, run it from a clone as in the quick start
+(first-time setup is in [CONTRIBUTING.md](CONTRIBUTING.md#development-setup)):
+
+```bash
+git checkout main && git pull       # or: gh pr checkout <number>
+npm install                         # picks up any new dependencies
+npm run dev                         # hot-reloads the renderer; restart after changes under electron/
+```
+
+- `npm start` runs the production build, which is closer to what ships than `npm run dev`.
+- `npm run package` builds an unpacked, unsigned app under `release/` with electron-builder. It catches packaging
+  problems, such as missing bundled FFmpeg (see [INSTALL.md](docs/INSTALL.md#bundling-ffmpeg)).
+- `npm run typecheck`, `npm test` and `npm run test:e2e` run the same checks as CI.
+- No build tools? Every push to `main` makes a **test build**: the Windows, Linux and macOS installers of that commit,
+  downloadable from the CI run's Artifacts. See [Test builds](docs/RELEASING.md#test-builds).
 
 ## Documentation
 

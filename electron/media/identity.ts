@@ -53,6 +53,8 @@ export function fingerprintOffsets(size: number): number[] {
 /** Hash input: version, size and the sampled bytes (each block prefixed by its offset). Exported for tests. */
 export function fingerprintOfBlocks(size: number, blocks: { offset: number; bytes: Uint8Array }[]): string {
   const h = createHash('sha1');
+  // frozen: changing this salt would change every media fingerprint, hence every content cache key: all cached
+  // thumbnails, waveforms, proxies, scenes, OCR and Whisper results would be orphaned and rebuilt.
   h.update(`recut-media-fingerprint-v${FINGERPRINT_VERSION}\0${size}\0`);
   for (const b of blocks) {
     h.update(`${b.offset}:${b.bytes.byteLength}\0`);

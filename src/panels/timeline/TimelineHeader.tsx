@@ -1,6 +1,6 @@
 import React, { memo } from 'react';
 import {
-  ArrowLeftRight, ChevronsLeftRight, Filter, Hand, Link, Magnet, MousePointer2, MoveHorizontal, Plus, Rows3, Scissors, UnfoldHorizontal, X, ZoomIn, ZoomOut,
+  ArrowLeftRight, ChevronsLeftRight, Filter, Hand, Link, LocateFixed, Magnet, MousePointer2, MoveHorizontal, Plus, Rows3, Scissors, UnfoldHorizontal, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
@@ -85,6 +85,7 @@ export const TimelineHeader = memo(function TimelineHeader({ seqId, fps, zoom, v
       <div className="sep" />
       <button type="button" className="btn btn-sm btn-ghost" title="Add video track" data-add-video onClick={() => useStore.getState().addTrack(seqId, 'video')}><Plus />V</button>
       <button type="button" className="btn btn-sm btn-ghost" title="Add audio track" data-add-audio onClick={() => useStore.getState().addTrack(seqId, 'audio')}><Plus />A</button>
+      <FollowPlayheadButton seqId={seqId} />
       <div className="grow" />
       {active ? (
         <span className="tag accent tl-filter-chip" title={`Story filters active (${filters.mode}) — click to clear`} onClick={() => useStore.getState().clearFilters()}>
@@ -99,3 +100,25 @@ export const TimelineHeader = memo(function TimelineHeader({ seqId, fps, zoom, v
     </div>
   );
 });
+
+/**
+ * Shown while playback auto-follow is paused because the timeline was scrolled during playback (#140): scrolls back so
+ * the playhead is at the left of the view (as a page flip does) and follows it again.
+ */
+function FollowPlayheadButton({ seqId }: { seqId: string }) {
+  const paused = useTimelineUi((s) => s.followPaused);
+  const playing = useStore((s) => s.playback.playing);
+  if (!paused || !playing) return null;
+  return (
+    <button type="button" className="btn btn-sm btn-ghost toggled accent-2" data-follow-playhead title="Scroll back to the playhead and follow it again"
+      onClick={() => {
+        const st = useStore.getState();
+        const v = st.project.sequences[seqId]?.view;
+        // Scroll first: a scroll while playing pauses the follow, so resume after it.
+        if (v) st.setView(seqId, { scroll: Math.max(0, v.playhead) });
+        useTimelineUi.getState().setFollowPaused(false);
+      }}>
+      <LocateFixed />Follow playhead
+    </button>
+  );
+}

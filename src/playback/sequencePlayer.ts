@@ -15,7 +15,8 @@
  * The canvas internal resolution is the sequence size scaled by `playbackResolution`; CSS sizing
  * is the caller's responsibility.
  */
-import type { ID, MediaItem, Rational, Sequence, VideoStreamInfo } from '../../shared/model';
+import type { ID, MediaItem, Rational, Sequence, SubtitleTrack, VideoStreamInfo } from '../../shared/model';
+import { cuesAt, onScreenTranscript, transcriptIndex, type TranscriptCue } from '../../shared/transcripts';
 import { secondsToFramesFloor, framesToSeconds, fpsValue } from '../../shared/time';
 import { sequenceDuration, resolveSubtitleCues, type ResolvedCue } from '../../shared/timeline';
 import { PlaybackClock } from './clock';
@@ -23,6 +24,7 @@ import { MediaElementPool, poolKey } from './elementPool';
 import { mixesWith, planFrame, type FramePlan, type LayerPlan, type AudioPlan, type MissingMedia } from './planner';
 import { clampElementTime, toElementTime } from './mediaSource';
 import { selectAudioTrack } from './audioTracks';
+import { SUBTITLE_HIGHLIGHT, SUBTITLE_MAX_WIDTH, activeWordIndex, wrapSubtitleText, wrapWords } from './subtitleWrap';
 import { pathToMediaUrl } from '../../shared/ipc';
 import { videoDisplaySize } from '../../shared/media';
 
@@ -67,6 +69,8 @@ export function forgetStillImage(path: string): void { imageCache.delete(path); 
 export interface SequencePlayerSettings {
   useProxies: boolean;
   playbackResolution: 'full' | '1/2' | '1/4';
+  /** The project's media subtitle tracks: Whisper transcripts are drawn live from them (#112). */
+  subtitleTracks?: Record<ID, SubtitleTrack>;
 }
 
 export interface SequencePlayerOptions {
@@ -257,11 +261,13 @@ export class SequencePlayer {
   /** Removes this player's listeners from an element (elements outlive a player with a reusable id). */
   private listenerOffs = new Map<HTMLMediaElement, () => void>();
   private subtitleCache = new WeakMap<Sequence, ResolvedCue[]>();
+  private transcriptCache: { seq: Sequence; tracks: Record<ID, SubtitleTrack>; media: Record<ID, MediaItem>; cues: TranscriptCue[] } | null = null;
   /** playingKey's subtitle part for (sequence, frame). */
   private subtitleKey: { seq: Sequence | null; frame: number; key: string } = { seq: null, frame: -1, key: '' };
   private frameCbs = new Set<(frame: number) => void>();
   private stateCbs = new Set<(s: SequencePlayerState) => void>();
   private drawSubtitles: boolean;
+  private highlightWords = true;
   private readonly id: string;
   private destroyed = false;
   private offPoolRelease: (() => void) | null = null;
@@ -314,6 +320,7 @@ export class SequencePlayer {
     this.settings = settings;
     this.fps = seq.fps;
     this.durationFrames = sequenceDuration(seq);
+    this.subtitleKey.frame = NaN; // the cues on screen may have changed (a new transcript) on the same frame
     if (fpsChanged || resChanged || sizeChanged) this.resizeCanvas();
     this.invalidate(); // force re-plan + redraw
     this.requestTick();
@@ -449,6 +456,11 @@ export class SequencePlayer {
   }
 
   setDrawSubtitles(on: boolean): void { this.drawSubtitles = on; this.invalidate(); this.requestTick(); }
+  /** Highlight the word being spoken in word-timed subtitles (#119; ProjectSettings.highlightSpokenWords). */
+  setHighlightWords(on: boolean): void {
+    if (on === this.highlightWords) return;
+    this.highlightWords = on; this.subtitleKey.frame = NaN; this.invalidate(); this.requestTick();
+  }
 
   /** Synchronously seek to `frame`, update every element (as at rest, not as a scrub step) and draw once. */
   renderFrame(frame: number): void {
@@ -504,7 +516,23 @@ export class SequencePlayer {
       if (c.start > frame) break;
       if (frame < c.end) out.push(c);
     }
+    // The on-screen clip's transcript (#112): live from the media, top visible clip first, falling through; the same
+    // list the timeline's Subtitles row shows (#126).
+    for (const t of cuesAt(this.transcripts(), frame)) {
+      out.push({ id: t.id, trackId: 'transcript', start: t.start, end: t.end, text: t.text, clipId: t.clipId, orphan: false, ...(t.words ? { words: t.words } : {}) });
+    }
     return out;
+  }
+
+  /** The sequence's on-screen transcript, rebuilt when the sequence, its media or the transcripts change. */
+  private transcripts(): TranscriptCue[] {
+    const seq = this.seq!;
+    const tracks = this.settings.subtitleTracks ?? {};
+    const hit = this.transcriptCache;
+    if (hit && hit.seq === seq && hit.tracks === tracks && hit.media === this.media) return hit.cues;
+    const cues = onScreenTranscript(seq, transcriptIndex(seq, this.media, tracks));
+    this.transcriptCache = { seq, tracks, media: this.media, cues };
+    return cues;
   }
 
   getState(): SequencePlayerState {
@@ -836,7 +864,7 @@ export class SequencePlayer {
     }
     if (this.drawSubtitles) {
       const sk = this.subtitleKey; // the cue scan runs once per timeline frame, not on every rAF tick
-      if (sk.seq !== this.seq || sk.frame !== frame) { sk.seq = this.seq; sk.frame = frame; sk.key = this.getSubtitleAt(frame).map((c) => `|s${c.id}`).join(''); }
+      if (sk.seq !== this.seq || sk.frame !== frame) { sk.seq = this.seq; sk.frame = frame; sk.key = this.getSubtitleAt(frame).map((c) => `|s${c.id}w${this.highlightWords ? activeWordIndex(c.words, frame) : -1}`).join(''); }
       key += sk.key;
     }
     return key;
@@ -1230,23 +1258,40 @@ export class SequencePlayer {
   private drawSubtitleOverlay(ctx: CanvasRenderingContext2D, seq: Sequence, frame: number): void {
     const cues = this.getSubtitleAt(frame);
     if (!cues.length) return;
-    const lines = cues.flatMap((c) => c.text.split(/\r?\n/)).filter((l) => l.length > 0);
-    if (!lines.length) return;
     const size = Math.round(seq.height * 0.052);
     ctx.save();
     ctx.globalAlpha = 1;
     ctx.font = `600 ${size}px system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif`;
-    ctx.textAlign = 'center';
+    const maxWidth = seq.width * SUBTITLE_MAX_WIDTH;
+    const measure = (t: string) => ctx.measureText(t).width;
+    // Each line is a list of [text, highlighted] runs: a cue with word timing is laid out word by word so the word
+    // being spoken can be drawn in the highlight colour (#119); other cues are plain wrapped lines.
+    const lines: [string, boolean][][] = [];
+    for (const c of cues) {
+      if (c.words?.length) {
+        const active = this.highlightWords ? activeWordIndex(c.words, frame) : -1;
+        const texts = c.words.map((w) => w.text);
+        for (const line of wrapWords(texts, maxWidth, measure)) lines.push(line.map((i, k) => [k ? ` ${texts[i]}` : texts[i], i === active]));
+      } else {
+        for (const l of wrapSubtitleText(c.text, maxWidth, measure)) lines.push([[l, false]]);
+      }
+    }
+    if (!lines.length) { ctx.restore(); return; }
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.lineJoin = 'round';
     ctx.lineWidth = Math.max(2, size * 0.14);
     ctx.strokeStyle = 'rgba(0,0,0,0.9)';
-    ctx.fillStyle = '#fff';
     const lineH = size * 1.2;
     let y = seq.height * 0.93;
     for (let i = lines.length - 1; i >= 0; i--) {
-      ctx.strokeText(lines[i], seq.width / 2, y);
-      ctx.fillText(lines[i], seq.width / 2, y);
+      let x = (seq.width - measure(lines[i].map((r) => r[0]).join(''))) / 2;
+      for (const [text, hot] of lines[i]) {
+        ctx.fillStyle = hot ? SUBTITLE_HIGHLIGHT : '#fff';
+        ctx.strokeText(text, x, y);
+        ctx.fillText(text, x, y);
+        x += measure(text);
+      }
       y -= lineH;
     }
     ctx.restore();

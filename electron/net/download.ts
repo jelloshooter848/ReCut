@@ -24,6 +24,7 @@ import fsp from 'node:fs/promises';
 import crypto from 'node:crypto';
 import type { MediaFetch } from '../ipc';
 import { RENAME_RETRY } from '../project/io';
+import { PRODUCT_NAME } from '../../shared/productIdentity';
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const MAX_REDIRECTS = 5;
@@ -205,7 +206,7 @@ function hostOf(url: string): string {
   try { return new URL(url).host || 'the server'; } catch { return 'the server'; }
 }
 
-/** "Hugging Face redirected the download to x.example.com, which ReCut doesn't allow (refusing redirect to …)". */
+/** "Hugging Face redirected the download to x.example.com, which <app> doesn't allow (refusing redirect to …)". */
 function refusedRedirect(to: string, policy: DownloadPolicy): DownloadRefusedError {
   const who = policy.provider ?? 'The server';
   let what = 'an address it could not read';
@@ -216,13 +217,13 @@ function refusedRedirect(to: string, policy: DownloadPolicy): DownloadRefusedErr
     what = u.protocol === 'https:' ? u.host : u.protocol === 'http:' ? `${u.host} over plain http` : `a ${u.protocol} address`;
     if (u.username || u.password) what += ' with a user name or password';
   } catch { /* keep the defaults */ }
-  return new DownloadRefusedError(`${who} redirected the download to ${what}, which ReCut doesn't allow (refusing redirect to ${origin})`);
+  return new DownloadRefusedError(`${who} redirected the download to ${what}, which ${PRODUCT_NAME} doesn't allow (refusing redirect to ${origin})`);
 }
 
 /**
  * Request `o.url` with manual redirects, following one only when the policy allows it (isAllowedRedirect), at most
  * MAX_REDIRECTS times. Resolves with the first non-redirect response. Throws DownloadRefusedError for a URL the
- * policy refuses ("… redirected the download to <host>, which ReCut doesn't allow"), "network error: …" naming the
+ * policy refuses ("… redirected the download to <host>, which <app> doesn't allow"), "network error: …" naming the
  * host when a request fails, and DownloadCanceledError when `signal` aborts.
  * scripts/check-model-redirects.mjs runs this against the real servers in CI.
  */

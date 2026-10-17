@@ -74,6 +74,7 @@ const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
   readText: (path: string) => ipcRenderer.invoke(IPC.fsReadText, path),
   exportSubtitleFile: (path: string, content: string, protectedPaths: string[]) => ipcRenderer.invoke(IPC.subtitlesExport, path, content, protectedPaths),
   listDir: (path: string) => ipcRenderer.invoke(IPC.fsListDir, path),
+  relocateLegacyPath: (path: string) => ipcRenderer.invoke(IPC.fsRelocateLegacyPath, path),
   scanForRelink: (req: RelinkScanRequest) => ipcRenderer.invoke(IPC.fsScanForRelink, req),
 
   probe: (path: string) => ipcRenderer.invoke(IPC.mediaProbe, path),
@@ -82,6 +83,7 @@ const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
   cancelThumbnails: (requestIds: string[]) => ipcRenderer.invoke(IPC.mediaThumbCancel, requestIds),
   waveform: (path: string, mediaId?: ID, streamIndex?: number) => ipcRenderer.invoke(IPC.mediaWaveform, path, mediaId, streamIndex),
   startProxy: (req: ProxyRequest) => ipcRenderer.invoke(IPC.mediaProxyStart, req),
+  lookupProxy: (req: ProxyRequest) => ipcRenderer.invoke(IPC.mediaProxyLookup, req),
   startChannelProxy: (req: ChannelProxyRequest) => ipcRenderer.invoke(IPC.mediaChannelProxyStart, req),
   startSceneDetect: (req: SceneDetectRequest) => ipcRenderer.invoke(IPC.mediaSceneDetectStart, req),
   extractSubtitles: (path: string, streamIndex: number) => ipcRenderer.invoke(IPC.mediaExtractSubtitles, path, streamIndex),

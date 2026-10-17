@@ -9,7 +9,7 @@
  *  - `<resources>/ffmpeg/FFMPEG-*.txt` (extraResources `resources/ffmpeg`, written by scripts/windows/get-ffmpeg.ps1)
  *  - `LICENSE.electron.txt`, `LICENSES.chromium.html` next to the executable (added by electron-builder itself on Windows
  *    and Linux); on macOS electron-builder leaves them out, so build.mac.extraResources copies them into `<resources>`
- *    (ReCut.app/Contents/Resources) and they are looked up there after the executable's folder
+ *    (<product>.app/Contents/Resources) and they are looked up there after the executable's folder
  *  - `<resources>/app.asar.unpacked/dist/electron/ocr/core/LICENSE`: Tesseract's licence, copied with the OCR core by
  *    scripts/build-electron.mjs (dist/electron/ocr/** is unpacked from app.asar, build.asarUnpack)
  *  - `<resources>/whisper/WHISPER-*.txt` (extraResources `resources/whisper`, written by scripts/<platform>/get-whisper.*)
@@ -21,6 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { LicenceFile, LicenceFileId } from '../shared/ipc';
+import { PRODUCT_NAME } from '../shared/productIdentity';
 
 type Where = 'app' | 'ffmpeg' | 'exe' | 'ocr' | 'whisper';
 
@@ -28,7 +29,7 @@ interface LicenceDef { id: LicenceFileId; label: string; fileName: string; where
 
 /** Every file the About dialog may open, in display order. */
 export const LICENCE_FILES: readonly LicenceDef[] = Object.freeze([
-  { id: 'recut', label: 'ReCut licence (MIT)', fileName: 'LICENSE', where: 'app' },
+  { id: 'recut', label: `${PRODUCT_NAME} licence (MIT)`, fileName: 'LICENSE', where: 'app' },
   { id: 'notices', label: 'Third-party notices', fileName: 'THIRD_PARTY_NOTICES.md', where: 'app' },
   { id: 'ffmpegBuild', label: 'FFmpeg build and source', fileName: 'FFMPEG-BUILD.txt', where: 'ffmpeg' },
   { id: 'ffmpegLicense', label: 'FFmpeg licence', fileName: 'FFMPEG-LICENSE.txt', where: 'ffmpeg' },

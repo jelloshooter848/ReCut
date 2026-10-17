@@ -11,6 +11,8 @@ import { useStore } from '@/state';
 import type { Recipe } from '@/state';
 
 // ------------------------------------------------------------------ collapsed-state store
+// frozen: changing this would reset every user's saved collapsed Inspector sections (the key is read from the browser storage the
+// user-data folder carries along; it is invisible to users).
 const KEY = 'recut.inspector.collapsed.v1';
 let collapsed: Record<string, boolean> = (() => {
   try { const raw = localStorage.getItem(KEY); return raw ? (JSON.parse(raw) as Record<string, boolean>) : {}; } catch { return {}; }

@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { TextField } from '@/components/ui/TextField';
+import { PRODUCT_NAME } from '@shared/productIdentity';
 
 export interface ConfirmOptions {
   title?: string;
@@ -94,7 +95,7 @@ function ConfirmView({ req }: { req: ConfirmRequest }) {
   const defaultId = req.opts.defaultId ?? 0;
   const finish = (i: number) => { useDialogQueue.getState().shift(); req.resolve(i); };
   return (
-    <Dialog open title={req.opts.title ?? 'ReCut'} onClose={() => finish(cancelId)} width={440} closeOnBackdrop={false} onSubmit={() => finish(defaultId)}
+    <Dialog open title={req.opts.title ?? PRODUCT_NAME} onClose={() => finish(cancelId)} width={440} closeOnBackdrop={false} onSubmit={() => finish(defaultId)}
       footer={buttons.map((b, i) => (
         <Button key={b} variant={i === defaultId ? 'primary' : 'default'} onClick={() => finish(i)} data-testid={req.opts.buttonTestIds?.[i] ?? `confirm-button-${i}`} autoFocus={i === defaultId}>{b}</Button>
       ))}>

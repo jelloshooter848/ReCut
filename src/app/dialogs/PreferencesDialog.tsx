@@ -20,6 +20,7 @@ import { installedModelsSummary, useWhisperStatus } from '@/state/whisperStatus'
 import { openWhisperModels } from '@/whisper/whisperUi';
 import { checkForUpdatesNow, refreshUpdateStatus, setUpdateCheckSetting, useUpdateStore } from '@/app/updates';
 import type { UpdateCheckSetting, UpdateStatus } from '@shared/update';
+import { PRODUCT_NAME } from '@shared/productIdentity';
 import {
   AUTOSAVE_INTERVAL_MAX_SEC, AUTOSAVE_INTERVAL_MIN_SEC, DEFAULT_TRANSITION_FRAMES_MAX, DEFAULT_TRANSITION_FRAMES_MIN, PROXY_HEIGHTS,
 } from '@shared/limits';
@@ -40,7 +41,7 @@ export function lastCheckText(s: UpdateStatus | null): string {
   if (s.lastCheckAt === null) return 'Never checked';
   const when = new Date(s.lastCheckAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
   if (s.lastCheckOk === false) return `Last checked ${when} (GitHub could not be reached)`;
-  return `Last checked ${when}${s.available ? ` — ReCut ${s.available.version} is available` : ' — up to date'}`;
+  return `Last checked ${when}${s.available ? ` — ${PRODUCT_NAME} ${s.available.version} is available` : ' — up to date'}`;
 }
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -149,8 +150,8 @@ export function PreferencesDialog() {
             </span>
             <Button size="sm" onClick={() => openWhisperModels()} aria-label="Manage transcription models…" data-testid="prefs-whisper-manage">Manage…</Button>
           </Row>
-          <Row label="Version"><span className="text-sm">{info ? `ReCut ${info.version} · ${info.platform}${info.isDev ? ' · dev' : ''}` : '…'}</span></Row>
-          <Row label="Check for updates" hint="Asks GitHub for the latest ReCut release once a day and says when a newer one exists. Only that request is sent; nothing is downloaded or installed.">
+          <Row label="Version"><span className="text-sm">{info ? `${PRODUCT_NAME} ${info.version} · ${info.platform}${info.isDev ? ' · dev' : ''}` : '…'}</span></Row>
+          <Row label="Check for updates" hint={`Asks GitHub for the latest ${PRODUCT_NAME} release once a day and says when a newer one exists. Only that request is sent; nothing is downloaded or installed.`}>
             {update?.managed ? (
               <span className="text-sm text-dim" data-testid="prefs-update-check">Turned off for this installation</span>
             ) : (

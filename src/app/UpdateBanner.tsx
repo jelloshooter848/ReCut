@@ -1,5 +1,6 @@
 import React from 'react';
 import { Info, X } from 'lucide-react';
+import { PRODUCT_NAME } from '@shared/productIdentity';
 import { dismissUpdateNotice, noticeRelease, openReleasePage, setUpdateCheckSetting, showsUpdatePrompt, skipUpdateVersion, useUpdateStore } from './updates';
 
 /**
@@ -18,7 +19,7 @@ export function UpdateBanner() {
         <div className="ffmpeg-banner update-banner" role="status" data-testid="update-prompt">
           <Info size={14} />
           <span className="grow">
-            <strong>Check for new ReCut versions on GitHub once a day?</strong> Only the request itself is sent; nothing is
+            <strong>Check for new {PRODUCT_NAME} versions on GitHub once a day?</strong> Only the request itself is sent; nothing is
             downloaded or installed. You can change this in Preferences.
           </span>
           <button type="button" className="btn btn-primary" onClick={() => void setUpdateCheckSetting('on')}>Yes</button>
@@ -29,7 +30,7 @@ export function UpdateBanner() {
         <div className="ffmpeg-banner update-banner" role="status" data-testid="update-notice">
           <Info size={14} />
           <span className="grow">
-            <strong>ReCut {release.version} is available</strong> — {' '}
+            <strong>{PRODUCT_NAME} {release.version} is available</strong> — {' '}
             <button type="button" className="link-button" onClick={() => void openReleasePage(release.url)}>Release notes</button>
           </span>
           <button type="button" className="btn btn-ghost" onClick={() => void skipUpdateVersion(release.version)}>Skip this version</button>

@@ -9,6 +9,7 @@ import type { TranscribeRequest, WhisperEngineInfo, WhisperModelState } from './
 import type { CollectRequest, CollectStartResult, CollectSummary } from './collect';
 import type { ProjectWire } from './projectWire';
 import type { UpdateCheckResult, UpdateCheckSetting, UpdateStatus } from './update';
+import { PRODUCT_NAME, envVarName } from './productIdentity';
 
 export const IPC = {
   // app
@@ -44,6 +45,8 @@ export const IPC = {
   subtitlesExport: 'subtitles:export',
   fsScanForRelink: 'fs:scanForRelink',
   fsListDir: 'fs:listDir',
+  /** A missing cache path under a legacy user-data folder, found under the current one (electron/legacyPathRemap.ts). */
+  fsRelocateLegacyPath: 'fs:relocateLegacyPath',
   // media
   mediaProbe: 'media:probe',
   mediaThumbnail: 'media:thumbnail',
@@ -51,6 +54,7 @@ export const IPC = {
   mediaThumbCancel: 'media:thumbCancel',
   mediaWaveform: 'media:waveform',
   mediaProxyStart: 'media:proxyStart',
+  mediaProxyLookup: 'media:proxyLookup',
   mediaChannelProxyStart: 'media:channelProxyStart',
   mediaSceneDetectStart: 'media:sceneDetectStart',
   mediaExtractSubtitles: 'media:extractSubtitles',
@@ -95,13 +99,13 @@ export const IPC = {
 
 /** How to fix a missing FFmpeg (shown in the startup banner and in import / export / proxy errors). */
 export const FFMPEG_INSTALL_HELP =
-  'Install FFmpeg (it provides both ffmpeg and ffprobe) and restart ReCut: `sudo apt install ffmpeg` on Debian/Ubuntu, '
-  + '`brew install ffmpeg` on macOS, or `winget install Gyan.FFmpeg` on Windows. Or point ReCut at the binaries with the '
-  + 'RECUT_FFMPEG and RECUT_FFPROBE environment variables. See docs/INSTALL.md.';
+  `Install FFmpeg (it provides both ffmpeg and ffprobe) and restart ${PRODUCT_NAME}: \`sudo apt install ffmpeg\` on Debian/Ubuntu, `
+  + `\`brew install ffmpeg\` on macOS, or \`winget install Gyan.FFmpeg\` on Windows. Or point ${PRODUCT_NAME} at the binaries with the `
+  + `${envVarName('FFMPEG')} and ${envVarName('FFPROBE')} environment variables. See docs/INSTALL.md.`;
 
 /** Clear error for a missing ffmpeg / ffprobe binary. */
 export function ffmpegMissingMessage(binary: 'ffmpeg' | 'ffprobe'): string {
-  return `${binary} was not found, so ReCut cannot ${binary === 'ffprobe' ? 'read media files' : 'process media'}. ${FFMPEG_INSTALL_HELP}`;
+  return `${binary} was not found, so ${PRODUCT_NAME} cannot ${binary === 'ffprobe' ? 'read media files' : 'process media'}. ${FFMPEG_INSTALL_HELP}`;
 }
 
 export interface AppInfo {
@@ -186,6 +190,9 @@ export interface WaveformData {
   duration: number;
 }
 
+/** A cached proxy found by RecutApi.lookupProxy (#136). */
+export interface ProxyLookup { path: string; width?: number; height?: number; audioStreams: number[] }
+
 export interface ProxyRequest {
   mediaId: ID; path: string; height: number; audioChannels?: number;
   /**
@@ -213,7 +220,8 @@ export interface ExportRequest {
   media: Record<ID, MediaItem>;
   settings: ExportSettings;
   /** Sequence subtitle cues, already resolved to seconds. */
-  subtitles?: { start: number; end: number; text: string }[];
+  /** Burn-in / sidecar cues in seconds; `words` (seconds) lets burn-in highlight the spoken word (#134). */
+  subtitles?: { start: number; end: number; text: string; words?: { start: number; end: number; text: string }[] }[];
   /**
    * The sequence's subtitle tracks one by one (cues resolved to seconds), for soft subtitle streams
    * (`settings.subtitleOutputs`, MKV). Hidden (disabled) tracks are included: the settings choose.
@@ -249,7 +257,7 @@ export interface RecutApi {
   quitCancel(): Promise<void>;
   openExternal(url: string): Promise<void>;
   showItemInFolder(path: string): Promise<void>;
-  /** The licence files shipped with this build (ReCut, third-party notices, bundled FFmpeg, Electron), in display order. */
+  /** The licence files shipped with this build (the app's own, third-party notices, bundled FFmpeg, Electron), in display order. */
   licenceFiles(): Promise<LicenceFile[]>;
   /** Open one of `licenceFiles()` with the system's default app (or reveal it when nothing can open it). */
   openLicenceFile(id: LicenceFileId): Promise<OpenLicenceResult>;
@@ -293,6 +301,12 @@ export interface RecutApi {
    */
   exportSubtitleFile(path: string, content: string, protectedPaths: string[]): Promise<SubtitleWriteResult>;
   listDir(path: string): Promise<{ name: string; path: string; isDirectory: boolean; size: number }[]>;
+  /**
+   * A missing cache file (proxy, channel proxy) saved under a legacy user-data folder that has moved: the same relative
+   * path under the current folder when a file exists there, else null (electron/legacyPathRemap.ts). Optional: older
+   * bridges and test doubles lack it.
+   */
+  relocateLegacyPath?(path: string): Promise<string | null>;
   scanForRelink(req: RelinkScanRequest): Promise<RelinkCandidate[]>;
 
   probe(path: string): Promise<MediaProbe>;
@@ -304,6 +318,8 @@ export interface RecutApi {
   /** Peaks of one audio stream (`streamIndex`: absolute ffprobe index; default the first audio stream). */
   waveform(path: string, mediaId?: ID, streamIndex?: number): Promise<WaveformData>;
   startProxy(req: ProxyRequest): Promise<JobInfo>;
+  /** A finished all-streams proxy of `req.path` at `req.height` already in the cache, without rendering (#136); null when none. */
+  lookupProxy(req: ProxyRequest): Promise<ProxyLookup | null>;
   /** Queue (or join) the channel proxy job of a clip's channel selection. */
   startChannelProxy(req: ChannelProxyRequest): Promise<JobInfo>;
   startSceneDetect(req: SceneDetectRequest): Promise<JobInfo>;
@@ -373,6 +389,8 @@ declare global {
 }
 
 /** Scheme used for streaming local media into the renderer with range support. */
+// frozen: changing this would break every place that builds or parses these URLs (protocol registration, thumbnails,
+// the smoke test and about 25 test files) with nothing gained: the scheme is invisible to users and never saved.
 export const MEDIA_SCHEME = 'recut-media';
 export function pathToMediaUrl(path: string): string {
   return `${MEDIA_SCHEME}://local/${encodeURIComponent(path)}`;

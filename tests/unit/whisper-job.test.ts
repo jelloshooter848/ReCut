@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JobInfo } from '../../shared/model';
-import type { TranscribeRequest, TranscribeResult } from '../../shared/whisper';
+import { type TranscribeRequest, type TranscribeResult } from '../../shared/whisper';
 import { JobQueue } from '../../electron/jobs/jobQueue';
 import { setCacheDir } from '../../electron/media/cache';
 import { getFfmpegPath } from '../../electron/media/ffmpeg';
@@ -67,6 +67,7 @@ beforeEach(() => {
   fs.rmSync(path.join(tmp, 'cache'), { recursive: true, force: true });
   delete process.env.FAKE_WHISPER_MODE;
   delete process.env.FAKE_WHISPER_PIDFILE;
+  delete process.env.FAKE_WHISPER_TOKENS;
   process.env.FAKE_WHISPER_LOG = log;
 });
 
@@ -116,6 +117,61 @@ describe.skipIf(!hasFfmpeg)('transcription job (fake engine)', () => {
     expect((again.job.result as TranscribeResult).cached).toBe(true);
     expect((again.job.result as TranscribeResult).cues.map((c) => c.text)).toEqual(r.cues.map((c) => c.text));
     expect(engineRuns()).toHaveLength(1);
+  });
+
+  it('a stream that starts after the file: cues and words are placed at its start offset (#157)', async () => {
+    process.env.FAKE_WHISPER_TOKENS = '1';
+    try {
+      // The same audio muxed with a 0.5 s delay (an MKV whose audio starts after its video).
+      const late = path.join(tmp, 'late audio.mkv');
+      ffmpeg(['-f', 'lavfi', '-i', 'color=c=black:s=64x64:r=25:d=6', '-itsoffset', '0.5', '-i', media,
+        '-map', '0:v', '-map', '1:a:0', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'flac', late]);
+      const q = new JobQueue({ throttleMs: 0 });
+      const plain = (await run(q, req(), ctx())).job.result as TranscribeResult;
+      const lateRun = await run(q, req({ path: late, streamIndex: 1 }), ctx());
+      expect(lateRun.job.status, lateRun.job.error).toBe('done');
+      const shifted = lateRun.job.result as TranscribeResult;
+      const offset = shifted.cues[0].start - plain.cues[0].start;
+      expect(offset).toBeGreaterThan(0.45);
+      expect(offset).toBeLessThan(0.55);
+      expect(shifted.cues[0].words![0].start - plain.cues[0].words![0].start).toBeCloseTo(offset, 3);
+    } finally { delete process.env.FAKE_WHISPER_TOKENS; }
+  });
+
+  it('keeps word timing from -ojf tokens, through the cache too (#118)', async () => {
+    process.env.FAKE_WHISPER_TOKENS = '1';
+    const q = new JobQueue({ throttleMs: 0 });
+    const { job } = await run(q, req(), ctx());
+    expect(job.status, job.error).toBe('done');
+    const first = (job.result as TranscribeResult).cues[0];
+    expect(first.text).toBe('Bonjour, ça va ?');
+    expect(first.words?.map((w) => [w.text, w.start])).toEqual([['Bonjour,', 0.1], ['ça', 0.7], ['va ?', 0.9]]);
+    const again = await run(q, req(), ctx());
+    expect((again.job.result as TranscribeResult).cached).toBe(true);
+    expect((again.job.result as TranscribeResult).cues[0].words).toEqual(first.words);
+  });
+
+  it('runs whisper-cli without text context or a prompt, so a hallucinated line cannot loop (#158)', async () => {
+    const q = new JobQueue({ throttleMs: 0 });
+    const { job } = await run(q, req({ language: 'en' }), ctx());
+    expect(job.status, job.error).toBe('done');
+    const [call] = engineRuns();
+    expect(call.args[call.args.indexOf('-mc') + 1]).toBe('0');
+    expect(call.args).not.toContain('--prompt');
+  });
+
+  it('Transcribe again (force) ignores the cached result and replaces it (#158)', async () => {
+    const q = new JobQueue({ throttleMs: 0 });
+    const first = await run(q, req(), ctx());
+    expect(first.job.status, first.job.error).toBe('done');
+    const runs = engineRuns().length;
+    const cached = await run(q, req(), ctx());
+    expect((cached.job.result as TranscribeResult).cached).toBe(true);
+    expect(engineRuns().length).toBe(runs);
+    const again = await run(q, req({ force: true }), ctx());
+    expect(again.job.status, again.job.error).toBe('done');
+    expect((again.job.result as TranscribeResult).cached).toBeFalsy();
+    expect(engineRuns().length).toBeGreaterThan(runs);
   });
 
   it('transcribes long audio in chunks cut at a quiet moment, with the detected language passed on', async () => {
@@ -212,6 +268,14 @@ describe.skipIf(!hasFfmpeg)('transcription job (fake engine)', () => {
 });
 
 describe('cache key and arguments', () => {
+  it('engine arguments: no text context (-mc 0), no prompt; DTW with flash attention off (#158)', () => {
+    const o = { model: 'm.bin', input: 'audio.wav', outBase: 'out', threads: 2, language: 'en', translate: false };
+    const args = whisperArgs(o);
+    expect(args.join(' ')).toContain('-mc 0');
+    expect(args).not.toContain('--prompt');
+    expect(whisperArgs({ ...o, dtw: 'large.v3.turbo' }).slice(-3)).toEqual(['--dtw', 'large.v3.turbo', '-nfa']);
+  });
+
   it('changes with every setting that changes the result', async () => {
     const base = { streamIndex: 1, model: 'small', language: 'auto', translate: false };
     const h = transcriptionSettingsHash(base, 'a'.repeat(64));

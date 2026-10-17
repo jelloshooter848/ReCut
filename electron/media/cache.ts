@@ -20,6 +20,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { assertAbsoluteMediaPath } from './ffmpeg';
 import { fingerprintFile } from './identity';
+import { envVar } from '../env';
 
 /** `ids`: the content-key index (legacy key -> content key, see cacheKeysForPath). */
 export type CacheSubdir = 'thumbs' | 'waves' | 'proxies' | 'scenes' | 'ocr' | 'ids' | 'whisper';
@@ -34,7 +35,7 @@ export function setCacheDir(dir: string): void {
 
 /** Resolve the cache root: env RECUT_CACHE_DIR → setCacheDir() → <tmp>/recut-cache. */
 export function getCacheDir(): string {
-  const env = process.env.RECUT_CACHE_DIR;
+  const env = envVar('CACHE_DIR');
   if (env && env.trim()) return path.resolve(env);
   if (configuredDir) return configuredDir;
   return path.join(os.tmpdir(), 'recut-cache');
@@ -67,6 +68,8 @@ export function cacheKeyForFile(filePath: string, size: number, mtimeMs: number)
 
 /** Content key of a file from its size and fingerprint (./identity.ts). 40 hex characters, like the legacy key. */
 export function contentCacheKey(size: number, fingerprint: string): string {
+  // frozen: changing this would change every content key, so every user's cached thumbnails, waveforms, proxies,
+  // scenes, OCR and Whisper results would be orphaned and rebuilt (and moved media would lose their cache).
   return createHash('sha1').update(`recut-content-key\0${size}\0${fingerprint}`).digest('hex');
 }
 

@@ -16,7 +16,7 @@
 import type { AudioChannelSelection, ID, JobInfo, Project, ProxyInfo } from '@shared/model';
 import { channelProxyKey, clipAudioStream, resolveChannelSelection } from '@shared/audioChannels';
 import { useStore } from '@/state/store';
-import { recutApi } from '@/state/mediaActions';
+import { recutApi, relocatedCachePath } from '@/state/mediaActions';
 import { useJobsStore } from './jobsStore';
 import { invalidateMediaPath } from './media';
 
@@ -142,6 +142,13 @@ export async function syncChannelProxies(): Promise<void> {
         let exists = true;
         try { exists = api ? (await api.stat(cur.path)).exists : true; } catch { /* keep it */ }
         if (exists) { verified.add(cur.path); continue; }
+        // Saved under a legacy user-data folder that has moved: the same file under the current one.
+        const moved = api ? await relocatedCachePath(api, cur.path) : null;
+        if (moved) {
+          verified.add(moved);
+          useStore.getState().setChannelProxies(mediaId, { [w.key]: { ...cur, path: moved } });
+          continue;
+        }
         useStore.getState().setChannelProxies(mediaId, { [w.key]: null });
         void requestChannelProxy(w);
         continue;
