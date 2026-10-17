@@ -235,7 +235,7 @@ None of these encoded the wrong timing; they pinned the argument shape or the ca
   and a clip starting at the media's first frame exports that frame black.
 - [2026-10-09-ts-thumbnail-next-keyframe](../open/2026-10-09-ts-thumbnail-next-keyframe.md): TS thumbnails land on
   the next keyframe with long GOPs (seek, not timestamps).
-- [2026-10-09-whisper-ignores-late-audio-start](../open/2026-10-09-whisper-ignores-late-audio-start.md): transcripts
+- [2026-10-09-whisper-ignores-late-audio-start](2026-10-09-whisper-ignores-late-audio-start.md): transcripts
   are early by a late audio stream's offset, in any container.
 - Not filed: a media proxy is CFR from 0, so a source whose frames are off the proxy's frame grid (here 0.53 of a
   frame) previews the previous frame for in-points that land in that part of a frame (source 7.013 s: proxy 161,
