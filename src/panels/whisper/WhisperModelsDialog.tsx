@@ -1,6 +1,6 @@
 /**
  * Transcription Models dialog (File › Transcription Models…, Preferences, the Transcribe dialog): every Whisper model
- * ReCut can install, with its size, a short note and its state — Installed [Remove], downloading n% [Cancel], a
+ * the app can install, with its size, a short note and its state — Installed [Remove], downloading n% [Cancel], a
  * paused partial download [Resume] [Discard], or [Install] — plus the disk space models use, Install from file… (for
  * the selected model) and Open folder. Installs run as 'download' jobs in the main process (resumable, checked against
  * a pinned SHA-256); the jobs router refreshes the list when one settles.
@@ -17,10 +17,11 @@ import { formatModelSize, modelsDiskUsage, useWhisperStatus } from '@/state/whis
 import { closeWhisperModels, useWhisperUi, WHISPER_DOWNLOAD_PREFIX } from '@/whisper/whisperUi';
 import type { JobInfo } from '@shared/model';
 import type { WhisperModelState } from '@shared/whisper';
+import { PRODUCT_NAME } from '@shared/productIdentity';
 import './whisper.css';
 
 export const WHISPER_MODELS_NOTE = 'Speech recognition models for the built-in whisper.cpp engine (OpenAI Whisper weights, MIT licence). '
-  + 'ReCut downloads a model only when you click Install; transcribing then works offline and nothing is uploaded.';
+  + `${PRODUCT_NAME} downloads a model only when you click Install; transcribing then works offline and nothing is uploaded.`;
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 

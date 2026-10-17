@@ -180,7 +180,16 @@ export interface TranscribeRequest {
   language: string;
   /** Translate the speech to English (multilingual models only). Default false. */
   translate?: boolean;
+  /** Transcribe again even when a result for the same file and settings is cached (#158). Default false. */
+  force?: boolean;
 }
+
+/** whisper.cpp's `--dtw` alignment preset of a model (word timing, #118), or null when it has none. */
+export function whisperDtwPreset(modelId: string): string | null {
+  const preset = modelId.replace(/-/g, '.');
+  return ['tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large.v1', 'large.v2', 'large.v3', 'large.v3.turbo'].includes(preset) ? preset : null;
+}
+
 
 /** `JobInfo.result` of a finished 'transcribe' job. */
 export interface TranscribeResult {

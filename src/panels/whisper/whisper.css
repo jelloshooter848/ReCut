@@ -22,4 +22,5 @@
 .trx-empty { padding: 16px; text-align: center; }
 .trx-field > .text-sm:first-child { width: 72px; flex: none; }
 .trx-check { padding-left: 80px; }
+.trx-hint { padding-left: 100px; margin-top: -6px; line-height: 1.4; }
 .trx-note { margin: 0; line-height: 1.45; }

@@ -20,9 +20,19 @@ and paste `ffprobe` output for the original file instead.
 
 ## Development setup
 
-You need **Node.js 20 or 22** (developed on 22) and **FFmpeg 6 or newer** with libx264 (`ffmpeg` and `ffprobe` on
-`PATH`, or set `RECUT_FFMPEG` / `RECUT_FFPROBE`). [docs/INSTALL.md](docs/INSTALL.md#prerequisites) lists the
-prerequisites and how to install FFmpeg on each OS.
+You need **Node.js 20 or 22** (developed on 22). For speech-to-text you also need **cmake** and a C++ compiler
+(macOS: Xcode command line tools and `brew install cmake`; Linux: `cmake` and `g++`; Windows: Visual Studio with the C++
+workload).
+
+`npm run dev` and `npm start` first run `scripts/setup-dev.mjs` (also `npm run setup`), which gets what the release
+builds bundle when it is missing:
+- **FFmpeg** into `resources/ffmpeg/` (`scripts/<os>/get-ffmpeg.*`), unless `ffmpeg` and `ffprobe` are on `PATH` or
+  `RECUT_FFMPEG` is set. [docs/INSTALL.md](docs/INSTALL.md#prerequisites) explains the FFmpeg requirements.
+- **The speech-to-text engine** (whisper.cpp) compiled into `resources/whisper/` (`scripts/<os>/get-whisper.*`), a few
+  minutes the first time. Without cmake it is skipped with a note; ReCut then says the engine is not included and the
+  engine tests are skipped.
+
+Both folders are git-ignored, and later runs skip whatever is already there. Set `RECUT_SKIP_SETUP=1` to skip setup.
 
 ```bash
 git clone https://github.com/jelloshooter848/ReCut.git
@@ -39,10 +49,6 @@ To try things without your own media, generate synthetic, copyright-free test fi
 ```bash
 scripts/make-test-media.sh ./test-media      # add "short" for 4 s scenes
 ```
-
-Speech-to-text needs the whisper.cpp engine compiled into `resources/whisper/` (`scripts/linux/get-whisper.sh`,
-`scripts/mac/get-whisper.sh` or `scripts/windows/get-whisper.ps1`; needs cmake and a C++ compiler). You don't need it
-for most work: without it the app says the engine is not included and the engine tests are skipped.
 
 For isolated runs (so you don't touch your own preferences or cache), set `RECUT_USER_DATA` and `RECUT_CACHE_DIR` to
 temporary folders.
@@ -112,29 +118,60 @@ These matter more than style, and reviewers will ask about them. The full list i
 
 ## Branches and pull requests
 
-| Branch | What it holds | Who merges into it |
+| Branch | What it holds | Who writes to it |
 |---|---|---|
-| `dev` | The integration branch: everything finished and reviewed. **Contributors, James and agents open their PRs here.** | James (write access) or the owner. |
-| `rc` | The next release: changes promoted from `dev`, its release-prep PRs, and its release candidates (pre-releases) when it has them. | The owner only. |
-| `main` | Released code only. | The owner only. |
+| `main` | Released code only: it moves only when a release or a hotfix is merged. | The owner only: the `rc` → `main` PR of a release, and hotfix PRs. |
+| `rc` | The next release: changes promoted from `dev`, its release-prep PRs, and its release candidates (pre-releases) when it has them. | The owner only: promotion PRs from `dev`, release-prep PRs, `main` merged back. |
+| `dev` | The shared integration branch: everything that is finished and reviewed. **Contributors, James and agents open their PRs here.** | James (write access) or the owner merges PRs into it. Nobody pushes to it. |
+| `devDavid`, `devJames` | Each person's long-lived branch: David's (the owner) and James's. | Their owner, through PRs from task branches. |
+| task branches (`fix-…`, `claude/…`) | One task: one fix, or one slice of a feature. | Whoever does the task. |
 
-`rc` and `main` are owner-only: nobody else pushes to them or opens PRs into them unless the owner asks (promotions
-from `dev`, releases and hotfixes, see [docs/RELEASING.md](docs/RELEASING.md#branches-and-roles)). Nobody pushes to
-`dev` directly either: changes reach it through pull requests.
+The flow:
 
-- Fork the repository (or, with write access, push a branch), branch from `dev`, and open the PR against `dev`.
-  Never target `rc` or `main`. Use a short descriptive branch name, for example `fix-collect-fat32-message`.
-- Keep a PR to one change. Explain **what** and **why**, and how you tested it (commands and results). Link the issue
-  it closes (`Closes #123`).
-- A bug fix comes with a **regression test** that fails before the fix. Never weaken, skip or delete an existing test
-  to get green; if an assertion encoded the bug, change it and say so.
-- Update the docs your change affects: the [User Guide](docs/USER-GUIDE.md), [FORMATS](docs/FORMATS.md),
-  [SHORTCUTS](docs/SHORTCUTS.md), and [LIMITATIONS](docs/LIMITATIONS.md) (remove an item your change fixes, add one
-  for a new limitation).
-- A PR that completes a [Roadmap](docs/ROADMAP.md) entry updates [docs/ROADMAP.md](docs/ROADMAP.md) in the same PR:
-  the entry's **Status** line and its row in the Progress table.
-- **Feature and bug PRs never change the version.** Don't touch `version` in `package.json` or `package-lock.json`.
-  Only a release-prep PR into `rc` (or a hotfix) changes it ([docs/RELEASING.md](docs/RELEASING.md)).
+1. **Start every session by merging `dev` into your personal branch** (`git fetch origin`, then
+   `git merge origin/dev` on `devDavid` or `devJames`).
+2. **Branch each task from your personal branch** and open its PR back into your personal branch. Use a short
+   descriptive name, for example `fix-collect-fat32-message`. Agents work the same way, on `claude/…` branches: one
+   task per branch and one PR, never several tasks stacked on one branch.
+3. **Open a PR from your personal branch into `dev` every 1–2 days, or as soon as one change is finished.** One change
+   per PR (a fix, or one slice of a feature), small enough to review. The point is to find conflicts with the other
+   person's work within a day or two, not after a week. Before opening it, merge `dev` into your branch again and get
+   CI green.
+4. **Large features go in slices.** Each slice is its own PR into `dev`; a slice that leaves the feature half-done
+   goes behind a setting, so `dev` always works.
+5. **Releases** go `dev` → `rc` → `main`: changes are promoted from `dev` to `rc` (a merge of `dev` up to a commit,
+   or `-x` cherry-picks of `dev` PRs), a release-prep PR into `rc` sets the version (its `rc` build is the test build to
+   smoke-test), and the release is an `rc` → `main` PR. Pre-releases `X.Y.Z-rc.N` from `rc` come first only for a
+   MAJOR release, or a MINOR one when the owner decides it needs testing in person. A **hotfix** branches from `main` and PRs into `main`; `main` is then merged into `rc` and `dev`.
+   All of that is the owner's: see [docs/RELEASING.md](docs/RELEASING.md#branches-and-roles).
+
+James (write access) or the owner merges PRs into `dev`. `rc` and `main` are owner-only: only the owner merges into
+them, and nobody opens a PR into them unless the owner asks (agents: only when the coordinator asks). James and his
+bot push only to `devJames` and their own task branches, and open PRs. Nobody pushes to `dev`, `rc` or `main`
+directly, and nobody pushes to another person's branch.
+
+A daily overlap check (run by the owner's coordinating session) test-merges `dev`, `devDavid`, `devJames` and the open
+PR branches and reports where they touch the same code.
+
+**Outside contributors:** fork the repository, branch from `dev`, and open the PR against `dev`. Never target `rc` or
+`main`.
+
+Before you open a PR into `dev`, check:
+
+- [ ] `dev` is merged into your branch, and CI on the PR is green (`npm run typecheck` and `npm test` locally first).
+- [ ] The PR is **one change**: one fix or one feature slice, small enough to review in one sitting. A half-done
+      feature is behind a setting.
+- [ ] It says **what** and **why**, how you tested it (commands and results), and links the issue it closes
+      (`Closes #123`).
+- [ ] A bug fix comes with a **regression test** that fails before the fix. Never weaken, skip or delete an existing
+      test to get green; if an assertion encoded the bug, change it and say so.
+- [ ] The docs your change affects are updated: the [User Guide](docs/USER-GUIDE.md), [FORMATS](docs/FORMATS.md),
+      [SHORTCUTS](docs/SHORTCUTS.md), and [LIMITATIONS](docs/LIMITATIONS.md) (remove an item your change fixes, add
+      one for a new limitation).
+- [ ] If it completes a [Roadmap](docs/ROADMAP.md) entry, it updates [docs/ROADMAP.md](docs/ROADMAP.md): the entry's
+      **Status** line and its row in the Progress table.
+- [ ] It does **not** change the version. Feature and bug PRs never touch `version` in `package.json` or
+      `package-lock.json`; only a release-prep PR into `rc` (or a hotfix) changes it ([docs/RELEASING.md](docs/RELEASING.md)).
 
 ### The changelog
 

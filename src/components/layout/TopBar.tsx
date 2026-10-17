@@ -4,6 +4,7 @@ import { MenuButton } from '@/components/ui/Menu';
 import { useLayoutStore, WORKSPACES, resetAllLayouts, type WorkspaceId } from './layoutStore';
 import { getShortcutLabel } from '@/keyboard/shortcuts';
 import { COMMAND_IDS } from '@/keyboard/commandIds';
+import { PRODUCT_NAME } from '@shared/productIdentity';
 
 export interface TopBarProps {
   /** Project name / dirty indicator / sequence name. */
@@ -20,7 +21,7 @@ const WS_COMMAND: Record<WorkspaceId, string> = {
   Compare: COMMAND_IDS.workspaceCompare,
 };
 
-export function TopBar({ projectSlot, rightSlot, appName = 'ReCut' }: TopBarProps) {
+export function TopBar({ projectSlot, rightSlot, appName = PRODUCT_NAME }: TopBarProps) {
   const workspace = useLayoutStore((s) => s.workspace);
   const setWorkspace = useLayoutStore((s) => s.setWorkspace);
   const resetLayout = useLayoutStore((s) => s.resetLayout);

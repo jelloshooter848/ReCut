@@ -1,9 +1,14 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
+import { PRODUCT_NAME } from './shared/productIdentity';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    // index.html names the product through shared/productIdentity.ts (%PRODUCT_NAME%), like the rest of the app.
+    { name: 'product-identity', transformIndexHtml: (html: string) => html.replace(/%PRODUCT_NAME%/g, PRODUCT_NAME) },
+  ],
   base: './',
   resolve: {
     alias: {

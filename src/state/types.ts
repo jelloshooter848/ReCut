@@ -100,6 +100,9 @@ export interface InsertFromSourceOptions {
   atFrame: number;
   videoTrackId?: ID;
   audioTrackId?: ID;
+  /** Drag and drop: without a track id, place this kind on its track at this index (trackForDrop, #120). */
+  videoTrackIndex?: number;
+  audioTrackIndex?: number;
   mode: 'insert' | 'overwrite';
   includeVideo?: boolean;
   includeAudio?: boolean;
@@ -342,7 +345,7 @@ export interface StoreActions {
   /** Open in Timeline: make a nested clip's sequence the active one, its playhead at the frame shown at `frame` (default: the outer playhead). */
   openNestedSequence(seqId: ID, clipId: ID, frame?: number): boolean;
   /** Nest sequence `childId` in `seqId` at `frame` (video and / or audio nested clips; cycles and too deep nesting are refused with a toast). */
-  nestSequence(seqId: ID, childId: ID, frame: number, opts?: { mode?: 'insert' | 'overwrite'; videoTrackId?: ID; audioTrackId?: ID }): ID[];
+  nestSequence(seqId: ID, childId: ID, frame: number, opts?: { mode?: 'insert' | 'overwrite'; videoTrackId?: ID; audioTrackId?: ID; videoTrackIndex?: number; audioTrackIndex?: number }): ID[];
 }
 
 export type RecutStore = StoreState & StoreActions;

@@ -49,6 +49,7 @@ export function TranscribeDialog() {
   const [language, setLanguage] = useState('auto');
   const [languageTouched, setLanguageTouched] = useState(false);
   const [translate, setTranslate] = useState(false);
+  const [force, setForce] = useState(false);
   const [query, setQuery] = useState('');
   const [starting, setStarting] = useState(false);
   const api = recutApi();
@@ -69,6 +70,7 @@ export function TranscribeDialog() {
     setQuery('');
     setStarting(false);
     setTranslate(false);
+    setForce(false);
     setLanguageTouched(false);
     setModel(null);
     setLastModel(undefined);
@@ -117,7 +119,7 @@ export function TranscribeDialog() {
       const streamIndex = streamOf(m);
       if (streamIndex === undefined) continue;
       try {
-        await api.startTranscribe({ mediaId: m.id, path: m.path, streamIndex, model: selectedModel, language: lang, translate: translate && !englishOnly });
+        await api.startTranscribe({ mediaId: m.id, path: m.path, streamIndex, model: selectedModel, language: lang, translate: translate && !englishOnly, force });
         queued++;
       } catch (e) {
         toast('error', `Could not start transcribing ${m.name}: ${errText(e)}`);
@@ -195,6 +197,16 @@ export function TranscribeDialog() {
           <input type="checkbox" checked={translate && !englishOnly} disabled={englishOnly} onChange={(e) => setTranslate(e.target.checked)} data-testid="transcribe-translate" />
           <span className="text-sm">Translate the speech to English</span>
         </label>
+        <div className="text-dim text-sm trx-hint" data-testid="transcribe-translate-hint">
+          The transcript is less exact when translating: filler words like "um" and "uh" are dropped.
+        </div>
+        <label className="row gap-6 trx-check">
+          <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} data-testid="transcribe-force" />
+          <span className="text-sm">Transcribe again (ignore the saved result)</span>
+        </label>
+        <div className="text-dim text-sm trx-hint" data-testid="transcribe-force-hint">
+          A file already transcribed with the same model and settings normally reuses that transcript at once. Tick this if it came out wrong.
+        </div>
         {blocked && blocked !== 'Install a transcription model first.' ? <div className="text-sm text-accent-2" data-testid="transcribe-blocked">{blocked}</div> : null}
         {running.length ? <div className="text-sm text-dim">{running.length === 1 ? `${running[0].name} is already being transcribed; starting again joins that job.` : `${running.length} of these are already being transcribed.`}</div> : null}
         <p className="text-dim text-sm trx-note">

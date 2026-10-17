@@ -5,7 +5,7 @@
  * A probe stores the stream's SAR (`VideoStreamInfo.sar`); `width` / `height` are storage pixels on the display
  * axes (already swapped for 90 / 270 rotation), and SAR stretches the storage x axis.
  */
-import type { Rational, VideoStreamInfo } from './model';
+import type { AudioStreamInfo, Rational, VideoStreamInfo } from './model';
 
 /**
  * Still-image file extensions (lower case, no dot). FFmpeg decodes all of them; Chromium draws only some
@@ -71,4 +71,55 @@ export function videoDisplaySize(v: VideoStreamInfo | undefined, mode: 'element'
   let w = rotated ? v.height : v.width, h = rotated ? v.width : v.height; // storage axes
   if (sar > 1) w = Math.round(w * sar); else if (sar < 1) h = Math.round(h / sar);
   return rotated ? { width: h, height: w } : { width: w, height: h };
+}
+
+// ------------------------------------------------------------------
+// Playability (moved from electron/media/probe.ts, #138)
+// ------------------------------------------------------------------
+const PLAYABLE_CONTAINERS = new Set(['mp4', 'mov', 'm4v', 'm4a', 'webm', 'matroska', 'mp3', 'wav', 'flac', 'ogg']);
+const PLAYABLE_VIDEO = new Set(['h264', 'vp8', 'vp9', 'av1']);
+const PLAYABLE_AUDIO = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac', 'pcm_s16le', 'pcm_s24le', 'pcm_f32le']);
+
+/** What this machine's Chromium can decode beyond the fixed list (#138); absent = nothing extra (the probe's view). */
+export interface DecodeSupport { hevcMain: boolean; hevcMain10: boolean }
+
+/** Containers Chromium plays HEVC from when the platform decodes it (#138): the ISO / QuickTime family. */
+const HEVC_CONTAINERS = new Set(['mp4', 'mov', 'm4v']);
+
+/**
+ * Whether Chromium can preview a file directly, and why not. The probe (electron/media/probe.ts) calls it without
+ * `extra`, so the stored `browserPlayable` is the same on every machine; the renderer calls it again with what this
+ * machine decodes (src/playback/codecSupport.ts) to preview HEVC without a proxy where it can (#138).
+ */
+export function evaluatePlayability(p: { container: string; video?: VideoStreamInfo; audio: AudioStreamInfo[] }, extra?: DecodeSupport): { ok: boolean; reason?: string } {
+  if (!PLAYABLE_CONTAINERS.has(p.container)) {
+    return { ok: false, reason: `container ${p.container} not supported by Chromium` };
+  }
+  if (p.video) {
+    const codec = p.video.codec;
+    const theoraOk = codec === 'theora' && p.container === 'ogg';
+    const hevcOk = codec === 'hevc' && !!extra && HEVC_CONTAINERS.has(p.container) && hevcProfileOk(p.video.pixFmt ?? '', extra);
+    if (!PLAYABLE_VIDEO.has(codec) && !theoraOk && !hevcOk) {
+      return { ok: false, reason: `video codec ${codec} not supported by Chromium` };
+    }
+    const pix = p.video.pixFmt ?? '';
+    if (codec === 'h264') {
+      if (/444/.test(pix)) return { ok: false, reason: 'h264 4:4:4 (yuv444p) not supported by Chromium' };
+      if (/422/.test(pix)) return { ok: false, reason: 'h264 4:2:2 not supported by Chromium' };
+      if (/(10|12|14|16)(le|be)?$/.test(pix)) return { ok: false, reason: `h264 ${pix} (high bit depth) not supported by Chromium` };
+    }
+  }
+  for (const a of p.audio) {
+    if (!PLAYABLE_AUDIO.has(a.codec)) {
+      return { ok: false, reason: `audio codec ${a.codec} not supported by Chromium` };
+    }
+  }
+  return { ok: true };
+}
+
+/** HEVC 4:2:0 at 8 bits (Main) or 10 bits (Main 10), as this machine decodes them; 4:2:2 / 4:4:4 / 12-bit: no. */
+function hevcProfileOk(pix: string, s: DecodeSupport): boolean {
+  if (/422|444|440|411/.test(pix)) return false;
+  if (/12(le|be)?$/.test(pix)) return false;
+  return /10(le|be)?$/.test(pix) ? s.hevcMain10 : s.hevcMain;
 }

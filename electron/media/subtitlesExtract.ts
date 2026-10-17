@@ -5,6 +5,7 @@ import path from 'node:path';
 import { ffmpegFileArg, runFfmpeg, runFfprobeJson } from './ffmpeg';
 import type { FfprobeOutput } from './probe';
 import { isOcrCodec } from '@shared/ocr';
+import { PRODUCT_NAME } from '../../shared/productIdentity';
 
 export const TEXT_SUBTITLE_CODECS = new Set(['subrip', 'srt', 'ass', 'ssa', 'mov_text', 'webvtt', 'text', 'ttml', 'sami', 'microdvd', 'mpl2', 'subviewer', 'subviewer1', 'vplayer', 'jacosub', 'realtext', 'stl']);
 export const BITMAP_SUBTITLE_CODECS = new Set(['hdmv_pgs_subtitle', 'dvd_subtitle', 'dvb_subtitle', 'xsub', 'dvb_teletext', 'arib_caption']);
@@ -15,7 +16,7 @@ export function isTextSubtitleCodec(codec: string | undefined): boolean {
 
 /**
  * Why subtitle stream `streamIndex` (codec `codec`, lower case) cannot be extracted as text, or null when it can.
- * Bitmap streams ReCut can OCR (PGS, VobSub, DVB, XSUB) point to Read with OCR…; teletext / ARIB captions and
+ * Bitmap streams the app can OCR (PGS, VobSub, DVB, XSUB) point to Read with OCR…; teletext / ARIB captions and
  * unknown codecs are not supported.
  */
 export function subtitleExtractRefusal(codec: string, streamIndex: number): string | null {
@@ -23,7 +24,7 @@ export function subtitleExtractRefusal(codec: string, streamIndex: number): stri
     return `subtitle stream ${streamIndex} is a bitmap subtitle stream (${codec}); use Read with OCR… to turn it into text.`;
   }
   if (BITMAP_SUBTITLE_CODECS.has(codec)) {
-    return `subtitle stream ${streamIndex} uses ${codec}, which ReCut does not support: it can only extract text subtitles (SRT, ASS, mov_text, WebVTT) and read PGS, VobSub, DVB and XSUB bitmap subtitles with OCR.`;
+    return `subtitle stream ${streamIndex} uses ${codec}, which ${PRODUCT_NAME} does not support: it can only extract text subtitles (SRT, ASS, mov_text, WebVTT) and read PGS, VobSub, DVB and XSUB bitmap subtitles with OCR.`;
   }
   if (!isTextSubtitleCodec(codec)) return `subtitle codec ${codec || 'unknown'} is not a supported text format`;
   return null;

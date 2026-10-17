@@ -9,7 +9,9 @@ import { resolveSubtitleCues } from '@shared/timeline';
 import { sidecarCandidates } from '@/transcript/providers';
 import { sequenceHasSubtitles } from './settings';
 import { subtitleOutputPlan } from '@shared/exportFormat';
-import { nestedSequencesFor } from '@shared/nest';
+import { flattenSequence, nestedSequencesFor } from '@shared/nest';
+import { clipTranscriptTrack, onScreenTranscript, transcriptIndex } from '@shared/transcripts';
+import { allTracks } from '@shared/timeline';
 
 /**
  * The parts of the project an export request is built from. `sequences` (for files imported into the
@@ -78,9 +80,50 @@ export function softSubtitleTracks(seq: Sequence, settings: ExportSettings): Exp
   }));
 }
 
-export function buildExportRequest(project: ExportProjectSources, seq: Sequence, settings: ExportSettings): ExportRequest {
+/** Id of the subtitle track an export adds for the on-screen transcript (#127). */
+export const TRANSCRIPT_EXPORT_TRACK_ID = 'transcript';
+
+/**
+ * The on-screen transcript of `seq` (#126: what the Subtitles row and the Program monitor show), as a sequence subtitle
+ * track named "Transcript" with free cues in frames, or null when the sequence has no transcript. Nested sequences
+ * are flattened first, as the Program monitor does, so transcripts inside them count.
+ */
+export function transcriptExportTrack(project: ExportProjectSources, seq: Sequence): SequenceSubtitleTrack | null {
+  const flat = flattenSequence(seq, project.sequences ?? {}, project.media);
+  const cues = onScreenTranscript(flat, transcriptIndex(flat, project.media, project.subtitleTracks));
+  if (!cues.length) return null;
+  const firstClip = allTracks(flat).flatMap((t) => t.clips).find((c) => c.id === cues[0].clipId);
+  const source = firstClip?.mediaId ? clipTranscriptTrack(firstClip, project.media[firstClip.mediaId], project.subtitleTracks) : null;
+  return {
+    id: TRANSCRIPT_EXPORT_TRACK_ID, name: 'Transcript', language: source?.language ?? 'und', enabled: true,
+    cues: cues.map((c) => ({ id: c.id, start: c.start, duration: c.end - c.start, offset: 0, text: c.text })),
+  };
+}
+
+/** `seq` with the transcript track added when `settings.includeTranscripts` is on and there is a transcript (#127). */
+export function withTranscriptTrack(project: ExportProjectSources, seq: Sequence, settings: Pick<ExportSettings, 'includeTranscripts'>): Sequence {
+  if (!settings.includeTranscripts || seq.subtitleTracks.some((t) => t.id === TRANSCRIPT_EXPORT_TRACK_ID)) return seq;
+  const track = transcriptExportTrack(project, seq);
+  return track ? { ...seq, subtitleTracks: [...seq.subtitleTracks, track] } : seq;
+}
+
+/** Word timing (sequence frames) of the transcript track's cues, by cue id: burn-in highlighting needs it (#134). */
+function transcriptWords(project: ExportProjectSources, seq: Sequence): Map<string, { start: number; end: number; text: string }[]> {
+  const flat = flattenSequence(seq, project.sequences ?? {}, project.media);
+  const out = new Map<string, { start: number; end: number; text: string }[]>();
+  for (const c of onScreenTranscript(flat, transcriptIndex(flat, project.media, project.subtitleTracks))) if (c.words?.length) out.set(c.id, c.words);
+  return out;
+}
+
+export function buildExportRequest(project: ExportProjectSources, source: Sequence, settings: ExportSettings): ExportRequest {
+  const seq = withTranscriptTrack(project, source, settings);
+  const words = settings.includeTranscripts && settings.highlightWords ? transcriptWords(project, source) : new Map();
+  const toSeconds = (w: { start: number; end: number; text: string }) => ({ start: framesToSeconds(w.start, seq.fps), end: framesToSeconds(w.end, seq.fps), text: w.text });
   const subtitles = sequenceHasSubtitles(seq)
-    ? resolveSubtitleCues(seq).map((c) => ({ start: framesToSeconds(c.start, seq.fps), end: framesToSeconds(c.end, seq.fps), text: c.text }))
+    ? resolveSubtitleCues(seq).map((c) => {
+      const w = (c.trackId === TRANSCRIPT_EXPORT_TRACK_ID ? words.get(c.id) : undefined) ?? (settings.highlightWords ? c.words : undefined);
+      return { start: framesToSeconds(c.start, seq.fps), end: framesToSeconds(c.end, seq.fps), text: c.text, ...(w?.length ? { words: w.map(toSeconds) } : {}) };
+    })
     : undefined;
   const subtitleTracks = softSubtitleTracks(seq, settings);
   // Nested sequences (Roadmap §8) travel with the request: the export flattens them into this timeline.

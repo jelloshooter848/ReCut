@@ -19,6 +19,29 @@ export interface TimelineUiState {
   markerEditRequest: { markerId: string; nonce: number } | null;
   setMarkerEditorHost(delta: 1 | -1): void;
   requestMarkerEdit(markerId: string | null): void;
+  /**
+   * Playback auto-follow is paused (#140): the user scrolled or zoomed the timeline while it played, so the view
+   * stays put. Resumes when the playhead is back in view, after a seek into view, on the next play, or by the
+   * toolbar's Follow playhead button.
+   */
+  followPaused: boolean;
+  setFollowPaused(v: boolean): void;
+  /** Audio track ids whose transcript lane is collapsed to a thin line (#132); kept in local storage. */
+  collapsedTranscripts: Record<string, true>;
+  toggleTranscriptCollapsed(trackId: string): void;
+}
+
+const COLLAPSED_KEY = 'recut.timeline.collapsedTranscripts';
+
+function readCollapsed(): Record<string, true> {
+  try {
+    const v = typeof localStorage === 'undefined' ? null : JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? 'null');
+    return v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).map((k) => [k, true as const])) : {};
+  } catch { return {}; }
+}
+
+function writeCollapsed(v: Record<string, true>): void {
+  try { if (typeof localStorage !== 'undefined') localStorage.setItem(COLLAPSED_KEY, JSON.stringify(v)); } catch { /* private mode / quota */ }
 }
 
 export const MIN_HEADER_W = 110;
@@ -36,6 +59,15 @@ export const useTimelineUi = create<TimelineUiState>()((set) => ({
   markerEditRequest: null,
   setMarkerEditorHost: (delta) => set((s) => ({ markerEditorHosts: Math.max(0, s.markerEditorHosts + delta) })),
   requestMarkerEdit: (markerId) => set((s) => ({ markerEditRequest: markerId ? { markerId, nonce: (s.markerEditRequest?.nonce ?? 0) + 1 } : null })),
+  followPaused: false,
+  setFollowPaused: (followPaused) => set((s) => (s.followPaused === followPaused ? s : { followPaused })),
+  collapsedTranscripts: readCollapsed(),
+  toggleTranscriptCollapsed: (trackId) => set((s) => {
+    const next = { ...s.collapsedTranscripts };
+    if (next[trackId]) delete next[trackId]; else next[trackId] = true;
+    writeCollapsed(next);
+    return { collapsedTranscripts: next };
+  }),
   setLiveHeight: (trackId, height) => set((s) => {
     const next = { ...s.liveHeights };
     if (height === null) delete next[trackId]; else next[trackId] = height;
