@@ -146,7 +146,7 @@ wrong. Scenes already detected in a project stay as they are: run **Detect Scene
 
 - Whisper transcripts of a file whose audio starts after its video (an audio track muxed with a delay) are early by
   that delay; shifting the subtitle track works around it
-  ([report](bugs/open/2026-10-09-whisper-ignores-late-audio-start.md)).
+  ([report](bugs/closed/2026-10-09-whisper-ignores-late-audio-start.md)).
 - Thumbnails and filmstrips of an MPEG-TS file with long keyframe intervals can show the next keyframe instead of
   the frame at that time; the preview and the export are right
   ([report](bugs/open/2026-10-09-ts-thumbnail-next-keyframe.md)).
