@@ -7,7 +7,8 @@ import { sequenceDuration } from '@shared/timeline';
 import { fpsLabel } from '@shared/time';
 import { useStore } from '@/state';
 import type { StoreState } from '@/state';
-import { Button, IconButton, NumberField, Select, TextField } from '@/components/ui';
+import { Button, IconButton, NumberField, Select, Slider, TextField } from '@/components/ui';
+import { SUBTITLE_POSITION_DEFAULT, SUBTITLE_POSITION_MAX, SUBTITLE_POSITION_MIN, SUBTITLE_POSITION_TOP } from '@shared/subtitlePosition';
 import { Row, Section, Value, dbFromLinear, finish, framesLabel, linearFromDb, pluralize, transient } from './primitives';
 
 const SAMPLE_RATES = [{ value: '44100', label: '44.1 kHz' }, { value: '48000', label: '48 kHz' }, { value: '96000', label: '96 kHz' }];
@@ -22,7 +23,7 @@ export function SequenceInspector({ seqId }: { seqId: ID }) {
     const q = s.project.sequences[seqId];
     return q ? {
       name: q.name, fps: q.fps, width: q.width, height: q.height, sampleRate: q.sampleRate, channels: q.channels, versionLabel: q.versionLabel,
-      parentSequenceId: q.parentSequenceId, snapshots: q.snapshots, videoTracks: q.videoTracks, audioTracks: q.audioTracks, markers: q.markers,
+      parentSequenceId: q.parentSequenceId, subtitlePosition: q.subtitlePosition, snapshots: q.snapshots, videoTracks: q.videoTracks, audioTracks: q.audioTracks, markers: q.markers,
       subtitleTracks: q.subtitleTracks, storyBlocks: q.storyBlocks, createdAt: q.createdAt, modifiedAt: q.modifiedAt,
     } : null;
   }));
@@ -42,7 +43,7 @@ export function SequenceInspector({ seqId }: { seqId: ID }) {
     return { clips, transitions, markers, continuityOpen, duration };
   }, [seq]);
 
-  if (!seq || !stats) return <div className="insp-empty p-8">No active sequence.</div>;
+  if (!seq || !stats) return <div className="insp-empty p-8">No active timeline.</div>;
   const fps = seq.fps;
   const resPreset = RES_PRESETS.find((r) => r.w === seq.width && r.h === seq.height);
   const setDim = (key: 'width' | 'height', v: number) => transient((d) => { const q = d.sequences[seqId]; if (q) q[key] = Math.max(16, Math.round(v / 2) * 2); });
@@ -69,17 +70,17 @@ export function SequenceInspector({ seqId }: { seqId: ID }) {
         </div>
       </div>
 
-      <Section id="seq-settings" title="Sequence settings">
-        <Row label="Frame rate" title="Frame rate is fixed once a sequence has clips (positions are frames)."><Value copy={fpsLabel(fps)} title={`${fps.num}/${fps.den}`}>{fpsLabel(fps)} fps</Value></Row>
+      <Section id="seq-settings" title="Timeline settings">
+        <Row label="Frame rate" title="Frame rate is fixed once a timeline has clips (positions are frames)."><Value copy={fpsLabel(fps)} title={`${fps.num}/${fps.den}`}>{fpsLabel(fps)} fps</Value></Row>
         <Row label="Resolution" prop="resolution">
           <Select size="sm" value={resPreset ? `${resPreset.w}x${resPreset.h}` : 'custom'}
             options={[...RES_PRESETS.map((r) => ({ value: `${r.w}x${r.h}`, label: r.label })), { value: 'custom', label: `Custom (${seq.width}×${seq.height})` }]}
             onChange={(v) => { const r = RES_PRESETS.find((x) => `${x.w}x${x.h}` === v); if (r) updateSequenceSettings(seqId, { width: r.w, height: r.h }); }} />
         </Row>
         <Row label="Frame size" prop="frame-size">
-          <NumberField value={seq.width} min={16} max={16384} unit="w" title="Width (even px)" onChange={(v) => setDim('width', v)} onCommit={() => finish('Sequence settings')} />
+          <NumberField value={seq.width} min={16} max={16384} unit="w" title="Width (even px)" onChange={(v) => setDim('width', v)} onCommit={() => finish('Timeline settings')} />
           <span className="insp-axis">×</span>
-          <NumberField value={seq.height} min={16} max={16384} unit="h" title="Height (even px)" onChange={(v) => setDim('height', v)} onCommit={() => finish('Sequence settings')} />
+          <NumberField value={seq.height} min={16} max={16384} unit="h" title="Height (even px)" onChange={(v) => setDim('height', v)} onCommit={() => finish('Timeline settings')} />
         </Row>
         <Row label="Sample rate" prop="sample-rate">
           <Select size="sm" value={String(seq.sampleRate)} options={SAMPLE_RATES.some((r) => r.value === String(seq.sampleRate)) ? SAMPLE_RATES : [...SAMPLE_RATES, { value: String(seq.sampleRate), label: `${seq.sampleRate} Hz` }]}
@@ -93,6 +94,8 @@ export function SequenceInspector({ seqId }: { seqId: ID }) {
           <TextField size="sm" value={seq.versionLabel ?? ''} placeholder="e.g. v2 – shorter act 2" commitOnBlur onChange={(v) => { if ((seq.versionLabel ?? '') !== v.trim()) updateSequenceSettings(seqId, { versionLabel: v.trim() || undefined }); }} />
         </Row>
       </Section>
+
+      <SubtitlePositionSection seqId={seqId} position={seq.subtitlePosition} />
 
       <Section id="seq-stats" title="Contents">
         <Row label="Duration"><Value copy={String(stats.duration)}>{framesLabel(stats.duration, fps)}</Value></Row>
@@ -111,8 +114,8 @@ export function SequenceInspector({ seqId }: { seqId: ID }) {
         {parentName ? <Row label="Alternate cut of"><Value title={seq.parentSequenceId}>{parentName}</Value></Row> : null}
         {childCount ? <Row label="Alternate cuts"><Value dim>{childCount}</Value></Row> : null}
         <div className="insp-btn-row">
-          <Button size="sm" icon={Copy} onClick={() => setForm({ kind: 'duplicate', name: `${seq.name} copy` })} title="Duplicate this sequence as a new alternate cut" data-testid="duplicate-sequence">Duplicate sequence</Button>
-          <Button size="sm" icon={Camera} onClick={() => setForm({ kind: 'snapshot', name: `Snapshot ${seq.snapshots.length + 1}` })} title="Save a restorable snapshot of this sequence" data-testid="take-snapshot">Snapshot</Button>
+          <Button size="sm" icon={Copy} onClick={() => setForm({ kind: 'duplicate', name: `${seq.name} copy` })} title="Duplicate this timeline as a new alternate cut" data-testid="duplicate-sequence">Duplicate timeline</Button>
+          <Button size="sm" icon={Camera} onClick={() => setForm({ kind: 'snapshot', name: `Snapshot ${seq.snapshots.length + 1}` })} title="Save a restorable snapshot of this timeline" data-testid="take-snapshot">Snapshot</Button>
         </div>
         {form ? (
           <div className="insp-inline-form" data-testid="inline-form">
@@ -166,5 +169,30 @@ function TrackRow({ seqId, t, setTrackFlags }: { seqId: ID; t: Track; setTrackFl
         </span>
       </div>
     </div>
+  );
+}
+
+/**
+ * Where subtitles sit (#115): the timeline's subtitle position, used by the Program and Source monitors and burn-in
+ * export. The slider commits one undo step on release; Bottom goes back to the default.
+ */
+function SubtitlePositionSection({ seqId, position }: { seqId: ID; position: number | undefined }) {
+  const [drag, setDrag] = useState<number | null>(null);
+  const set = (v: number | undefined) => useStore.getState().updateSequenceSettings(seqId, { subtitlePosition: v });
+  const value = drag ?? position ?? SUBTITLE_POSITION_DEFAULT;
+  const label = position === undefined && drag === null ? 'Bottom (default)' : `${Math.round(value * 100)} % from the top`;
+  return (
+    <Section id="seq-subtitles" title="Subtitles">
+      <Row label="Position" prop="subtitle-position" title="Where subtitles sit in the frame: Program and Source monitors and burn-in export">
+        <Slider value={value} min={SUBTITLE_POSITION_MIN} max={SUBTITLE_POSITION_MAX} step={0.01} className="grow" title={label}
+          onChange={setDrag}
+          onCommit={(v) => { setDrag(null); set(Math.min(SUBTITLE_POSITION_MAX, Math.max(SUBTITLE_POSITION_MIN, Math.round(v * 100) / 100))); }} />
+      </Row>
+      <Row label="">
+        <span className="text-dim text-sm grow" data-testid="subtitle-position-label">{label}</span>
+        <Button size="sm" onClick={() => set(SUBTITLE_POSITION_TOP)} data-testid="subtitle-position-top">Top</Button>
+        <Button size="sm" onClick={() => set(undefined)} data-testid="subtitle-position-bottom" title="The default position">Bottom</Button>
+      </Row>
+    </Section>
   );
 }

@@ -11,6 +11,7 @@ import {
 } from '../../shared/projectWire';
 import { parseSubtitles } from '../../shared/subtitles';
 import { uid } from '../../shared/ids';
+import { PROBE_REVISION } from '../../shared/media';
 import { stripProjectExtension } from '../../shared/productIdentity';
 import { useStore } from './store';
 import { fileNameOf } from './selectors';
@@ -212,6 +213,20 @@ export async function probeMedia(mediaId: ID): Promise<MediaProbe | null> {
   }
 }
 
+/**
+ * Re-probe online media whose stored probe predates a fix that can change it (MediaProbe.probeRev < PROBE_REVISION),
+ * limited to the probes the fix can affect: revision 2 (#154) moved stream start offsets, so only a video with a
+ * stored start offset is probed again. Runs in the background after a project opens. Returns the re-probed ids.
+ */
+export async function refreshStaleProbes(): Promise<ID[]> {
+  const st = useStore.getState();
+  const stale = Object.values(st.project.media).filter((m) => !m.offline && m.probe && (m.probe.probeRev ?? 1) < PROBE_REVISION
+    && (m.probe.video?.startTime ?? 0) > 0);
+  const done: ID[] = [];
+  for (const m of stale) { if (await probeMedia(m.id)) done.push(m.id); }
+  return done;
+}
+
 /** Re-check that each media file still exists; marks offline accordingly. Also drops `ready` proxies whose file is gone. */
 export async function verifyMediaOnline(mediaIds?: ID[]): Promise<ID[]> {
   const api = recutApi();
@@ -381,7 +396,10 @@ export async function startSceneDetect(mediaId: ID, threshold?: number): Promise
   const m = st.project.media[mediaId];
   if (!api || !m) return null;
   st.setSceneDetectStatus(mediaId, 'running');
-  return api.startSceneDetect({ mediaId, path: m.path, threshold: threshold ?? st.project.settings.sceneThreshold, duration: m.probe?.duration ?? 0 });
+  return api.startSceneDetect({
+    mediaId, path: m.path, threshold: threshold ?? st.project.settings.sceneThreshold, duration: m.probe?.duration ?? 0,
+    minSceneSeconds: st.project.settings.minShotSeconds,
+  });
 }
 
 /** Read an .srt/.vtt file and attach it to a media item as a subtitle track. Returns parse warnings. */
@@ -734,7 +752,7 @@ function covers(save: WriteSnapshot, snap: WriteSnapshot): boolean {
 }
 
 /*
- * An autosave never lands after a save that holds its content (bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md).
+ * An autosave never lands after a save that holds its content (bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md @ 59eafc6).
  * Saves and autosaves run on their own queues, and an autosave serializes in idle slices for a while: one that
  * snapshotted the project before or during a save could make its file after the save's. Its file is then newer
  * than the project file while holding nothing the project lacks, and the next launch offers it for recovery after a
@@ -859,8 +877,7 @@ let lastAutosaveDoneAt = 0;
  * An edit made while a manual save was in flight stays dirty (markSaved), and its debounced autosave may have
  * landed before the save's write: recovery then takes that autosave for older than the project file and ignores
  * it, and the lifecycle would only autosave again on its interval tick (60 s by default). Autosave once more
- * AUTOSAVE_AFTER_SAVE_MS after such a save, unless an autosave finished since (bugs/closed/
- * 2026-10-06-autosave-during-save-ignored-by-recovery.md). Never while playing or mid-drag (the lifecycle's rule):
+ * AUTOSAVE_AFTER_SAVE_MS after such a save, unless an autosave finished since (bugs/closed/2026-10-06-autosave-during-save-ignored-by-recovery.md @ 59eafc6). Never while playing or mid-drag (the lifecycle's rule):
  * it waits for those to end. Dropped when the project is saved, replaced or opened meanwhile.
  */
 function autosaveAfterSave(projectId: ID, loadedRevision: number): void {

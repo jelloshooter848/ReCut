@@ -5,7 +5,7 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
-  ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronRight, Clapperboard, Copy, Film, LayoutGrid, List, Palette, Pencil, Plus, Scissors, Star, Trash2, Wand2, Filter, X,
+  ArrowDownAZ, ArrowUpAZ, Captions, ChevronDown, ChevronRight, Clapperboard, Copy, Film, LayoutGrid, List, ListOrdered, ListPlus, Merge, Palette, Pencil, Plus, Scissors, Star, Trash2, Wand2, Filter, X,
 } from 'lucide-react';
 import type { ID, MediaItem, SceneRecord } from '@shared/model';
 import { formatSequenceSecondsTimecode } from '@shared/time';
@@ -17,7 +17,7 @@ import { toast } from '@/components/ui/toastStore';
 import { useLayoutStore } from '@/components/layout/layoutStore';
 import {
   EMPTY_FILTERS, collectFacets, compareScenes, defaultSceneName, duplicateScene, durationLabel, filtersActive, groupScenes, importDetectedScenes,
-  insertSceneAtPlayhead, insertScenesAtPlayhead, loadSceneInSource, matchesFilters, mediaFps, rangeLabel, sourceLabel, startSceneDrag,
+  insertSceneAtPlayhead, insertScenesAtPlayhead, loadSceneInSource, matchesFilters, mediaFps, nameScenesFromTranscript, nextSequenceName, rangeLabel, sourceLabel, startSceneDrag,
   type GroupKey, type SceneFilters, type SortKey, type ViewMode,
 } from './sceneUtils';
 import { useThumb } from './useThumb';
@@ -69,6 +69,8 @@ export function ScenesPanel({ active }: PanelProps) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [prompt, setPrompt] = useState<Prompt>(null);
   const [confirmDelete, setConfirmDelete] = useState<ID[] | null>(null);
+  /** Scenes for a new sequence (Make Sequence…), in list order. */
+  const [seqPrompt, setSeqPrompt] = useState<ID[] | null>(null);
   const anchorRef = useRef<ID | null>(null);
   const listRef = useRef<VirtualListHandle>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -96,6 +98,7 @@ export function ScenesPanel({ active }: PanelProps) {
     return out;
   }, [groups, collapsed]);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const visibleRef = useRef(visibleIds); visibleRef.current = visibleIds;
   const selectedScenes = useMemo(() => selectedIds.map((id) => scenesMap[id]).filter((s): s is SceneRecord => !!s), [selectedIds, scenesMap]);
 
   // Detected-scenes import helper candidate: selected media first, then the Source clip's media.
@@ -145,7 +148,7 @@ export function ScenesPanel({ active }: PanelProps) {
   const runImport = () => {
     if (!importCandidate) return;
     const n = importDetectedScenes(importCandidate.id);
-    toast.ok(n ? `Imported ${n} detected scene${n === 1 ? '' : 's'} from ${importCandidate.name}` : 'All detected scenes are already in the library');
+    toast.ok(n ? `Imported ${n} detected shot${n === 1 ? '' : 's'} from ${importCandidate.name}` : 'All detected shots are already in the library');
   };
 
   // ---- deletion
@@ -167,12 +170,34 @@ export function ScenesPanel({ active }: PanelProps) {
     const many = targets.length > 1;
     const setAll = (p: Partial<SceneRecord>) => { for (const t of targets) useStore.getState().updateScene(t.id, p); };
     const hasSeq = !!s.project.activeSequenceId;
+    // Sequences (#146) take the scenes in the order the list shows them.
+    const order = visibleRef.current;
+    const ordered = [...targets].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)).map((t) => t.id);
+    const sequences = Object.values(s.project.sceneSequences ?? {}).sort((a, b) => a.name.localeCompare(b.name));
     return [
       { label: 'Load in Source', icon: Film, onSelect: () => loadSceneInSource(scene) },
       { label: many ? `Insert ${targets.length} at playhead` : 'Insert at playhead', icon: Plus, disabled: !hasSeq, onSelect: () => (many ? insertScenesAtPlayhead(targets, 'insert') : insertSceneAtPlayhead(scene, 'insert')) },
       { label: many ? `Overwrite ${targets.length} at playhead` : 'Overwrite at playhead', icon: Scissors, disabled: !hasSeq, onSelect: () => (many ? insertScenesAtPlayhead(targets, 'overwrite') : insertSceneAtPlayhead(scene, 'overwrite')) },
       { separator: true },
+      ...(many ? [{
+        label: `Merge ${targets.length} Scenes`, icon: Merge, disabled: targets.some((t) => t.mediaId !== targets[0].mediaId),
+        title: targets.some((t) => t.mediaId !== targets[0].mediaId) ? 'The selected scenes are from different videos' : 'One scene from the first start to the last end',
+        onSelect: () => {
+          const id = useStore.getState().mergeScenes(targets.map((t) => t.id));
+          if (id) { useStore.getState().selectScenes([id], 'set'); anchorRef.current = id; toast.ok(`Merged ${targets.length} scenes into "${useStore.getState().project.scenes[id]?.name}"`); }
+        },
+      }] : []),
+      { label: many ? `Make Sequence from ${targets.length} Scenes…` : 'Make Sequence…', icon: ListOrdered, onSelect: () => setSeqPrompt(ordered) },
+      {
+        label: 'Add to Sequence', icon: ListPlus, disabled: !sequences.length, title: sequences.length ? undefined : 'No sequences yet: use Make Sequence…',
+        submenu: sequences.map((q) => ({
+          label: q.name,
+          onSelect: () => { useStore.getState().updateSceneSequence(q.id, { sceneIds: [...q.sceneIds, ...ordered] }); toast.ok(`Added ${ordered.length} scene${ordered.length === 1 ? '' : 's'} to "${q.name}"`); },
+        })),
+      },
+      { separator: true },
       { label: 'Edit…', icon: Pencil, onSelect: () => openEditor(scene.id) },
+      { label: many ? `Name ${targets.length} from Transcript` : 'Name from Transcript', icon: Captions, title: 'Uses the first words spoken in the scene (Whisper transcript or subtitles)', onSelect: () => { nameScenesFromTranscript(targets); } },
       { label: many ? `Duplicate ${targets.length}` : 'Duplicate', icon: Copy, onSelect: () => { const ids = targets.map(duplicateScene); useStore.getState().selectScenes(ids, 'set'); } },
       {
         label: 'Set color', icon: Palette,
@@ -337,9 +362,9 @@ export function ScenesPanel({ active }: PanelProps) {
         <div className="scn-import" data-testid="scene-import-detected">
           <Wand2 size={13} />
           <span className="grow ellipsis" title={importCandidate.name}>
-            <b>{importable}</b> detected scene{importable === 1 ? '' : 's'} in <b>{importCandidate.name}</b>
+            <b>{importable}</b> detected shot{importable === 1 ? '' : 's'} in <b>{importCandidate.name}</b>
           </span>
-          <Button size="sm" onClick={runImport} title={`Import detected scenes of ${importCandidate.name} as records`}>Import as records</Button>
+          <Button size="sm" onClick={runImport} title={`Make one scene per detected shot of ${importCandidate.name}`}>Import as records</Button>
         </div>
       ) : null}
 
@@ -347,7 +372,7 @@ export function ScenesPanel({ active }: PanelProps) {
       <div className="panel-body scn-body" ref={bodyRef} onClick={(e) => { if (!(e.target as HTMLElement).closest('[data-scene-id], .scn-group-head')) useStore.getState().selectScenes([], 'clear'); }}>
         {all.length === 0 ? (
           <EmptyState icon={Clapperboard} title="No scenes in the library yet"
-            description="Mark In/Out in the Source monitor and press “From Source In/Out”, or import detected scenes from a movie. Scene records only reference the source — nothing is copied." />
+            description="Mark In/Out in the Source monitor and press “From Source In/Out”, or select shots in the Project panel and choose Make Scene. Scene records only reference the source — nothing is copied." />
         ) : filtered.length === 0 ? (
           <EmptyState icon={Filter} title="No scenes match" description="Try a different search or clear the filters." action={<Button size="sm" onClick={() => setFilters(EMPTY_FILTERS)}>Clear filters</Button>} />
         ) : (
@@ -376,6 +401,16 @@ export function ScenesPanel({ active }: PanelProps) {
             <span className="text-faint"> · {media[sourceClip.mediaId]?.name}</span>
           </div>
         ) : null}
+      </NamePromptDialog>
+      <NamePromptDialog open={!!seqPrompt} title={seqPrompt && seqPrompt.length > 1 ? `Make Sequence from ${seqPrompt.length} Scenes` : 'Make Sequence'} label="Sequence name"
+        initial={seqPrompt ? nextSequenceName() : ''} confirmLabel="Make Sequence" onCancel={() => setSeqPrompt(null)}
+        onConfirm={(name) => {
+          const ids = seqPrompt ?? [];
+          setSeqPrompt(null);
+          useStore.getState().addSceneSequence(name, ids);
+          toast.ok(`Sequence "${name}" made from ${ids.length} scene${ids.length === 1 ? '' : 's'}`);
+        }}>
+        <div className="text-dim text-xs">The scenes keep the order of the list. Find the sequence in the Sequences tab.</div>
       </NamePromptDialog>
       <ConfirmDialog open={!!confirmDelete} title={confirmDelete && confirmDelete.length > 1 ? `Delete ${confirmDelete.length} scenes?` : 'Delete scene?'}
         message={<>Removes the record{confirmDelete && confirmDelete.length > 1 ? 's' : ''} from the library. Source media and timeline clips are not affected. This can be undone.</>}

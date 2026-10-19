@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LICENCE_FILES, licenceDirs, listLicenceFiles, resolveLicenceFile } from '../../electron/licences';
 
-// bugs/closed/2026-10-07-bundled-ffmpeg-licence-not-shipped.md: releases must ship ReCut's LICENSE, the third-party
+// bugs/closed/2026-10-07-bundled-ffmpeg-licence-not-shipped.md @ 59eafc6: releases must ship ReCut's LICENSE, the third-party
 // notices and the bundled FFmpeg's licence / build files, and Help › About › Licences opens them by id only.
 
 const repo = fileURLToPath(new URL('../..', import.meta.url));

@@ -126,8 +126,8 @@ are not affected.
 | 7.1 and other layouts | as above | downmixed | converted to 5.1 |
 
 - **5.1 export** (Export › Audio › Channels › **5.1 Surround**, or the **1080p 5.1 Surround** preset) is only offered
-  when at least one source in the sequence has 6 or more channels. It uses AC-3 at 640 kb/s by default.
-- A sequence can be set to 5.1 in New Sequence / Sequence Settings (Match Media picks 5.1 when the clip has ≥ 6
+  when at least one source in the timeline has 6 or more channels. It uses AC-3 at 640 kb/s by default.
+- A timeline can be set to 5.1 in New Timeline / Timeline Settings (Match Media picks 5.1 when the clip has ≥ 6
   channels). That sets the export defaults. Mixing itself is level / gain / fades per clip and volume per track.
   There is no panning or surround positioning.
 - **Channel selection per clip** (Clip Inspector › Audio › **Channels**, for streams with two or more channels):
@@ -152,33 +152,33 @@ are not affected.
 
 | Source | How |
 |---|---|
-| SRT, WebVTT files | **Import Subtitles…** (Project right-click, File menu, or Transcript › Import), or in a sequence's Subtitles panel with **Import to track…**. The parser accepts BOMs, CRLF, 3-digit hours and VTT cue identifiers. |
+| SRT, WebVTT files | **Import Subtitles…** (Project right-click, File menu, or Transcript › Import), or in a timeline's Subtitles panel with **Import to track…**. The parser accepts BOMs, CRLF, 3-digit hours and VTT cue identifiers. |
 | Sidecar files | When a video is imported, `<video name>.srt|.vtt` and `<video name>.<lang>.srt|.vtt` **in the same folder** are attached automatically, with the language taken from the file name. |
 | Embedded text streams | Right-click › **Embedded Subtitles** or Transcript › Import › **Embedded…**. Text codecs (SubRip, ASS/SSA, mov_text, WebVTT, TTML, SAMI, MicroDVD, ...) are converted to SRT. ASS styling is dropped. |
 | Bitmap streams (PGS, VobSub, DVB, XSUB) | Right-click › **Embedded Subtitles** or Transcript › Import › **Embedded…** › "#3 eng (PGS) — **Read with OCR…**". ReCut reads the images with its built-in OCR engine (Tesseract) in the language you choose; install languages once in **File › OCR Languages…**. The track is named "English (OCR #3)". Teletext and ARIB captions are not supported. |
 | Speech-to-text | Transcript › Import › Transcribe… › **Local Whisper…** or right-click › **Transcribe with Whisper…**: the built-in whisper.cpp engine transcribes any audio stream FFmpeg can decode (it is converted to 16 kHz mono first) with a model installed from **File › Transcription Models…** (ggml Whisper models, 78 MB to 1.6 GB). The track is named "English (Whisper Small)". |
 
-Media subtitle tracks feed the Transcript search. When **Carry subtitles into sequence** is on (the default),
-inserting a clip copies its cues into the sequence's subtitle tracks, attached to the clip.
+Media subtitle tracks feed the Transcript search. When **Carry subtitles into timeline** is on (the default),
+inserting a clip copies its cues into the timeline's subtitle tracks, attached to the clip.
 
 **Output:**
 - Subtitles panel › **Export** › **Export SRT…** / **Export VTT…** writes one track. It only writes absolute
   `.srt` / `.vtt` paths, refuses any file the project reads from (media, proxies, subtitle files imported to media
-  or to a sequence track, or read by the Transcript; compared case-insensitively and by file identity, so links are
+  or to a timeline track, or read by the Transcript; compared case-insensitively and by file identity, so links are
   caught), and writes through a temp file in the same folder that is renamed into place.
-- Export dialog › Subtitles › **Sidecar** writes `<name>.srt` next to the exported file with the sequence's subtitle cues
+- Export dialog › Subtitles › **Sidecar** writes `<name>.srt` next to the exported file with the timeline's subtitle cues
   (all tracks merged), re-timed to the exported range.
 - Export dialog › Subtitles › **Burn in** renders them into the picture with FFmpeg's `subtitles` filter (needs
-  libass). Cues are snapped to the sequence frames the Program monitor shows them on, so they appear and disappear on
+  libass). Cues are snapped to the timeline frames the Program monitor shows them on, so they appear and disappear on
   exactly those frames. The sidecar keeps the exact cue times.
-- MKV export › Subtitles › tracks: each chosen sequence subtitle track becomes a soft subtitle stream (SubRip,
+- MKV export › Subtitles › tracks: each chosen timeline subtitle track becomes a soft subtitle stream (SubRip,
   `S_TEXT/UTF8`) with the sidecar's exact cue times, a language (ISO 639-2), a title and Default / Forced flags. Plain
   text only: ReCut's subtitles have no styling, so ASS is not written.
 
 ## Images
 
 Stills (png, jpg, gif, bmp, webp, and anything else FFmpeg reads as an image) import as `image` media with a default
-length of 5 s when inserted. They export with `-loop 1` at the sequence frame rate. A still whose name contains a
+length of 5 s when inserted. They export with `-loop 1` at the timeline frame rate. A still whose name contains a
 printf pattern such as `x%03d.png` fails with FFmpeg 6.1 (see [LIMITATIONS](LIMITATIONS.md)).
 
 ## Export formats
@@ -217,7 +217,7 @@ MOV profiles and the pixel format each one is written in (FFmpeg's `-profile:v`)
   would take minutes). Colour tags are what the MP4 export writes: no primaries, transfer or matrix for ProRes, as
   for H.264 (FFmpeg 8 and later mark ProRes as limited range, which it is); FFmpeg's DNxHR encoder always marks its
   stream BT.709, limited range.
-- **WAV / FLAC (audio only):** stereo or 5.1, at the sample rate chosen (44.1 / 48 / 96 kHz, or the sequence's). The
+- **WAV / FLAC (audio only):** stereo or 5.1, at the sample rate chosen (44.1 / 48 / 96 kHz, or the timeline's). The
   file has exactly the samples of the range (frames × rate ÷ fps, rounded). A WAV larger than 4 GB is written as
   RF64. FLAC carries the chapters; WAV has none. Burn-in does not apply; the sidecar `.srt` does.
 - **One file per audio track** (WAV or FLAC, Export › Audio › Files › **One per track**): one file for every audio
@@ -233,7 +233,7 @@ MOV profiles and the pixel format each one is written in (FFmpeg's `-profile:v`)
 - Video: exactly the MP4 encoder settings (H.264 / H.265, CRF or bitrate, preset, frame size and rate), without the
   `hvc1` tag (Matroska has codec ids, not tags; FFmpeg refuses one). ProRes and DNxHR are not offered in MKV: few
   players and editors read them there, and MOV is their container.
-- Audio tracks: a list of mix definitions (`ExportSettings.audioOutputs`): which sequence audio tracks feed the track
+- Audio tracks: a list of mix definitions (`ExportSettings.audioOutputs`): which timeline audio tracks feed the track
   (default: all, the main mix), its layout (stereo, 5.1, mono), codec (AAC, AC-3, FLAC, PCM; PCM and FLAC at the
   dialog's bit depth), bitrate (AAC / AC-3), language (ISO 639-2) and title. The first is the default track. Presets:
   **Main mix only** (no list: one track with the codec, bitrate and channels of the MP4 settings), **5.1 + stereo
@@ -243,7 +243,7 @@ MOV profiles and the pixel format each one is written in (FFmpeg's `-profile:v`)
 - Matroska stores no channel layout for PCM, only the channel count: players assume the standard layout for 2 or 6
   channels. FLAC, AAC and AC-3 carry theirs.
 - Subtitles: soft SubRip streams (above). Burn-in and the sidecar `.srt` still work.
-- Chapters: as MP4 (the sequence's Chapter markers in the range). Matroska can start the first chapter later, but the
+- Chapters: as MP4 (the timeline's Chapter markers in the range). Matroska can start the first chapter later, but the
   same untitled leading chapter is written so MP4 and MKV exports have the same chapters.
 - Metadata: nothing from the sources (as MP4). Each audio and subtitle stream gets the language (`und` when none is
   set) and the title you give it, and the default / forced flags; the video stream is marked default. FFmpeg's own
@@ -257,15 +257,15 @@ MP4 details:
 - Container: **MP4** (`+faststart`).
 - Video: **H.264 (libx264)** or **H.265 / HEVC (libx265)**, yuv420p, constant frame rate. Quality is either **CRF**
   (14–32) or **Target bitrate**. Encoder preset ultrafast…slow. Frame size 16–8192 px (even). Frame rate is the
-  sequence's or 23.976 / 24 / 25 / 29.97 / 30 / 50 / 59.94 / 60 (NTSC rates stay exact rationals, e.g. 30000/1001).
-  A rate other than the sequence's is converted at the output by repeating or dropping frames: the timeline,
-  transitions, subtitles and audio are rendered at the sequence rate, so the duration and A/V sync do not change.
+  timeline's or 23.976 / 24 / 25 / 29.97 / 30 / 50 / 59.94 / 60 (NTSC rates stay exact rationals, e.g. 30000/1001).
+  A rate other than the timeline's is converted at the output by repeating or dropping frames: the timeline,
+  transitions, subtitles and audio are rendered at the timeline rate, so the duration and A/V sync do not change.
 - Audio: **AAC** (44.1 / 48 / 96 kHz) or **AC-3** (32 / 44.1 / 48 kHz, the encoder's limit), stereo or 5.1. Switching
   to AC-3 lowers a higher sample rate to 48 kHz; a request that still asks for an unsupported AC-3 rate is exported
   at 48 kHz (or the next supported rate) with a warning.
-- Range: entire sequence or In → Out. A range edge inside a transition renders the frames the full export renders.
+- Range: entire timeline or In → Out. A range edge inside a transition renders the frames the full export renders.
 - Anamorphic sources are un-squeezed, and the output always has square pixels.
-- Chapters (MP4, MKV, MOV, FLAC): the sequence's **Chapter** markers in the range (names and times from the range start; ordinary and
+- Chapters (MP4, MKV, MOV, FLAC): the timeline's **Chapter** markers in the range (names and times from the range start; ordinary and
   continuity markers are not exported). No chapter markers, no chapters. The first chapter starts at 0: a chapter
   marker at or before the range start (the latest one) covers it; if there is none, an untitled chapter runs from 0
   to the first chapter marker. No metadata is copied from the sources: no global tags (title, comment, artist,
@@ -274,7 +274,7 @@ MP4 details:
 - Output: an absolute folder, an existing file is only replaced after you confirm, and a project source file is
   never written over (see [USER-GUIDE › Export](USER-GUIDE.md#15-export) and
   [export-pipeline.md](export-pipeline.md#output-files)).
-- Presets (`shared/model.ts` → `EXPORT_PRESETS`, plus **Match Sequence**):
+- Presets (`shared/model.ts` → `EXPORT_PRESETS`, plus **Match Timeline**):
 
 | Preset | Size | Video | Audio |
 |---|---|---|---|
@@ -287,8 +287,8 @@ MP4 details:
 | DNxHR HQ (MOV) | (keeps the size) | DNxHR HQ | PCM 24-bit |
 | WAV 24-bit (audio only) | — | none | PCM 24-bit, one mixed file |
 | WAV per audio track | — | none | PCM 24-bit, one file per track |
-| Match Sequence | sequence size | (keeps current codec settings) | sequence rate / channels |
+| Match Timeline | timeline size | (keeps current codec settings) | timeline rate / channels |
 
 Exports are frame-exact: the output has exactly the frame count of the exported range, and each frame is the one the
 Program monitor shows. With a converted frame rate the output has `round(range duration × export rate)` frames and
-each one shows the sequence frame on screen at its midpoint. See [export-pipeline.md](export-pipeline.md).
+each one shows the timeline frame on screen at its midpoint. See [export-pipeline.md](export-pipeline.md).

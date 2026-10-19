@@ -84,10 +84,10 @@ export function FilterBar({ seq, filters, palette }: FilterBarProps) {
           onClick={() => bulkEnable('Enable all clips', (enabled) => (enabled ? null : true))}>Enable all{disabledCount ? ` (${disabledCount})` : ''}</Button>
         <Button size="sm" icon={Scissors} disabled={disabledCount === 0} data-testid="remove-disabled" title="Ripple-delete every disabled clip and close the gaps (asks first; one undo step)"
           onClick={() => runCommand('sequence.removeDisabledClips')}>Remove disabled</Button>
-        <Button size="sm" icon={CopyPlus} disabled={disabledCount === 0} data-testid="duplicate-without-disabled" title="Duplicate the sequence as a new version with the disabled clips removed and gaps closed"
+        <Button size="sm" icon={CopyPlus} disabled={disabledCount === 0} data-testid="duplicate-without-disabled" title="Duplicate the timeline as a new version with the disabled clips removed and gaps closed"
           onClick={() => runCommand('sequence.duplicateWithoutDisabled')}>Duplicate as cut</Button>
         {stats ? (
-          <span className="sl-whatif mono" data-testid="whatif-readout" title="Sequence duration minus the matching clips on V1 (ignores gaps closing and other tracks)">
+          <span className="sl-whatif mono" data-testid="whatif-readout" title="Timeline duration minus the matching clips on V1 (ignores gaps closing and other tracks)">
             Runtime if removed: <b>{formatHMS(stats.runtimeIfRemoved, seq.fps)}</b>
             <span className="text-dim"> (−{formatMS(stats.matchingV1Frames, seq.fps)})</span>
             <span className="text-faint"> · estimated</span>

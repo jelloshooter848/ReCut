@@ -17,7 +17,7 @@ import {
   sanitizePackaging, subtitleOutputPlan, supportsPackaging, usesAc3, validLanguageCode, videoEncoder, withExportExtension,
 } from '@shared/exportFormat';
 
-export const MATCH_SEQUENCE = 'Match Sequence';
+export const MATCH_SEQUENCE = 'Match Timeline';
 export const CUSTOM = 'Custom';
 
 export const ENCODER_PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow'] as const;
@@ -443,24 +443,24 @@ export function exportChecklist(seq: Sequence, media: Record<ID, MediaItem>, set
   const played = flattenSequence(seq, sequences, media);
   for (const w of flattenWarnings(played)) items.push({ level: 'warning', text: w });
   const ids = sequenceMediaIds(played);
-  if (sequenceDuration(seq) <= 0) items.push({ level: 'error', text: 'The sequence is empty — nothing to export.' });
+  if (sequenceDuration(seq) <= 0) items.push({ level: 'error', text: 'The timeline is empty — nothing to export.' });
   const missing = ids.filter((id) => !media[id]);
   const offline = ids.map((id) => media[id]).filter((m): m is MediaItem => !!m && m.offline);
   const unprobed = ids.map((id) => media[id]).filter((m): m is MediaItem => !!m && !m.offline && !m.probe);
   const failedProbe = unprobed.filter((m) => m.probeError);
   if (missing.length) items.push({ level: 'error', text: `${missing.length} clip source${missing.length > 1 ? 's are' : ' is'} missing from the project.` });
-  if (offline.length) items.push({ level: 'error', text: `Offline media used in the sequence: ${offline.map((m) => m.name).join(', ')}. Relink it before exporting.` });
+  if (offline.length) items.push({ level: 'error', text: `Offline media used in the timeline: ${offline.map((m) => m.name).join(', ')}. Relink it before exporting.` });
   if (failedProbe.length) items.push({ level: 'warning', text: `Media could not be analyzed: ${failedProbe.map((m) => m.name).join(', ')}. Clips may render as black/silence.` });
   const pending = unprobed.filter((m) => !m.probeError);
   if (pending.length) items.push({ level: 'warning', text: `Media not analyzed yet: ${pending.map((m) => m.name).join(', ')}.` });
-  if (settings.rangeMode === 'inOut' && !hasInOut(seq)) items.push({ level: 'warning', text: 'In/Out range is not set; the entire sequence will be exported.' });
+  if (settings.rangeMode === 'inOut' && !hasInOut(seq)) items.push({ level: 'warning', text: 'In/Out range is not set; the entire timeline will be exported.' });
   const audioOnly = isAudioOnly(settings);
   // A different (valid) export frame rate is converted at the output (see fpsConversionNote); nothing to check.
-  if (!audioOnly && !isValidFps(settings.fps)) items.push({ level: 'warning', text: `The export frame rate is not valid; the sequence frame rate (${fpsLabel(seq.fps)} fps) is used.` });
+  if (!audioOnly && !isValidFps(settings.fps)) items.push({ level: 'warning', text: `The export frame rate is not valid; the timeline frame rate (${fpsLabel(seq.fps)} fps) is used.` });
   const surroundOut = hasAudioOutputs(settings) ? settings.audioOutputs!.some((o) => o.layout === '5.1') : settings.audioChannels === 6;
   if (surroundOut && maxSourceChannels(played, media) < 6) items.push({ level: 'warning', text: 'No source has 6 audio channels; 5.1 output will be upmixed from stereo.' });
   const burnIn = settings.burnSubtitles && !audioOnly;
-  if ((burnIn || settings.exportSubtitleSidecar) && !sequenceHasSubtitles(seq)) items.push({ level: 'warning', text: 'The sequence has no subtitle tracks; nothing will be burned in or written.' });
+  if ((burnIn || settings.exportSubtitleSidecar) && !sequenceHasSubtitles(seq)) items.push({ level: 'warning', text: 'The timeline has no subtitle tracks; nothing will be burned in or written.' });
   if (audioOnly && settings.burnSubtitles && sequenceHasSubtitles(seq)) {
     items.push({ level: 'info', text: 'Subtitle burn-in does not apply to an audio-only format (there is no picture). Use Sidecar to write an .srt next to the audio.' });
   }
@@ -714,14 +714,14 @@ function computeSequenceWarnings(seq: Sequence, media: Record<ID, MediaItem>, st
     const names = groups.map((g) => `${g.media.name} (${fpsLabel(g.media.probe!.video!.fps)} fps)`);
     items.push({
       level: 'warning', target: mediaTarget(groups), scope: 'video',
-      text: `Source frame rate differs from the sequence (${fpsLabel(seq.fps)} fps): ${namesWithMore(names)}. Frames are repeated or dropped to fit, so motion may stutter.`,
+      text: `Source frame rate differs from the timeline (${fpsLabel(seq.fps)} fps): ${namesWithMore(names)}. Frames are repeated or dropped to fit, so motion may stutter.`,
     });
   }
   if (vfr.length) {
     const groups = groupByMedia(vfr);
     items.push({
       level: 'warning', target: mediaTarget(groups), scope: 'video',
-      text: `Variable frame rate (VFR) media in the sequence: ${namesWithMore(groups.map((g) => g.media.name))}. Frames are repeated or dropped unevenly; convert it to a constant frame rate if motion or sync looks off.`,
+      text: `Variable frame rate (VFR) media in the timeline: ${namesWithMore(groups.map((g) => g.media.name))}. Frames are repeated or dropped unevenly; convert it to a constant frame rate if motion or sync looks off.`,
     });
   }
 

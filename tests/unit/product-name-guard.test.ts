@@ -4,7 +4,7 @@
  * index.html outside the identity module, comments included, so that changing the identity module renames the
  * whole app.
  *
- * Not scanned (allowed to name the product literally): docs, CHANGELOG.md, bugs/, test fixtures and tests, where a
+ * Not scanned (allowed to name the product literally): docs, CHANGELOG.md, test fixtures and tests, where a
  * literal is the point. The frozen identifiers (cache-key salts, `recut.*.v1` storage keys, the `recut-media://`
  * scheme, `window.__recut`, the `.recut` fixtures) are lower case and are not the display name.
  */

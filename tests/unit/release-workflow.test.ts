@@ -699,7 +699,12 @@ describe('speech-to-text engine in CI (Roadmap §5)', () => {
   });
 
   it('the smoke tests require the engine line, and the packages stay within the budget with no model', () => {
-    expect(jobText('installer')).toContain("'whisper engine=[0-9.]+ ok path=.*resources\\\\whisper\\\\whisper-cli\\.exe'");
+    // The installer's (and the launcher's) required smoke lines are scripts/smoke-requirements.json (issue #170).
+    expect(jobText('installer')).toContain('node scripts/check-smoke.mjs --mode installer $out');
+    const smokeList = JSON.parse(fs.readFileSync(path.join(repo, 'scripts', 'smoke-requirements.json'), 'utf8')) as { required: Array<Record<string, string>> };
+    for (const mode of ['installer', 'launcher']) {
+      expect(smokeList.required.find((r) => r.id === 'whisper')?.[mode], mode).toBe(String.raw`^smoke: whisper engine=[0-9.]+ ok path=.*\\resources\\whisper\\whisper-cli\.exe$`);
+    }
     expect(jobText('linux')).toContain("'smoke: whisper engine=[0-9.]+ ok path=");
     for (const job of ['installer', 'linux']) {
       expect(jobText(job), job).toContain('Speech-to-text packaging budget');

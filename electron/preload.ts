@@ -12,7 +12,7 @@ import { IPC, pathToMediaUrl } from '../shared/ipc';
 import { SAVE_STREAM_IPC, type ProjectAutosaveStreamApi, type ProjectSaveStreamApi } from '../shared/projectWire';
 import type {
   DroppedFile, ExportRequest, FilmstripRequest, LicenceFileId, MenuCommand, MessageOptions, OpenFilesOptions, ProxyRequest, ChannelProxyRequest, RecutApi,
-  RelinkScanRequest, SaveFileOptions, SceneDetectRequest, ThumbnailRequest,
+  RelinkScanRequest, SaveFileOptions, SceneDetectRequest, SuggestScenesRequest, ThumbnailRequest,
 } from '../shared/ipc';
 
 function subscribe<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
@@ -86,6 +86,7 @@ const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
   lookupProxy: (req: ProxyRequest) => ipcRenderer.invoke(IPC.mediaProxyLookup, req),
   startChannelProxy: (req: ChannelProxyRequest) => ipcRenderer.invoke(IPC.mediaChannelProxyStart, req),
   startSceneDetect: (req: SceneDetectRequest) => ipcRenderer.invoke(IPC.mediaSceneDetectStart, req),
+  startSuggestScenes: (req: SuggestScenesRequest) => ipcRenderer.invoke(IPC.mediaSuggestScenesStart, req),
   extractSubtitles: (path: string, streamIndex: number) => ipcRenderer.invoke(IPC.mediaExtractSubtitles, path, streamIndex),
   mediaUrl: (path: string) => pathToMediaUrl(path),
 

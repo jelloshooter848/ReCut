@@ -9,7 +9,7 @@ registerPanel({
   icon: Monitor,
   component: ProgramPanel,
   keepAlive: true,
-  description: 'Program Monitor — plays the active sequence',
+  description: 'Program Monitor — plays the active timeline',
 });
 
 export { ProgramPanel };

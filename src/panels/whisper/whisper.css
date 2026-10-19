@@ -16,11 +16,17 @@
 
 /* Transcribe dialog (TranscribeDialog.tsx) */
 .trx-media { display: flex; flex-direction: column; max-height: 220px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-1); }
-.trx-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 240px) auto; align-items: center; gap: 8px; min-height: 28px; padding: 2px 8px; border-bottom: 1px solid var(--bg-3); }
+.trx-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 240px) auto; align-items: center; gap: 8px; min-height: 30px; padding: 3px 8px; border-bottom: 1px solid var(--bg-3); }
 .trx-name { min-width: 0; }
 .trx-stream { min-width: 0; }
 .trx-empty { padding: 16px; text-align: center; }
+/* Settings under the media list: one column of evenly spaced rows, labels in a fixed gutter (#110). */
+.trx-settings { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
+.trx-field { min-height: 28px; align-items: center; }
 .trx-field > .text-sm:first-child { width: 72px; flex: none; }
-.trx-check { padding-left: 80px; }
-.trx-hint { padding-left: 100px; margin-top: -6px; line-height: 1.4; }
-.trx-note { margin: 0; line-height: 1.45; }
+.trx-field .btn, .trx-field .select { min-height: 26px; }
+.trx-dl-bar { max-width: 220px; }
+.trx-check { padding-left: 80px; margin-top: 4px; }
+.trx-hint { padding-left: 102px; margin-top: -6px; line-height: 1.45; }
+.trx-field + .trx-hint { padding-left: 80px; margin-top: -4px; }
+.trx-note { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--bg-3); line-height: 1.5; }

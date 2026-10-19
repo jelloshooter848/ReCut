@@ -345,7 +345,7 @@ export function StoryStrip({ seq, zoom, onZoomChange, palette, filters, snapping
               {t.label ? <span>{t.label}</span> : null}
             </div>
           ))}
-          {durationF > 0 ? <div className="sl-duration-end" style={{ left: durationF * ppf }} title={`Sequence end ${formatSequenceTimecode(durationF, fps)}`} /> : null}
+          {durationF > 0 ? <div className="sl-duration-end" style={{ left: durationF * ppf }} title={`Timeline end ${formatSequenceTimecode(durationF, fps)}`} /> : null}
         </div>
 
         {/* story blocks */}

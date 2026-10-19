@@ -625,7 +625,7 @@ const poolState = () => page.evaluate(() => { const v = window.__perf.videos; re
   // can at most fill the shared pool once (MediaElementPool(16), src/app/media.ts), so more creations than its
   // capacity mean per-clip / per-frame churn (7,471 here before the fix).
   // Counted over a replay of the same 10 s from frame 0, so the pool's starting state is defined: it holds what the
-  // playback above used (bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md). The first playback
+  // playback above used (bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md @ 59eafc6). The first playback
   // creates the (file, slot) pairs that the scrub rows happened to evict, 0–2 depending on run timing; those are
   // first uses, not churn. A replay of a correct player creates none. The rows above (fps, long tasks) still measure
   // the first playback, unchanged.

@@ -211,7 +211,7 @@ describe('export frame-rate conversion: equal or invalid rates', () => {
   };
 
   // Recorded from the renderer before output frame-rate conversion existed (sequence 23.976, export 23.976). The input
-  // no longer has `-start_at_zero` (bugs/closed/2026-10-09-ts-late-video-export-early.md); the graph is unchanged.
+  // no longer has `-start_at_zero` (bugs/closed/2026-10-09-ts-late-video-export-early.md @ 59eafc6); the graph is unchanged.
   const BEFORE_FILTER = [
     "[0:v:0]trim=start=0.979146:duration=1.522104,settb=AVTB,setpts=PTS-1.000001/TB,fps=24000/1001:start_time=0,format=yuva420p,scale=w='if(gt(sar,1.000001),max(2,round(iw*sar/2)*2),iw)':h='if(lt(sar,0.999999),max(2,round(ih/sar/2)*2),ih)':flags=bicubic,setsar=1,scale=64:36:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,setsar=1,pad=64:36:(ow-iw)/2:(oh-ih)/2:color=black@0,tpad=stop=30:stop_mode=clone,trim=end_frame=30,setpts=PTS-STARTPTS[v0]",
     '[v0]settb=1001/24000,setpts=N[tv1]',

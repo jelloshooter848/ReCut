@@ -1,9 +1,9 @@
 /**
  * Quitting through the real quit path (main before-quit -> ev:beforeQuit -> renderer handleBeforeQuit), with the
  * main-process message box stubbed so a prompt is recorded instead of shown.
- *  - bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md: a background job finishing after a clean save
+ *  - bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md @ 59eafc6: a background job finishing after a clean save
  *    does not make the quit ask "Save changes?".
- *  - bugs/closed/2026-10-08-quit-stuck-after-renderer-dies.md: a renderer that dies after it acked the quit request
+ *  - bugs/closed/2026-10-08-quit-stuck-after-renderer-dies.md @ 59eafc6: a renderer that dies after it acked the quit request
  *    no longer leaves the app running for ever; a live renderer's prompt is never quit behind.
  */
 import { test, expect, type ElectronApplication } from '@playwright/test';

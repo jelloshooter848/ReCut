@@ -8,6 +8,8 @@
  *  - "hang": writes its pid to FAKE_WHISPER_PIDFILE and waits forever (cancel tests).
  *  - "fail": prints an error and exits with code 3.
  * Every run appends its arguments (one JSON line) to FAKE_WHISPER_LOG when set.
+ * `-dl` (detect language, #163): prints "auto-detected language: <xx> (p = <p>)" and exits; the answers come from
+ * FAKE_WHISPER_DETECT ("en:0.9,de:0.95,zh:0.4", one per run in order, counted in the working folder), default en:0.9.
  */
 'use strict';
 const fs = require('node:fs');
@@ -24,6 +26,14 @@ if (mode === 'hang') {
 } else if (mode === 'fail') {
   process.stderr.write('whisper_init_from_file_with_params_no_state: loading model\nerror: failed to initialize whisper context\n');
   process.exit(3);
+} else if (args.includes('-dl')) {
+  const list = (process.env.FAKE_WHISPER_DETECT || 'en:0.9').split(',');
+  const counter = require('node:path').join(process.cwd(), 'fake-dl-count');
+  const n = fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) : 0;
+  fs.writeFileSync(counter, String(n + 1));
+  const [code, p] = list[Math.min(n, list.length - 1)].split(':');
+  process.stderr.write(`whisper_lang_auto_detect_with_state: auto-detected language: ${code} (p = ${Number(p).toFixed(6)})\n`);
+  process.exit(0);
 } else {
   const input = opt('-f');
   const outBase = opt('-of');

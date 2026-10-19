@@ -1,7 +1,7 @@
 /**
  * Derived-media cache behaviour when a source file is moved, renamed or copied.
  *
- * Regression test for bugs/closed/2026-10-05-moved-media-cache-miss.md. Cache keys used to hash the absolute path
+ * Regression test for bugs/closed/2026-10-05-moved-media-cache-miss.md @ 59eafc6. Cache keys used to hash the absolute path
  * (electron/media/cache.ts cacheKeyForFile), so after a move every thumbnail, waveform, proxy and scene lookup for the
  * new path missed and the work was redone. They are now content keys (size + sampled fingerprint, cacheKeyForPath),
  * and entries written under the old path-based key are still found (legacy fallback, adopted under the content key).
@@ -23,7 +23,7 @@ import { getFfmpegPath } from '../../electron/media/ffmpeg';
 import {
   cacheKeyForFile, cacheKeyForPath, cacheKeysForPath, getCacheDir, identityStats, resetContentKeyMemo,
 } from '../../electron/media/cache';
-import { getFilmstrip, getThumbnail } from '../../electron/media/thumbs';
+import { getFilmstrip, getThumbnail, THUMB_VERSION } from '../../electron/media/thumbs';
 import { getWaveform, waveformCachePaths } from '../../electron/media/waveform';
 import { proxyOutputPath, startProxyJob } from '../../electron/media/proxy';
 import { sceneCachePath, startSceneDetectJob } from '../../electron/media/sceneDetect';
@@ -159,7 +159,7 @@ describe('derived media after moving a source file', () => {
     const thumbsRoot = path.dirname(path.dirname(thumb));
     const contentThumbDir = path.dirname(thumb);
     const { createHash } = await import('node:crypto');
-    const legacyThumbDir = path.join(thumbsRoot, createHash('sha1').update(`${keys.legacyKey}|covering-frame-display-shape-v3`).digest('hex'));
+    const legacyThumbDir = path.join(thumbsRoot, createHash('sha1').update(`${keys.legacyKey}|${THUMB_VERSION}`).digest('hex'));
     fs.renameSync(contentThumbDir, legacyThumbDir);
     const wc = waveformCachePaths(keys.key), wl = waveformCachePaths(keys.legacyKey);
     fs.renameSync(wc.pk, wl.pk);

@@ -11,7 +11,7 @@ import type { ID, JobInfo, MediaProbe } from '@shared/model';
 import {
   pathToMediaUrl, ffmpegMissingMessage,
   type ExportRequest, type ExportStartResult, type FilmstripRequest, type ProxyRequest, type ProxyLookup, type ChannelProxyRequest,
-  type SceneDetectRequest, type ThumbnailRequest, type WaveformData,
+  type SceneDetectRequest, type SuggestScenesRequest, type ThumbnailRequest, type WaveformData,
 } from '@shared/ipc';
 import type { OcrLanguageState, OcrRequest } from '@shared/ocr';
 import type { MediaContext, MediaFetch, MediaHandlers } from '../ipc';
@@ -21,7 +21,7 @@ import { installFromFile, removeLanguage, startInstallJob } from '../ocr/languag
 import { startOcrJob } from '../ocr/ocrJob';
 import type { TranscribeRequest, WhisperEngineInfo, WhisperModelState } from '@shared/whisper';
 import { parseLoopbackBaseUrl } from '../net/download';
-import { getWhisperCliPath, whisperCliVersion } from '../whisper/engine';
+import { getWhisperCliPath, whisperCliVersion, whisperMissingMessage } from '../whisper/engine';
 import {
   installModelFromFile, listWhisperModels, parseTestModelSpec, removeModel, setTestWhisperModels, startModelInstallJob,
   whisperDir, whisperModelsDir,
@@ -40,9 +40,9 @@ import { getWaveform } from './waveform';
 import { lookupCachedProxy, startProxyJob } from './proxy';
 import { startChannelProxyJob } from './channelProxy';
 import { startSceneDetectJob } from './sceneDetect';
+import { startSuggestScenesJob } from './suggestScenes';
 import { extractSubtitles } from './subtitlesExtract';
 import { envVar } from '../env';
-import { PRODUCT_NAME } from '../../shared/productIdentity';
 
 export type { MediaHandlers, MediaContext } from '../ipc';
 
@@ -164,6 +164,11 @@ export const mediaHandlers: MediaHandlers = {
     return startSceneDetectJob(jobQueue, req);
   },
 
+  async startSuggestScenes(req: SuggestScenesRequest): Promise<JobInfo> {
+    if (!getFfmpegPath()) throw new Error(ffmpegMissingMessage('ffmpeg'));
+    return startSuggestScenesJob(jobQueue, req);
+  },
+
   extractSubtitles(path: string, streamIndex: number): Promise<string> {
     return extractSubtitles(path, streamIndex);
   },
@@ -202,7 +207,7 @@ export const mediaHandlers: MediaHandlers = {
   async whisperEngine(): Promise<WhisperEngineInfo> {
     const { modelsDir } = whisperContext();
     const bin = getWhisperCliPath();
-    if (!bin) return { path: null, version: null, modelsDir, error: `The speech-to-text engine (whisper-cli) is not included in this build of ${PRODUCT_NAME}.` };
+    if (!bin) return { path: null, version: null, modelsDir, error: whisperMissingMessage() };
     engineVersion ??= whisperCliVersion(bin);
     try {
       return { path: bin, version: await engineVersion, modelsDir };

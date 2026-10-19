@@ -1,5 +1,5 @@
 /**
- * Export warnings from FFmpeg's own output (bugs/closed/2026-10-09-export-silently-pads-truncated-sources.md).
+ * Export warnings from FFmpeg's own output (bugs/closed/2026-10-09-export-silently-pads-truncated-sources.md @ 59eafc6).
  *
  * FFmpeg exits 0 when a source ends early (truncated download, damaged file), has a decode error partway through
  * or has corrupt packets, and the render graph pads every clip to its full length (tpad / apad), so the export

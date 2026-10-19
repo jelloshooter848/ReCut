@@ -1,5 +1,5 @@
 /**
- * The Program monitor's Cross Dissolve (bugs/closed/2026-10-08-two-sided-transition-preview-mismatch.md): the two
+ * The Program monitor's Cross Dissolve (bugs/closed/2026-10-08-two-sided-transition-preview-mismatch.md @ 59eafc6): the two
  * layers of a dissolve are added in a scratch canvas (`lighter`, a premultiplied add) and the sum goes over what is
  * below, so the picture is the linear mix (1 − t)·(out over below) + t·(in over below), like the export. Drawn one
  * over the other, as before, the picture dimmed mid-dissolve.

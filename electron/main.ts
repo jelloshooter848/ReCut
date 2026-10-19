@@ -9,7 +9,7 @@
  *  RECUT_UPDATE_CHECK=0 / RECUT_UPDATE_URL — update notice (see electron/updateIpc.ts)
  * Test-only user-data switches: electron/userDataStartup.ts.
  */
-import { app, BrowserWindow, dialog, net, protocol, screen, shell } from 'electron';
+import { app, BrowserWindow, dialog, nativeTheme, net, protocol, screen, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { IPC, MEDIA_SCHEME } from '../shared/ipc';
@@ -52,7 +52,7 @@ if (process.argv.includes('--no-sandbox')) app.commandLine.appendSwitch('no-sand
 app.commandLine.appendSwitch('enable-blink-features', 'AudioVideoTracks');
 // No Chromium HTTP cache. Its folder, <userData>/Cache, is the app's default cache folder <userData>/cache on Windows and
 // macOS (case-insensitive), and with the HTTP cache on Chromium empties that folder at every start except its own
-// Cache_Data (bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md; electron/chromiumCache.ts). The app
+// Cache_Data (bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md @ 59eafc6; electron/chromiumCache.ts). The app
 // loads only local files and recut-media://, and its downloads and the update check do not use the HTTP cache.
 // Before ready, so no network context is ever created with it.
 app.commandLine.appendSwitch('disable-http-cache');
@@ -175,6 +175,9 @@ function rememberBounds(w: BrowserWindow, now = false): void {
 }
 
 async function createWindow(): Promise<BrowserWindow> {
+  // The app is always dark: the window's title bar, native menus and system dialogs follow it rather than the
+  // system's light / dark setting (#166; on macOS in light mode the title bar was white above the dark app).
+  nativeTheme.themeSource = 'dark';
   const prefs = await io.readPrefs(userData());
   const bounds = savedBounds(prefs);
   const workArea = screen.getPrimaryDisplay().workAreaSize;
@@ -216,7 +219,7 @@ async function createWindow(): Promise<BrowserWindow> {
     requestQuit(false);
   });
   w.on('closed', () => { if (win === w) { win = null; quitFlow.rendererGone(); } });
-  // A renderer that dies or hangs while the quit waits for it (bugs/closed/2026-10-08-quit-stuck-after-renderer-dies.md).
+  // A renderer that dies or hangs while the quit waits for it (bugs/closed/2026-10-08-quit-stuck-after-renderer-dies.md @ 59eafc6).
   w.webContents.on('render-process-gone', (_e, details) => {
     console.warn(`renderer process gone (${details.reason}, exit code ${details.exitCode})`);
     quitFlow.rendererGone();
@@ -310,7 +313,9 @@ async function runSmoke(): Promise<void> {
   // Speech-to-text: the bundled whisper-cli (resources/whisper) runs and reports its version; no model needed.
   // "whisper engine=FAILED" fails the CI smoke checks (.github/workflows/windows.yml, scripts/windows/install-check.ps1),
   // which require "whisper engine=<version> ok" from every package. A run from source (the Windows launcher script, npm start)
-  // has no engine unless scripts/<platform>/get-whisper.* was run, which is not a failure there.
+  // has no engine unless scripts/setup-dev.mjs could compile it (needs cmake and a C++ compiler); it then prints
+  // "whisper engine=absent", which a double-click start of the launcher accepts. The launcher's -Smoke (CI only) does not:
+  // it requires the engine and OCR, checked with scripts/check-smoke.mjs against scripts/smoke-requirements.json (#170).
   const whisperBin = getWhisperCliPath();
   if (!whisperBin && !app.isPackaged) {
     log('smoke: whisper engine=absent (not bundled in a source run)');

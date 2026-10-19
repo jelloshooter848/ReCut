@@ -57,6 +57,7 @@ export const IPC = {
   mediaProxyLookup: 'media:proxyLookup',
   mediaChannelProxyStart: 'media:channelProxyStart',
   mediaSceneDetectStart: 'media:sceneDetectStart',
+  mediaSuggestScenesStart: 'media:suggestScenesStart',
   mediaExtractSubtitles: 'media:extractSubtitles',
   mediaUrl: 'media:url',
   // OCR of bitmap subtitles (shared/ocr.ts)
@@ -210,6 +211,21 @@ export interface ChannelProxyRequest { mediaId: ID; path: string; stream: number
 export interface SceneDetectRequest { mediaId: ID; path: string; threshold: number; duration: number; minSceneSeconds?: number }
 export interface SceneDetectResult { boundaries: number[]; duration: number }
 
+/** Suggest Scenes analysis (#151): the shots of one video, the file to read pictures from and the one to hear. */
+export interface SuggestScenesRequest {
+  mediaId: ID;
+  /** Shown in the Jobs tab. */
+  name?: string;
+  shots: { start: number; end: number }[];
+  /** The proxy when one is ready (decodes faster), else the original. */
+  videoPath: string;
+  audioPath?: string;
+  audioStream?: number;
+  duration: number;
+}
+/** One colour histogram per shot (null where none could be read), one sound score per cut (null without audio). */
+export interface SuggestScenesResult { hists: (number[] | null)[]; audioLinks: (number | null)[] }
+
 export interface ExportRequest {
   sequence: Sequence;
   /**
@@ -323,6 +339,7 @@ export interface RecutApi {
   /** Queue (or join) the channel proxy job of a clip's channel selection. */
   startChannelProxy(req: ChannelProxyRequest): Promise<JobInfo>;
   startSceneDetect(req: SceneDetectRequest): Promise<JobInfo>;
+  startSuggestScenes(req: SuggestScenesRequest): Promise<JobInfo>;
   /** Extracts embedded text subtitle stream to SRT text. */
   extractSubtitles(path: string, streamIndex: number): Promise<string>;
   /** Convert a filesystem path to a streamable URL for <video>/<img>. */

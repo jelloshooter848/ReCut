@@ -1,5 +1,5 @@
 /**
- * Program Monitor transitions in the real renderer (bugs/closed/2026-10-08-two-sided-transition-preview-mismatch.md):
+ * Program Monitor transitions in the real renderer (bugs/closed/2026-10-08-two-sided-transition-preview-mismatch.md @ 59eafc6):
  * a Cross Dissolve is the linear mix of its two clips (the canvas adds the pair with `lighter` in a scratch canvas,
  * then draws the sum over what is below), a Dip to Black fades each clip over half its length. Flat-colour stills, so
  * every pixel value is known: white 255, gray 128, dark 64.

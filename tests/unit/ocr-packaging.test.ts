@@ -95,9 +95,14 @@ describe('OCR packaging', () => {
     expect(yml).toMatch(/-gt 7MB/);
     expect(yml).toMatch(/npx asar list release\/win-unpacked\/resources\/app\.asar/);
     expect(yml).toContain("tesseract\\.js(-core)?");
-    expect(yml).toContain("ocr core=(relaxedsimd-lstm|lstm) ok worker=.*app\\.asar\\.unpacked");
-    // A failed probe logs "ocr core=FAILED …", which the existing FAILED check rejects.
-    expect(yml).toContain("$r -cmatch 'FAILED|layout=MISSING'");
+    // The Windows smoke checks (installer and launcher) take their required lines from scripts/smoke-requirements.json
+    // (issue #170): the OCR line per mode, and "FAILED" anywhere (a failed probe logs "ocr core=FAILED …") fails them.
+    expect(yml).toContain('node scripts/check-smoke.mjs --mode installer $out');
+    const smoke = JSON.parse(fs.readFileSync(path.join(repo, 'scripts/smoke-requirements.json'), 'utf8')) as { forbidden: string; required: Array<Record<string, string>> };
+    const ocr = smoke.required.find((r) => r.id === 'ocr');
+    expect(ocr?.installer).toContain('ocr core=(relaxedsimd-lstm|lstm) ok worker=.*\\\\resources\\\\app\\.asar\\.unpacked');
+    expect(ocr?.launcher).toContain('ocr core=(relaxedsimd-lstm|lstm) ok worker=');
+    expect(new RegExp(smoke.forbidden).test('smoke: ocr core=FAILED worker missing')).toBe(true);
     const main = fs.readFileSync(path.join(repo, 'electron/main.ts'), 'utf8');
     expect(main).toContain('smoke: ocr core=${core} ok worker=');
     expect(main).toContain('smoke: ocr core=FAILED');

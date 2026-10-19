@@ -83,8 +83,8 @@ export function maybeConformSequence(seqId: ID, mediaId: ID): Promise<void> | nu
   if (remembered === 'change') { applyConform(seqId, target); return null; }
   const desc = `${fpsLabel(target.fps)} fps, ${target.width}×${target.height}`;
   return confirmInApp({
-    title: 'Sequence settings',
-    message: `Change sequence to match clip (${desc})?`,
+    title: 'Timeline settings',
+    message: `Change timeline to match clip (${desc})?`,
     detail: `“${seq.name}” is ${fpsLabel(seq.fps)} fps, ${seq.width}×${seq.height}. Matching avoids frame-rate conversion on preview and export.`,
     buttons: ['Change', 'Keep'], defaultId: 0, cancelId: 1, testId: 'conform-dialog', buttonTestIds: ['conform-change', 'conform-keep'],
   }).then((i) => {
@@ -115,7 +115,7 @@ function runEdit(seqId: ID, req: SourceEditRequest): InsertSourceResult {
   const seq = st.project.sequences[seqId];
   const m = st.project.media[req.mediaId];
   const fail = (reason: string, kind: 'info' | 'warn' | 'error' = 'warn'): InsertSourceResult => { if (!req.quiet) toast(kind, reason); return { ok: false, clipIds: [], endFrame: null, reason }; };
-  if (!seq) return fail('No active sequence');
+  if (!seq) return fail('No active timeline');
   if (!m) return fail('No source clip loaded');
   const r = resolveSourceEdit(seq, m, req);
   if (!r.ok) return fail(r.reason, 'info');
@@ -129,8 +129,8 @@ function runEdit(seqId: ID, req: SourceEditRequest): InsertSourceResult {
   if (after) for (const t of [...after.videoTracks, ...after.audioTracks]) for (const c of t.clips) if (ids.includes(c.id)) end = Math.max(end, c.start + c.duration);
   if (req.at === undefined) useStore.getState().setView(seqId, { playhead: end, inPoint: null, outPoint: null });
   if (!req.quiet) {
-    if (r.notes.includes('seqOutIgnored')) toast('info', 'Sequence Out ignored — source In/Out set the duration');
-    if (r.notes.includes('sourceTooShort')) toast('warn', 'Source media is shorter than the marked sequence range');
+    if (r.notes.includes('seqOutIgnored')) toast('info', 'Timeline Out ignored — source In/Out set the duration');
+    if (r.notes.includes('sourceTooShort')) toast('warn', 'Source media is shorter than the marked timeline range');
   }
   return { ok: true, clipIds: ids, endFrame: end };
 }
@@ -138,8 +138,8 @@ function runEdit(seqId: ID, req: SourceEditRequest): InsertSourceResult {
 /** Run a Source → sequence edit into `seqId` (active sequence by default). */
 export function performSourceEdit(req: SourceEditRequest, seqId: ID | null = useStore.getState().project.activeSequenceId): InsertSourceResult {
   if (!seqId || !useStore.getState().project.sequences[seqId]) {
-    if (!req.quiet) toast('warn', 'No active sequence');
-    return { ok: false, clipIds: [], endFrame: null, reason: 'No active sequence' };
+    if (!req.quiet) toast('warn', 'No active timeline');
+    return { ok: false, clipIds: [], endFrame: null, reason: 'No active timeline' };
   }
   const pending = maybeConformSequence(seqId, req.mediaId);
   if (pending) {

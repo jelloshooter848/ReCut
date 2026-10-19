@@ -184,7 +184,7 @@ describe('export never overwrites project source assets', () => {
     // The sidecar temp is <name>.recut-part-<random>.srt created exclusively: the old fixed name is not written.
     expect(() => buildRenderGraph({ ...req, protectedPaths: [path.join(dir, 'temp-victim.part.srt')] })).not.toThrow();
     expect(() => buildRenderGraph({ ...req, protectedPaths: undefined })).not.toThrow();
-    expect(() => buildRenderGraph({ ...req, protectedPaths: undefined, settings: { ...req.settings, fileName: 'red.mp4' } })).toThrow(/used by the sequence/);
+    expect(() => buildRenderGraph({ ...req, protectedPaths: undefined, settings: { ...req.settings, fileName: 'red.mp4' } })).toThrow(/used by the timeline/);
   });
 
   it('the dialog request (media, subtitleTracks, sequences) protects subtitle files imported into another sequence', () => {

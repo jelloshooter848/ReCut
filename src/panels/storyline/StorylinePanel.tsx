@@ -66,7 +66,7 @@ export function StorylinePanel(_props: PanelProps) {
   if (!seq) {
     return (
       <div className="panel storyline-panel">
-        <EmptyState icon={MapIcon} title="No active sequence" description="Open or create a sequence to see its storyline." />
+        <EmptyState icon={MapIcon} title="No active timeline" description="Open or create a timeline to see its storyline." />
       </div>
     );
   }
@@ -74,7 +74,7 @@ export function StorylinePanel(_props: PanelProps) {
   return (
     <div className="panel storyline-panel" data-testid="storyline-panel">
       <div className="toolbar">
-        <Button size="sm" icon={Brackets} disabled={!inOut} data-testid="block-from-inout" title="Create a story block spanning the sequence In/Out range"
+        <Button size="sm" icon={Brackets} disabled={!inOut} data-testid="block-from-inout" title="Create a story block spanning the timeline In/Out range"
           onClick={() => inOut && openCreate(inOut.start, inOut.end)}>Block from In/Out</Button>
         <Button size="sm" icon={BetweenHorizontalStart} disabled={!selectionSpan} data-testid="block-from-selection" title="Create a story block spanning the selected clips"
           onClick={() => selectionSpan && openCreate(selectionSpan.start, selectionSpan.end)}>Block from Selection</Button>

@@ -378,7 +378,7 @@ test.describe('Program Monitor', () => {
   });
 
   test('a seek that never completes does not freeze the monitor: it is issued again', async () => {
-    // bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md: Chromium left a pooled element's paused seek
+    // bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md @ 59eafc6: Chromium left a pooled element's paused seek
     // pending for good (seeking, readyState HAVE_METADATA). The player waited for it for ever: no seek for the rest
     // of the scrub, and not even at rest. Here the first seek of the drag is made to look stalled (the element's
     // `seeking` / `readyState` report it in flight until the app seeks it again; the real seek underneath is normal).

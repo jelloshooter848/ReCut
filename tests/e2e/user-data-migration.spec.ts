@@ -65,7 +65,7 @@ const marker = (dir: string) => JSON.parse(fs.readFileSync(path.join(dir, MARKER
  * `cache/Cache_Data` is there as in every real profile on Windows and macOS: their file systems are case-insensitive,
  * so the app's `cache` folder is Chromium's HTTP cache folder `Cache`, of which Chromium deletes everything but
  * `Cache_Data` at every start while its HTTP cache is on
- * (bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md; the app now turns it off). "legacy folder only"
+ * (bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md @ 59eafc6; the app now turns it off). "legacy folder only"
  * checks that the moved proxy survives the first start on such a profile.
  */
 function seedLegacy(dir: string, recentProject: string): void {

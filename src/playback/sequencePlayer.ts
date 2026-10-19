@@ -15,6 +15,7 @@
  * The canvas internal resolution is the sequence size scaled by `playbackResolution`; CSS sizing
  * is the caller's responsibility.
  */
+import { SUBTITLE_POSITION_DEFAULT, subtitleAnchor } from '@shared/subtitlePosition';
 import type { ID, MediaItem, Rational, Sequence, SubtitleTrack, VideoStreamInfo } from '../../shared/model';
 import { cuesAt, onScreenTranscript, transcriptIndex, type TranscriptCue } from '../../shared/transcripts';
 import { secondsToFramesFloor, framesToSeconds, fpsValue } from '../../shared/time';
@@ -107,7 +108,7 @@ export const PRESENT_HOLD_MS = 250;
 /**
  * A paused seek that has not landed after this long (ms) is issued again, and a scrub round stops waiting for it.
  * Chromium can leave a paused element's seek pending for good (`seeking` true, readyState HAVE_METADATA, no
- * 'seeked'): see bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md. Only a new seek restarts it.
+ * 'seeked'): see bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md @ 59eafc6. Only a new seek restarts it.
  * Each retry of the same element waits twice as long as the one before (up to SEEK_STALL_MAX_MS), so a seek that is
  * just slow (a long-GOP original on a busy machine) still lands instead of being restarted forever.
  */
@@ -1283,7 +1284,12 @@ export class SequencePlayer {
     ctx.lineWidth = Math.max(2, size * 0.14);
     ctx.strokeStyle = 'rgba(0,0,0,0.9)';
     const lineH = size * 1.2;
-    let y = seq.height * 0.93;
+    // Position (#115): the default puts the last line's baseline at 93 % of the height. A set position puts the text
+    // block's bottom (lower half) or top (upper half) at that height; the first line's baseline is a cap height down.
+    const anchor = subtitleAnchor(seq.subtitlePosition);
+    let y = !anchor ? seq.height * SUBTITLE_POSITION_DEFAULT
+      : anchor.edge === 'bottom' ? seq.height * (1 - anchor.margin) - size * 0.25
+        : seq.height * anchor.margin + size * 0.95 + (lines.length - 1) * lineH;
     for (let i = lines.length - 1; i >= 0; i--) {
       let x = (seq.width - measure(lines[i].map((r) => r[0]).join(''))) / 2;
       for (const [text, hot] of lines[i]) {

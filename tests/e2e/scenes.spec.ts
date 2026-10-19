@@ -128,7 +128,7 @@ test('filters, grouping and the detected-scenes import helper', async () => {
   }, mediaId);
   const helper = page.locator('[data-testid="scene-import-detected"]');
   await expect(helper).toBeVisible();
-  await expect(helper).toContainText('6 detected scenes');
+  await expect(helper).toContainText('6 detected shots');
   await helper.locator('button', { hasText: 'Import as records' }).click();
   await expect.poll(() => getState<number>(page, '(s) => Object.keys(s.project.scenes).length')).toBe(7);
   await expect(helper).toBeHidden();

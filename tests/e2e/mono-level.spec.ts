@@ -1,5 +1,5 @@
 /**
- * Mono sources preview at the level they export at (bugs/closed/2026-10-07-mono-preview-level.md).
+ * Mono sources preview at the level they export at (bugs/closed/2026-10-07-mono-preview-level.md @ 59eafc6).
  *
  * A stereo export puts a mono stream on both channels at -3.01 dB (FFmpeg's equal-power upmix, electron/export/
  * renderGraph.ts `aformat=...:channel_layouts=stereo`). The Program monitor's speakers hear the master bus up-mixed by
@@ -177,7 +177,7 @@ test('a mono source previews 3 dB below the same tone in stereo, on both channel
   }
 });
 
-test('the Program meter shows a mono source on both bars at the level heard (bugs/closed/2026-10-07-program-meter-always-unavailable.md)', async () => {
+test('the Program meter shows a mono source on both bars at the level heard (bugs/closed/2026-10-07-program-meter-always-unavailable.md @ 59eafc6)', async () => {
   // Mono WAV: peak 0.25 x 1/sqrt(2) = -15.05 dBFS -> 0.75 of the -60..0 dB bar on L and R.
   await previewLevels(monoIds[1]);
   await page.click('[data-testid="program-go-start"]');

@@ -73,7 +73,7 @@ export async function writeSequenceSubtitles(
 ): Promise<ExportResult> {
   const seqId = opts.seqId ?? project.activeSequenceId;
   const seq = seqId ? project.sequences[seqId] : undefined;
-  if (!seq) return { ok: false, error: 'No sequence' };
+  if (!seq) return { ok: false, error: 'No timeline' };
   const refused = subtitleExportPathError(project, opts.path, io.platform);
   if (refused) return { ok: false, error: refused };
   const format: SubtitleFormat = opts.format ?? (/\.vtt$/i.test(opts.path) ? 'vtt' : 'srt');
@@ -109,7 +109,7 @@ export async function exportSubtitlesDialog(seqId: ID, format: SubtitleFormat, t
   const api = recutApi();
   if (!api) return { ok: false, error: 'IPC unavailable' };
   const seq = useStore.getState().project.sequences[seqId];
-  if (!seq) return { ok: false, error: 'No sequence' };
+  if (!seq) return { ok: false, error: 'No timeline' };
   const track = trackId ? seq.subtitleTracks.find((t) => t.id === trackId) : undefined;
   const base = `${seq.name}${track && seq.subtitleTracks.length > 1 ? `.${track.language || track.name}` : ''}.${format}`.replace(/[\\/:*?"<>|]/g, '_');
   const path = await api.saveFile({ title: `Export ${format.toUpperCase()}`, defaultPath: base, filters: [{ name: format.toUpperCase(), extensions: [format] }] });

@@ -93,8 +93,8 @@ CI (`.github/workflows/windows.yml`) runs on every push to `main`, `rc` or `dev`
 `main`, `rc`, `dev`, `devDavid` or `devJames` that changes more than Markdown and `docs/`: it typechecks, runs the
 unit and end-to-end suites on Windows, macOS and Linux, and builds and smoke-tests the Windows installer, the Linux
 AppImage and both macOS dmgs. A pull request run is a test build: it never publishes anything. A new push to the pull
-request's branch cancels the older run. It takes a while, so run the checks locally first; a maintainer can also
-start it by hand on a branch.
+request's branch cancels the older run. It takes a while, so run the checks locally first; a maintainer can also start
+it by hand on a branch.
 
 ## Code conventions
 
@@ -170,15 +170,27 @@ Before you open a PR into `dev`, check:
       one for a new limitation).
 - [ ] If it completes a [Roadmap](docs/ROADMAP.md) entry, it updates [docs/ROADMAP.md](docs/ROADMAP.md): the entry's
       **Status** line and its row in the Progress table.
+- [ ] It adds its changelog-draft line and QA block to [docs/NEXT-RELEASE.md](docs/NEXT-RELEASE.md) (see
+      [The changelog](#the-changelog)).
 - [ ] It does **not** change the version. Feature and bug PRs never touch `version` in `package.json` or
       `package-lock.json`; only a release-prep PR into `rc` (or a hotfix) changes it ([docs/RELEASING.md](docs/RELEASING.md)).
 
 ### The changelog
 
-Don't edit [CHANGELOG.md](CHANGELOG.md) in a feature or bug PR. Each release-prep PR adds the new version's section,
-written from the merged changes since the previous release and from the bug reports moved to `bugs/closed/`
-([RELEASING › What goes in the changelog](docs/RELEASING.md#what-goes-in-the-changelog)). Help it by giving your PR a
-title and description that say what a user will notice, and by linking the bug report it fixes.
+Don't edit [CHANGELOG.md](CHANGELOG.md) in a feature or bug PR. Add your entries to
+[docs/NEXT-RELEASE.md](docs/NEXT-RELEASE.md) instead, in the same PR as the change:
+
+- a line in its **Changelog draft**, under Added, Changed, Fixed or Known issues, written for users and linking the
+  issue ([RELEASING › What goes in the changelog](docs/RELEASING.md#what-goes-in-the-changelog));
+- a block in its **QA checklist**: a few tick-box steps that someone who didn't work on it can follow on a `dev` build,
+  and what they should see.
+
+Append to the end of each list and leave other entries alone, so the two personal branches rarely conflict there. The
+entries travel with the code into `dev`, and with promotions into `rc`. QA runs the checklist on the `rc` build
+of the release (its release candidates, when it has them); the release-prep PR into `rc` writes the version's `CHANGELOG.md` section from the
+draft (checked against `git log`). Candidates, if any, leave the draft as it is; it is reset to its empty template once per
+stable release, and the reset reaches `dev` from `main`. Also give your PR a title and description that say what a
+user will notice, and link the issue it fixes (`Fixes #N`).
 
 ## Reporting bugs
 
@@ -201,9 +213,9 @@ Please search [existing issues](https://github.com/jelloshooter848/ReCut/issues)
 Where ReCut keeps preferences, autosaves and its cache on each OS is listed in
 [INSTALL › Where data lives](docs/INSTALL.md#where-data-lives).
 
-Maintainers also track bugs as Markdown files under [`bugs/`](bugs/) (`bugs/open/` and `bugs/closed/`, one file per
-bug, with the severity scale and the fix process in [bugs/README.md](bugs/README.md)). You don't need to write one:
-an issue is enough. If you fix a bug that has a file there, close it as bugs/README.md describes, in the same PR.
+All bugs are tracked in GitHub Issues. Reports from before the move to Issues were Markdown files in a `bugs/`
+folder, since removed. Code comments cite them as `bugs/closed/<file> @ 59eafc6` (read one with
+`git show 59eafc6:bugs/closed/<file>`), and the docs and changelog link to them at that commit.
 
 **Security problems:** please don't describe a vulnerability in a public issue.
 <!-- OWNER: say how to report a vulnerability privately (GitHub private vulnerability reporting is currently off for this repository, or give a contact), then remove this comment. -->
@@ -216,7 +228,7 @@ AI coding agents (Claude, via Claude Code) working on tasks the owner defines. T
 in what order; the [Roadmap](docs/ROADMAP.md) records those decisions.
 
 <!-- OWNER: describe how you review changes -->
-Changes reach `dev` through pull requests, move to `rc` and from there to `main` through pull requests that the owner
+Changes reach `dev` through pull requests, and from there `rc` and then `main` through pull requests that the owner
 merges. CI runs the unit and end-to-end suites on Windows, macOS and Linux.
 
 Because of how it is built, ReCut leans on automated checks: release builds are installed or launched and
