@@ -1,11 +1,13 @@
 import { PROJECT_FORMAT_VERSION, MEDIA_CATEGORIES } from './model';
+import { isValidSubtitlePosition } from './subtitlePosition';
 import type {
   Project, Sequence, Rational, MediaItem, ProjectSettings, Bin, ID, TagVocabulary, SequenceView, Track, Clip, Transition,
   TransitionType, MediaKind, ProxyStatus, MarkerKind, Marker, StoryBlock, SequenceSubtitleTrack, SequenceSubtitleCue,
   SequenceSnapshot, SceneRecord, SubtitleTrack, ClipTransform, ClipAudio, ProxyInfo, MediaProbe, VideoStreamInfo, SourceIdentity,
-  DetectedScene,
+  DetectedScene, SceneSequence,
 } from './model';
 import { uid } from './ids';
+import { PRODUCT_NAME } from './productIdentity';
 import { makeTrack, defaultTransform, defaultAudio, reconcileTransitions, SPEED_PERCENT_MIN, SPEED_PERCENT_MAX } from './timeline';
 import { isValidFps, parseFps } from './time';
 import { saneSar } from './media';
@@ -22,14 +24,17 @@ import {
 export const DEFAULT_SEQUENCE_FPS: Readonly<Rational> = Object.freeze({ num: 24000, den: 1001 });
 
 /**
- * The project cannot be opened by this build: it was saved by a newer ReCut (`reason: 'newer'`), or its
- * formatVersion is missing / not a positive integer (`reason: 'notProject'`: not a ReCut project). This is a
+ * The project cannot be opened by this build: it was saved by a newer version (`reason: 'newer'`), or its
+ * formatVersion is missing / not a positive integer (`reason: 'notProject'`: not a project file). This is a
  * refusal, not damage: the loader reports it and never substitutes a backup. Every other error out of
  * normalizeProject means the content is damaged.
  */
 export class ProjectIncompatibleError extends Error {
   constructor(message: string, readonly reason: 'newer' | 'notProject' = 'notProject') { super(message); this.name = 'ProjectIncompatibleError'; }
 }
+
+/** Longest minimum shot length the settings accept (seconds). */
+export const MAX_MIN_SHOT_SECONDS = 30;
 
 export function defaultSettings(): ProjectSettings {
   return {
@@ -42,6 +47,9 @@ export function defaultSettings(): ProjectSettings {
     snapping: true,
     defaultTransitionFrames: 24,
     showSourceTimecodeOnClips: false,
+    highlightSpokenWords: true,
+    nameShotsFromTranscript: true,
+    minShotSeconds: 1,
   };
 }
 
@@ -70,7 +78,7 @@ export function liveView(v: SequenceView): SequenceView {
 }
 
 export function createSequence(name: string, fps: Rational = { ...DEFAULT_SEQUENCE_FPS }, width = 1920, height = 1080): Sequence {
-  if (!isValidFps(fps)) throw new RangeError(`Invalid sequence frame rate ${describeFps(fps)}`);
+  if (!isValidFps(fps)) throw new RangeError(`Invalid timeline frame rate ${describeFps(fps)}`);
   const now = Date.now();
   return {
     id: uid('seq'), name, fps, width, height, sampleRate: 48000, channels: 2,
@@ -87,7 +95,7 @@ export const DEFAULT_BINS: { id: string; name: string }[] = [
   { id: 'bin-movies', name: 'Movies' },
   { id: 'bin-tv', name: 'TV' },
   { id: 'bin-scenes', name: 'Scenes' },
-  { id: 'bin-sequences', name: 'Sequences' },
+  { id: 'bin-sequences', name: 'Timelines' },
   { id: 'bin-audio', name: 'Audio' },
   { id: 'bin-subtitles', name: 'Subtitles' },
   { id: 'bin-graphics', name: 'Graphics' },
@@ -98,14 +106,30 @@ export function createProject(name = 'Untitled Project'): Project {
   const now = Date.now();
   const bins: Record<ID, Bin> = {};
   for (const b of DEFAULT_BINS) bins[b.id] = { id: b.id, name: b.name, parentId: null, kind: 'bin' };
-  const seq = createSequence('Sequence 01');
+  const seq = createSequence('Timeline 01');
   seq.binId = 'bin-sequences';
   return {
     formatVersion: PROJECT_FORMAT_VERSION,
     id: uid('proj'), name, createdAt: now, modifiedAt: now,
     media: {}, bins, sequences: { [seq.id]: seq }, sequenceOrder: [seq.id],
-    scenes: {}, subtitleTracks: {}, tags: emptyTags(), settings: defaultSettings(), activeSequenceId: seq.id,
+    scenes: {}, sceneSequences: {}, subtitleTracks: {}, tags: emptyTags(), settings: defaultSettings(), activeSequenceId: seq.id,
   };
+}
+
+/**
+ * Whether a project holds anything a user would want back: media, scenes, subtitle tracks, tags, a name other than
+ * the default, more than one sequence, or a sequence with clips, markers, story blocks, snapshots or subtitles.
+ * Empty bins, track layout and settings do not count. An untitled project without user work is not autosaved, not
+ * offered for recovery and closes without a "Save changes?" prompt (#111).
+ */
+export function projectHasUserWork(p: Project): boolean {
+  if (p.name !== 'Untitled Project') return true;
+  if (Object.keys(p.media).length || Object.keys(p.scenes).length || Object.keys(p.subtitleTracks).length) return true;
+  if (Object.values(p.tags).some((list) => list.length > 0)) return true;
+  const seqs = Object.values(p.sequences);
+  if (seqs.length > 1) return true;
+  return seqs.some((s) => s.markers.length > 0 || s.storyBlocks.length > 0 || s.snapshots.length > 0 || s.subtitleTracks.length > 0
+    || [...s.videoTracks, ...s.audioTracks].some((t) => t.clips.length > 0));
 }
 
 export function createMediaItem(path: string, name: string): MediaItem {
@@ -119,7 +143,7 @@ export function createMediaItem(path: string, name: string): MediaItem {
 /**
  * Validate + migrate a parsed project JSON, and say what had to be repaired.
  *
- * - Throws ProjectIncompatibleError when formatVersion is missing / not a positive integer (not a ReCut project)
+ * - Throws ProjectIncompatibleError when formatVersion is missing / not a positive integer (not a project file)
  *   or newer than this build reads.
  * - Throws a plain Error for damage it cannot repair without losing work: a top-level collection holding user
  *   work (media / sequences / scenes / subtitleTracks) that is present but not an object (the loader then
@@ -161,11 +185,11 @@ function normalizeInner(raw: unknown): Project {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Project file is not a JSON object');
   const p = raw as Obj;
   const fv = p.formatVersion;
-  if (fv === undefined || fv === null) throw new ProjectIncompatibleError('Missing formatVersion; not a ReCut project', 'notProject');
+  if (fv === undefined || fv === null) throw new ProjectIncompatibleError(`Missing formatVersion; not a ${PRODUCT_NAME} project`, 'notProject');
   if (typeof fv !== 'number' || !Number.isInteger(fv) || fv < 1) {
-    throw new ProjectIncompatibleError(`Invalid formatVersion ${describeValue(fv)}; not a ReCut project`, 'notProject');
+    throw new ProjectIncompatibleError(`Invalid formatVersion ${describeValue(fv)}; not a ${PRODUCT_NAME} project`, 'notProject');
   }
-  if (fv > PROJECT_FORMAT_VERSION) throw new ProjectIncompatibleError(`Project was saved by a newer ReCut (format ${fv}); this build reads ${PROJECT_FORMAT_VERSION}`, 'newer');
+  if (fv > PROJECT_FORMAT_VERSION) throw new ProjectIncompatibleError(`Project was saved by a newer ${PRODUCT_NAME} (format ${fv}); this build reads ${PROJECT_FORMAT_VERSION}`, 'newer');
   note(`value nested more than ${MAX_PROJECT_DEPTH} levels deep removed`, pruneDeepValues(p));
   const base = createProject(str(p.name, 'Untitled Project'));
   const out = {
@@ -180,6 +204,7 @@ function normalizeInner(raw: unknown): Project {
     bins: p.bins ?? base.bins,
     sequences: entries(p.sequences, 'sequences', (s, id) => repairSequence(s, id, DEFAULT_SEQUENCE_FPS)),
     scenes: entries(p.scenes, 'scenes', repairScene),
+    sceneSequences: entries(p.sceneSequences, 'sceneSequences', repairSceneSequence),
     subtitleTracks: entries(p.subtitleTracks, 'subtitleTracks', repairSubtitleTrack),
     tags: repairTags(p.tags),
     settings: repairSettings(p.settings),
@@ -188,16 +213,17 @@ function normalizeInner(raw: unknown): Project {
   } as Project;
   const order = [...new Set(out.sequenceOrder)].filter((id) => Object.hasOwn(out.sequences, id));
   for (const id of Object.keys(out.sequences)) if (!order.includes(id)) order.push(id);
-  if (order.length !== out.sequenceOrder.length || order.some((id, i) => id !== out.sequenceOrder[i])) note('sequence order repaired');
+  if (order.length !== out.sequenceOrder.length || order.some((id, i) => id !== out.sequenceOrder[i])) note('timeline order repaired');
   out.sequenceOrder = order;
   if (!out.activeSequenceId || !Object.hasOwn(out.sequences, out.activeSequenceId)) {
-    if (out.activeSequenceId) note('unknown active sequence replaced');
+    if (out.activeSequenceId) note('unknown active timeline replaced');
     out.activeSequenceId = out.sequenceOrder[0] ?? null;
   }
   if (out.sequenceOrder.length === 0) {
-    const seq = createSequence('Sequence 01'); seq.binId = 'bin-sequences';
+    const seq = createSequence('Timeline 01'); seq.binId = 'bin-sequences';
     out.sequences[seq.id] = seq; out.sequenceOrder.push(seq.id); out.activeSequenceId = seq.id;
   }
+  repairSceneSequenceRefs(out);
   repairBins(out);
   repairPrototypeRefs(out);
   repairNesting(out);
@@ -395,7 +421,7 @@ function repairFps(v: unknown, fallback: Readonly<Rational>): Rational {
 
 function repairSequence(s: Obj, id: ID, fallbackFps: Readonly<Rational>): Sequence {
   keyedId(s, id);
-  const template = createSequence(str(s.name, 'Sequence'));
+  const template = createSequence(str(s.name, 'Timeline'));
   const fps = repairFps(s.fps, fallbackFps);
   const posInt = (v: unknown, d: number) => { if (isPosInt(v)) return v; if (v !== undefined) note(FIELD_RESET); return d; };
   const seq = {
@@ -419,6 +445,7 @@ function repairSequence(s: Obj, id: ID, fallbackFps: Readonly<Rational>): Sequen
   } as Sequence;
   optional(seq as unknown as Obj, 'parentSequenceId', isStr);
   optional(seq as unknown as Obj, 'versionLabel', isStr);
+  optional(seq as unknown as Obj, 'subtitlePosition', isValidSubtitlePosition);
   dedupeSequenceIds(seq);
   for (const t of [...seq.videoTracks, ...seq.audioTracks]) reconcileLoadedTransitions(t);
   return seq;
@@ -667,6 +694,7 @@ function repairSequenceCue(c: Obj): SequenceSubtitleCue | null {
   else if (!isFiniteNum(c.offset) || Math.abs(Math.round(c.offset)) > MAX_TIMELINE_FRAMES) { note(FIELD_RESET); c.offset = 0; }
   else if (Math.round(c.offset) !== c.offset) { note(ROUNDED); c.offset = Math.round(c.offset) + 0; }
   c.text = str(c.text, '');
+  repairWords(c);
   return c as unknown as SequenceSubtitleCue;
 }
 
@@ -791,7 +819,7 @@ function repairNesting(p: Project): void {
   for (const s of seqs) {
     for (const t of [...s.videoTracks, ...s.audioTracks]) for (const c of t.clips) {
       if (c.sequenceId === undefined) continue;
-      if (inheritedOnly(p.sequences, c.sequenceId)) { delete c.sequenceId; note('nested sequence reference that is not a sequence id cleared'); continue; }
+      if (inheritedOnly(p.sequences, c.sequenceId)) { delete c.sequenceId; note('nested timeline reference that is not a timeline id cleared'); continue; }
       any = true;
     }
   }
@@ -799,7 +827,7 @@ function repairNesting(p: Project): void {
   for (const [host, child] of nestingRepairs(p.sequences, p.sequenceOrder)) {
     const seq = p.sequences[host];
     for (const t of [...seq.videoTracks, ...seq.audioTracks]) for (const c of t.clips) {
-      if (c.sequenceId === child) { delete c.sequenceId; note('nested sequence that contained itself or was nested too deep made offline'); }
+      if (c.sequenceId === child) { delete c.sequenceId; note('nested timeline that contained itself or was nested too deep made offline'); }
     }
     // New track lists: shared/nest.ts caches the references per list.
     seq.videoTracks = [...seq.videoTracks]; seq.audioTracks = [...seq.audioTracks];
@@ -808,7 +836,7 @@ function repairNesting(p: Project): void {
   for (const [host, clipId] of nestSizeRepairs(p.sequences, p.sequenceOrder)) {
     const seq = p.sequences[host];
     for (const t of [...seq.videoTracks, ...seq.audioTracks]) for (const c of t.clips) {
-      if (c.id === clipId && c.sequenceId !== undefined) { delete c.sequenceId; note(`nested sequence that would expand to more than ${FLAT_LIMIT_TEXT} when flattened made offline`); }
+      if (c.id === clipId && c.sequenceId !== undefined) { delete c.sequenceId; note(`nested timeline that would expand to more than ${FLAT_LIMIT_TEXT} when flattened made offline`); }
     }
     sized.add(host);
   }
@@ -856,6 +884,8 @@ function repairMedia(m: Obj, id: ID): MediaItem {
   m.notes = str(m.notes, '');
   m.addedAt = num(m.addedAt, 0);
   optional(m, 'sceneDetectStatus', (v) => isStr(v) && Object.hasOwn(JOB_STATES, v));
+  optional(m, 'shotsEdited', isBool);
+  optional(m, 'transcriptTrackId', isStr);
   optional(m, 'waveformStatus', (v) => isStr(v) && Object.hasOwn(WAVEFORM_STATES, v));
   // Jobs do not survive a restart (expected, not a repair).
   if (m.sceneDetectStatus === 'running') m.sceneDetectStatus = 'none';
@@ -924,6 +954,8 @@ function repairProbe(pr: Obj): MediaProbe {
   pr.audio = objList(pr.audio, 'probed audio stream').filter(repairAudioStream);
   pr.subtitles = objList(pr.subtitles, 'probed subtitle stream');
   optional(pr, 'bitrate', isFiniteNum); optional(pr, 'playabilityReason', isStr);
+  optional(pr, 'probeRev', (v) => Number.isSafeInteger(v) && (v as number) > 0);
+  optional(pr, 'startLead', (v) => isFiniteNum(v) && v > 0 && v <= MAX_SOURCE_SECONDS);
   if ('video' in pr) { if (isObj(pr.video)) pr.video = repairVideoStream(pr.video); else { delete pr.video; note(FIELD_RESET); } }
   return pr as unknown as MediaProbe;
 }
@@ -940,6 +972,7 @@ function repairAudioStream(a: Obj): boolean {
   a.layout = str(a.layout, '');
   a.sampleRate = num(a.sampleRate, 0, nonNeg);
   optional(a, 'language', isStr); optional(a, 'title', isStr); optional(a, 'layoutGuessed', isBool);
+  optional(a, 'startTime', (v) => isFiniteNum(v) && v >= 0 && v <= MAX_SOURCE_SECONDS);
   return true;
 }
 
@@ -980,12 +1013,43 @@ function repairScene(s: Obj, id: ID): SceneRecord | null {
   return s as unknown as SceneRecord;
 }
 
+/** A sequence of scenes (#146): fields reset when wrongly typed; scene references are checked by repairSceneSequenceRefs. */
+function repairSceneSequence(s: Obj, id: ID): SceneSequence | null {
+  keyedId(s, id);
+  s.name = str(s.name, 'Sequence');
+  s.sceneIds = strList(s.sceneIds);
+  s.color = str(s.color, SCENE_SEQUENCE_COLOR); s.tags = strList(s.tags); s.notes = str(s.notes, ''); s.createdAt = num(s.createdAt, 0);
+  return s as unknown as SceneSequence;
+}
+
+/** Default colour of a new sequence of scenes. */
+export const SCENE_SEQUENCE_COLOR = '#c77dff';
+
+/** Sequences keep only scenes that exist, each once, in their order. */
+function repairSceneSequenceRefs(p: Project): void {
+  for (const q of Object.values(p.sceneSequences)) {
+    const kept = [...new Set(q.sceneIds)].filter((id) => Object.hasOwn(p.scenes, id));
+    if (kept.length !== q.sceneIds.length) { note('sequence reference to a missing scene removed'); q.sceneIds = kept; }
+  }
+}
+
+/** Optional per-word timing of a cue (#118): a list of {start, end, text} in source seconds; anything else is dropped. */
+function repairWords(c: Obj): void {
+  if (c.words === undefined) return;
+  const ok = (w: unknown): boolean => isObj(w) && isFiniteNum(w.start) && isFiniteNum(w.end) && Math.abs(w.start) <= MAX_SOURCE_SECONDS
+    && Math.abs(w.end) <= MAX_SOURCE_SECONDS && typeof w.text === 'string';
+  const list = Array.isArray(c.words) ? c.words.filter(ok).map((w) => ({ start: (w as Obj).start, end: (w as Obj).end, text: (w as Obj).text })) : [];
+  if (!Array.isArray(c.words) || list.length !== c.words.length) note('subtitle word timing without a usable time removed');
+  if (list.length) c.words = list; else delete c.words;
+}
+
 function repairSubtitleTrack(t: Obj, id: ID): SubtitleTrack {
   keyedId(t, id);
   t.name = str(t.name, ''); t.language = str(t.language, 'und'); t.origin = str(t.origin, 'srt');
   t.mediaId = nullableStr(t.mediaId);
   optional(t, 'path', isStr);
   optional(t, 'streamIndex', isNonNegInt);
+  optional(t, 'edited', isBool);
   const inRange = (n: unknown) => isFiniteNum(n) && Math.abs(n) <= MAX_SOURCE_SECONDS;
   t.cues = objList(t.cues, 'subtitle cue').filter((c) => {
     const ok = inRange(c.start) && inRange(c.end);
@@ -993,6 +1057,8 @@ function repairSubtitleTrack(t: Obj, id: ID): SubtitleTrack {
     return ok;
   }).map((c) => {
     c.id = idOr(c.id, () => uid('cue')); c.text = str(c.text, '');
+    optional(c, 'lang', isStr);
+    repairWords(c);
     return c;
   });
   return t as unknown as SubtitleTrack;
@@ -1035,6 +1101,7 @@ function repairSettings(v: unknown): ProjectSettings {
   s.autosaveIntervalSec = clampInt(s.autosaveIntervalSec, AUTOSAVE_INTERVAL_MIN_SEC, AUTOSAVE_INTERVAL_MAX_SEC);
   s.defaultTransitionFrames = clampInt(s.defaultTransitionFrames, DEFAULT_TRANSITION_FRAMES_MIN, DEFAULT_TRANSITION_FRAMES_MAX);
   if (!unit(s.sceneThreshold)) { s.sceneThreshold = d.sceneThreshold; note(FIELD_RESET); }
+  if (!(s.minShotSeconds >= 0 && s.minShotSeconds <= MAX_MIN_SHOT_SECONDS)) { s.minShotSeconds = d.minShotSeconds; note(FIELD_RESET); }
   return s;
 }
 

@@ -15,7 +15,7 @@ import { Button, Dialog, NumberField, ProgressBar, Select, Slider, TextField, To
 import { toast } from '@/components/ui/toastStore';
 import { confirm } from '@/app/dialogs/ConfirmDialog';
 import { injectStyle } from './injectStyle';
-import { buildExportRequest } from './request';
+import { buildExportRequest, transcriptExportTrack } from './request';
 import {
   AC3_SAMPLE_RATES, CRF_MAX, CRF_MIN, CUSTOM, ENCODER_PRESETS, MAX_DIMENSION, MIN_DIMENSION, applyPreset, checklistBlocks, crfLabel,
   effectiveExportFps, estimateEtaSeconds, estimateFileSize, exportChecklist, exportOutputFrames, exportRange, formatBytes,
@@ -131,6 +131,8 @@ export function ExportDialog() {
   const projectId = useStore((s) => s.project.id);
   const projectPath = useStore((s) => s.projectPath);
   const projectUsesProxies = useStore((s) => s.project.settings.useProxies);
+  /** The timeline's highlight setting: the export's "Highlight the spoken word" follows it until changed (#134). */
+  const projectHighlight = useStore((s) => s.project.settings.highlightSpokenWords);
 
   const [settings, setSettings] = useState<ExportSettings | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: 'edit' });
@@ -179,11 +181,17 @@ export function ExportDialog() {
     setCommand(null); setCommandError(null);
   }, []);
 
+  // Transcripts (#127): the on-screen transcript can be exported as a "Transcript" subtitle track. The settings view
+  // works on the sequence with that track added (burn-in, sidecar, MKV tracks and Checks all see it).
+  const transcriptTrack = useMemo(() => (open && seq ? transcriptExportTrack({ media, subtitleTracks, sequences }, seq) : null), [open, seq, media, subtitleTracks, sequences]);
+  const exportSeq = useMemo(() => (seq && settings?.includeTranscripts && transcriptTrack ? { ...seq, subtitleTracks: [...seq.subtitleTracks, transcriptTrack] } : seq),
+    [seq, settings?.includeTranscripts, transcriptTrack]);
+
   if (!open) return null;
-  if (!seq || !settings) {
+  if (!seq || !exportSeq || !settings) {
     return (
       <Dialog open title="Export" onClose={onClose} width={420} footer={<Button onClick={onClose}>Close</Button>}>
-        <div className="text-dim">Open or create a sequence to export.</div>
+        <div className="text-dim">Open or create a timeline to export.</div>
       </Dialog>
     );
   }
@@ -200,7 +208,7 @@ export function ExportDialog() {
 
   return (
     <SettingsView
-      seq={seq} settings={settings} media={media} projectUsesProxies={projectUsesProxies} sequences={sequences} update={update}
+      seq={exportSeq} hasTranscripts={transcriptTrack !== null} projectHighlight={projectHighlight} settings={settings} media={media} projectUsesProxies={projectUsesProxies} sequences={sequences} update={update}
       onShowTarget={(t) => onShowTarget(seq.id, t)}
       command={command} commandError={commandError} starting={starting} startError={startError}
       onShowCommand={async () => {
@@ -208,7 +216,7 @@ export function ExportDialog() {
         if (!api) { setCommandError('IPC unavailable'); return; }
         setCommand(null); setCommandError(null);
         try {
-          const args = await api.previewExportCommand(buildRequest(seq, { media, subtitleTracks, sequences }, settings));
+          const args = await api.previewExportCommand(buildRequest(seq, { media, subtitleTracks, sequences }, { ...settings, highlightWords: settings.highlightWords ?? projectHighlight }));
           setCommand(['ffmpeg', ...args.map(shellQuote)].join(' '));
         } catch (e) { setCommandError(e instanceof Error ? e.message : String(e)); }
       }}
@@ -222,7 +230,7 @@ export function ExportDialog() {
         const api = recutApi();
         if (!api) { setStartError('IPC unavailable'); return; }
         setStarting(true); setStartError(null);
-        const final: ExportSettings = { ...settings, fileName: withFormatExtension(sanitizeFileName(settings.fileName), settings), useProxies: false };
+        const final: ExportSettings = { ...settings, fileName: withFormatExtension(sanitizeFileName(settings.fileName), settings), useProxies: false, highlightWords: settings.highlightWords ?? projectHighlight };
         saveExportSettings(projectId, seq.id, final);
         api.setPrefs({ lastExportDir: final.outputDir }).catch(() => { /* ignore */ });
         const noFfmpeg = ffmpegUnavailable('ffmpeg');
@@ -262,6 +270,10 @@ function buildRequest(seq: Sequence, project: Parameters<typeof buildExportReque
 
 interface SettingsViewProps {
   seq: Sequence;
+  /** The sequence has a transcript that "Include transcripts" can add (#127). */
+  hasTranscripts: boolean;
+  /** The timeline's highlight setting, the default of "Highlight the spoken word" (#134). */
+  projectHighlight: boolean;
   settings: ExportSettings;
   media: ExportRequest['media'];
   projectUsesProxies: boolean;
@@ -280,7 +292,7 @@ interface SettingsViewProps {
 }
 
 function SettingsView(p: SettingsViewProps) {
-  const { seq, settings, media, update } = p;
+  const { seq, settings, media, update, hasTranscripts, projectHighlight } = p;
   const presets = useMemo(() => presetsFor(seq), [seq]);
   const [chosenPreset, setChosenPreset] = useState<string | undefined>(undefined);
   const presetName = presetNameFor(settings, presets, chosenPreset);
@@ -314,7 +326,7 @@ function SettingsView(p: SettingsViewProps) {
 
   const fpsOptions = useMemo(() => {
     const opts = FPS_PRESETS.map((f) => ({ value: f.label, label: `${f.label} fps` }));
-    if (!FPS_PRESETS.some((f) => fpsEquals(f.fps, seq.fps))) opts.unshift({ value: fpsOptionValue(seq.fps), label: `${fpsLabel(seq.fps)} fps (sequence)` });
+    if (!FPS_PRESETS.some((f) => fpsEquals(f.fps, seq.fps))) opts.unshift({ value: fpsOptionValue(seq.fps), label: `${fpsLabel(seq.fps)} fps (timeline)` });
     return opts;
   }, [seq.fps]);
 
@@ -351,7 +363,7 @@ function SettingsView(p: SettingsViewProps) {
           <div>
             <h4>Source</h4>
             <dl className="xd-kv">
-              <dt>Sequence</dt><dd title={seq.name}>{seq.name}</dd>
+              <dt>Timeline</dt><dd title={seq.name}>{seq.name}</dd>
               <dt>Format</dt><dd>{seq.width}×{seq.height} · {fpsLabel(seq.fps)} fps</dd>
               <dt>Audio</dt><dd>{seq.channels === 6 ? '5.1' : 'Stereo'} · {(seq.sampleRate / 1000).toFixed(1).replace(/\.0$/, '')} kHz</dd>
               <dt>Clips</dt><dd>{clipCount(seq)}</dd>
@@ -366,7 +378,7 @@ function SettingsView(p: SettingsViewProps) {
               {h26x ? <><dt>Quality</dt><dd>{settings.qualityMode === 'crf' ? `CRF ${settings.crf} (${crfLabel(settings.crf)})` : `${settings.videoBitrateKbps} kbps`} · {settings.preset}</dd></> : null}
               <dt>Audio</dt><dd data-testid="export-summary-audio" title={audioSummary(settings)}>{audioSummary(settings)}{mkv ? '' : ` · ${channelsLabel}`} · {kHz}</dd>
               {mkv ? <><dt>Subtitles</dt><dd data-testid="export-summary-subtitles">{mkvSubs.length ? `${mkvSubs.length} track${mkvSubs.length === 1 ? '' : 's'} (soft)` : 'none (soft)'}</dd></> : null}
-              <dt>Range</dt><dd>{range.usesInOut ? 'In → Out' : 'Entire sequence'}</dd>
+              <dt>Range</dt><dd>{range.usesInOut ? 'In → Out' : 'Entire timeline'}</dd>
               <dt>Duration</dt><dd className="mono">{formatSequenceTimecode(range.frames, seq.fps)}{audioOnly ? '' : ` · ${outFramesLabel}`}</dd>
               <dt>Est. size</dt><dd data-testid="export-size">{size.approximate ? '≈ ' : ''}{formatBytes(size.bytes)}</dd>
               {perTrackPaths ? (
@@ -433,7 +445,7 @@ function SettingsView(p: SettingsViewProps) {
                 <NumberField value={settings.width} min={MIN_DIMENSION} max={MAX_DIMENSION} step={2} unit="px" title={issueFor('width')} onChange={(v) => update({ width: Math.round(v) })} />
                 <span className="text-dim">×</span>
                 <NumberField value={settings.height} min={MIN_DIMENSION} max={MAX_DIMENSION} step={2} unit="px" title={issueFor('height')} onChange={(v) => update({ height: Math.round(v) })} />
-                <Button size="sm" onClick={() => update({ width: seq.width - (seq.width % 2), height: seq.height - (seq.height % 2) })}>Match sequence</Button>
+                <Button size="sm" onClick={() => update({ width: seq.width - (seq.width % 2), height: seq.height - (seq.height % 2) })}>Match timeline</Button>
               </div>
             </div>
             {issueFor('width') || issueFor('height') ? <div className="xd-row"><span /><span className="xd-warn"><AlertTriangle />{issueFor('width') ?? issueFor('height')}</span></div> : null}
@@ -557,7 +569,7 @@ function SettingsView(p: SettingsViewProps) {
               <label>Export</label>
               <div className="ctl">
                 <Select value={settings.rangeMode} onChange={(v) => update({ rangeMode: v })}
-                  options={[{ value: 'entire', label: 'Entire sequence' }, { value: 'inOut', label: hasInOut(seq) ? 'In to Out' : 'In to Out (not set)', disabled: !hasInOut(seq) }]} />
+                  options={[{ value: 'entire', label: 'Entire timeline' }, { value: 'inOut', label: hasInOut(seq) ? 'In to Out' : 'In to Out (not set)', disabled: !hasInOut(seq) }]} />
                 <span className="xd-hint mono">{formatSequenceTimecode(range.frames, seq.fps)} · {outFramesLabel} · {size.approximate ? '≈ ' : ''}{formatBytes(size.bytes)}</span>
               </div>
             </div>
@@ -566,11 +578,33 @@ function SettingsView(p: SettingsViewProps) {
           <section className="xd-section">
             <h4>Subtitles</h4>
             <div className="xd-row">
+              <label>Transcripts</label>
+              <div className="ctl">
+                <Toggle checked={!!settings.includeTranscripts && hasTranscripts} disabled={!hasTranscripts} onChange={(v) => update({ includeTranscripts: v })}
+                  label={<span className="text-sm">Include transcripts as subtitles</span>}
+                  title={hasTranscripts ? 'Adds the on-screen transcript (what the Subtitles row and Program monitor show) as a subtitle track named "Transcript"' : 'No clip in this timeline has a transcript'} />
+              </div>
+            </div>
+            <div className="xd-row">
               <label>Burn in</label>
               <div className="ctl">
                 <Toggle checked={settings.burnSubtitles && hasSubs && !audioOnly} disabled={!hasSubs || audioOnly} onChange={(v) => update({ burnSubtitles: v })} label={<span className="text-sm">Render subtitles into the picture</span>} />
               </div>
             </div>
+            {(() => {
+              // Only word-timed cues (transcripts) can be highlighted (#134).
+              const canHighlight = settings.burnSubtitles && hasSubs && !audioOnly && !!settings.includeTranscripts && hasTranscripts;
+              return (
+                <div className="xd-row">
+                  <label>Highlight</label>
+                  <div className="ctl">
+                    <Toggle checked={canHighlight && (settings.highlightWords ?? projectHighlight)} disabled={!canHighlight} onChange={(v) => update({ highlightWords: v })}
+                      label={<span className="text-sm">Highlight the spoken word</span>}
+                      title={canHighlight ? 'Burned-in transcripts show the word being spoken in yellow, as the monitors do' : 'Needs Burn in and Include transcripts as subtitles'} />
+                  </div>
+                </div>
+              );
+            })()}
             {audioOnly && hasSubs ? <div className="xd-row"><span /><span className="xd-hint" data-testid="export-burn-in-note">Burn-in needs a picture, so it is off for audio-only formats. A sidecar .srt can still be written.</span></div> : null}
             <div className="xd-row">
               <label>Sidecar</label>
@@ -585,7 +619,7 @@ function SettingsView(p: SettingsViewProps) {
               </div>
               <SubtitleOutputsEditor seq={seq} settings={settings} update={update} />
             </> : null}
-            {!hasSubs ? <div className="xd-row"><span /><span className="xd-hint">The sequence has no subtitle tracks.</span></div> : null}
+            {!hasSubs ? <div className="xd-row"><span /><span className="xd-hint">The timeline has no subtitle tracks.</span></div> : null}
           </section>
 
           <section className="xd-section">

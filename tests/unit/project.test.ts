@@ -15,7 +15,7 @@ describe('createProject', () => {
     expect(seq).toBeDefined();
     expect(p.activeSequenceId).toBe(seq.id);
     expect(seq.binId).toBe('bin-sequences');
-    expect(seq.name).toBe('Sequence 01');
+    expect(seq.name).toBe('Timeline 01');
     expect(seq.fps).toEqual({ num: 24000, den: 1001 });
     expect(seq.videoTracks.map((t) => t.name)).toEqual(['V1', 'V2', 'V3']);
     expect(seq.audioTracks.map((t) => t.name)).toEqual(['A1', 'A2', 'A3']);
@@ -135,7 +135,7 @@ describe('normalizeProject', () => {
     expect(id).not.toBe('junk');
     expect(n.sequenceOrder).toEqual([id]);
     expect(n.activeSequenceId).toBe(id);
-    expect(n.sequences[id].name).toBe('Sequence 01');
+    expect(n.sequences[id].name).toBe('Timeline 01');
     expect(n.sequences[id].binId).toBe('bin-sequences');
   });
 

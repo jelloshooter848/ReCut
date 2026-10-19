@@ -40,6 +40,8 @@
   color: #fff; font-size: clamp(11px, 2.6vmin, 20px); line-height: 1.3; font-weight: 500; white-space: pre-line;
   text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0 0 6px rgba(0,0,0,0.9);
 }
+/* The word being spoken (karaoke, #119): SUBTITLE_HIGHLIGHT in src/playback/subtitleWrap.ts, as in the Program monitor. */
+.source-word.active { color: #ffd84d; }
 
 .source-error-card {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);

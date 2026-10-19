@@ -15,6 +15,8 @@ import { PROJECT_FORMAT_VERSION } from '../../shared/model';
 import type { Clip, Project, Sequence, Track } from '../../shared/model';
 
 const FIXTURE_DIR = path.resolve(__dirname, '../fixtures/projects');
+// frozen: changing this would stop the suite from finding the saved-project fixtures tests/fixtures/projects/*.recut,
+// which are never renamed or regenerated (they are what earlier releases wrote; see that folder's README).
 const FIXTURE_RE = /^recut-(\d+)\.(\d+)\.(\d+)\.recut$/;
 
 const fixtures = fs.readdirSync(FIXTURE_DIR)
@@ -187,6 +189,7 @@ describe('saved-project fixtures', () => {
       expect(project.settings).toEqual({
         useProxies: false, proxyHeight: 720, autosaveIntervalSec: 120, carrySubtitles: false, sceneThreshold: 0.42,
         playbackResolution: '1/2', snapping: false, defaultTransitionFrames: 12, showSourceTimecodeOnClips: true,
+        highlightSpokenWords: true, nameShotsFromTranscript: true, minShotSeconds: 1, // added after these releases: the defaults (#119, #144, #142)
       });
     });
 
@@ -265,8 +268,11 @@ describe('saved-project fixtures', () => {
         [v1.clips[1].id, 126, 128, 0, 'There is no try.'],
       ]);
       expect(byName(subs, 'Notes').cues.map((c) => [c.clipId, c.text])).toEqual([[v1.clips[2].id, 'Malevolence fires']]);
+      // From 0.9.0 a cue added at the playhead over a clip is pinned to the clip on top there (#135).
+      const pinned = atLeast(v, [0, 9, 0]);
       expect(byName(subs, 'Forced').cues.map((c) => [c.clipId, c.start, c.duration, c.text])).toEqual([
-        [undefined, 60, 48, 'Somewhere on Hoth'], [undefined, 250, 36, 'Dagobah system\n(forced)'],
+        [pinned ? v2.clips[0].id : undefined, 60, 48, 'Somewhere on Hoth'],
+        [pinned ? v1.clips[1].id : undefined, 250, 36, 'Dagobah system\n(forced)'],
       ]);
       expect(subs.some((t) => t.language === 'fre')).toBe(atLeast(v, [0, 6, 0]));
       expect(plain(main.view)).toEqual({ playhead: 120, zoom: 2, scroll: 16, inPoint: 24, outPoint: 600 });

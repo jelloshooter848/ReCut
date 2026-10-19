@@ -50,7 +50,7 @@ export function loadInSource(mediaId: ID, inS: number, outS: number, opts: { foc
 export function insertAtPlayhead(mediaId: ID, inS: number, outS: number, originLabel = 'transcript'): ID[] {
   const st = useStore.getState();
   const seqId = st.project.activeSequenceId;
-  if (!seqId || !st.project.sequences[seqId]) { toast.warn('No active sequence to insert into'); return []; }
+  if (!seqId || !st.project.sequences[seqId]) { toast.warn('No active timeline to insert into'); return []; }
   if (outS - inS <= 0) { toast.warn('Nothing to insert: empty range'); return []; }
   const res = performSourceEdit({ mode: 'insert', mediaId, srcIn: inS, srcOut: outS, extra: { originLabel } }, seqId);
   return res.clipIds;

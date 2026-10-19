@@ -87,7 +87,7 @@ describe('frame rate and VFR warnings', () => {
     const c = fixtureClip(seq.videoTracks[0], m25, 24, 24, 0);
     const items = checklist(seq, media);
     const it = find(items, FPS)!;
-    expect(it.text).toBe('Source frame rate differs from the sequence (24 fps): m25.mp4 (25 fps). Frames are repeated or dropped to fit, so motion may stutter.');
+    expect(it.text).toBe('Source frame rate differs from the timeline (24 fps): m25.mp4 (25 fps). Frames are repeated or dropped to fit, so motion may stutter.');
     expect(it.level).toBe('warning');
     expect(it.target).toEqual({ frame: 24, clipIds: [c.id] });
     expect(checklistBlocks(items)).toBe(false);
@@ -130,7 +130,7 @@ describe('frame rate and VFR warnings', () => {
     });
     ids.push(fixtureClip(seq.videoTracks[0], media.r0, 5 * 24, 24, 2).id);
     const it = find(checklist(seq, media), FPS)!;
-    expect(it.text).toBe('Source frame rate differs from the sequence (24 fps): r0.mp4 (25 fps), r1.mp4 (30 fps), r2.mp4 (50 fps) and 2 more. Frames are repeated or dropped to fit, so motion may stutter.');
+    expect(it.text).toBe('Source frame rate differs from the timeline (24 fps): r0.mp4 (25 fps), r1.mp4 (30 fps), r2.mp4 (50 fps) and 2 more. Frames are repeated or dropped to fit, so motion may stutter.');
     expect(it.target!.frame).toBe(0);
     expect([...it.target!.clipIds].sort()).toEqual([...ids].sort());
   });
@@ -142,7 +142,7 @@ describe('frame rate and VFR warnings', () => {
     const items = checklist(seq, media);
     expect(find(items, FPS)).toBeUndefined();
     const it = find(items, VFR)!;
-    expect(it.text).toBe('Variable frame rate (VFR) media in the sequence: phone.mp4. Frames are repeated or dropped unevenly; convert it to a constant frame rate if motion or sync looks off.');
+    expect(it.text).toBe('Variable frame rate (VFR) media in the timeline: phone.mp4. Frames are repeated or dropped unevenly; convert it to a constant frame rate if motion or sync looks off.');
     expect(it.target!.frame).toBe(10);
   });
 
@@ -332,7 +332,7 @@ describe('memoization and cost', () => {
       const t0 = performance.now();
       const items = exportChecklist(s, media, settings);
       runs.push(performance.now() - t0);
-      expect(items.map((i) => i.text.split(':')[0]).sort()).toEqual(['Linked clips out of sync', 'Source frame rate differs from the sequence (24 fps)', 'Transitions dropped (hard cut)', 'Variable frame rate (VFR) media in the sequence']);
+      expect(items.map((i) => i.text.split(':')[0]).sort()).toEqual(['Linked clips out of sync', 'Source frame rate differs from the timeline (24 fps)', 'Transitions dropped (hard cut)', 'Variable frame rate (VFR) media in the timeline']);
     }
     const median = runs.sort((a, b) => a - b)[2];
     console.log(`export checklist on ${seq.videoTracks[0].clips.length + seq.audioTracks[0].clips.length} clips / ${pos} frames: median ${median.toFixed(1)} ms (runs ${runs.map((r) => r.toFixed(1)).join(', ')})`);

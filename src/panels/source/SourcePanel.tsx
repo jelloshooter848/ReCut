@@ -13,7 +13,10 @@ import { pathToMediaUrl } from '@shared/ipc';
 import { useStore, identityLabel, startProxy } from '@/state';
 import type { StoreState } from '@/state';
 import { SourcePlayer, resolvePlaybackPath, mediaFps, mediaSize, type SourcePlayerStatus } from '@/playback';
-import { isStillImage } from '@/playback/mediaSource';
+import { isStillImage, previewPlayable, previewReason } from '@/playback/mediaSource';
+import { activeWordIndex } from '@/playback/subtitleWrap';
+import { subtitleAnchor } from '@shared/subtitlePosition';
+import { estimateWords, transcriptDisplayText } from '@shared/transcripts';
 import { resumeAudio } from '@/app/media';
 import { registerTransport, setActiveTransport, shuttle, useActiveTransportId, type Transport } from '@/app/transport';
 import { setClipDrag } from '@/app/dnd';
@@ -27,6 +30,13 @@ import './source.css';
 
 /** Max rate at which playback time is written back to the store. */
 const REPORT_INTERVAL_MS = 1000 / 30;
+
+/** Switch the Source scrub bar between the opened scene's range and the full file (#150; the button and the backslash key). */
+export function toggleSourceSceneView(): void {
+  const st = useStore.getState();
+  const sc = st.ui.sourceClip;
+  if (sc?.view) st.setSourceViewFull(!sc.viewFull);
+}
 
 type Zoom = 'fit' | '50' | '100';
 const ZOOM_OPTIONS = [{ value: 'fit', label: 'Fit' }, { value: '50', label: '50%' }, { value: '100', label: '100%' }] as const;
@@ -43,7 +53,7 @@ function selectMedia(s: StoreState): MediaItem | undefined {
 export function selectLoadKey(s: StoreState): string {
   const m = selectMedia(s);
   if (!m) return '';
-  return [m.id, m.path, m.kind, m.offline ? 1 : 0, m.probe ? 1 : 0, m.probe?.browserPlayable ? 1 : 0, m.proxy.status, m.proxy.path ?? '', s.project.settings.useProxies ? 1 : 0, m.preferredAudioStream ?? ''].join('|');
+  return [m.id, m.path, m.kind, m.offline ? 1 : 0, m.probe ? 1 : 0, previewPlayable(m) ? 1 : 0, m.proxy.status, m.proxy.path ?? '', s.project.settings.useProxies ? 1 : 0, m.preferredAudioStream ?? ''].join('|');
 }
 
 /**
@@ -57,7 +67,7 @@ export function describeDecodeProblem(media: MediaItem | undefined): string {
     const m = /\.([^./\\]+)$/.exec(media!.path);
     return `${m ? m[1].toUpperCase() : 'This'} image needs a preview proxy`;
   }
-  const reason = p.playabilityReason?.trim();
+  const reason = previewReason(media)?.trim();
   if (reason) {
     const audio = /audio codec\s+([\w.-]+)/i.exec(reason);
     if (audio) return `${codecName(audio[1])} audio can't be decoded for preview`;
@@ -84,6 +94,8 @@ export function SourcePanel({ focused, active }: PanelProps) {
   const loadKey = useStore(selectLoadKey);
   const inPoint = useStore((s) => s.ui.sourceClip?.inPoint ?? null);
   const outPoint = useStore((s) => s.ui.sourceClip?.outPoint ?? null);
+  const sceneView = useStore((s) => s.ui.sourceClip?.view ?? null);
+  const viewFull = useStore((s) => !!s.ui.sourceClip?.viewFull);
   const useProxies = useStore((s) => s.project.settings.useProxies);
   const subtitleTracks = useStore((s) => s.project.subtitleTracks);
   const activeSequenceId = useStore((s) => s.project.activeSequenceId);
@@ -110,16 +122,51 @@ export function SourcePanel({ focused, active }: PanelProps) {
   const durationFrames = Number.isFinite(duration) && duration > 0 ? Math.max(1, secondsToFrames(duration, fps)) : 0;
   const cues: SubtitleCue[] = useMemo(() => {
     if (!media) return [];
+    // A subtitle track chosen as the transcript (#162) is the one shown, as transcript text with estimated word timing.
+    const chosen = media.transcriptTrackId && media.subtitleTrackIds.includes(media.transcriptTrackId) ? subtitleTracks[media.transcriptTrackId] : undefined;
+    if (chosen && chosen.origin !== 'whisper') {
+      return chosen.cues.map((c) => {
+        const text = transcriptDisplayText(c.text);
+        const words = c.words?.length ? c.words : estimateWords(text, c.start, c.end);
+        return { ...c, text, ...(words ? { words } : {}) };
+      }).sort((a, b) => a.start - b.start);
+    }
     const out: SubtitleCue[] = [];
-    for (const tid of media.subtitleTrackIds) { const t = subtitleTracks[tid]; if (t) out.push(...t.cues); }
+    for (const tid of chosen ? [chosen.id] : media.subtitleTrackIds) { const t = subtitleTracks[tid]; if (t) out.push(...t.cues); }
     return out.sort((a, b) => a.start - b.start);
   }, [media, subtitleTracks]);
   const currentCue = useMemo(() => cues.find((c) => c.start <= time && time < c.end) ?? null, [cues, time]);
+  const highlightWords = useStore((s) => s.project.settings.highlightSpokenWords);
+  const activeWord = highlightWords ? activeWordIndex(currentCue?.words, time) : -1;
+  // Subtitle position (#115): the active timeline's, so the Source monitor matches Program and the export.
+  const subtitlePosition = useStore((s) => (s.project.activeSequenceId ? s.project.sequences[s.project.activeSequenceId]?.subtitlePosition : undefined));
+  const subtitleStyle = useMemo((): React.CSSProperties | undefined => {
+    const a = subtitleAnchor(subtitlePosition);
+    if (!a) return undefined;
+    return a.edge === 'bottom' ? { bottom: `${(a.margin * 100).toFixed(2)}%` } : { top: `${(a.margin * 100).toFixed(2)}%`, bottom: 'auto' };
+  }, [subtitlePosition]);
+
+  // Scene range (#150): the bar shows the opened shot / scene until Full file is chosen or the playhead leaves the range
+  // (playing past Out, stepping to another shot, typing a time). It arms once the playhead has been inside the range,
+  // so the moment before the opening seek lands does not count.
+  const zoomed = !!sceneView && !viewFull;
+  const armed = useRef(false);
+  useEffect(() => { armed.current = false; }, [sceneView?.start, sceneView?.end]);
+  useEffect(() => {
+    if (!sceneView || viewFull) return;
+    const tol = fps.den / fps.num;
+    const inside = time >= sceneView.start - tol / 2 && time <= sceneView.end + tol;
+    if (inside) { armed.current = true; return; }
+    if (armed.current) useStore.getState().setSourceViewFull(true);
+  }, [time, sceneView, viewFull, fps]);
 
   // ------------------------------------------------------------- refs shared with the transport / callbacks
-  const live = useRef({ inPoint, outPoint, duration, fps, loop, isImage, mediaId: media?.id ?? null, playRange: null as { in: number; out: number } | null });
+  const live = useRef({ inPoint, outPoint, duration, fps, loop, isImage, mediaId: media?.id ?? null, playRange: null as { in: number; out: number } | null,
+    sceneRange: null as { start: number; end: number } | null });
   live.current.inPoint = inPoint; live.current.outPoint = outPoint; live.current.duration = duration; live.current.fps = fps;
   live.current.loop = loop; live.current.isImage = isImage; live.current.mediaId = media?.id ?? null;
+  // The opened shot / scene while the scrub bar shows it (#150): Play stops at its end (#164).
+  live.current.sceneRange = sceneView && !viewFull ? sceneView : null;
   const lastReported = useRef<number>(-1);
   const lastReportAt = useRef(0);
 
@@ -202,14 +249,16 @@ export function SourcePanel({ focused, active }: PanelProps) {
     const sp = getPlayer();
     void resumeAudio();
     live.current.playRange = null;
-    if (live.current.loop) {
-      // Loop on: play In → Out (or the whole clip) and wrap at the Out point.
+    const scene = live.current.sceneRange;
+    if (live.current.loop || scene) {
+      // Loop on: play In → Out (or the whole clip) and wrap at the Out point. An opened shot / scene shown in the scrub
+      // bar plays to its end and stops there (#164); from its end, Play starts it again.
       const { inPoint: i, outPoint: o, duration: d } = live.current;
-      const range = { in: i ?? 0, out: o ?? d };
+      const range = scene ? { in: scene.start, out: scene.end } : { in: i ?? 0, out: o ?? d };
       if (range.out > range.in) {
         live.current.playRange = range;
         const t = sp.currentTime();
-        if (t < range.in || t >= range.out - 1e-4) sp.seek(range.in);
+        if (t < range.in - 1e-4 || t >= range.out - framesToSeconds(1, live.current.fps) - 1e-4) sp.seek(range.in);
       }
     }
     if (sp.playbackRate <= 0) sp.setRate(1);
@@ -304,6 +353,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
       case 'End': transport.goToEnd(); break;
       case 'KeyI': if (e.shiftKey) transport.goToIn(); else transport.markIn(); break;
       case 'KeyO': if (e.shiftKey) transport.goToOut(); else transport.markOut(); break;
+      case 'Backslash': if (sceneView) toggleSourceSceneView(); else handled = false; break;
       case 'Comma': if (e.shiftKey) handled = false; else insertAt('insert'); break;
       case 'Period': if (e.shiftKey) handled = false; else insertAt('overwrite'); break;
       default: handled = false;
@@ -361,7 +411,15 @@ export function SourcePanel({ focused, active }: PanelProps) {
             {media.offline ? <span className="source-badge offline"><WifiOff /> Offline</span> : null}
             {size ? <span className="source-badge" title="Source resolution">{size.width}×{size.height}</span> : null}
           </div>
-          {currentCue ? <div className="source-subtitle">{currentCue.text}</div> : null}
+          {currentCue ? (
+            <div className="source-subtitle" data-testid="source-subtitle" style={subtitleStyle}>
+              {currentCue.words?.length
+                ? currentCue.words.map((w, i) => (
+                  <React.Fragment key={i}>{i ? ' ' : ''}<span className={i === activeWord ? 'source-word active' : 'source-word'}>{w.text}</span></React.Fragment>
+                ))
+                : currentCue.text}
+            </div>
+          ) : null}
           {loading && !errored ? <div className="source-spinner"><LoaderCircle className="spin" /></div> : null}
           {errored ? (
             <div className="source-error-card" role="alert">
@@ -395,7 +453,7 @@ export function SourcePanel({ focused, active }: PanelProps) {
       </div>
 
       <ScrubBar
-        duration={duration} time={time} inPoint={inPoint} outPoint={outPoint} fps={fps}
+        duration={duration} time={time} inPoint={inPoint} outPoint={outPoint} fps={fps} view={zoomed ? sceneView : null}
         scenes={media.detectedScenes} cues={cues}
         onSeekFrame={(f) => { if (isImage) return; if (getPlayer().isPlaying) pause(); seekFrame(f); }}
       />
@@ -417,6 +475,11 @@ export function SourcePanel({ focused, active }: PanelProps) {
         </div>
         <span className="tc-label">Dur</span>
         <span className="mono text-sm tc-dur" title="In → Out duration">{formatSequenceTimecode(Math.max(0, rangeFrames), fps)}</span>
+        {sceneView ? (
+          <Button size="sm" variant="ghost" className="source-view-toggle" data-testid="source-view-toggle" data-view={zoomed ? 'scene' : 'full'}
+            title={zoomed ? 'The scrub bar shows the scene. Click to show the full file (\\)' : 'The scrub bar shows the full file. Click to show just the scene (\\)'}
+            onClick={toggleSourceSceneView}>{zoomed ? 'Scene' : 'Full file'}</Button>
+        ) : null}
         <Select<Zoom> size="sm" value={zoom} options={ZOOM_OPTIONS} onChange={setZoom} title="Zoom" aria-label="Zoom" />
       </div>
 

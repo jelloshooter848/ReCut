@@ -25,7 +25,7 @@ import { MAX_ZOOM, MIN_ZOOM, minZoomFor, zoomAround, zoomToFit } from '@/panels/
 import { useTimelineUi } from '@/panels/timeline/timelineStore';
 import { insertSourceIntoSequence } from '@/panels/source/insert';
 import { clipboardHasClips, copyClipsToClipboard, pasteClipboardAt } from './clipboard';
-import { getActiveTransport, shuttle, type Transport } from './transport';
+import { getActiveTransport, getActiveTransportId, shuttle, type Transport } from './transport';
 import { requestNewProject, requestOpenProject, requestSave, requestSaveAs } from './project';
 import { confirm, promptText } from './dialogs/ConfirmDialog';
 import { openSpeedDialog } from './dialogs/SpeedDialog';
@@ -34,6 +34,7 @@ import { openOcrLanguages } from '@/ocr/ocrUi';
 import { openWhisperModels } from '@/whisper/whisperUi';
 import { openCollectDialog } from '@/panels/collect/collectUi';
 import type { Tool } from '@/state/types';
+import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@shared/productIdentity';
 
 /** Command ids implemented here that are not part of the shell's COMMAND_IDS (menu names match electron/menu.ts). */
 export const EXTRA_COMMAND_IDS = {
@@ -79,13 +80,13 @@ const EXTRA_META: Record<string, { title: string; category: string; keys: string
   [EXTRA_COMMAND_IDS.whisperModels]: { title: 'Transcription Models…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.collectProject]: { title: 'Collect Project…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.quit]: { title: 'Quit', category: 'File', keys: ['Ctrl+Q'] },
-  [EXTRA_COMMAND_IDS.duplicateSequence]: { title: 'Duplicate Sequence…', category: 'File', keys: [] },
+  [EXTRA_COMMAND_IDS.duplicateSequence]: { title: 'Duplicate Timeline…', category: 'File', keys: [] },
   [EXTRA_COMMAND_IDS.removeDisabledClips]: { title: 'Remove Disabled Clips…', category: 'Editing', keys: [] },
   [EXTRA_COMMAND_IDS.duplicateWithoutDisabled]: { title: 'Duplicate as Cut Without Disabled Clips…', category: 'File', keys: [] },
-  [EXTRA_COMMAND_IDS.takeSnapshot]: { title: 'Take Sequence Snapshot…', category: 'File', keys: [] },
-  [EXTRA_COMMAND_IDS.renameSequence]: { title: 'Rename Sequence…', category: 'File', keys: [] },
-  [EXTRA_COMMAND_IDS.sequenceSettings]: { title: 'Sequence Settings…', category: 'File', keys: [] },
-  [EXTRA_COMMAND_IDS.about]: { title: 'About ReCut', category: 'Help', keys: [] },
+  [EXTRA_COMMAND_IDS.takeSnapshot]: { title: 'Take Timeline Snapshot…', category: 'File', keys: [] },
+  [EXTRA_COMMAND_IDS.renameSequence]: { title: 'Rename Timeline…', category: 'File', keys: [] },
+  [EXTRA_COMMAND_IDS.sequenceSettings]: { title: 'Timeline Settings…', category: 'File', keys: [] },
+  [EXTRA_COMMAND_IDS.about]: { title: `About ${PRODUCT_NAME}`, category: 'Help', keys: [] },
   [EXTRA_COMMAND_IDS.extractCentreChannel]: { title: 'Extract Centre Channel (Dialogue)', category: 'Editing', keys: [] },
   [EXTRA_COMMAND_IDS.makeCompoundClip]: { title: 'Make Compound Clip', category: 'Editing', keys: [] },
   [EXTRA_COMMAND_IDS.openInTimeline]: { title: 'Open in Timeline', category: 'Editing', keys: [] },
@@ -96,8 +97,8 @@ const EXTRA_META: Record<string, { title: string; category: string; keys: string
  * The About dialog's licence line. Every release build (Windows installer, Linux AppImage, both macOS dmgs) bundles a
  * GPL-3.0-or-later FFmpeg build: see THIRD_PARTY_NOTICES.md.
  */
-export const ABOUT_LICENCE_TEXT = 'ReCut is free software under the MIT License. FFmpeg is a separate program with its own licence '
-  + '(the FFmpeg bundled with every ReCut release build is GPL-3.0-or-later); see Licences.';
+export const ABOUT_LICENCE_TEXT = `${PRODUCT_NAME} is free software under the MIT License. FFmpeg is a separate program with its own licence `
+  + `(the FFmpeg bundled with every ${PRODUCT_NAME} release build is GPL-3.0-or-later); see Licences.`;
 
 // ------------------------------------------------------------------
 // Helpers
@@ -129,7 +130,7 @@ function selectedNestedClip(seq: Sequence): Clip | undefined {
 
 /** Open in Timeline (Roadmap §8): the nested clip's sequence becomes the active one, at the frame under the playhead. */
 export function runOpenInTimeline(seqId: ID, clipId: ID | undefined, frame?: number): boolean {
-  if (!clipId) { toast('info', 'Select a nested sequence clip first'); return false; }
+  if (!clipId) { toast('info', 'Select a nested timeline clip first'); return false; }
   return S().openNestedSequence(seqId, clipId, frame);
 }
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -524,7 +525,7 @@ export function buildEditingCommands(): CommandInput[] {
     cmd(X.openInTimeline, () => { const seq = seqNow(); if (seq) runOpenInTimeline(seq.id, selectedNestedClip(seq)?.id); }, () => hasSeq() && selectedClips(S()).some(isNestedClip)),
     cmd(X.breakApartCompound, () => {
       const seq = seqNow(); const c = seq && selectedNestedClip(seq);
-      if (!seq || !c) { toast('info', 'Select a nested sequence clip first'); return; }
+      if (!seq || !c) { toast('info', 'Select a nested timeline clip first'); return; }
       S().breakApartCompoundClip(seq.id, c.id);
     }, () => hasSeq() && selectedClips(S()).some(isNestedClip)),
 
@@ -542,9 +543,11 @@ export function buildEditingCommands(): CommandInput[] {
     cmd(C.zoomIn, () => { const seq = seqNow(); if (seq) zoomAroundPlayhead(seq, 1.5); }, hasSeq),
     cmd(C.zoomOut, () => { const seq = seqNow(); if (seq) zoomAroundPlayhead(seq, 1 / 1.5); }, hasSeq),
     cmd(C.zoomToFit, () => {
+      // In the Source monitor with a shot / scene open, \ switches its scrub bar between the scene and the file (#150).
+      if (getActiveTransportId() === 'source' && S().ui.sourceClip?.view) { S().setSourceViewFull(!S().ui.sourceClip!.viewFull); return; }
       const seq = seqNow(); if (!seq) return;
       S().setView(seq.id, { zoom: zoomToFitValue(sequenceDuration(seq)), scroll: 0 });
-    }, hasSeq),
+    }, () => hasSeq() || (getActiveTransportId() === 'source' && !!S().ui.sourceClip?.view)),
     cmd(X.toggleSnapping, () => {
       const next = !S().project.settings.snapping;
       S().setSettings({ snapping: next });
@@ -569,7 +572,7 @@ export function buildEditingCommands(): CommandInput[] {
     cmd(C.newSequence, () => S().openDialog('newSequence')),
     cmd(X.duplicateSequence, async () => {
       const seq = seqNow(); if (!seq) return;
-      const name = await promptText({ title: 'Duplicate Sequence', label: 'Name for the new version', initial: `${seq.name} copy` });
+      const name = await promptText({ title: 'Duplicate Timeline', label: 'Name for the new version', initial: `${seq.name} copy` });
       if (name === null) return;
       const id = S().duplicateSequence(seq.id, name.trim() || `${seq.name} copy`);
       if (id) toast('ok', `Created ${S().project.sequences[id]?.name}`);
@@ -578,7 +581,7 @@ export function buildEditingCommands(): CommandInput[] {
     cmd(X.duplicateWithoutDisabled, async () => {
       const seq = seqNow(); if (!seq) return;
       const n = disabledCount();
-      if (!n) { toast('info', 'No disabled clips in this sequence'); return; }
+      if (!n) { toast('info', 'No disabled clips in this timeline'); return; }
       const name = await promptText({ title: 'Duplicate as Cut Without Disabled Clips', label: `Name for the new cut (${n} disabled clip${n === 1 ? '' : 's'} removed, gaps closed)`, initial: `${seq.name} cut` });
       if (name === null) return;
       const id = S().duplicateWithoutDisabled(seq.id, name.trim() || `${seq.name} cut`);
@@ -592,7 +595,7 @@ export function buildEditingCommands(): CommandInput[] {
     }, hasSeq),
     cmd(X.renameSequence, async () => {
       const seq = seqNow(); if (!seq) return;
-      const name = await promptText({ title: 'Rename Sequence', label: 'Sequence name', initial: seq.name });
+      const name = await promptText({ title: 'Rename Timeline', label: 'Timeline name', initial: seq.name });
       if (name === null || !name.trim() || name.trim() === seq.name) return;
       S().renameSequence(seq.id, name.trim());
     }, hasSeq),
@@ -601,19 +604,19 @@ export function buildEditingCommands(): CommandInput[] {
     // ---- help ----
     cmd(X.about, async () => {
       const api = recutApi();
-      if (!api) { toast('info', 'ReCut — fan-edit video editor'); return; }
+      if (!api) { toast('info', `${PRODUCT_NAME} — ${PRODUCT_TAGLINE}`); return; }
       const info = await api.appInfo();
       const files = await api.licenceFiles?.().catch(() => []) ?? [];
       const licence = ABOUT_LICENCE_TEXT;
       const choice = await api.message({
-        type: 'info', title: 'About ReCut', message: `ReCut ${info.version}`,
+        type: 'info', title: `About ${PRODUCT_NAME}`, message: `${PRODUCT_NAME} ${info.version}`,
         detail: `${licence}\n\nFFmpeg: ${info.ffmpegVersion ?? 'not found'}\n${info.ffmpegPath ?? ''}\nCache: ${info.cacheDir}`,
         buttons: files.length ? ['OK', 'Licences…'] : ['OK'], defaultId: 0, cancelId: 0,
       });
       if (choice !== 1 || !files.length) return;
       const pick = await api.message({
         type: 'none', title: 'Licences', message: 'Licences and notices',
-        detail: 'Choose a file to open. ReCut is MIT-licensed; the third-party notices list everything ReCut ships with, '
+        detail: `Choose a file to open. ${PRODUCT_NAME} is MIT-licensed; the third-party notices list everything ${PRODUCT_NAME} ships with, `
           + 'and the FFmpeg files describe the bundled FFmpeg build and where to get its source.',
         buttons: [...files.map((f) => f.label), 'Close'], defaultId: files.length, cancelId: files.length,
       });
@@ -638,7 +641,7 @@ function disabledCount(): number {
 export async function removeDisabledClipsConfirmed(): Promise<number> {
   const seq = seqNow(); if (!seq) return 0;
   const n = disabledCount();
-  if (!n) { toast('info', 'No disabled clips in this sequence'); return 0; }
+  if (!n) { toast('info', 'No disabled clips in this timeline'); return 0; }
   const i = await confirm({
     type: 'question', title: 'Remove Disabled Clips',
     message: `Remove ${n} disabled clip${n === 1 ? '' : 's'} from "${seq.name}" and close the gaps?`,

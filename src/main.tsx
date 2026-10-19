@@ -8,6 +8,8 @@ import * as selectors from './state/selectors';
 import { runCommand } from './keyboard/shortcuts';
 
 // Test/automation hook (used by Playwright e2e and dev console).
+// frozen: changing this would break every e2e test, the perf scripts and the README media script that drive the app
+// through window.__recut; it is invisible to users.
 (window as unknown as Record<string, unknown>).__recut = { store: useStore, actions: mediaActions, selectors, runCommand };
 
 async function start() {

@@ -83,8 +83,16 @@ async function importMenu(labels: string[]): Promise<void> {
   await page.locator('.menu-item', { hasText: labels[labels.length - 1] }).first().click();
 }
 
-test('installs a model from Transcription Models with progress', async () => {
-  await page.evaluate(() => (window as unknown as { __recut: { runCommand(id: string): boolean } }).__recut.runCommand('app.whisperModels'));
+test('installs a model from the Transcribe dialog in the background, and comes back with the choices kept (#110)', async () => {
+  // Transcribe with Whisper… with no model: choose an option, then Install a model…
+  const media = page.locator(`[data-row-kind="media"][data-media-id="${mediaId}"]`);
+  await media.click({ button: 'right' });
+  await page.locator('.menu-item', { hasText: 'Transcribe with Whisper' }).click();
+  await expect(page.getByTestId('transcribe-dialog')).toBeVisible();
+  await expect(page.getByTestId('transcribe-no-model')).toHaveText('No model installed.');
+  await page.getByTestId('transcribe-translate').check();
+  await page.getByTestId('transcribe-install-model').click();
+
   const dialog = page.getByTestId('whisper-models-dialog');
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText('ReCut downloads a model only when you click Install');
@@ -93,14 +101,35 @@ test('installs a model from Transcription Models with progress', async () => {
   await expect(row('large-v3-turbo')).toContainText('1.6 GB');
   await expect(row('test-tiny')).toHaveAttribute('data-state', 'available');
   await expect(page.getByTestId('whisper-disk-usage')).toHaveText('0 installed · 0 MB on disk');
+  await expect(page.getByTestId('whisper-models-done')).toBeVisible();
 
   await row('test-tiny').getByRole('button', { name: 'Install' }).click();
   await expect(row('test-tiny')).toHaveAttribute('data-state', 'downloading');
   if (SHOT_DIR) await page.locator('.wm-dialog').screenshot({ path: path.join(SHOT_DIR, 'whisper-models-downloading.png') });
-  await expect(row('test-tiny')).toHaveAttribute('data-state', 'installed', { timeout: 30_000 });
-  await expect(page.getByTestId('whisper-disk-usage')).toHaveText('1 installed · 8 MB on disk');
+  // While it downloads: Finish in background closes both dialogs.
+  await page.getByTestId('whisper-models-background').click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByTestId('transcribe-dialog')).toBeHidden();
+
+  // When it is installed, the toast's Transcribe… reopens the dialog with the choices kept and the new model selected.
+  const action = page.getByTestId('toast-action').filter({ hasText: 'Transcribe…' });
+  await expect(action).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.toast', { has: action })).toContainText('Test (tiny) transcription model installed');
   expect(fs.existsSync(path.join(launched.userData, 'whisper', 'models', 'ggml-test-tiny.bin'))).toBe(true);
   expect(requests).toBe(1);
+  await action.click();
+  await expect(page.getByTestId('transcribe-dialog')).toBeVisible();
+  await expect(page.getByTestId(`transcribe-check-${mediaId}`)).toBeChecked();
+  await expect(page.getByTestId('transcribe-translate')).toBeChecked();
+  await expect(page.getByTestId('transcribe-model')).toContainText('Test (tiny)');
+  if (SHOT_DIR) await page.locator('.transcribe-dialog').screenshot({ path: path.join(SHOT_DIR, 'transcribe-dialog.png') });
+  await page.locator('.transcribe-dialog').getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByTestId('transcribe-dialog')).toBeHidden();
+
+  // Transcription Models with nothing downloading says Done again.
+  await page.evaluate(() => (window as unknown as { __recut: { runCommand(id: string): boolean } }).__recut.runCommand('app.whisperModels'));
+  await expect(row('test-tiny')).toHaveAttribute('data-state', 'installed');
+  await expect(page.getByTestId('whisper-disk-usage')).toHaveText('1 installed · 8 MB on disk');
   if (SHOT_DIR) await page.locator('.wm-dialog').screenshot({ path: path.join(SHOT_DIR, 'whisper-models.png') });
   await page.locator('.wm-dialog').getByRole('button', { name: 'Done' }).click();
   await expect(dialog).toBeHidden();

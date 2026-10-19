@@ -1,5 +1,5 @@
 /**
- * bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md
+ * bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md @ 59eafc6
  *
  * Background job results mirrored into the project (proxy / channel-proxy / scene-detect status and results) are
  * written to the .recut but are not edits: every one of them can be made again from the content-keyed cache. They

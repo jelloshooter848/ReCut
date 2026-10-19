@@ -1,5 +1,5 @@
 /**
- * Export of a damaged source through the Export dialog (bugs/closed/2026-10-09-export-silently-pads-truncated-sources.md):
+ * Export of a damaged source through the Export dialog (bugs/closed/2026-10-09-export-silently-pads-truncated-sources.md @ 59eafc6):
  * real Electron app, real FFmpeg. A downloaded MP4 cut to half its bytes still probes as 10 s (its index is intact),
  * so the pre-export checks see nothing and FFmpeg exits 0 while the export pads the missing part. The export must
  * finish, and the done view and a toast must say that the file ends early.

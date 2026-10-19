@@ -29,7 +29,7 @@ export const DOWNMIX_DB_MAX = 6;
 export const MONO_IN_STEREO_GAIN = Math.SQRT1_2;
 /**
  * Bumped when the filter a channel proxy is made with changes, so older cached proxies are not reused.
- * v2: padded to the container start on MPEG-TS / MPEG-PS too (bugs/closed/2026-10-09-ts-late-video-export-early.md).
+ * v2: padded to the container start on MPEG-TS / MPEG-PS too (bugs/closed/2026-10-09-ts-late-video-export-early.md @ 59eafc6).
  */
 export const CHANNEL_PROXY_VERSION = 2;
 

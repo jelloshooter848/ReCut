@@ -63,9 +63,10 @@ Path aliases: `@shared/*` → `shared/`, `@/*` → `src/` (in `vite.config.ts` a
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | Builds main/preload with esbuild, starts the Vite dev server on :5173, launches Electron with `RECUT_DEV_URL`. The renderer hot-reloads. Restart to pick up main-process changes. |
+| `npm run setup` | `scripts/setup-dev.mjs`: when missing, downloads FFmpeg into `resources/ffmpeg/` (skipped when `ffmpeg` and `ffprobe` are on `PATH` or `RECUT_FFMPEG` is set) and compiles the speech-to-text engine into `resources/whisper/` (skipped with a note when cmake is missing), using the `scripts/<os>/get-*` scripts below. A step that fails does not stop the app. `npm run dev` and `npm start` run it first; `RECUT_SKIP_SETUP=1` skips it. |
+| `npm run dev` | Runs `npm run setup`'s checks, builds main/preload with esbuild, starts the Vite dev server on :5173, launches Electron with `RECUT_DEV_URL`. The renderer hot-reloads. Restart to pick up main-process changes. |
 | `npm run build` | `vite build` → `dist/renderer` and `scripts/build-electron.mjs` → `dist/electron`. |
-| `npm start` | Build, then `electron .` |
+| `npm start` | Setup (as `npm run setup`), build, then `electron .` |
 | `npm run typecheck` | `tsc --noEmit` for the renderer/shared project and for the electron project. |
 | `npm test` | Vitest over `tests/unit/**/*.test.ts` (node environment). Some tests run real FFmpeg. |
 | `npm run test:watch` | Vitest in watch mode. |
@@ -75,6 +76,7 @@ Path aliases: `@shared/*` → `shared/`, `@/*` → `src/` (in `vite.config.ts` a
 | `npm run package` | Build, then `electron-builder --dir` → `release/<platform>-unpacked`. Windows installers are built by `.github/workflows/windows.yml`. |
 | `npm run dist` | Build, then electron-builder installers (AppImage / dmg / nsis + portable exe). The Windows nsis installer and portable exe are built in CI by `.github/workflows/windows.yml`, which smoke-tests the unpacked app and a silent install (unsigned, FFmpeg bundled); its `linux` job builds the x86-64 AppImage with FFmpeg bundled (`scripts/linux/get-ffmpeg.sh`) and smoke-tests it; its `macos` job (a release gate) builds the Apple Silicon (arm64) and Intel (x64) dmgs with FFmpeg bundled (`scripts/mac/get-ffmpeg.sh --arch`) and smoke-tests each app inside its mounted dmg (the Intel one under Rosetta 2); on a release run both dmgs must be Developer ID signed and notarized (signing: `docs/MACOS-SIGNING.md`). |
 | `scripts/linux/get-whisper.sh`, `scripts/windows/get-whisper.ps1`, `scripts/mac/get-whisper.sh` | Compile the speech-to-text engine (whisper.cpp, pinned and SHA-256-checked by `scripts/whisper-source.mjs`) into `resources/whisper/`, where the app finds it in development (working directory) and electron-builder bundles it. Needs cmake and a C++ compiler (Visual Studio 2022 or newer with the C++ workload on Windows, found with vswhere); a few minutes with 2 jobs. `WHISPER_WORK_DIR` (Linux / macOS) or `-WorkDir` (Windows) keeps the build for incremental rebuilds. Without it (for example when running from source with "Start ReCut.cmd"), Local Whisper says the engine is not included, the smoke test prints `whisper engine=absent`, and the engine tests are skipped. |
+| `scripts/check-smoke.mjs --mode installer\|launcher <report>` | Checks a Windows smoke report (`RECUT_SMOKE=1`) against `scripts/smoke-requirements.json`, the one list of required results shared by the installer job's smoke test and `Start ReCut.cmd -Smoke` (the launcher job): media protocol, FFmpeg encode + probe, OCR (worker path per mode), the speech-to-text engine in `resources\whisper`, the mounted window, and no `FAILED`. FFmpeg from `resources\ffmpeg` is required of the installer only. `-Smoke` runs only in CI and fails without the engine; a double-click start still goes on without it. |
 
 Run `npm run typecheck` and `npm test` before you send changes.
 
@@ -161,7 +163,7 @@ Every budgeted row has a tier. The owner decided this policy on 6 October 2026:
   scrub rows happened to leave out of the pool. Since 9 October 2026 the row counts a replay of the same 10 s (the
   first playback, with its fps and long-task gates, runs unchanged before it), which starts with exactly the
   elements playback needs, so it reads 0 on unchanged code
-  (`bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md`). Every other row is unchanged: time, rate and long-task rows with a baseline of 0, and
+  (`https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-perf-pool-elements-created-during-playback.md`). Every other row is unchanged: time, rate and long-task rows with a baseline of 0, and
   count rows with a non-zero baseline (1 → 2 still fails), keep the ratio rule; the row's own budget still applies.
 - **Nothing is deleted or loosened.** Re-scoping a row's tier is the only mechanism. Diagnostic rows (and
   `reference` guardrails) keep their old threshold in the row, shown as a reference, so history stays comparable.
@@ -176,7 +178,7 @@ Every budgeted row has a tier. The owner decided this policy on 6 October 2026:
 
 Cloud hosts of the same nominal class differ in real speed: identical code measured 1.5–2.3× slower on one 4-core
 container than on another and failed 15 of 98 gates there
-(`bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md`). So every run measures the host first and judges its
+(`https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md`). So every run measures the host first and judges its
 rows on the scale of the **reference machine**, the machine the baseline was seeded on.
 
 - **Calibration** (`tests/perf/calibrate.mjs`, run before each run into `<run dir>/calibration.json`; on its own:
@@ -258,7 +260,7 @@ machine, so no local baseline is needed; to judge a change against main on one h
   the slowest ratio (`RECUT_PERF_TIMEOUT_SCALE`), so the 8-minute full export does not time out there.
 - **Treat ±30 % as noise on a single run.** On an idle 4-core container three runs agreed within about ±10 % for
   most rows, but with other jobs on the machine a single row has doubled on identical code (`serializeProject`
-  344 → 704 ms; see the baseline in `bugs/closed/2026-10-05-perf-budgets-2500-clips.md`). A single run is not
+  344 → 704 ms; see the baseline in `https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-perf-budgets-2500-clips.md`). A single run is not
   evidence of a regression or a fix, and rows within a few percent of their budget flip between runs. Compare
   medians of at least two runs: `npm run perf:check -- --runs 2` runs everything twice and reports the median per row
   with its min–max spread; a row passes its budget only when it passed in more than half of the runs.

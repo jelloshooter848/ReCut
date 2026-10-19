@@ -1,5 +1,5 @@
 /**
- * bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md
+ * bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md @ 59eafc6
  *
  * An autosave that snapshotted the project before (or while) a manual save ran must not land after that save: it
  * holds nothing the project file lacks, but written after it, it is offered for recovery on the next launch. For a

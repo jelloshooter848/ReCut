@@ -11,6 +11,8 @@ import {
 } from '../../shared/projectWire';
 import { parseSubtitles } from '../../shared/subtitles';
 import { uid } from '../../shared/ids';
+import { PROBE_REVISION } from '../../shared/media';
+import { stripProjectExtension } from '../../shared/productIdentity';
 import { useStore } from './store';
 import { fileNameOf } from './selectors';
 import { classifyPath, importIdentity, sidecarLanguage, LONG_FORM_MOVIE_SEC, type ImportBinKind } from './parseIdentity';
@@ -211,6 +213,20 @@ export async function probeMedia(mediaId: ID): Promise<MediaProbe | null> {
   }
 }
 
+/**
+ * Re-probe online media whose stored probe predates a fix that can change it (MediaProbe.probeRev < PROBE_REVISION),
+ * limited to the probes the fix can affect: revision 2 (#154) moved stream start offsets, so only a video with a
+ * stored start offset is probed again. Runs in the background after a project opens. Returns the re-probed ids.
+ */
+export async function refreshStaleProbes(): Promise<ID[]> {
+  const st = useStore.getState();
+  const stale = Object.values(st.project.media).filter((m) => !m.offline && m.probe && (m.probe.probeRev ?? 1) < PROBE_REVISION
+    && (m.probe.video?.startTime ?? 0) > 0);
+  const done: ID[] = [];
+  for (const m of stale) { if (await probeMedia(m.id)) done.push(m.id); }
+  return done;
+}
+
 /** Re-check that each media file still exists; marks offline accordingly. Also drops `ready` proxies whose file is gone. */
 export async function verifyMediaOnline(mediaIds?: ID[]): Promise<ID[]> {
   const api = recutApi();
@@ -229,7 +245,56 @@ export async function verifyMediaOnline(mediaIds?: ID[]): Promise<ID[]> {
   return missing;
 }
 
-/** Stat every `ready` proxy; a missing proxy file resets the item to `none` (so it shows as needing a proxy again). */
+/**
+ * A missing cache file (proxy, channel proxy) saved under a legacy user-data folder that has moved (or under its
+ * default cache): the same relative path under the current folder when a file exists there, else null. The main
+ * process compares the paths in their real form (electron/legacyPathRemap.ts).
+ */
+export async function relocatedCachePath(api: RecutApi, p: string): Promise<string | null> {
+  if (typeof api.relocateLegacyPath !== 'function') return null;
+  try {
+    const moved = await api.relocateLegacyPath(p);
+    return typeof moved === 'string' && moved && moved !== p ? moved : null;
+  } catch { return null; }
+}
+
+/**
+ * Stat every `ready` proxy. A missing proxy file saved under a legacy user-data folder is looked for at the same place
+ * under the current one first (relocatedCachePath; the path is updated quietly, like every proxy state write); any
+ * other missing proxy resets the item to `none` (so it shows as needing a proxy again).
+ */
+/**
+ * After a project is opened: give back the proxies it lost (#136). A proxy that finished after the last save is not in
+ * the file (proxy status is not an edit and does not make the project dirty), and queued / running proxies load as
+ * 'none'; the finished file is still in the content-keyed cache. For every media that needs a proxy to preview and has
+ * none, look one up (RecutApi.lookupProxy: never renders) and mark it ready. Returns the media ids restored.
+ */
+export async function restoreCachedProxies(mediaIds?: ID[]): Promise<ID[]> {
+  const api = recutApi();
+  if (!api?.lookupProxy) return [];
+  const { media, settings } = useStore.getState().project;
+  const todo = (mediaIds ?? Object.keys(media)).filter((id) => {
+    const m = media[id];
+    return !!m && m.proxy.status === 'none' && mediaNeedsProxyForPreview(m);
+  });
+  const restored: ID[] = [];
+  const worker = async () => {
+    for (let id = todo.shift(); id !== undefined; id = todo.shift()) {
+      const m = useStore.getState().project.media[id];
+      if (!m || m.proxy.status !== 'none') continue;
+      let hit: Awaited<ReturnType<RecutApi['lookupProxy']>> = null;
+      try { hit = await api.lookupProxy({ mediaId: id, path: m.path, height: settings.proxyHeight }); } catch { hit = null; }
+      // Still 'none' (a job may have started meanwhile): mark the cached proxy ready.
+      if (!hit || useStore.getState().project.media[id]?.proxy.status !== 'none') continue;
+      useStore.getState().setProxy(id, { status: 'ready', path: hit.path, progress: 1, width: hit.width, height: hit.height, audioStreams: [...hit.audioStreams] });
+      restored.push(id);
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  if (restored.length) say('info', `${plural(restored.length, 'proxy', 'proxies')} restored from the cache`);
+  return restored;
+}
+
 export async function verifyProxies(mediaIds?: ID[]): Promise<ID[]> {
   const api = recutApi();
   if (!api) return [];
@@ -241,6 +306,11 @@ export async function verifyProxies(mediaIds?: ID[]): Promise<ID[]> {
     let exists = true;
     try { exists = (await api.stat(m.proxy.path)).exists; } catch { /* leave as is */ }
     if (exists) continue;
+    const moved = await relocatedCachePath(api, m.proxy.path);
+    if (moved) {
+      useStore.getState().setProxy(id, { ...m.proxy, path: moved });
+      continue;
+    }
     gone.push(id);
     useStore.getState().setProxy(id, { status: 'none' });
   }
@@ -326,7 +396,10 @@ export async function startSceneDetect(mediaId: ID, threshold?: number): Promise
   const m = st.project.media[mediaId];
   if (!api || !m) return null;
   st.setSceneDetectStatus(mediaId, 'running');
-  return api.startSceneDetect({ mediaId, path: m.path, threshold: threshold ?? st.project.settings.sceneThreshold, duration: m.probe?.duration ?? 0 });
+  return api.startSceneDetect({
+    mediaId, path: m.path, threshold: threshold ?? st.project.settings.sceneThreshold, duration: m.probe?.duration ?? 0,
+    minSceneSeconds: st.project.settings.minShotSeconds,
+  });
 }
 
 /** Read an .srt/.vtt file and attach it to a media item as a subtitle track. Returns parse warnings. */
@@ -679,7 +752,7 @@ function covers(save: WriteSnapshot, snap: WriteSnapshot): boolean {
 }
 
 /*
- * An autosave never lands after a save that holds its content (bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md).
+ * An autosave never lands after a save that holds its content (bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md @ 59eafc6).
  * Saves and autosaves run on their own queues, and an autosave serializes in idle slices for a while: one that
  * snapshotted the project before or during a save could make its file after the save's. Its file is then newer
  * than the project file while holding nothing the project lacks, and the next launch offers it for recovery after a
@@ -804,8 +877,7 @@ let lastAutosaveDoneAt = 0;
  * An edit made while a manual save was in flight stays dirty (markSaved), and its debounced autosave may have
  * landed before the save's write: recovery then takes that autosave for older than the project file and ignores
  * it, and the lifecycle would only autosave again on its interval tick (60 s by default). Autosave once more
- * AUTOSAVE_AFTER_SAVE_MS after such a save, unless an autosave finished since (bugs/closed/
- * 2026-10-06-autosave-during-save-ignored-by-recovery.md). Never while playing or mid-drag (the lifecycle's rule):
+ * AUTOSAVE_AFTER_SAVE_MS after such a save, unless an autosave finished since (bugs/closed/2026-10-06-autosave-during-save-ignored-by-recovery.md @ 59eafc6). Never while playing or mid-drag (the lifecycle's rule):
  * it waits for those to end. Dropped when the project is saved, replaced or opened meanwhile.
  */
 function autosaveAfterSave(projectId: ID, loadedRevision: number): void {
@@ -822,10 +894,10 @@ function autosaveAfterSave(projectId: ID, loadedRevision: number): void {
   afterSaveTimer = setTimeout(fire, AUTOSAVE_AFTER_SAVE_MS);
 }
 
-/** The name a still-untitled project takes from its file (`/a/My Edit.recut` -> `My Edit`). */
+/** The name a still-untitled project takes from its file (`/a/My Edit.recut` -> `My Edit`; any project extension). */
 export const DEFAULT_PROJECT_NAME = 'Untitled Project';
 export function projectNameFromPath(p: string): string {
-  return fileNameOf(p).replace(/\.recut$/i, '').trim();
+  return stripProjectExtension(fileNameOf(p)).trim();
 }
 
 /** Warning text for a load that had to repair damaged data (LoadResult.repaired / preRepairPath). */

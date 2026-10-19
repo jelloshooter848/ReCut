@@ -9,7 +9,7 @@
  *    leaves the target as it was and no temp file; the .bak holds the previous version;
  *  - the .bak is a hard link where possible, a copy where links are refused, and a .bak that already is a link to
  *    the target leaves no temp name behind;
- *  - the save-race rules (bugs/closed/2026-10-06-edits-during-save-marked-saved.md) hold on the streamed path.
+ *  - the save-race rules (bugs/closed/2026-10-06-edits-during-save-marked-saved.md @ 59eafc6) hold on the streamed path.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';

@@ -4,7 +4,7 @@
  */
 import type {
   AudioChannelSelection, Bin, Clip, ClipAudio, ClipTransform, DetectedScene, ID, JobInfo, Marker, MediaItem, MediaProbe, Project,
-  ProjectSettings, ProxyInfo, SceneRecord, Sequence, SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock,
+  ProjectSettings, ProxyInfo, SceneRecord, SceneSequence, Sequence, SequenceSubtitleCue, SequenceSubtitleTrack, StoryBlock,
   SubtitleTrack, TagVocabulary, Track, Transition, TransitionType, KeyframeInterp,
 } from '../../shared/model';
 import type { MoveSpec, NewClipSpec } from '../../shared/timeline';
@@ -21,6 +21,13 @@ export interface SourceClipState {
   inPoint: number | null;   // seconds
   outPoint: number | null;  // seconds
   time: number;             // seconds
+  /**
+   * The scrub bar's zoom (#150): opening a shot or scene shows just its range (seconds), until `viewFull` or until the
+   * playhead leaves it. Absent / null when a whole file was opened.
+   */
+  view?: { start: number; end: number } | null;
+  /** The scene range is set but the user chose Full file. */
+  viewFull?: boolean;
 }
 
 export interface FilterState {
@@ -100,6 +107,9 @@ export interface InsertFromSourceOptions {
   atFrame: number;
   videoTrackId?: ID;
   audioTrackId?: ID;
+  /** Drag and drop: without a track id, place this kind on its track at this index (trackForDrop, #120). */
+  videoTrackIndex?: number;
+  audioTrackIndex?: number;
   mode: 'insert' | 'overwrite';
   includeVideo?: boolean;
   includeAudio?: boolean;
@@ -122,7 +132,7 @@ export interface TrackFlagsPatch {
 
 export interface ContinuityNoteInput { time: number; name: string; note: string; category?: string; clipId?: ID; duration?: number }
 
-export type SequenceSettingsPatch = Partial<Pick<Sequence, 'name' | 'fps' | 'width' | 'height' | 'sampleRate' | 'channels' | 'binId' | 'versionLabel'>>;
+export type SequenceSettingsPatch = Partial<Pick<Sequence, 'name' | 'fps' | 'width' | 'height' | 'sampleRate' | 'channels' | 'binId' | 'versionLabel' | 'subtitlePosition'>>;
 
 export interface MediaRelinkStat { size?: number; mtimeMs?: number }
 
@@ -143,6 +153,8 @@ export interface StoreActions {
   canRedo(): boolean;
   clearHistory(): void;
   setView(seqId: ID, patch: ViewPatch): void;
+  /** Run `fn`; every commit inside it becomes one undo step named `label` (#143). Nested batches join the outer one. */
+  batch<T>(label: string, fn: () => T): T;
   beginTransaction(): void;
   updateTransient(recipe: Recipe): void;
   endTransaction(label: string): boolean;
@@ -183,7 +195,8 @@ export interface StoreActions {
    */
   setChannelProxies(id: ID, patch: Record<string, ProxyInfo | null>): void;
   setSceneDetectStatus(id: ID, status: NonNullable<MediaItem['sceneDetectStatus']>): void;
-  setDetectedScenes(id: ID, boundaries: number[], duration: number): void;
+  /** `nameFor` names a new shot from its range (e.g. from the transcript, #144); null keeps the default "Shot NNN". */
+  setDetectedScenes(id: ID, boundaries: number[], duration: number, nameFor?: (start: number, end: number) => string | null): void;
   renameDetectedScene(mediaId: ID, sceneId: ID, name: string): void;
   mergeDetectedScenes(mediaId: ID, sceneIds: ID[]): void;
   splitDetectedScene(mediaId: ID, sceneId: ID, atSeconds: number): void;
@@ -205,6 +218,8 @@ export interface StoreActions {
    */
   putWhisperSubtitleTrack(track: SubtitleTrack): ID;
   removeMediaSubtitleTrack(trackId: ID): void;
+  /** Use one of the media's subtitle tracks as its transcript (#162), or null for the Whisper transcript. */
+  setTranscriptSource(mediaId: ID, trackId: ID | null): void;
 
   // ---- sequences ----
   addSequence(seq: Sequence, opts?: { activate?: boolean }): void;
@@ -298,13 +313,34 @@ export interface StoreActions {
   splitCue(seqId: ID, cueId: ID, atFrame: number): ID | null;
   mergeCues(seqId: ID, cueIds: ID[]): void;
   removeCue(seqId: ID, cueId: ID): void;
+  /** Set a timeline cue's start and end (timeline frames); an attached cue stays attached, within its clip (#135). */
+  setCueTiming(seqId: ID, cueId: ID, startFrame: number, endFrame: number): void;
+  /** Detach a timeline cue from its clip: it stays where it is on the timeline (#135). */
+  unpinCue(seqId: ID, cueId: ID): void;
+
+  // ---- media subtitle / transcript cues, edited by hand (#135): source seconds, so edits follow the audio ----
+  /** Text and / or start / end of a media cue; empty text removes it. Kept off its neighbours (no new overlap). */
+  editMediaCue(trackId: ID, cueId: ID, patch: { text?: string; start?: number; end?: number }): void;
+  addMediaCue(trackId: ID, cue: { start: number; end: number; text: string }): ID | null;
+  splitMediaCue(trackId: ID, cueId: ID, atSeconds: number): ID | null;
+  /** Merge consecutive cues of one track into the first. */
+  mergeMediaCues(trackId: ID, cueIds: ID[]): void;
+  removeMediaCue(trackId: ID, cueId: ID): void;
 
   // ---- scenes library ----
   addScene(record: SceneRecord): void;
   updateScene(id: ID, patch: Partial<SceneRecord>): void;
   removeScene(id: ID): void;
+  /** Merge library scenes of one video into the first (#152); null when fewer than two or from several videos. */
+  mergeScenes(ids: ID[]): ID | null;
   sceneFromSource(name?: string): ID | null;
   sceneFromClip(seqId: ID, clipId: ID, name?: string): ID | null;
+
+  // ---- sequences of scenes (#146; not timelines) ----
+  /** A new sequence holding the given scenes (existing ones, each once) in that order. Returns its id. */
+  addSceneSequence(name: string, sceneIds: ID[], opts?: { color?: string }): ID;
+  updateSceneSequence(id: ID, patch: Partial<Pick<SceneSequence, 'name' | 'sceneIds' | 'color' | 'tags' | 'notes'>>): void;
+  removeSceneSequence(id: ID): void;
 
   // ---- tags ----
   addTag(kind: keyof TagVocabulary, value: string): void;
@@ -318,6 +354,10 @@ export interface StoreActions {
   selectBin(id: ID | null): void;
   selectMarker(id: ID | null): void;
   setSourceClip(mediaId: ID | null, time?: number): void;
+  /** Zoom the Source scrub bar to a range (a shot or scene, #150), or clear it (null). Shows the range. */
+  setSourceView(view: { start: number; end: number } | null): void;
+  /** Switch the Source scrub bar between the scene range (false) and the full file (true). */
+  setSourceViewFull(full: boolean): void;
   setSourceIn(seconds: number | null): void;
   setSourceOut(seconds: number | null): void;
   setSourceTime(seconds: number): void;
@@ -342,7 +382,7 @@ export interface StoreActions {
   /** Open in Timeline: make a nested clip's sequence the active one, its playhead at the frame shown at `frame` (default: the outer playhead). */
   openNestedSequence(seqId: ID, clipId: ID, frame?: number): boolean;
   /** Nest sequence `childId` in `seqId` at `frame` (video and / or audio nested clips; cycles and too deep nesting are refused with a toast). */
-  nestSequence(seqId: ID, childId: ID, frame: number, opts?: { mode?: 'insert' | 'overwrite'; videoTrackId?: ID; audioTrackId?: ID }): ID[];
+  nestSequence(seqId: ID, childId: ID, frame: number, opts?: { mode?: 'insert' | 'overwrite'; videoTrackId?: ID; audioTrackId?: ID; videoTrackIndex?: number; audioTrackIndex?: number }): ID[];
 }
 
 export type RecutStore = StoreState & StoreActions;

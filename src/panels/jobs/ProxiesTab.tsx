@@ -10,7 +10,7 @@ import { useJobsStore } from '@/app/jobsStore';
 import { Button, EmptyState, ProgressBar, Select, Toggle } from '@/components/ui';
 import { toast } from '@/components/ui/toastStore';
 import { jobEq, useJobsSelect } from './useJobsSelect';
-import { isDisplayableImage, isStillImage, mediaNeedsProxyForPreview } from '@/playback/mediaSource';
+import { isDisplayableImage, isStillImage, mediaNeedsProxyForPreview, previewReason } from '@/playback/mediaSource';
 import { PROXY_HEIGHTS } from '@shared/limits';
 
 const PROXY_HEIGHT_OPTIONS = PROXY_HEIGHTS.map((h) => ({ value: String(h), label: `${h}p` }));
@@ -40,7 +40,7 @@ async function generateFor(ids: ID[]): Promise<void> {
 async function detectFor(ids: ID[]): Promise<void> {
   let n = 0;
   for (const id of ids) {
-    const r = await startSceneDetect(id).catch((e: unknown) => { toast('error', `Scene detection failed to start: ${e instanceof Error ? e.message : String(e)}`); return null; });
+    const r = await startSceneDetect(id).catch((e: unknown) => { toast('error', `Shot detection failed to start: ${e instanceof Error ? e.message : String(e)}`); return null; });
     if (r) n++;
   }
   if (n > 0) toast('info', `Detecting scenes in ${n} file${n > 1 ? 's' : ''}`);
@@ -89,11 +89,11 @@ export function ProxiesTab() {
           Cancel all{activeProxyJobs ? ` (${activeProxyJobs})` : ''}
         </Button>
         <span className="toolbar-sep" />
-        <Button size="sm" icon={Clapperboard} disabled={!selectedScene.length} title="Detect scenes in the selected media (uses the project scene threshold)" onClick={() => detectFor(selectedScene.map((m) => m.id))}>
-          Detect scenes: selected{selectedScene.length ? ` (${selectedScene.length})` : ''}
+        <Button size="sm" icon={Clapperboard} disabled={!selectedScene.length} title="Detect shots in the selected media (uses the project shot threshold)" onClick={() => detectFor(selectedScene.map((m) => m.id))}>
+          Detect shots: selected{selectedScene.length ? ` (${selectedScene.length})` : ''}
         </Button>
-        <Button size="sm" disabled={!withoutScenes.length} title="Detect scenes in every video that has none yet" onClick={() => detectFor(withoutScenes.map((m) => m.id))}>
-          All without scenes{withoutScenes.length ? ` (${withoutScenes.length})` : ''}
+        <Button size="sm" disabled={!withoutScenes.length} title="Detect shots in every video that has none yet" onClick={() => detectFor(withoutScenes.map((m) => m.id))}>
+          All without shots{withoutScenes.length ? ` (${withoutScenes.length})` : ''}
         </Button>
       </div>
       <div className="toolbar" style={{ height: 'auto', flexWrap: 'wrap', padding: '3px 6px', gap: 8, rowGap: 2 }}>
@@ -153,7 +153,7 @@ const ProxyRow = memo(function ProxyRow({ media: m, selected }: { media: MediaIt
       <div className="jp-trow-main">
         <FileVideo className="jp-job-icon" />
         <span className="ellipsis grow" title={m.path}>{m.name}</span>
-        {flagged ? <span className="tag nowrap" style={{ borderColor: 'var(--accent-2)', color: 'var(--accent-2)' }} title={m.probe?.playabilityReason ?? 'Not decodable in the preview'}>needs proxy</span> : null}
+        {flagged ? <span className="tag nowrap" style={{ borderColor: 'var(--accent-2)', color: 'var(--accent-2)' }} title={previewReason(m) ?? 'Not decodable in the preview'}>needs proxy</span> : null}
         {statusNode}
         <span className="jp-actions" onClick={(e) => e.stopPropagation()}>
           {eligible && !active && status !== 'ready' ? <Button size="sm" onClick={() => generateFor([m.id])} data-testid="proxy-generate">Generate</Button> : null}
@@ -164,7 +164,7 @@ const ProxyRow = memo(function ProxyRow({ media: m, selected }: { media: MediaIt
         </span>
       </div>
       <div className="jp-trow-sub">
-        <span className="text-dim text-xs nowrap" title={m.probe?.playabilityReason}>{source}</span>
+        <span className="text-dim text-xs nowrap" title={previewReason(m)}>{source}</span>
         {proxyRes ? <span className="text-faint text-xs nowrap mono">· {proxyRes}</span> : null}
         {active ? <ProgressBar value={job?.status === 'running' && progress > 0 ? progress : undefined} /> : null}
         {active && job?.message ? <span className="text-faint text-xs ellipsis">{job.message}</span> : null}

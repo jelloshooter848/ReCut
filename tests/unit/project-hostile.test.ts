@@ -240,7 +240,7 @@ describe('BUG 3: malformed members are dropped, valid siblings kept', () => {
     const { p, sid, seq } = base();
     Object.assign(seq, { name: 5, width: 'big', height: -1, sampleRate: 0, channels: 2.5, view: 'x', createdAt: 'x', modifiedAt: null, parentSequenceId: 5, versionLabel: {} });
     const s = normalizeProject(p).sequences[sid];
-    expect(s.name).toBe('Sequence');
+    expect(s.name).toBe('Timeline');
     expect([s.width, s.height, s.sampleRate, s.channels]).toEqual([1920, 1080, 48000, 2]);
     expect(s.view).toEqual({ playhead: 0, zoom: 4, scroll: 0, inPoint: null, outPoint: null });
     expect(Number.isFinite(s.createdAt) && Number.isFinite(s.modifiedAt)).toBe(true);

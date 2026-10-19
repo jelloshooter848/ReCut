@@ -83,10 +83,10 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
   };
 
   const sequenceMenu: MenuItemConstructorOptions = {
-    label: 'Sequence',
+    label: 'Timeline',
     submenu: [
-      cmd('New Sequence…', 'sequence.new'),
-      cmd('Duplicate Sequence', 'sequence.duplicate'),
+      cmd('New Timeline…', 'sequence.new'),
+      cmd('Duplicate Timeline', 'sequence.duplicate'),
       cmd('Duplicate as Cut Without Disabled Clips…', 'sequence.duplicateWithoutDisabled'),
       { type: 'separator' },
       cmd('Remove Disabled Clips…', 'sequence.removeDisabledClips'),

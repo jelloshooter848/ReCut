@@ -21,6 +21,7 @@ import type { JobQueue } from '../jobs/jobQueue';
 import { inFlightJob, trackInFlight, type InFlight } from '../jobs/inFlight';
 import { ensureDirSafe } from '../safeMkdir';
 import { downloadVerified, renameRetrying, sha256File, type DownloadPolicy } from '../net/download';
+import { PRODUCT_NAME } from '../../shared/productIdentity';
 
 /**
  * Model downloads: start at https://huggingface.co; redirects only over https (default port) to Hugging Face's own
@@ -72,7 +73,7 @@ export function findWhisperModel(id: unknown): WhisperModelInfo | undefined {
   return typeof id === 'string' ? allWhisperModels().find((m) => m.id === id) : undefined;
 }
 
-/** A model id ReCut can install; throws otherwise (IPC argument check). */
+/** A model id the app can install; throws otherwise (IPC argument check). */
 export function assertWhisperModelId(v: unknown): string {
   if (!findWhisperModel(v)) throw new Error(`unknown Whisper model: ${JSON.stringify(typeof v === 'string' ? v.slice(0, 40) : v)}`);
   return v as string;
@@ -236,7 +237,7 @@ export async function installModelFromFile(queue: JobQueue, id: string, src: str
   let st;
   try { st = await fsp.stat(src); } catch { return { ok: false, error: `${path.basename(src)} was not found.` }; }
   if (!st.isFile()) return { ok: false, error: `${path.basename(src)} is not a file.` };
-  const wrong = `${path.basename(src)} is not the ${model.name} model ReCut expects (${model.file}, ${formatModelSize(model.bytes)} from the whisper.cpp model repository).`;
+  const wrong = `${path.basename(src)} is not the ${model.name} model ${PRODUCT_NAME} expects (${model.file}, ${formatModelSize(model.bytes)} from the whisper.cpp model repository).`;
   if (st.size !== model.bytes) return { ok: false, error: wrong };
   const dest = path.join(ctx.modelsDir, model.file);
   const tmp = `${dest}.${crypto.randomBytes(4).toString('hex')}.tmp`;

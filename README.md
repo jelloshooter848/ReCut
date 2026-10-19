@@ -51,8 +51,8 @@ Footage: *Tears of Steel* and *Sintel* © Blender Foundation, [CC BY 3.0](https:
 
 ### Editing core
 - Source / Program monitors with JKL shuttle (up to 8x), frame stepping, In/Out marks and typed timecode entry.
-- Three-point **Insert** (`,`) and **Overwrite** (`.`) that honour sequence and source In/Out. On the first edit into
-  an empty sequence, ReCut offers to change the sequence to match the clip.
+- Three-point **Insert** (`,`) and **Overwrite** (`.`) that honour timeline and source In/Out. On the first edit into
+  an empty timeline, ReCut offers to change the timeline to match the clip.
 - Multi-track timeline (video + audio tracks, linked A/V, source patching, lock / mute / solo), snapping,
   Lift / Extract, Ripple Delete, Add Edit, Ripple Trim to playhead (Q / W), nudge, copy / paste.
 - Tools: Selection, Track Select, Ripple, Rolling, Slip, Slide, Razor, Hand. All edits are frame-exact.
@@ -61,8 +61,8 @@ Footage: *Tears of Steel* and *Sintel* © Blender Foundation, [CC BY 3.0](https:
 - Clip speed (1 %–10 000 %), position / scale / rotation / opacity / crop, clip gain, level and fades, and track volume.
 - **Keyframes** for position, scale, opacity and volume, Linear or Ease, shown as diamonds on the timeline. They stay
   with the picture through trims, splits, rolls and slides, and the export matches the preview.
-- **Nested sequences and compound clips.** Make Compound Clip folds the selection into its own sequence; edits to it
-  show everywhere it is used. Drag a sequence onto the timeline to nest it; Break Apart reverses it.
+- **Nested timelines and compound clips.** Make Compound Clip folds the selection into its own timeline; edits to it
+  show everywhere it is used. Drag a timeline from the Project panel into another to nest it; Break Apart reverses it.
 
 ### Fan-edit tools
 - **Series / season / franchise organisation.** On import, ReCut reads `S01E03`, `1x03` or `Season 1 Episode 3` and
@@ -71,7 +71,7 @@ Footage: *Tears of Steel* and *Sintel* © Blender Foundation, [CC BY 3.0](https:
 - **Scene detection** (FFmpeg scene filter, adjustable threshold) with merge, split and tag of detected scenes.
 - **Transcript search across a franchise.** Import SRT / WebVTT (sidecars next to a video are picked up
   automatically) or extract embedded text subtitles. Search by project, series, season, franchise, collection, source
-  or sequence, with regex and whole-word options. Click a hit to load it in the Source monitor at that line.
+  or timeline, with regex and whole-word options. Click a hit to load it in the Source monitor at that line.
 - **Speech-to-text (Whisper).** Media without subtitles gets a searchable transcript from the built-in whisper.cpp
   engine, entirely offline. Models (tiny to large-v3-turbo) are downloaded once, when you choose one, and checked
   against a fixed checksum.
@@ -82,12 +82,12 @@ Footage: *Tears of Steel* and *Sintel* © Blender Foundation, [CC BY 3.0](https:
 - **Story tagging.** Tag clips with characters, plotlines, locations and tags. The Storyline panel can **Highlight** or
   **Solo** matching clips, and its **What if** buttons disable matching / non-matching clips and estimate the runtime.
   **Remove disabled** turns the experiment into the real cut (ripple, one undo step), and **Duplicate as cut** does the
-  same in a new version of the sequence.
+  same in a new version of the timeline.
 - **Storyline blocks.** Label acts and arcs as coloured blocks above the cut.
-- **Alternate cuts and snapshots.** Duplicate a sequence as a versioned alternate cut, or take restorable snapshots.
-- **Compare cuts.** Play two sequences side by side on one clock and read a structural diff
+- **Alternate cuts and snapshots.** Duplicate a timeline as a versioned alternate cut, or take restorable snapshots.
+- **Compare cuts.** Play two timelines side by side on one clock and read a structural diff
   (same / moved / trimmed / only in A / only in B).
-- **Continuity notes.** Categorised issues that are pinned to a clip, can be resolved, are aggregated across sequences
+- **Continuity notes.** Categorised issues that are pinned to a clip, can be resolved, are aggregated across timelines
   and can be copied as text.
 - **Original source timecode.** The Inspector shows the source file's timecode at the playhead. The Program timecode
   can switch from SEQ to SRC, and Match Frame (`F`) jumps to the source.
@@ -122,7 +122,7 @@ Footage: *Tears of Steel* and *Sintel* © Blender Foundation, [CC BY 3.0](https:
 | ![Project panel](docs/screenshots/project-panel.png) Project panel: bins, series, scenes | ![Source](docs/screenshots/source.png) Source monitor with subtitles |
 | ![Program](docs/screenshots/program.png) Program monitor | ![Timeline](docs/screenshots/timeline.png) Timeline |
 | ![Inspector](docs/screenshots/inspector.png) Inspector with original source timecode | ![Keyframes](docs/screenshots/keyframes.png) Keyframes in the Inspector and on the timeline |
-| ![Nested sequence](docs/screenshots/nested.png) A compound clip (nested sequence) | ![Channels](docs/screenshots/channels.png) Centre channel extracted from a 5.1 source |
+| ![Nested timeline](docs/screenshots/nested.png) A compound clip (nested timeline) | ![Channels](docs/screenshots/channels.png) Centre channel extracted from a 5.1 source |
 | ![Transcript](docs/screenshots/transcript.png) Transcript search across a franchise | ![Scenes](docs/screenshots/scenes.png) Scene library |
 | ![Storyline](docs/screenshots/storyline.png) Storyline blocks and tag filters | ![Compare](docs/screenshots/compare.png) Compare cuts with structural diff |
 | ![Continuity](docs/screenshots/continuity.png) Continuity notes | ![Jobs](docs/screenshots/jobs.png) Jobs and proxies |
@@ -139,6 +139,9 @@ Footage: *Tears of Steel* and *Sintel* © Blender Foundation, [CC BY 3.0](https:
 - **From a clone:** double-click **`Start ReCut.cmd`** in the repository folder. The first run checks for Node.js
   (offering to install it with winget), installs dependencies, builds the app and downloads FFmpeg into
   `resources\ffmpeg`; later runs just launch ReCut. Run it again after `git pull` and it rebuilds automatically.
+  For speech-to-text it also compiles the Whisper engine into `resources\whisper` (a few minutes, once), which needs
+  **cmake** and **Visual Studio 2022 or newer with "Desktop development with C++"**. Without them it says what to
+  install and ReCut starts without speech-to-text; install them and double-click `Start ReCut.cmd` again.
 
 Both are built and smoke-tested on a Windows machine by [`.github/workflows/windows.yml`](.github/workflows/windows.yml)
 on every push.
@@ -152,7 +155,8 @@ on every push.
   or run it with `--appimage-extract-and-run`. See [docs/INSTALL.md](docs/INSTALL.md#linux-in-one-step).
 - **From source:** see the quick start below.
 
-The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow on every push.
+The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow on every push to `main` and `dev` and
+on every pull request into `dev`.
 
 ## macOS (Apple Silicon and Intel): download and run
 
@@ -164,23 +168,30 @@ The AppImage is built, tested and launched on Ubuntu 22.04 by the same workflow 
   needed. On Intel Macs speech-to-text runs on the CPU only (no Metal), so it is slower; Intel support may be retired
   after 1.0. See [docs/INSTALL.md](docs/INSTALL.md#macos).
 
-Both dmgs are built, signed, notarized and launched from the mounted dmg by the same workflow on every push, on an
-Apple Silicon runner (the Intel one under Rosetta 2). Builds of unreleased commits are the **ReCut-macos-arm64** and
-**ReCut-macos-x64** artifacts of a CI run (Actions › Windows build › the run › Artifacts); see
+Both dmgs are built, signed, notarized and launched from the mounted dmg by the same workflow on every push to `main`
+and `dev` and on every pull request into `dev`, on an Apple Silicon runner (the Intel one under Rosetta 2). The newest
+unreleased code is on the `dev` branch: its builds are the **ReCut-macos-arm64** and **ReCut-macos-x64** artifacts of
+the latest green `dev` run (Actions › Windows build › filter by branch `dev` › the run › Artifacts); see
 [macOS test builds](docs/INSTALL.md#macos-test-builds).
 
 ## Quick start (from source, any OS)
 
-Requires Node.js 20+ (22 recommended) and FFmpeg 6+ (`ffmpeg` and `ffprobe` on `PATH`, or set `RECUT_FFMPEG` /
-`RECUT_FFPROBE`). ReCut shows a banner at startup when it cannot find them. See [docs/INSTALL.md](docs/INSTALL.md),
-which also explains how to bundle FFmpeg into a package.
+Requires Node.js 20+ (22 recommended). For speech-to-text, also install **cmake** and a C++ compiler (macOS: Xcode
+command line tools and `brew install cmake`; Linux: `cmake` and `g++`; Windows: Visual Studio with the C++ workload).
+
+The first `npm run dev` or `npm start` sets up what the release installers bundle: it downloads FFmpeg into
+`resources/ffmpeg/` (unless `ffmpeg` and `ffprobe` are already on `PATH`) and compiles the speech-to-text engine into
+`resources/whisper/`, which takes a few minutes once. Later runs skip both. Without cmake the engine is skipped and
+ReCut still runs, but it says the engine is not included; install cmake and run `npm run setup`. Set
+`RECUT_SKIP_SETUP=1` to skip setup. See [docs/INSTALL.md](docs/INSTALL.md) for FFmpeg details and
+[Development setup in CONTRIBUTING.md](CONTRIBUTING.md#development-setup) for tests and conventions.
 
 ```bash
 git clone <this repo> ReCut && cd ReCut
 npm install
-npm run dev            # Vite + Electron with hot reload
+npm run dev            # first run: gets FFmpeg and the speech-to-text engine; then Vite + Electron with hot reload
 # or
-npm start              # production build, then launch
+npm start              # same setup, then a production build and launch
 ```
 
 To try it without your own media, generate synthetic test files (requires FFmpeg):
@@ -192,6 +203,24 @@ scripts/make-test-media.sh ./test-media        # movies, TV episodes, SRTs, 5.1 
 Then press **Ctrl+I** (Cmd+I on macOS) to import, double-click a clip, mark **I** / **O**, and press **,** to insert it.
 The [User Guide](docs/USER-GUIDE.md) walks through a complete fan edit.
 
+## Testing unreleased changes
+
+To try what is on `main` (or a pull request) before it is released, run it from a clone as in the quick start
+(first-time setup is in [CONTRIBUTING.md](CONTRIBUTING.md#development-setup)):
+
+```bash
+git checkout main && git pull       # or: gh pr checkout <number>
+npm install                         # picks up any new dependencies
+npm run dev                         # hot-reloads the renderer; restart after changes under electron/
+```
+
+- `npm start` runs the production build, which is closer to what ships than `npm run dev`.
+- `npm run package` builds an unpacked, unsigned app under `release/` with electron-builder. It catches packaging
+  problems, such as missing bundled FFmpeg (see [INSTALL.md](docs/INSTALL.md#bundling-ffmpeg)).
+- `npm run typecheck`, `npm test` and `npm run test:e2e` run the same checks as CI.
+- No build tools? Every push to `main` makes a **test build**: the Windows, Linux and macOS installers of that commit,
+  downloadable from the CI run's Artifacts. See [Test builds](docs/RELEASING.md#test-builds).
+
 ## Documentation
 
 | Doc | Contents |
@@ -202,6 +231,7 @@ The [User Guide](docs/USER-GUIDE.md) walks through a complete fan edit.
 | [FORMATS](docs/FORMATS.md) | Import formats, preview vs proxy, audio layouts, subtitles, export formats |
 | [LIMITATIONS](docs/LIMITATIONS.md) | Known limitations and open bugs |
 | [ROADMAP](docs/ROADMAP.md) | Deferred capabilities and why |
+| [NEXT-RELEASE](docs/NEXT-RELEASE.md) | What is on `dev` but not released yet: changelog draft and QA checklist |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | Processes, store, playback engine, export pipeline, timing model |
 | [DEVELOPMENT](docs/DEVELOPMENT.md) | Repo layout, scripts, tests, conventions |
 | [project-format](docs/project-format.md) | The `.recut` JSON format |

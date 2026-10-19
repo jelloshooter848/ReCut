@@ -294,8 +294,8 @@ describe('export settings: backward compatibility, presets, extension, validatio
     const stems = applyPreset(base, EXPORT_PRESETS.find((p) => p.name === 'WAV per audio track')!);
     expect([stems.container, stems.audioPerTrack, stems.fileName]).toEqual(['wav', true, 'Cut.wav']);
     expect(presetNameFor({ ...stems, audioPerTrack: false }, presets)).toBe('WAV 24-bit (audio only)');
-    // Match Sequence keeps the format.
-    expect(applyPreset(prores, presets.find((p) => p.name === 'Match Sequence')!).container).toBe('mov');
+    // Match Timeline keeps the format.
+    expect(applyPreset(prores, presets.find((p) => p.name === 'Match Timeline')!).container).toBe('mov');
   });
 
   it('the file name follows the format; output paths use it', () => {

@@ -1,5 +1,5 @@
 import React, { memo, useEffect, useRef, useState } from 'react';
-import { Captions, Eye, EyeOff, Lock, LockOpen } from 'lucide-react';
+import { Captions, ChevronDown, ChevronRight, Eye, EyeOff, Highlighter, Lock, LockOpen } from 'lucide-react';
 import type { Track } from '@shared/model';
 import { useStore } from '@/state';
 import { NumberField } from '@/components/ui/NumberField';
@@ -129,9 +129,31 @@ export const TrackHeader = memo(function TrackHeader({ seqId, track, top, height
 });
 
 export function SubtitleLaneHeader({ height, count }: { height: number; count: number }) {
+  const highlight = useStore((s) => s.project.settings.highlightSpokenWords);
   return (
-    <div className="tl-th-sub" style={{ height }} title="Subtitle lane (double-click a cue to open the Subtitles panel)">
+    <div className="tl-th-sub" style={{ height }} title="Subtitles: the transcript of the clip on screen (green; it follows the visible clip) and imported subtitles (double-click one to open the Subtitles panel)">
       <Captions /> <span>Subtitles</span><span className="text-faint">{count}</span>
+      <button type="button" className={['tl-th-btn', 'tl-th-sub-btn', highlight ? 'on' : ''].join(' ')} aria-pressed={highlight} data-highlight-words
+        title={highlight ? 'Highlighting the spoken word in the monitors (click to turn off)' : 'Highlight the spoken word in the monitors'}
+        onClick={() => useStore.getState().setSettings({ highlightSpokenWords: !highlight })}>
+        <Highlighter />
+      </button>
+    </div>
+  );
+}
+
+/** Header of a transcript lane (#112): "T1" under A1, with the number of cues; the chevron collapses it (#132). */
+export function TranscriptLaneHeader({ top, height, number, count, collapsed, onToggle }: {
+  top: number; height: number; number: number; count: number; collapsed: boolean; onToggle(): void;
+}) {
+  return (
+    <div className={['tl-th-sub', 'tl-th-t', collapsed ? 'collapsed' : ''].join(' ')} style={{ top, height }}
+      title={`Transcript of the clips on A${number} (from their media; transcribe a clip to fill it)`} data-transcript-lane={number}>
+      <button type="button" className="tl-th-t-toggle" onClick={onToggle} aria-expanded={!collapsed} data-transcript-toggle
+        title={collapsed ? `Expand T${number}` : `Collapse T${number} to a line`}>
+        {collapsed ? <ChevronRight /> : <ChevronDown />}
+      </button>
+      <span className="tl-th-t-name">T{number}</span>{collapsed ? null : <><span>Transcript</span><span className="text-faint">{count}</span></>}
     </div>
   );
 }

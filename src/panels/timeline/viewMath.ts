@@ -221,12 +221,27 @@ export function snapThresholdFrames(zoom: number, px = SNAP_PX): number { return
 
 export interface TrackLayoutInput { id: string; height: number; kind: 'video' | 'audio' }
 export interface TrackRow { id: string; kind: 'video' | 'audio'; top: number; height: number; /** index within its kind list (0 = V1/A1) */ index: number }
-export interface TrackLayout { rows: TrackRow[]; total: number; dividerTop: number; subtitleLane: number }
+/** A transcript lane (T1, T2, ...) under the audio track `trackId` (#112); not a track row: no drops, no hit-testing. */
+export interface TranscriptRow { trackId: string; /** index of its audio track (0 = A1 → T1) */ index: number; top: number; height: number; collapsed: boolean }
+export interface TrackLayout { rows: TrackRow[]; total: number; dividerTop: number; subtitleLane: number; transcripts: TranscriptRow[] }
 
 export const TRACK_DIVIDER_PX = 6;
-export const SUBTITLE_LANE_PX = 18;
+export const SUBTITLE_LANE_PX = 32;
+export const TRANSCRIPT_LANE_PX = 32;
+/** A collapsed transcript lane: a thin row with a line where it has text (#132). */
+export const TRANSCRIPT_COLLAPSED_PX = 18;
 export const MIN_TRACK_HEIGHT = 24;
 export const MAX_TRACK_HEIGHT = 240;
+
+/**
+ * Track targets of a media or sequence drop on `row` (#120): that track for its own kind, and the track at the same
+ * index for the other kind (V2 -> A2, A2 -> V2), so the linked half never lands on, and overwrites, another track.
+ */
+export function dropTracks(row: Pick<TrackRow, 'id' | 'kind' | 'index'> | null | undefined):
+  { videoTrackId?: string; audioTrackId?: string; videoTrackIndex?: number; audioTrackIndex?: number } {
+  if (!row) return {};
+  return row.kind === 'video' ? { videoTrackId: row.id, audioTrackIndex: row.index } : { audioTrackId: row.id, videoTrackIndex: row.index };
+}
 
 /**
  * Premiere ordering: video tracks stacked with V1 nearest the divider (V3 on top), audio A1 just under the divider.
@@ -234,7 +249,7 @@ export const MAX_TRACK_HEIGHT = 240;
  */
 export function layoutTracks(
   video: TrackLayoutInput[], audio: TrackLayoutInput[],
-  opts: { subtitleLane?: boolean; heights?: Record<string, number>; divider?: number } = {},
+  opts: { subtitleLane?: boolean; heights?: Record<string, number>; divider?: number; transcripts?: ReadonlySet<string>; collapsedTranscripts?: Readonly<Record<string, true>> } = {},
 ): TrackLayout {
   const divider = opts.divider ?? TRACK_DIVIDER_PX;
   const lane = opts.subtitleLane ? SUBTITLE_LANE_PX : 0;
@@ -248,8 +263,16 @@ export function layoutTracks(
   }
   const dividerTop = y;
   y += divider;
-  audio.forEach((t, i) => { rows.push({ id: t.id, kind: 'audio', top: y, height: h(t), index: i }); y += h(t); });
-  return { rows, total: y, dividerTop, subtitleLane: lane };
+  const transcripts: TranscriptRow[] = [];
+  audio.forEach((t, i) => {
+    rows.push({ id: t.id, kind: 'audio', top: y, height: h(t), index: i }); y += h(t);
+    if (opts.transcripts?.has(t.id)) {
+      const collapsed = !!opts.collapsedTranscripts?.[t.id];
+      const height = collapsed ? TRANSCRIPT_COLLAPSED_PX : TRANSCRIPT_LANE_PX;
+      transcripts.push({ trackId: t.id, index: i, top: y, height, collapsed }); y += height;
+    }
+  });
+  return { rows, total: y, dividerTop, subtitleLane: lane, transcripts };
 }
 
 export function rowAtY(layout: TrackLayout, y: number): TrackRow | null {

@@ -7,9 +7,10 @@
 import { useStore } from '@/state/store';
 import {
   DEFAULT_PROJECT_NAME, autosaveProject, openProject, projectFromReply, projectNameFromPath, recutApi, repairedMessage, saveProject,
-  setAutosaveRequester, verifyMediaOnline,
+  setAutosaveRequester, verifyMediaOnline, restoreCachedProxies, refreshStaleProbes,
 } from '@/state/mediaActions';
 import { activeSequence } from '@/state/selectors';
+import { projectHasUserWork } from '@shared/project';
 import type { RecoveryReply } from '@shared/ipc';
 import { useShellStore } from './shellStore';
 import { setBeforeQuitHandler, setOpenProjectPathHandler } from './bootstrap';
@@ -17,8 +18,12 @@ import { registerCommand } from '@/keyboard/shortcuts';
 import { toast } from '@/components/ui/toastStore';
 import { confirm, confirmInApp, type ConfirmOptions } from './dialogs/ConfirmDialog';
 import { createAutosaveGate } from './autosaveGate';
+import { PRODUCT_NAME, PROJECT_EXTENSION, projectFileFilters, projectSaveFilters } from '@shared/productIdentity';
 
-export const PROJECT_FILTERS = [{ name: 'ReCut Project', extensions: ['recut'] }];
+/** Open filter: every project extension that opens (productIdentity PROJECT_EXTENSIONS), the primary first. */
+export const PROJECT_FILTERS = projectFileFilters();
+/** Save As filter: the primary extension (a project already saved with another one keeps it). */
+export const PROJECT_SAVE_FILTERS = projectSaveFilters();
 /** Debounce after the last change before an autosave is written. */
 export const AUTOSAVE_DEBOUNCE_MS = 5000;
 const DEFAULT_AUTOSAVE_INTERVAL_SEC = 60;
@@ -73,8 +78,8 @@ export async function requestSaveAs(): Promise<boolean> {
   const st = useStore.getState();
   try {
     const target = await api.saveFile({
-      title: 'Save Project As', filters: PROJECT_FILTERS,
-      defaultPath: st.projectPath ?? `${st.project.name.replace(/[\\/:*?"<>|]+/g, '_') || 'Untitled'}.recut`,
+      title: 'Save Project As', filters: PROJECT_SAVE_FILTERS,
+      defaultPath: st.projectPath ?? `${st.project.name.replace(/[\\/:*?"<>|]+/g, '_') || 'Untitled'}.${PROJECT_EXTENSION}`,
     });
     if (!target) return false;
     adoptFileName(target);
@@ -102,7 +107,7 @@ async function saveBeforeClose(): Promise<boolean> {
  */
 export async function confirmDiscardIfDirty(): Promise<boolean> {
   const st = useStore.getState();
-  if (!st.dirty) return true;
+  if (!st.dirty || !worthSaving()) return true;
   const i = await confirm({
     type: 'question', title: 'Unsaved changes',
     message: `Save changes to "${st.project.name}"?`,
@@ -123,6 +128,8 @@ export async function requestNewProject(): Promise<boolean> {
 export async function checkMissingMedia(): Promise<string[]> {
   try {
     const missing = await verifyMediaOnline();
+    void restoreCachedProxies(); // proxies that finished after the last save (#136)
+    void refreshStaleProbes(); // stored probes an older build measured wrongly (#154)
     if (missing.length) {
       toast('warn', `${missing.length} media file${missing.length === 1 ? ' is' : 's are'} offline`);
       useStore.getState().openDialog('relink');
@@ -161,8 +168,8 @@ function syncTitle(): void {
   const seq = activeSequence(st);
   const name = st.project.name || 'Untitled Project';
   useShellStore.getState().setProjectTitle({ projectName: name, sequenceName: seq?.name ?? null, dirty: st.dirty });
-  // "<project>[ *] — ReCut"; the Electron window title follows document.title (main.ts does not override it).
-  if (typeof document !== 'undefined') document.title = `${name}${st.dirty ? ' *' : ''} — ReCut`;
+  // "<project>[ *] — <product name>"; the Electron window title follows document.title (main.ts does not override it).
+  if (typeof document !== 'undefined') document.title = `${name}${st.dirty ? ' *' : ''} — ${PRODUCT_NAME}`;
 }
 
 // ------------------------------------------------------------------
@@ -207,6 +214,12 @@ function cancelIdle(): void {
   idleHandle = null;
   if (quietTimer !== null) { clearTimeout(quietTimer); quietTimer = null; }
   gate.reset();
+}
+
+/** False for an untitled project without user work (#111): closing it asks nothing (its autosave is dropped at the next launch). */
+function worthSaving(): boolean {
+  const st = useStore.getState();
+  return st.projectPath !== null || projectHasUserWork(st.project);
 }
 
 async function runAutosave(force = false): Promise<void> {
@@ -254,7 +267,7 @@ export function recoveryPrompt(info: RecoveryReply): ConfirmOptions {
   return {
     title: 'Recover unsaved changes?',
     message: `Recover unsaved changes from ${when}?`,
-    detail: `ReCut found an autosave for ${what} that is newer than the last save.${damage}`,
+    detail: `${PRODUCT_NAME} found an autosave for ${what} that is newer than the last save.${damage}`,
     buttons: ['Recover', 'Discard'], defaultId: 0, cancelId: 1, testId: 'recovery-dialog',
     ...(n ? { type: 'warning' as const } : {}),
   };
@@ -294,11 +307,11 @@ async function handleBeforeQuit(): Promise<void> {
   // Tell main we are alive and handling the request: it drops its hung-renderer fallback timer.
   try { await api.quitAck?.(); } catch { /* older main: falls back to its timer */ }
   const st = useStore.getState();
-  if (!st.dirty) { await api.quit(true); return; }
+  if (!st.dirty || !worthSaving()) { await api.quit(true); return; }
   let i = 2;
   try {
     i = await api.message({
-      type: 'question', title: 'Quit ReCut', message: `Save changes to "${st.project.name}" before quitting?`,
+      type: 'question', title: `Quit ${PRODUCT_NAME}`, message: `Save changes to "${st.project.name}" before quitting?`,
       buttons: ['Save', "Don't Save", 'Cancel'], defaultId: 0, cancelId: 2,
     });
   } catch (e) { console.error('[quit] prompt failed', e); }

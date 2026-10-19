@@ -1,4 +1,5 @@
 import React, { memo } from 'react';
+import { previewPlayable, previewReason } from '@/playback/mediaSource';
 import {
   ChevronDown, ChevronRight, Clapperboard, FileQuestion, FileText, Film, Folder, FolderOpen, Image as ImageIcon, Layers, Library, ListVideo, Music, Tv, Unlink,
 } from 'lucide-react';
@@ -96,13 +97,13 @@ function MediaBadges({ m, onRelink }: { m: MediaItem; onRelink: (id: ID) => void
     out.push(<span key="pr" className="pp-badge running" title={`Proxy ${Math.round(pr * 100)}%`}>Proxy {Math.round(pr * 100)}%<ProgressBar value={pr} /></span>);
   } else if (p.status === 'ready') out.push(<span key="pok" className="pp-badge ok" title={p.path}>Proxy</span>);
   else if (p.status === 'failed') out.push(<span key="pf" className="pp-badge danger" title={p.error}>Proxy failed</span>);
-  else if (m.probe && !m.probe.browserPlayable && (m.kind === 'video' || m.kind === 'audio')) out.push(<span key="np" className="pp-badge warn" title={m.probe.playabilityReason ?? 'Not directly playable; generate a proxy'}>Needs proxy</span>);
+  else if (m.probe && !previewPlayable(m) && (m.kind === 'video' || m.kind === 'audio')) out.push(<span key="np" className="pp-badge warn" title={previewReason(m) ?? 'Not directly playable; generate a proxy'}>Needs proxy</span>);
   const sd = m.sceneDetectStatus;
   if (sd === 'running') {
     const pr = sceneJob?.progress ?? 0;
-    out.push(<span key="sr" className="pp-badge running" title="Detecting scenes…">Scenes {Math.round(pr * 100)}%<ProgressBar value={sceneJob ? pr : undefined} /></span>);
-  } else if (sd === 'failed') out.push(<span key="sf" className="pp-badge danger">Scenes failed</span>);
-  else if (m.detectedScenes.length) out.push(<span key="sd" className="pp-badge accent" title="Detected scenes">{m.detectedScenes.length} scene{m.detectedScenes.length === 1 ? '' : 's'}</span>);
+    out.push(<span key="sr" className="pp-badge running" title="Detecting shots…">Shots {Math.round(pr * 100)}%<ProgressBar value={sceneJob ? pr : undefined} /></span>);
+  } else if (sd === 'failed') out.push(<span key="sf" className="pp-badge danger">Shots failed</span>);
+  else if (m.detectedScenes.length) out.push(<span key="sd" className="pp-badge accent" title="Detected shots">{m.detectedScenes.length} shot{m.detectedScenes.length === 1 ? '' : 's'}</span>);
   if (m.subtitleTrackIds.length) out.push(<span key="cc" className="pp-badge" title={`${m.subtitleTrackIds.length} subtitle track(s)`}>CC{m.subtitleTrackIds.length > 1 ? ` ${m.subtitleTrackIds.length}` : ''}</span>);
   return <>{out}</>;
 }
@@ -186,7 +187,7 @@ const SceneRowView = memo(function SceneRowView({ row, selected, renaming, cb }:
 
 const SequenceRowView = memo(function SequenceRowView({ row, selected, renaming, cb }: { row: SequenceRow; selected: boolean; renaming: boolean; cb: RowCallbacks }) {
   const s = row.seq;
-  const lineage = s.parentSequenceId ? `${s.versionLabel ?? 'v2'} of ${row.parentName ?? 'deleted sequence'}` : s.versionLabel;
+  const lineage = s.parentSequenceId ? `${s.versionLabel ?? 'v2'} of ${row.parentName ?? 'deleted timeline'}` : s.versionLabel;
   return (
     <div className={['pp-row', selected ? 'selected' : ''].filter(Boolean).join(' ')} data-row-kind="sequence" data-sequence-id={s.id} data-row-key={row.key}
       draggable={!renaming}

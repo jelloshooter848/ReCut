@@ -18,5 +18,8 @@ export function parseTranscribeRequest(v: unknown): TranscribeRequest {
   const model = assertWhisperModelId(r.model);
   if (!isWhisperLanguageCode(r.language)) throw new Error(`unknown language: ${JSON.stringify(typeof r.language === 'string' ? r.language.slice(0, 20) : r.language)}`);
   if (r.translate !== undefined && typeof r.translate !== 'boolean') throw new Error('Expected translate to be a boolean');
-  return { mediaId: r.mediaId, path, streamIndex: r.streamIndex as number, model, language: r.language, translate: r.translate === true };
+  if (r.force !== undefined && typeof r.force !== 'boolean') throw new Error('Expected force to be a boolean');
+  if (r.keepLanguages !== undefined && typeof r.keepLanguages !== 'boolean') throw new Error('Expected keepLanguages to be a boolean');
+  // `verbatim` (0.8.x, removed in #158) is ignored rather than refused.
+  return { mediaId: r.mediaId, path, streamIndex: r.streamIndex as number, model, language: r.language, translate: r.translate === true, force: r.force === true, keepLanguages: r.keepLanguages === true };
 }

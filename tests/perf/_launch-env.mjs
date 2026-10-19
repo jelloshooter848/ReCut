@@ -15,7 +15,7 @@ import fs from 'node:fs';
  * hundreds of MB of such file pages in the renderer (435–463 MB in a 40 s scrub harness, 800 MB in the 90 s before
  * and during the multi-hour scrub row); their writeback (the kernel's flush worker, up to 30 s later) ran every
  * thread of the renderer 4–6x slower for 0.2–0.5 s and turned page-flip frames of ~15 ms into 50–110 ms long tasks
- * (bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md). The app as users run it never gets that
+ * (bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md @ 59eafc6). The app as users run it never gets that
  * switch (electron/main.ts appends only no-sandbox and enable-blink-features): Chromium keeps its shared memory in
  * /dev/shm or memfd there. TMPDIR on tmpfs restores that, since the switch only moves the regions to TMPDIR. Not used
  * when /dev/shm has under 2 GiB free (see below). The app's own temp files (export filter scripts, OCR extraction)

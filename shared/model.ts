@@ -1,5 +1,5 @@
 /**
- * ReCut project model.
+ * Project model.
  *
  * Time conventions:
  *  - Timeline positions/durations are integer FRAMES at the owning sequence's frame rate.
@@ -35,6 +35,8 @@ export interface AudioStreamInfo {
    * layoutForChannels): channels are then numbered, not named (shared/audioChannels.ts). Absent on older probes.
    */
   layoutGuessed?: boolean;
+  /** Seconds the stream starts after the file does (an audio delay muxed in, #157); absent when it starts with it. */
+  startTime?: number;
 }
 
 export interface VideoStreamInfo {
@@ -71,10 +73,20 @@ export interface MediaProbe {
   audio: AudioStreamInfo[];
   subtitles: SubtitleStreamInfo[];
   startTime: number;            // container start time (seconds), used to normalize seeking
+  /**
+   * Seconds the container starts BEFORE 0 (a negative start_time, which `startTime` clamps to 0; #154). FFmpeg's input
+   * `-ss` and `-t` count from that raw start, so they are moved by it. Absent when the file starts at or after 0.
+   */
+  startLead?: number;
   bitrate?: number;
   /** Whether Chromium can decode this file directly (container + codecs). */
   browserPlayable: boolean;
   playabilityReason?: string;
+  /**
+   * Revision of the probe that made this (PROBE_REVISION in shared/media.ts). Absent on probes from before revision 2
+   * (#154), whose stream start offsets could be measured from a negative container start.
+   */
+  probeRev?: number;
 }
 
 export type ProxyStatus = 'none' | 'queued' | 'running' | 'ready' | 'failed';
@@ -136,6 +148,13 @@ export interface MediaItem {
   proxy: ProxyInfo;
   detectedScenes: DetectedScene[];
   sceneDetectStatus?: 'none' | 'running' | 'done' | 'failed';
+  /** The detected shots were renamed, merged, split, tagged or deleted: detecting again asks before replacing them (#142). */
+  shotsEdited?: boolean;
+  /**
+   * The subtitle track used as this media's transcript (#162): T lanes, the on-screen transcript, search and naming
+   * read it. Absent (or a track that is gone): the Whisper transcript, chosen automatically.
+   */
+  transcriptTrackId?: ID;
   subtitleTrackIds: ID[];
   thumbnailTime?: number;   // poster frame time (seconds)
   notes: string;
@@ -302,6 +321,8 @@ export interface SequenceSubtitleCue {
   duration: number;     // frames (authoritative only when no clipId)
   offset: number;       // frames nudge applied on top of derived position
   text: string;
+  /** Per-word timing carried from a media cue, in source seconds like srcStart / srcEnd (#118). */
+  words?: SubtitleWord[];
 }
 
 export interface SequenceSubtitleTrack {
@@ -341,6 +362,11 @@ export interface Sequence {
   videoTracks: Track[];
   audioTracks: Track[];
   subtitleTracks: SequenceSubtitleTrack[];
+  /**
+   * Where subtitles sit, as a fraction of the frame height from the top (0.05..0.95; shared/subtitlePosition.ts,
+   * #115). Used by the Program and Source monitors and burn-in export. Absent: the default position.
+   */
+  subtitlePosition?: number;
   markers: Marker[];
   storyBlocks: StoryBlock[];
   snapshots: SequenceSnapshot[];
@@ -372,7 +398,34 @@ export interface SceneRecord {
   createdAt: number;
 }
 
-export interface SubtitleCue { id: ID; start: number; end: number; text: string }  // seconds
+/**
+ * A sequence (#146): an ordered group of Scene library scenes, a larger part of the story (an act, a storyline, a set
+ * piece). Not a timeline: timelines are `Project.sequences` (the internal name predates this).
+ */
+export interface SceneSequence {
+  id: ID;
+  name: string;
+  /** Scene library ids (project.scenes), in story order. */
+  sceneIds: ID[];
+  color: string;
+  tags: string[];
+  notes: string;
+  createdAt: number;
+}
+
+/** One word of a transcribed cue, in source seconds (#118). */
+export interface SubtitleWord { start: number; end: number; text: string }
+
+export interface SubtitleCue {
+  id: ID;
+  start: number;  // seconds
+  end: number;    // seconds
+  text: string;
+  /** Per-word timing (Whisper transcripts); the words joined by spaces are `text`. */
+  words?: SubtitleWord[];
+  /** Language the line was transcribed in, when it differs by stretch (Whisper, keep other languages, #163). */
+  lang?: string;
+}
 
 export interface SubtitleTrack {
   id: ID;
@@ -389,6 +442,8 @@ export interface SubtitleTrack {
    * tracks not read from a stream.
    */
   streamIndex?: number;
+  /** Cues edited by hand (#135): transcribing the stream again asks before replacing them. */
+  edited?: boolean;
 }
 
 export interface TagVocabulary {
@@ -409,6 +464,12 @@ export interface ProjectSettings {
   snapping: boolean;
   defaultTransitionFrames: number;
   showSourceTimecodeOnClips: boolean;
+  /** Highlight the word being spoken in word-timed subtitles, in the Source and Program monitors (#119). */
+  highlightSpokenWords: boolean;
+  /** Name newly detected shots from the media's transcript or subtitles, when it has one (#144). */
+  nameShotsFromTranscript: boolean;
+  /** Shortest shot detection keeps, in seconds: cuts closer than this to the previous one are dropped (#142). */
+  minShotSeconds: number;
 }
 
 export interface Project {
@@ -422,6 +483,8 @@ export interface Project {
   sequences: Record<ID, Sequence>;
   sequenceOrder: ID[];
   scenes: Record<ID, SceneRecord>;
+  /** Groups of scenes (#146). Absent in files saved before it (the loader fills in {}). */
+  sceneSequences: Record<ID, SceneSequence>;
   subtitleTracks: Record<ID, SubtitleTrack>;
   tags: TagVocabulary;
   settings: ProjectSettings;
@@ -462,7 +525,7 @@ export interface AppPreferences {
  * (Whisper); 'channelProxy': preview audio of a clip's channel selection (electron/media/channelProxy.ts);
  * 'collect': Collect Project (copy the project and its media to one folder).
  */
-export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download' | 'channelProxy' | 'collect';
+export type JobKind = 'probe' | 'proxy' | 'waveform' | 'sceneDetect' | 'suggestScenes' | 'export' | 'thumbnails' | 'transcribe' | 'ocr' | 'download' | 'channelProxy' | 'collect';
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled';
 
 export interface JobInfo {
@@ -519,6 +582,10 @@ export interface ExportSettings {
   audioOutputs?: ExportAudioOutput[];
   /** MKV: sequence subtitle tracks muxed as soft subtitle streams, in order; absent or empty = none. */
   subtitleOutputs?: ExportSubtitleOutput[];
+  /** Include the on-screen transcript (#127) as a subtitle track named "Transcript"; absent = off. */
+  includeTranscripts?: boolean;
+  /** Burn-in: highlight the word being spoken in cues with word timing, as the monitors do (#134); absent = off. */
+  highlightWords?: boolean;
 }
 
 /** Export file formats (§6, §7). */

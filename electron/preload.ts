@@ -12,7 +12,7 @@ import { IPC, pathToMediaUrl } from '../shared/ipc';
 import { SAVE_STREAM_IPC, type ProjectAutosaveStreamApi, type ProjectSaveStreamApi } from '../shared/projectWire';
 import type {
   DroppedFile, ExportRequest, FilmstripRequest, LicenceFileId, MenuCommand, MessageOptions, OpenFilesOptions, ProxyRequest, ChannelProxyRequest, RecutApi,
-  RelinkScanRequest, SaveFileOptions, SceneDetectRequest, ThumbnailRequest,
+  RelinkScanRequest, SaveFileOptions, SceneDetectRequest, SuggestScenesRequest, ThumbnailRequest,
 } from '../shared/ipc';
 
 function subscribe<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
@@ -74,6 +74,7 @@ const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
   readText: (path: string) => ipcRenderer.invoke(IPC.fsReadText, path),
   exportSubtitleFile: (path: string, content: string, protectedPaths: string[]) => ipcRenderer.invoke(IPC.subtitlesExport, path, content, protectedPaths),
   listDir: (path: string) => ipcRenderer.invoke(IPC.fsListDir, path),
+  relocateLegacyPath: (path: string) => ipcRenderer.invoke(IPC.fsRelocateLegacyPath, path),
   scanForRelink: (req: RelinkScanRequest) => ipcRenderer.invoke(IPC.fsScanForRelink, req),
 
   probe: (path: string) => ipcRenderer.invoke(IPC.mediaProbe, path),
@@ -82,8 +83,10 @@ const api: RecutApi & ProjectSaveStreamApi & ProjectAutosaveStreamApi = {
   cancelThumbnails: (requestIds: string[]) => ipcRenderer.invoke(IPC.mediaThumbCancel, requestIds),
   waveform: (path: string, mediaId?: ID, streamIndex?: number) => ipcRenderer.invoke(IPC.mediaWaveform, path, mediaId, streamIndex),
   startProxy: (req: ProxyRequest) => ipcRenderer.invoke(IPC.mediaProxyStart, req),
+  lookupProxy: (req: ProxyRequest) => ipcRenderer.invoke(IPC.mediaProxyLookup, req),
   startChannelProxy: (req: ChannelProxyRequest) => ipcRenderer.invoke(IPC.mediaChannelProxyStart, req),
   startSceneDetect: (req: SceneDetectRequest) => ipcRenderer.invoke(IPC.mediaSceneDetectStart, req),
+  startSuggestScenes: (req: SuggestScenesRequest) => ipcRenderer.invoke(IPC.mediaSuggestScenesStart, req),
   extractSubtitles: (path: string, streamIndex: number) => ipcRenderer.invoke(IPC.mediaExtractSubtitles, path, streamIndex),
   mediaUrl: (path: string) => pathToMediaUrl(path),
 

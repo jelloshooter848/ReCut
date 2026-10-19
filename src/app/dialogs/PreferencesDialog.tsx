@@ -1,11 +1,11 @@
 /** Preferences dialog (ui.dialogs.preferences): project settings + read-only app info. */
+import { SHOT_SENSITIVITY, shotSensitivityOf, type ShotSensitivity } from '@shared/shotDetect';
 import React, { useEffect, useState } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { Toggle } from '@/components/ui/Toggle';
 import { Select } from '@/components/ui/Select';
 import { NumberField } from '@/components/ui/NumberField';
-import { Slider } from '@/components/ui/Slider';
 import { useStore } from '@/state/store';
 import { recutApi } from '@/state/mediaActions';
 import { resetAllLayouts } from '@/components/layout/layoutStore';
@@ -20,6 +20,7 @@ import { installedModelsSummary, useWhisperStatus } from '@/state/whisperStatus'
 import { openWhisperModels } from '@/whisper/whisperUi';
 import { checkForUpdatesNow, refreshUpdateStatus, setUpdateCheckSetting, useUpdateStore } from '@/app/updates';
 import type { UpdateCheckSetting, UpdateStatus } from '@shared/update';
+import { PRODUCT_NAME } from '@shared/productIdentity';
 import {
   AUTOSAVE_INTERVAL_MAX_SEC, AUTOSAVE_INTERVAL_MIN_SEC, DEFAULT_TRANSITION_FRAMES_MAX, DEFAULT_TRANSITION_FRAMES_MIN, PROXY_HEIGHTS,
 } from '@shared/limits';
@@ -40,7 +41,7 @@ export function lastCheckText(s: UpdateStatus | null): string {
   if (s.lastCheckAt === null) return 'Never checked';
   const when = new Date(s.lastCheckAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
   if (s.lastCheckOk === false) return `Last checked ${when} (GitHub could not be reached)`;
-  return `Last checked ${when}${s.available ? ` — ReCut ${s.available.version} is available` : ' — up to date'}`;
+  return `Last checked ${when}${s.available ? ` — ${PRODUCT_NAME} ${s.available.version} is available` : ' — up to date'}`;
 }
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -65,8 +66,6 @@ export function PreferencesDialog() {
   const open = useStore((s) => s.ui.dialogs.preferences);
   const settings = useStore((s) => s.project.settings);
   const [info, setInfo] = useState<AppInfo | null>(null);
-  const [threshold, setThreshold] = useState(settings.sceneThreshold);
-  useEffect(() => { if (open) setThreshold(settings.sceneThreshold); }, [open, settings.sceneThreshold]);
   const ocrLanguages = useOcrStatus((s) => s.languages);
   useEffect(() => { if (open) void useOcrStatus.getState().refresh(); }, [open]);
   const whisperModels = useWhisperStatus((s) => s.models);
@@ -96,9 +95,14 @@ export function PreferencesDialog() {
           <Row label="Playback resolution">
             <Select value={settings.playbackResolution} options={PLAYBACK_RES} onChange={(v) => set({ playbackResolution: v as ProjectSettings['playbackResolution'] })} />
           </Row>
-          <Row label="Scene detection threshold" hint="Higher values detect fewer, stronger cuts">
-            <Slider value={threshold} min={0.05} max={0.95} step={0.01} onChange={setThreshold} onCommit={(v) => set({ sceneThreshold: v })} className="grow" />
-            <span className="mono text-dim" style={{ width: 36, textAlign: 'right' }}>{threshold.toFixed(2)}</span>
+          <Row label="Shot detection" hint="How many cuts Detect Shots finds, and the shortest shot it keeps">
+            <Select value={shotSensitivityOf(settings.sceneThreshold)} data-testid="prefs-shot-sensitivity"
+              options={[{ value: 'fewer', label: 'Fewer cuts' }, { value: 'normal', label: 'Normal' }, { value: 'more', label: 'More cuts' },
+                ...(shotSensitivityOf(settings.sceneThreshold) === 'custom' ? [{ value: 'custom', label: `Custom (${settings.sceneThreshold.toFixed(2)})` }] : [])]}
+              onChange={(v) => { if (v !== 'custom') set({ sceneThreshold: SHOT_SENSITIVITY[v as ShotSensitivity] }); }} />
+            <Select value={String(settings.minShotSeconds)} data-testid="prefs-min-shot"
+              options={[0.5, 1, 2, 3, 5].map((s) => ({ value: String(s), label: `≥ ${s} s` }))}
+              onChange={(v) => set({ minShotSeconds: Number(v) })} />
           </Row>
         </Section>
 
@@ -110,7 +114,7 @@ export function PreferencesDialog() {
             <NumberField value={settings.defaultTransitionFrames} min={DEFAULT_TRANSITION_FRAMES_MIN} max={DEFAULT_TRANSITION_FRAMES_MAX} step={1} unit="frames" onChange={(v) => set({ defaultTransitionFrames: clampInt(v, DEFAULT_TRANSITION_FRAMES_MIN, DEFAULT_TRANSITION_FRAMES_MAX) })} />
           </Row>
           <Row label="Snapping"><Toggle checked={settings.snapping} onChange={(v) => set({ snapping: v })} /></Row>
-          <Row label="Carry subtitles into sequence" hint="Copy the media's subtitle cues onto new clips">
+          <Row label="Carry subtitles into timeline" hint="Copy the media's subtitle cues onto new clips">
             <Toggle checked={settings.carrySubtitles} onChange={(v) => set({ carrySubtitles: v })} />
           </Row>
           <Row label="Show source timecode on clips">
@@ -149,8 +153,8 @@ export function PreferencesDialog() {
             </span>
             <Button size="sm" onClick={() => openWhisperModels()} aria-label="Manage transcription models…" data-testid="prefs-whisper-manage">Manage…</Button>
           </Row>
-          <Row label="Version"><span className="text-sm">{info ? `ReCut ${info.version} · ${info.platform}${info.isDev ? ' · dev' : ''}` : '…'}</span></Row>
-          <Row label="Check for updates" hint="Asks GitHub for the latest ReCut release once a day and says when a newer one exists. Only that request is sent; nothing is downloaded or installed.">
+          <Row label="Version"><span className="text-sm">{info ? `${PRODUCT_NAME} ${info.version} · ${info.platform}${info.isDev ? ' · dev' : ''}` : '…'}</span></Row>
+          <Row label="Check for updates" hint={`Asks GitHub for the latest ${PRODUCT_NAME} release once a day and says when a newer one exists. Only that request is sent; nothing is downloaded or installed.`}>
             {update?.managed ? (
               <span className="text-sm text-dim" data-testid="prefs-update-check">Turned off for this installation</span>
             ) : (

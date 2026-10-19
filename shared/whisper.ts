@@ -180,7 +180,22 @@ export interface TranscribeRequest {
   language: string;
   /** Translate the speech to English (multilingual models only). Default false. */
   translate?: boolean;
+  /** Transcribe again even when a result for the same file and settings is cached (#158). Default false. */
+  force?: boolean;
+  /**
+   * Mixed-language audio (#163): detect the language of each stretch (about 10 s, cut at quiet moments) and transcribe
+   * it in that language, so lines in other languages are kept as spoken. Off: everything is read as the chosen
+   * language, which translates other languages into it. Ignored when translating or with an English-only model.
+   */
+  keepLanguages?: boolean;
 }
+
+/** whisper.cpp's `--dtw` alignment preset of a model (word timing, #118), or null when it has none. */
+export function whisperDtwPreset(modelId: string): string | null {
+  const preset = modelId.replace(/-/g, '.');
+  return ['tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large.v1', 'large.v2', 'large.v3', 'large.v3.turbo'].includes(preset) ? preset : null;
+}
+
 
 /** `JobInfo.result` of a finished 'transcribe' job. */
 export interface TranscribeResult {

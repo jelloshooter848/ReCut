@@ -160,12 +160,12 @@ export function ContinuityPanel({ active }: PanelProps) {
     <div className="panel cty-panel" data-testid="continuity-panel" data-active={active} tabIndex={0} onKeyDown={onKeyDown}>
       <div className="cty-toolbar">
         <SearchField value={query} onChange={setQuery} size="sm" placeholder="Search issues…" className="grow" data-testid="continuity-search" />
-        <Button size="sm" icon={Plus} variant="primary" disabled={!activeSeq} title={activeSeq ? `Add a continuity note at the playhead of ${activeSeq.name}` : 'No active sequence'}
+        <Button size="sm" icon={Plus} variant="primary" disabled={!activeSeq} title={activeSeq ? `Add a continuity note at the playhead of ${activeSeq.name}` : 'No active timeline'}
           onClick={() => setAddOpen(true)} data-testid="continuity-add">Add note at playhead</Button>
       </div>
       <div className="cty-toolbar">
-        <Select size="sm" value={seqScope} onChange={(v) => setSeqScope(v as 'all' | 'active')} aria-label="Sequence scope"
-          options={[{ value: 'all', label: 'All sequences' }, { value: 'active', label: activeSeq ? `Only: ${activeSeq.name}` : 'Active sequence' }]} className="cty-select" />
+        <Select size="sm" value={seqScope} onChange={(v) => setSeqScope(v as 'all' | 'active')} aria-label="Timeline scope"
+          options={[{ value: 'all', label: 'All timelines' }, { value: 'active', label: activeSeq ? `Only: ${activeSeq.name}` : 'Active timeline' }]} className="cty-select" />
         <Select size="sm" value={category} onChange={setCategory} aria-label="Category" options={[{ value: '', label: 'Any category' }, ...CATEGORY_OPTIONS]} className="cty-select" />
         <Toggle checked={showResolved} onChange={setShowResolved} label={<span className="text-sm">Resolved</span>} title="Show resolved issues" />
       </div>
@@ -173,7 +173,7 @@ export function ContinuityPanel({ active }: PanelProps) {
       <div className="panel-body cty-body" ref={listRef} onClick={(e) => { if (e.target === e.currentTarget) setFocusedId(null); }}>
         {allRows.length === 0 ? (
           <EmptyState icon={AlertTriangle} title="No continuity notes yet"
-            description="Flag wardrobe, prop, dialogue or music mismatches at the playhead. Notes live on the sequence as continuity markers and show up here across all cuts."
+            description="Flag wardrobe, prop, dialogue or music mismatches at the playhead. Notes live on the timeline as continuity markers and show up here across all cuts."
             action={activeSeq ? <Button size="sm" icon={Plus} onClick={() => setAddOpen(true)}>Add note at playhead</Button> : undefined} />
         ) : rows.length === 0 ? (
           <EmptyState icon={Check} title={counts.open === 0 && !showResolved && !query && !category ? 'All issues resolved' : 'No issues match'}
@@ -318,7 +318,7 @@ function AddNoteDialog({ open, seq, selectedClip, onClose, onAdd }: { open: bool
           <span className={selectedClip ? '' : 'text-faint'}>{selectedClip ? <>Link to selected clip <b className="ellipsis">{selectedClip.name}</b></> : 'Link to selected clip (select a clip in the timeline first)'}</span>
         </label>
         <span />
-        <span className="text-faint text-xs">Sequence: {seq.name}</span>
+        <span className="text-faint text-xs">Timeline: {seq.name}</span>
       </form>
     </Dialog>
   );

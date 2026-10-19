@@ -20,16 +20,25 @@ code-signed.
   Builds are unsigned: if SmartScreen says "Windows protected your PC", choose **More info › Run anyway**.
 - **From a cloned repository:** double-click `Start ReCut.cmd`. It runs `scripts/windows/start-recut.ps1`, which
   checks for Node.js 20+ (offers `winget install OpenJS.NodeJS.LTS`), runs `npm ci` when the lockfile changed,
-  rebuilds when the checked-out commit changed, downloads FFmpeg into `resources\ffmpeg` if none is installed, and
-  launches the app. `Start ReCut.cmd -Rebuild` forces a clean install and build.
+  rebuilds when the checked-out commit changed, downloads FFmpeg into `resources\ffmpeg` if none is installed,
+  compiles the speech-to-text engine into `resources\whisper` (`scripts/setup-dev.mjs`, the same step `npm run dev`
+  and `npm start` run), and launches the app. `Start ReCut.cmd -Rebuild` forces a clean install and build. The engine
+  needs cmake and Visual Studio 2022 or newer with the "Desktop development with C++" workload; without them the
+  launcher prints what to install and ReCut starts without speech-to-text (install them and run the launcher again,
+  or set `RECUT_WHISPER_CLI` to an existing `whisper-cli.exe`).
 
 Releases are produced by `.github/workflows/windows.yml`, which builds on `windows-latest`, bundles the current FFmpeg release (gyan.dev essentials, BtbN as fallback;
 see `scripts/windows/get-ffmpeg.ps1`) together with its licence and source information (`FFMPEG-LICENSE.txt`, `FFMPEG-BUILD.txt`), smoke-tests both the unpacked app and a silent install (media protocol, FFmpeg encode + probe,
-UI mounted), and publishes a release `v<version>` automatically when a release PR (version bump + changelog entry) is merged to
-`main` (see [RELEASING.md](RELEASING.md)). Every other run is a test build: nothing is published to the Releases page,
+UI mounted), and publishes a release automatically: the stable release `v<version>` when the release is merged from `rc` into
+`main`, and, for a release that has release candidates (not every release does), a pre-release `v<version>-rc.<N>`
+when a candidate (version bump + changelog entry) is merged into `rc` (see [RELEASING.md](RELEASING.md)). Every other run is a test build: nothing is published to the Releases page,
 and its installers are only the run's `ReCut-windows` artifact (Actions → the run → Artifacts → ReCut-windows, kept
 14 days; see [RELEASING.md](RELEASING.md#test-builds)). On every build the same workflow also checks `Start ReCut.cmd`
-from a fresh clone and runs the unit and end-to-end suites on Windows. Publishing is a separate last job that runs only
+from a fresh clone and runs the unit and end-to-end suites on Windows. The launcher check (`Start ReCut.cmd -Smoke`)
+and the installer's smoke test read one list of required results, `scripts/smoke-requirements.json`
+(`scripts/check-smoke.mjs`), so the launcher must set up and run the speech-to-text engine and OCR just as the installer
+ships them; `tests/unit/launcher-parity.test.ts` fails when the installer bundles a `resources/` folder the launcher does
+not set up. Publishing is a separate last job that runs only
 for a release and only when the build, smoke and install checks, both test suites and the launcher check have all
 passed; a release run with any failure publishes nothing.
 
@@ -163,6 +172,10 @@ npm install
 npm run dev        # development: Vite dev server + Electron, renderer hot reload
 ```
 
+The first `npm run dev` or `npm start` downloads FFmpeg into `resources/ffmpeg/` (unless it is on `PATH`) and compiles
+the speech-to-text engine into `resources/whisper/` when cmake is installed (`scripts/setup-dev.mjs`; run it again with
+`npm run setup`, skip it with `RECUT_SKIP_SETUP=1`). See [CONTRIBUTING.md](../CONTRIBUTING.md#development-setup).
+
 Production build and launch:
 
 ```bash
@@ -249,7 +262,7 @@ Build one package per platform: the binaries are platform-specific.
 ## First launch
 
 1. ReCut opens the **Editing** workspace with an empty project, the default bins (Audio, Graphics, Misc, Movies,
-   Scenes, Sequences, Subtitles, TV), and **Sequence 01** (1920×1080, 23.976 fps, stereo, 48 kHz).
+   Scenes, Timelines, Subtitles, TV), and **Timeline 01** (1920×1080, 23.976 fps, stereo, 48 kHz).
 2. Press **Ctrl+I** (Cmd+I) or click **Import…** in the Project panel. Proxies are on by default, so files the
    preview cannot decode get a proxy automatically.
 3. If an earlier session ended without saving, ReCut offers to **recover** the newer autosave.

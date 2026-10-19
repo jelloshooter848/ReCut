@@ -1,7 +1,7 @@
 /**
  * The performance gate's pure logic (tests/perf/_gate.mjs): calibration ratios, metric classes, normalization to the
  * reference machine, verdicts and the same-host A/B comparison
- * (bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md: the same code failed 15 of 98 gates on a host about
+ * (bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md @ 59eafc6: the same code failed 15 of 98 gates on a host about
  * 1.5-2.3x slower than the one the baseline was recorded on).
  */
 import { describe, it, expect } from 'vitest';

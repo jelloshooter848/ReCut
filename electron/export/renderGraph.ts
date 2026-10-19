@@ -16,7 +16,8 @@ import { activeTracks, planTrackSegments, widenRangeForTransitions, type ClipSeg
 import { framesToSeconds, isValidFps } from '@shared/time';
 import { serializeSrt } from '@shared/subtitles';
 import { flatOrigin, flattenSequence, flattenWarnings, trackGroupId } from '@shared/nest';
-import { videoDisplaySize } from '@shared/media';
+import { EXACT_SEEK_CONTAINERS, videoDisplaySize } from '@shared/media';
+import { ASS_PLAY_RES_Y, assSubtitlePosition } from '@shared/subtitlePosition';
 import { audioStreamInfo, channelPanFilter, channelSelectionLabel, channelSelectionProblem } from '@shared/audioChannels';
 import { evaluateKeyframes, exprNum, hasMotionKeyframes, keyframeRange, keyframesExpr, keyframesOf, MIN_KEYFRAME_SCALE } from '@shared/keyframes';
 import {
@@ -263,9 +264,9 @@ function resolveRange(seq: Sequence, settings: ExportSettings, warnings: string[
   if (settings.rangeMode === 'inOut') {
     const i = seq.view.inPoint, o = seq.view.outPoint;
     if (i !== null && o !== null && o > i) return check({ startF: Math.max(0, Math.round(i)), endF: Math.round(o) });
-    warnings.push('In/Out range is not set or empty; exporting the entire sequence instead.');
+    warnings.push('In/Out range is not set or empty; exporting the entire timeline instead.');
   }
-  if (total <= 0) throw new Error('Nothing to export: the sequence is empty.');
+  if (total <= 0) throw new Error('Nothing to export: the timeline is empty.');
   return check({ startF: 0, endF: total });
 }
 
@@ -292,9 +293,6 @@ interface Ctx {
 }
 
 function newLabel(ctx: Ctx, prefix: string): string { return `[${prefix}${ctx.labelCounter++}]`; }
-
-/** Containers whose input seek (`-ss` before `-i`) is frame-exact in ffmpeg: no decoder pre-roll needed. */
-const EXACT_SEEK_CONTAINERS = new Set(['mp4', 'mov', 'm4v', 'm4a', 'matroska', 'webm']);
 
 /** Seconds of pre-roll decoded before the trim point (a small margin for exact containers, 1 s otherwise). */
 function inputPreroll(m: MediaItem): number {
@@ -327,6 +325,12 @@ function videoStreamStart(m: MediaItem): number {
 function containerStart(m: MediaItem): number {
   const st = m.probe?.startTime;
   return typeof st === 'number' && Number.isFinite(st) && st > 0 ? st : 0;
+}
+
+/** How far the media's container starts before 0 (MediaProbe startLead, #154); 0 for most files. */
+function startLead(m: MediaItem): number {
+  const l = m.probe?.startLead;
+  return typeof l === 'number' && Number.isFinite(l) && l > 0 ? l : 0;
 }
 
 /** `PTS-x/TB` with a signed offset (x may be negative). */
@@ -380,9 +384,11 @@ function addInput(ctx: Ctx, seg: ClipSeg, kind: 'video' | 'audio'): InputInfo {
   const from = Math.max(0, readStart - lead);
   const seek = Math.max(0, from - inputPreroll(seg.media));
   const t0 = containerStart(seg.media);
+  // FFmpeg counts `-ss` and `-t` from the raw container start: a negative one lies startLead before source 0 (#154).
+  const sl = startLead(seg.media);
   const args: string[] = ['-copyts'];
-  if (seek > 0) args.push('-ss', sec(seek));
-  args.push('-t', sec((readStart - seek) + readLen + 0.25), '-i', seg.media.path);
+  if (seek > 0) args.push('-ss', sec(seek + sl));
+  args.push('-t', sec((readStart - seek) + readLen + 0.25 + (seek > 0 ? 0 : sl)), '-i', seg.media.path);
   const key = args.join('\u0000');
   const same = ctx.inputKeys.get(key) ?? [];
   const shared = same.find((e) => !e.kinds.has(kind));
@@ -1191,7 +1197,7 @@ export function assertExportPathsSafe(req: ExportRequest, outputs: string[], wri
   for (const t of tracks) {
     for (const c of t.clips) {
       const m = Object.hasOwn(req.media, c.mediaId) ? req.media[c.mediaId] : undefined; // "constructor" etc. are not media
-      if (m) for (const p of [m.path, m.proxy?.path]) add(p, 'used by the sequence');
+      if (m) for (const p of [m.path, m.proxy?.path]) add(p, 'used by the timeline');
     }
   }
   for (const m of Object.values(req.media)) if (m) for (const p of [m.path, m.proxy?.path]) add(p, 'a source file of the project');
@@ -1231,6 +1237,84 @@ const AC3_SAMPLE_RATES = [32000, 44100, 48000];
  * millisecond in the SRT) showed or hid about half the cue edges one frame late or early (D3). Burn-in runs on the
  * sequence-rate frames, before any output frame-rate conversion. The sidecar keeps exact times (buildSubtitleSrt).
  */
+/**
+ * The ASS header FFmpeg itself uses when it burns in an SRT (`ffmpeg -i x.srt x.ass`, FFmpeg 8.1): with it, a line
+ * without a highlight renders pixel-identical to the SRT burn-in, so turning highlighting on only changes colours.
+ */
+/** The burn-in ASS header: FFmpeg's default SRT style, placed at the timeline's subtitle position when it has one (#115). */
+function burnInAssHeader(position: number | undefined): string {
+  const pos = assSubtitlePosition(position);
+  return [
+    '[Script Info]', 'ScriptType: v4.00+', 'PlayResX: 384', `PlayResY: ${ASS_PLAY_RES_Y}`, 'ScaledBorderAndShadow: yes', 'YCbCr Matrix: None', '',
+    '[V4+ Styles]',
+    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+    `Style: Default,Arial,16,&Hffffff,&Hffffff,&H0,&H0,0,0,0,0,100,100,0,0,1,1,0,${pos?.alignment ?? 2},10,10,${pos?.marginV ?? 10},1`, '',
+    '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+  ].join('\n');
+}
+
+/**
+ * The `subtitles=` filter for the burn-in file. A plain SRT gets the timeline's subtitle position through libass's
+ * force_style (#115); the karaoke ASS carries it in its own style. force_style reads Alignment in the legacy SSA
+ * numbering (2 bottom centre, 6 top centre), not the ASS numpad one (2, 8) the ASS style uses.
+ */
+export function burnInFilter(file: string, position: number | undefined, ass: boolean): string {
+  const pos = ass ? null : assSubtitlePosition(position);
+  const legacy = pos ? (pos.alignment === 8 ? 6 : 2) : 0;
+  return `subtitles=filename=${file}${pos ? `:force_style='Alignment=${legacy},MarginV=${pos.marginV}'` : ''}`;
+}
+
+/** The highlight colour of the spoken word (SUBTITLE_HIGHLIGHT, #ffd84d) as an ASS colour (&HBBGGRR&). */
+const ASS_HIGHLIGHT = '&H4DD8FF&';
+
+/** ASS event text: `\`, `{` and `}` escaped and line breaks as `\N`, as FFmpeg converts SRT text. */
+export function assText(s: string): string {
+  return s.replace(/[\\{}]/g, (c) => `\\${c}`).replace(/\r?\n/g, '\\N');
+}
+
+/** Seconds → ASS time (H:MM:SS.cc). */
+function assTime(sec: number): string {
+  const cs = Math.max(0, Math.round(sec * 100));
+  const h = Math.floor(cs / 360000); const m = Math.floor(cs / 6000) % 60; const s = Math.floor(cs / 100) % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs % 100).padStart(2, '0')}`;
+}
+
+/**
+ * Burn-in subtitles with the spoken word highlighted (#134), as ASS: a cue with word timing becomes one event per
+ * word span: the whole line, the word that has most recently started in the highlight colour (as activeWordIndex
+ * in the monitors), before the first word none. Cue and word edges snap to sequence frames and are timed at frame
+ * centres like buildBurnInSrt (centiseconds are well inside half a frame up to 60 fps). Cues without words are
+ * plain events. Null when there is nothing to show.
+ */
+export function buildBurnInAss(req: ExportRequest, startF: number, endF: number): string | null {
+  const cues = req.subtitles;
+  if (!cues || cues.length === 0) return null;
+  const { num, den } = req.sequence.fps;
+  const fd = den / num;
+  const frame = (sec: number) => Math.round((sec * num) / den);
+  const t = (f: number) => assTime(Math.max(0, (f - startF - 0.5) * fd));
+  const events: { a: number; line: string }[] = [];
+  for (const c of cues) {
+    if (!Number.isFinite(c.start) || !Number.isFinite(c.end) || c.text.trim().length === 0) continue;
+    const a = Math.max(startF, frame(c.start)); const b = Math.min(endF, frame(c.end));
+    if (b <= a) continue;
+    const words = (c.words ?? []).filter((w) => Number.isFinite(w.start) && w.text.length > 0);
+    if (!words.length) { events.push({ a, line: `Dialogue: 0,${t(a)},${t(b)},Default,,0,0,0,,${assText(c.text)}` }); continue; }
+    const starts = words.map((w) => Math.min(b, Math.max(a, frame(w.start))));
+    const spans: { from: number; to: number; active: number }[] = [];
+    if (starts[0] > a) spans.push({ from: a, to: starts[0], active: -1 });
+    starts.forEach((s, i) => spans.push({ from: s, to: i + 1 < starts.length ? starts[i + 1] : b, active: i }));
+    for (const sp of spans) {
+      if (sp.to <= sp.from) continue;
+      const text = words.map((w, i) => (i === sp.active ? `{\\c${ASS_HIGHLIGHT}}${assText(w.text)}{\\c}` : assText(w.text))).join(' ');
+      events.push({ a: sp.from, line: `Dialogue: 0,${t(sp.from)},${t(sp.to)},Default,,0,0,0,,${text}` });
+    }
+  }
+  if (!events.length) return null;
+  events.sort((x, y) => x.a - y.a);
+  return `${burnInAssHeader(req.sequence.subtitlePosition)}\n${events.map((e) => e.line).join('\n')}\n`;
+}
+
 function buildBurnInSrt(req: ExportRequest, startF: number, endF: number): string | null {
   const cues = req.subtitles;
   if (!cues || cues.length === 0) return null;
@@ -1269,7 +1353,7 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
   if (reqFps !== undefined && reqFps !== null) {
     if (!isValidFps(reqFps)) {
       const bad = reqFps as Rational;
-      warnings.push(`Export frame rate ${String(bad.num)}/${String(bad.den)} is not valid; using the sequence frame rate ${fpsStr(seq.fps)}.`);
+      warnings.push(`Export frame rate ${String(bad.num)}/${String(bad.den)} is not valid; using the timeline frame rate ${fpsStr(seq.fps)}.`);
     } else if (!sameRate(reqFps, seq.fps)) {
       const g = gcd(reqFps.num, reqFps.den);
       outFps = { num: reqFps.num / g, den: reqFps.den / g };
@@ -1364,10 +1448,12 @@ export function buildRenderGraph(req: ExportRequest, opts: RenderGraphOptions = 
     const finalVideo: string[] = [];
     if (renderFrames !== frameCount) finalVideo.push(`trim=start_frame=${lead}:end_frame=${lead + frameCount}`, 'setpts=PTS-STARTPTS');
     if (settings.burnSubtitles) {
-      const srt = buildBurnInSrt(req, startF, endF);
+      // Highlighting the spoken word (#134) needs per-word colours: ASS (libass reads it from the same file name).
+      const highlight = settings.highlightWords === true && (req.subtitles ?? []).some((c) => (c.words?.length ?? 0) > 0);
+      const srt = highlight ? buildBurnInAss(req, startF, endF) : buildBurnInSrt(req, startF, endF);
       if (srt) {
         subtitleContent = srt;
-        if (opts.subtitleFilePath) finalVideo.push(`subtitles=filename=${escapeFilterPath(opts.subtitleFilePath)}`);
+        if (opts.subtitleFilePath) finalVideo.push(burnInFilter(escapeFilterPath(opts.subtitleFilePath), seq.subtitlePosition, highlight));
         else warnings.push('Subtitle burn-in requested but no subtitle file path was provided; subtitles are not burned in.');
       }
     }

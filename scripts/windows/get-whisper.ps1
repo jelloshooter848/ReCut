@@ -36,6 +36,15 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 # CPU kernel variants to ship (see above); ggml picks the best one this CPU supports at start.
 $variants = @('x64', 'sse42', 'sandybridge', 'haswell', 'skylakex')
 
+# A native command's stdout and stderr together, as text. Windows PowerShell 5.1 (the powershell.exe that
+# "Start ReCut.cmd" and npm run setup run this with, through scripts/setup-dev.mjs) turns redirected stderr lines into
+# error records, which $ErrorActionPreference = 'Stop' makes fatal (whisper-cli prints --help and --version to stderr),
+# so this runs with 'Continue'. PowerShell 7 (the CI jobs' pwsh) gives the same text either way.
+function Get-NativeOutput([string]$Exe, [string[]]$Arguments) {
+  $ErrorActionPreference = 'Continue'
+  ((& $Exe @Arguments 2>&1) | ForEach-Object { "$_" }) -join "`n"
+}
+
 foreach ($tool in @('cmake', 'node', 'tar')) {
   if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "[ReCut] $tool is required (install it and run again)." }
 }
@@ -116,9 +125,9 @@ try {
 
   # Run it: --version, and --help must list the options ReCut passes.
   $exe = Join-Path $Dest 'whisper-cli.exe'
-  $version = (& $exe --version 2>&1 | Out-String).Trim()
+  $version = (Get-NativeOutput $exe @('--version')).Trim()
   if ($version -notmatch 'whisper\.cpp version:') { throw "[ReCut] whisper-cli --version printed: $version" }
-  $help = (& $exe --help 2>&1 | Out-String)
+  $help = Get-NativeOutput $exe @('--help')
   foreach ($opt in @('--output-json', '--print-progress', '--language', '--translate', '--threads', '--output-file')) {
     if ($help -notmatch [regex]::Escape($opt)) { throw "[ReCut] whisper-cli --help does not list $opt" }
   }

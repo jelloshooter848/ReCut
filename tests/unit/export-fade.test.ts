@@ -1,9 +1,9 @@
 /**
  * Fades and transitions in the export match the Program monitor's picture, frame by frame.
  *
- * - Fades to / from black (bugs/closed/2026-10-07-export-fade-to-black-ends-early.md): a single-sided transition
+ * - Fades to / from black (bugs/closed/2026-10-07-export-fade-to-black-ends-early.md @ 59eafc6): a single-sided transition
  *   (`inClipId` or `outClipId` null) renders with the preview's per-frame weights.
- * - Two-sided transitions (bugs/closed/2026-10-08-two-sided-transition-preview-mismatch.md): a Cross Dissolve is the
+ * - Two-sided transitions (bugs/closed/2026-10-08-two-sided-transition-preview-mismatch.md @ 59eafc6): a Cross Dissolve is the
  *   linear mix (1 − t)·out + t·in, composited over what is below; a Dip to Black fades the outgoing clip to black over
  *   the first half and the incoming one up over the second, each on frames it shows anyway.
  *

@@ -96,7 +96,7 @@ function TimecodeOverlay({ frame, fps, mode, onToggle }: { frame: FrameSignal; f
   }
   return (
     <button type="button" className={['pm-tc', mode === 'source' ? 'source' : ''].filter(Boolean).join(' ')} onClick={onToggle} data-testid="program-timecode"
-      title={mode === 'source' ? 'Showing source timecode of the top clip. Click for sequence timecode.' : 'Showing sequence timecode. Click for source timecode of the top clip.'}>
+      title={mode === 'source' ? 'Showing source timecode of the top clip. Click for timeline timecode.' : 'Showing timeline timecode. Click for source timecode of the top clip.'}>
       <span className="pm-tc-mode">{mode === 'source' ? 'SRC' : 'SEQ'}</span>
       <span>{text}</span>
       {file ? <span className="pm-tc-file">{file}</span> : null}
@@ -116,7 +116,7 @@ function CurrentTimecode({ frame, fps, onSeek }: { frame: FrameSignal; fps: Rati
 
 const SequenceDurationField = memo(function SequenceDurationField({ fps }: { fps: Rational }) {
   const duration = useStore(activeSequenceDuration);
-  return <TimecodeField className="pm-dur" value={duration} fps={fps} onChange={() => { /* read-only */ }} scrub={false} disabled tone="default" title="Sequence duration" />;
+  return <TimecodeField className="pm-dur" value={duration} fps={fps} onChange={() => { /* read-only */ }} scrub={false} disabled tone="default" title="Timeline duration" />;
 });
 
 const ProgramScrubBar = memo(function ProgramScrubBar(props: Omit<ScrubBarProps, 'durationFrames'>) {
@@ -201,11 +201,15 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
     const player = new SequencePlayer(canvas, getPool(), getAudioContext() ?? undefined, { id: 'program' });
     playerRef.current = player;
     player.setMasterVolume(prefs.muted ? 0 : prefs.volume);
+    player.setHighlightWords(useStore.getState().project.settings.highlightSpokenWords);
 
     let lastSeq: Sequence | null = null;
     let lastFlat: Sequence | null = null;
     let lastMedia: Record<ID, MediaItem> | null = null;
     let lastSettings: StoreState['project']['settings'] | null = null;
+    let lastTracks: StoreState['project']['subtitleTracks'] | null = null;
+    /** The last frame the player wrote to the store while playing: any other playhead is a user seek (#139). */
+    let lastWritten: number | null = null;
 
     const apply = (s: StoreState) => {
       const seq = activeSequence(s);
@@ -217,10 +221,10 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
       // changes the flattened sequence without changing this one.
       const flat = flattenSequence(seq, s.project.sequences, media);
       const nestChanged = flat !== lastFlat && (flat !== seq || lastFlat !== lastSeq);
-      const changed = switched || nestChanged || (lastSeq !== seq && !sameRenderContent(lastSeq!, seq)) || media !== lastMedia || settings !== lastSettings;
+      const changed = switched || nestChanged || (lastSeq !== seq && !sameRenderContent(lastSeq!, seq)) || media !== lastMedia || settings !== lastSettings || s.project.subtitleTracks !== lastTracks;
       if (changed) {
         if (switched && player.isPlaying) player.pause();
-        player.setSequence(flat, media, { useProxies: settings.useProxies, playbackResolution: settings.playbackResolution });
+        player.setSequence(flat, media, { useProxies: settings.useProxies, playbackResolution: settings.playbackResolution, subtitleTracks: s.project.subtitleTracks });
         if (switched) { player.seek(seq.view.playhead); frameSig.set(player.currentFrame(), true); }
         else if (!player.isPlaying) player.renderFrame(seq.view.playhead);
         scheduleStatus();
@@ -228,11 +232,17 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
       // Paused: the store playhead is the source of truth (timeline clicks, keyboard, inspector). Publish it to the
       // frame readouts here, in the store update's task, so React renders them in the same commit as the store
       // consumers (the player's onFrame a frame later then finds the value already published: no second commit).
+      // Playing: a playhead the player didn't write (a click on the timeline or the ruler, a jump command) is a seek;
+      // the player keeps playing from there (#139). Its own write-backs (onFrame) are skipped by lastWritten.
+      if (player.isPlaying && !switched && lastWritten !== null && seq.view.playhead !== lastWritten) {
+        lastWritten = seq.view.playhead;
+        player.seek(seq.view.playhead);
+      }
       if (!player.isPlaying && seq.view.playhead !== player.currentFrame()) {
         player.seek(seq.view.playhead);
         frameSig.set(player.currentFrame(), true);
       }
-      lastSeq = seq; lastFlat = flat; lastMedia = media; lastSettings = settings;
+      lastSeq = seq; lastFlat = flat; lastMedia = media; lastSettings = settings; lastTracks = s.project.subtitleTracks;
     };
     apply(useStore.getState());
     const unsubStore = useStore.subscribe(apply);
@@ -241,6 +251,7 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
       frameSig.set(f, !player.isPlaying);
       const st = useStore.getState();
       const seq = activeSequence(st);
+      lastWritten = player.isPlaying ? f : null;
       if (seq && seq.view.playhead !== f) st.setView(seq.id, { playhead: f });
       scheduleStatus();
     });
@@ -285,6 +296,8 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
     else p.setLoopRange(0, null);
   }, [loopOn, inPoint, outPoint, seqId]);
   useEffect(() => { playerRef.current?.setDrawSubtitles(subtitles); }, [subtitles]);
+  const highlightWords = useStore((s) => s.project.settings.highlightSpokenWords);
+  useEffect(() => { playerRef.current?.setHighlightWords(highlightWords); }, [highlightWords]);
   useEffect(() => { prefs.volume = volume; prefs.muted = muted; playerRef.current?.setMasterVolume(muted ? 0 : volume); }, [volume, muted]);
 
   // ---- letterbox the canvas into the black area (object-fit: contain, computed so overlays can align) ----
@@ -424,11 +437,11 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
             </div>
           ) : null}
         </div>
-        {!seqId ? <div className="pm-empty"><Monitor /><span>No sequence open</span></div> : null}
+        {!seqId ? <div className="pm-empty"><Monitor /><span>No timeline open</span></div> : null}
         {seqId && empty ? (
           <div className="pm-empty" data-testid="program-empty-hint">
             <Film />
-            <span className="pm-empty-title">Sequence is empty</span>
+            <span className="pm-empty-title">Timeline is empty</span>
             <span>Insert from the Source monitor (<kbd>{getShortcutLabel(COMMAND_IDS.insert) || ','}</kbd> / <kbd>{getShortcutLabel(COMMAND_IDS.overwrite) || '.'}</kbd>) or drag media onto the Timeline.</span>
           </div>
         ) : null}
