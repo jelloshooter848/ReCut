@@ -1,6 +1,6 @@
 # Known limitations
 
-This page describes ReCut 0.9.0 as of 17 October 2026. Every item was checked against the code. Items marked **bug** are
+This page describes ReCut 0.9.0 as of 19 October 2026. Every item was checked against the code. Items marked **bug** are
 defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.md)).
 
 ## Editing and effects
@@ -146,6 +146,12 @@ defects. The others are features ReCut does not have yet (see [ROADMAP](ROADMAP.
   alignment (in testing 0–0.3 s after the word is heard) and its end is estimated from its length. Auto-detect
   decides the language from the start of the audio, so a film that opens with music may be detected wrongly: choose
   the language instead.
+- **Keep other languages as spoken** decides the language once per stretch of about 10 seconds (cut at a quiet
+  moment): a stretch where two languages are spoken is read in one of them, and a stretch the engine is unsure of
+  (music, noise) keeps the main language. The language check makes transcription noticeably slower (about four times
+  in testing). It is not available with an English-only model or with **Translate the speech to English**.
+- **A subtitle file used as a video's transcript** has no timing for each word, so its word highlighting is
+  estimated: each line's time is shared out across its words by their length.
 - A long media is transcribed in parts of up to 30 minutes, cut at the quietest moment near each boundary; a line
   spoken across a cut can still be split in two.
 - Models are downloaded from Hugging Face only when you click Install, and only from the pinned files; if Hugging

@@ -16,11 +16,11 @@
       "offline": false,
       "proxy": {"status":"ready","path":"/home/fan/.cache/recut/proxies/esb_540p_all.mp4","width":960,"height":540,"audioStreams":[1,2]},
       "detectedScenes": [
-        {"id":"dscmuphf9c07o74000u","start":0,"end":83.2,"name":"Scene 001","tags":[],"characters":[]},
+        {"id":"dscmuphf9c07o74000u","start":0,"end":83.2,"name":"Shot 001","tags":[],"characters":[]},
         {"id":"dscmuphf9c0dn7r000v","start":83.2,"end":190.04,"name":"Hoth – Echo Base","tags":["snow"],"characters":["Han","Leia"]},
-        {"id":"dscmuphf9c0q7xp000w","start":190.04,"end":312.5,"name":"Scene 003","tags":[],"characters":[]},
-        {"id":"dscmuphf9c0u7n6000x","start":312.5,"end":455.75,"name":"Scene 004","tags":[],"characters":[]},
-        {"id":"dscmuphf9c0vp95000y","start":455.75,"end":7620.12,"name":"Scene 005","tags":[],"characters":[]}
+        {"id":"dscmuphf9c0q7xp000w","start":190.04,"end":312.5,"name":"Shot 003","tags":[],"characters":[]},
+        {"id":"dscmuphf9c0u7n6000x","start":312.5,"end":455.75,"name":"Shot 004","tags":[],"characters":[]},
+        {"id":"dscmuphf9c0vp95000y","start":455.75,"end":7620.12,"name":"Shot 005","tags":[],"characters":[]}
       ],
       "subtitleTrackIds": ["stmuphf9c0l5b1000z","stmuphf9c0lmvm0016"],
       "notes": "Despecialized 2.7 master",
@@ -32,7 +32,8 @@
       "fileMtime": 1700000000000,
       "color": "#e5484d",
       "thumbnailTime": 312.5,
-      "sceneDetectStatus": "done"
+      "sceneDetectStatus": "done",
+      "shotsEdited": true
     },
     "medmuphf9c0oliu000q": {
       "id": "medmuphf9c0oliu000q",
@@ -112,7 +113,7 @@
     "bin-movies": {"id":"bin-movies","name":"Movies","parentId":null,"kind":"bin"},
     "bin-tv": {"id":"bin-tv","name":"TV","parentId":null,"kind":"bin"},
     "bin-scenes": {"id":"bin-scenes","name":"Scenes","parentId":null,"kind":"bin"},
-    "bin-sequences": {"id":"bin-sequences","name":"Sequences","parentId":null,"kind":"bin"},
+    "bin-sequences": {"id":"bin-sequences","name":"Timelines","parentId":null,"kind":"bin"},
     "bin-audio": {"id":"bin-audio","name":"Audio","parentId":null,"kind":"bin"},
     "bin-subtitles": {"id":"bin-subtitles","name":"Subtitles","parentId":null,"kind":"bin"},
     "bin-graphics": {"id":"bin-graphics","name":"Graphics","parentId":null,"kind":"bin"},
@@ -268,8 +269,8 @@
           "language": "eng",
           "enabled": true,
           "cues": [
-            {"id":"scuemuphf9c0myxi0028","start":60,"duration":48,"offset":0,"text":"Somewhere on Hoth"},
-            {"id":"scuemuphf9c0scj30029","start":250,"duration":36,"offset":0,"text":"Dagobah system\n(forced)"}
+            {"id":"scuemuphf9c0myxi0028","start":60,"duration":48,"offset":0,"text":"Somewhere on Hoth","clipId":"clipmuphf9c0u02x001w","srcStart":0.5005,"srcEnd":2.5025},
+            {"id":"scuemuphf9c0scj30029","start":250,"duration":36,"offset":0,"text":"Dagobah system\n(forced)","clipId":"clipmuphf9c00eml001l","srcStart":120.41708333333334,"srcEnd":121.91858333333333}
           ]
         }
       ],
@@ -435,8 +436,8 @@
                 "language": "eng",
                 "enabled": true,
                 "cues": [
-                  {"id":"scuemuphf9c0myxi0028","start":60,"duration":48,"offset":0,"text":"Somewhere on Hoth"},
-                  {"id":"scuemuphf9c0scj30029","start":250,"duration":36,"offset":0,"text":"Dagobah system\n(forced)"}
+                  {"id":"scuemuphf9c0myxi0028","start":60,"duration":48,"offset":0,"text":"Somewhere on Hoth","clipId":"clipmuphf9c0u02x001w","srcStart":0.5005,"srcEnd":2.5025},
+                  {"id":"scuemuphf9c0scj30029","start":250,"duration":36,"offset":0,"text":"Dagobah system\n(forced)","clipId":"clipmuphf9c00eml001l","srcStart":120.41708333333334,"srcEnd":121.91858333333333}
                 ]
               }
             ],
@@ -605,8 +606,8 @@
           "language": "eng",
           "enabled": true,
           "cues": [
-            {"id":"scuemuphf9c017p80036","start":60,"duration":48,"offset":0,"text":"Somewhere on Hoth"},
-            {"id":"scuemuphf9c0mcsu0037","start":250,"duration":36,"offset":0,"text":"Dagobah system\n(forced)"}
+            {"id":"scuemuphf9c017p80036","start":60,"duration":48,"offset":0,"text":"Somewhere on Hoth","clipId":"clipmuphf9c0uj1l002l","srcStart":0.5005,"srcEnd":2.5025},
+            {"id":"scuemuphf9c0mcsu0037","start":250,"duration":36,"offset":0,"text":"Dagobah system\n(forced)","clipId":"clipmuphf9c0vubz0044","srcStart":10.427083333333334,"srcEnd":11.928583333333334}
           ]
         }
       ],
@@ -849,6 +850,7 @@
     "scnmuphf9c0327h003r": {"id":"scnmuphf9c0327h003r","name":"Luke meets Yoda","mediaId":"medmuphf9c0lpl4000p","in":120,"out":135.015,"characters":["Luke","Yoda"],"location":"Dagobah","arc":"Jedi Training","tags":["keep"],"notes":"The heart of the film","rating":0,"color":"#30a46c","createdAt":1790856000000},
     "scnmuphf9c0jrxg003s": {"id":"scnmuphf9c0jrxg003s","name":"Biggs farewell","mediaId":"medmuphf9c0yzs1000t","in":12.5,"out":58.25,"characters":["Luke","Biggs"],"location":"Anchorhead","arc":"Friends","tags":["deleted"],"notes":"Restore in the extended cut","rating":4,"color":"#8e4ec6","createdAt":1790856000000}
   },
+  "sceneSequences": {},
   "subtitleTracks": {
     "stmuphf9c0l5b1000z": {
       "id": "stmuphf9c0l5b1000z",
@@ -904,7 +906,9 @@
     "snapping": false,
     "defaultTransitionFrames": 12,
     "showSourceTimecodeOnClips": true,
-    "highlightSpokenWords": true
+    "highlightSpokenWords": true,
+    "nameShotsFromTranscript": true,
+    "minShotSeconds": 1
   },
   "activeSequenceId": "seqmuphf9c0pevy000h"
 }
