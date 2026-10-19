@@ -141,7 +141,14 @@ describe('project file', () => {
 
   it('a file from before sequences opens with none, and nothing to repair', () => {
     const dir = path.resolve(__dirname, '../fixtures/projects');
-    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.recut'))) {
+    // Fixtures saved by 0.8.2 and earlier; from 0.9.0 a saved project has `sceneSequences` (#146).
+    const before = (f: string) => {
+      const m = /^recut-(\d+)\.(\d+)\.(\d+)\.recut$/.exec(f);
+      return !!m && (Number(m[1]) - 0 || Number(m[2]) - 9 || Number(m[3]) - 0) < 0;
+    };
+    const files = fs.readdirSync(dir).filter(before);
+    expect(files.length).toBeGreaterThan(0);
+    for (const f of files) {
       const raw = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
       expect(raw.sceneSequences, f).toBeUndefined();
       expect(normalizeProject(raw).sceneSequences, f).toEqual({});

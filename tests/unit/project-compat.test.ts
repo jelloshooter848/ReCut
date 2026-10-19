@@ -268,8 +268,11 @@ describe('saved-project fixtures', () => {
         [v1.clips[1].id, 126, 128, 0, 'There is no try.'],
       ]);
       expect(byName(subs, 'Notes').cues.map((c) => [c.clipId, c.text])).toEqual([[v1.clips[2].id, 'Malevolence fires']]);
+      // From 0.9.0 a cue added at the playhead over a clip is pinned to the clip on top there (#135).
+      const pinned = atLeast(v, [0, 9, 0]);
       expect(byName(subs, 'Forced').cues.map((c) => [c.clipId, c.start, c.duration, c.text])).toEqual([
-        [undefined, 60, 48, 'Somewhere on Hoth'], [undefined, 250, 36, 'Dagobah system\n(forced)'],
+        [pinned ? v2.clips[0].id : undefined, 60, 48, 'Somewhere on Hoth'],
+        [pinned ? v1.clips[1].id : undefined, 250, 36, 'Dagobah system\n(forced)'],
       ]);
       expect(subs.some((t) => t.language === 'fre')).toBe(atLeast(v, [0, 6, 0]));
       expect(plain(main.view)).toEqual({ playhead: 120, zoom: 2, scroll: 16, inPoint: 24, outPoint: 600 });

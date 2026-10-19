@@ -5,16 +5,19 @@ All notable changes to ReCut are listed here, newest first. The format follows
 [docs/RELEASING.md](docs/RELEASING.md). The project file `formatVersion` is versioned separately and is unchanged
 (still `1`) unless an entry says otherwise.
 
-## [0.9.0] - 2026-10-17
+## [0.9.0] - 2026-10-19
 
-Transcripts on the timeline: Whisper transcripts are word-timed, shown in transcript lanes under the audio tracks
-and in the monitors with the spoken word highlighted, and can be included in exports. HEVC previews without a proxy
-where the computer can decode it, and fixes for Whisper transcripts that looped on invented lines or came out early,
-exports to exFAT drives, proxies after reopening a project, clip drops on V2 and clicking or scrolling the timeline
-while playing. Project files stay `formatVersion` 1: the new settings are optional, and projects from earlier
-releases open unchanged.
+Transcripts move onto the timeline and shots become building blocks. Whisper transcripts are word-timed, appear in
+transcript lanes under the audio tracks, highlight each word as it is spoken in the monitors and in burned-in
+exports, and can be edited by hand; a subtitle file can stand in for one. Detected scenes are now **shots**, found by
+a detector that ignores camera moves, named from what is said in them, and grouped into scenes and ordered sequences,
+with scene suggestions to review. "Sequence" is now "Timeline" throughout the app. HEVC previews without a proxy
+where the computer can decode it, and many fixes for Whisper, thumbnails, exports and the timeline. Project files stay
+`formatVersion` 1: the new settings are optional, and projects from earlier releases open in 0.9.0.
 
 ### Added
+
+#### Transcripts and Whisper
 
 - Transcripts are word-timed and split into short lines; the Source and Program monitors highlight each word as it
   is spoken (karaoke style), and a short line stays on screen through a pause of up to a second
@@ -28,63 +31,174 @@ releases open unchanged.
   [#112](https://github.com/jelloshooter848/ReCut/issues/112)).
 - The timeline's Subtitles row shows the on-screen transcript, the same text the Program monitor shows
   ([#126](https://github.com/jelloshooter848/ReCut/issues/126)).
+- Transcript cues have their own colour (maroon) and transcript lanes can be collapsed with the chevron on their
+  header ([#132](https://github.com/jelloshooter848/ReCut/issues/132)).
 - Export › **Include transcripts as subtitles** adds the on-screen transcript as a subtitle track named "Transcript"
   (burn-in, sidecar .srt or MKV soft track) ([#127](https://github.com/jelloshooter848/ReCut/issues/127)).
 - Export › **Highlight the spoken word** burns transcripts in karaoke style
   ([#134](https://github.com/jelloshooter848/ReCut/issues/134)).
-- Transcript cues have their own colour (maroon) and transcript lanes can be collapsed with the chevron on their
-  header ([#132](https://github.com/jelloshooter848/ReCut/issues/132)).
+- A subtitle file can be a video's transcript (Media Inspector › **Transcript**, or right-click a transcript line ›
+  **Transcript Source**): T lanes, the on-screen transcript, search and shot naming use it, with estimated word
+  highlighting and a warning when it runs past the end of the video
+  ([#162](https://github.com/jelloshooter848/ReCut/issues/162)).
+- Transcribe › **Keep other languages as spoken** (slower): for films that switch language, each stretch of about
+  10 s is transcribed in the language spoken in it instead of being translated into the chosen language
+  ([#163](https://github.com/jelloshooter848/ReCut/issues/163)).
+- Transcribe dialog: **Transcribe again (ignore the saved result)** makes a new transcript instead of reusing the
+  cached one ([#158](https://github.com/jelloshooter848/ReCut/issues/158)).
+- Transcription Models: **Finish in background** while a model downloads; the Transcribe dialog shows the download's
+  progress, and the "model installed" toast has a **Transcribe…** button that brings you back with your choices kept
+  ([#110](https://github.com/jelloshooter848/ReCut/issues/110)).
+
+#### Shots, scenes and sequences
+
+- Shots: with several shots selected, **Insert N Shots at Playhead**, **Make Scene from N Shots…** and **Merge N
+  Shots**; **Insert All Shots at Playhead** on a video; dragging a selection of shots places all of them
+  ([#143](https://github.com/jelloshooter848/ReCut/issues/143)).
+- Shots and scenes are named from the first words spoken in them (Whisper transcript, else subtitles): automatically
+  for new detections, and with **Name from Transcript** / **Name Shots from Transcript**
+  ([#144](https://github.com/jelloshooter848/ReCut/issues/144)).
+- **Suggest Scenes…** on a video with shots proposes scenes from speech, picture and sound at each cut, for review
+  before they are created; it runs as a background job with progress in Jobs
+  ([#147](https://github.com/jelloshooter848/ReCut/issues/147), [#151](https://github.com/jelloshooter848/ReCut/issues/151)).
+- Scenes panel: **Merge N Scenes** joins selected scenes from one video into one
+  ([#152](https://github.com/jelloshooter848/ReCut/issues/152)).
+- Sequences: group scenes into ordered sequences (Scenes panel › **Make Sequence…**, **Add to Sequence**), with a
+  **Sequences** tab; a sequence can be inserted, dragged to the timeline or turned into a new timeline
+  ([#146](https://github.com/jelloshooter848/ReCut/issues/146)).
+
+#### Timeline and monitors
+
+- Opening a shot or scene zooms the Source scrub bar to its In/Out; the **Scene** / **Full file** button (or **\\**)
+  switches to the whole file and back ([#150](https://github.com/jelloshooter848/ReCut/issues/150)).
+- Timeline toolbar: **Follow playhead** brings the view back to the playhead after you scroll away while playing
+  ([#140](https://github.com/jelloshooter848/ReCut/issues/140)).
+
+#### Subtitles
+
+- Subtitle position: move subtitles up or down the frame per timeline (Inspector › Subtitles › **Position**,
+  **Top** / **Bottom**); the Program and Source monitors and burn-in export use it
+  ([#115](https://github.com/jelloshooter848/ReCut/issues/115)).
+- Edit subtitle and transcript lines by hand: double-click a line on the timeline (or right-click › **Edit…**, or the
+  pencil in the Subtitles panel) to change its text and timing, split, merge or delete it. Transcript edits change
+  the media's transcript, so they show in every timeline and keep following the audio; word highlighting follows the
+  edited text ([#135](https://github.com/jelloshooter848/ReCut/issues/135)).
+
+#### Media
+
 - HEVC media plays in the monitors without a proxy on machines that decode it (macOS, Windows with HEVC support);
   Linux still uses a proxy ([#138](https://github.com/jelloshooter848/ReCut/issues/138)).
 
 ### Changed
 
+#### Names
+
+- **"Sequence" is now "Timeline" everywhere in the UI** (Timeline menu, New Timeline…, Timelines in the Project
+  panel, Export's Entire timeline); new timelines are named Timeline 01, 02…; existing projects keep their names
+  ([#145](https://github.com/jelloshooter848/ReCut/issues/145)).
+- **Detected scenes are now called shots** (Detect Shots…, new detections named Shot 001…); "scene" means a Scene
+  library scene ([#143](https://github.com/jelloshooter848/ReCut/issues/143)).
+
+#### Shot detection
+
+- **Shot detection uses an adaptive detector**, so camera motion and exposure changes no longer count as cuts; shot
+  detections cached by earlier versions are made again when next run
+  ([#149](https://github.com/jelloshooter848/ReCut/issues/149)).
+- **Detect Shots asks in plain words**: Sensitivity (Fewer cuts / Normal / More cuts) instead of a threshold number,
+  and a Shortest shot setting; the Media Inspector's Detect… opens the same dialog, and detecting again over shots you
+  edited warns first ([#142](https://github.com/jelloshooter848/ReCut/issues/142)).
+
+#### Transcripts and subtitles
+
 - **Inserting a clip no longer copies its Whisper transcript into a timeline subtitle track**; opening a project
   removes the copies older versions made (imported and edited subtitles are kept). A project saved by 0.9.0 shows no
   transcript on its timeline when opened in an earlier version
   ([#125](https://github.com/jelloshooter848/ReCut/issues/125)).
-- **Transcripts cached by earlier versions are not reused**: transcribing again makes a new, word-timed one;
-  transcript tracks already in a project stay as they are ([#117](https://github.com/jelloshooter848/ReCut/issues/117),
-  [#118](https://github.com/jelloshooter848/ReCut/issues/118), [#158](https://github.com/jelloshooter848/ReCut/issues/158)).
+- **Transcripts cached by earlier versions are not reused**: transcribing again makes a new one (word timing, the
+  fixes below); transcript tracks already in a project stay as they are
+  ([#118](https://github.com/jelloshooter848/ReCut/issues/118), [#158](https://github.com/jelloshooter848/ReCut/issues/158)).
 - Transcribe dialog: a note under **Translate the speech to English** says a translated transcript is less exact
   ([#117](https://github.com/jelloshooter848/ReCut/issues/117)).
+- A subtitle cue added at the playhead over a clip now moves with that clip (**Unpin from Clip** keeps one in
+  place); transcribing media again asks before replacing a transcript you edited
+  ([#135](https://github.com/jelloshooter848/ReCut/issues/135)).
+
+#### Media
+
+- **Thumbnails and filmstrips are made again once**, and videos with a start offset are probed again when a project
+  opens ([#154](https://github.com/jelloshooter848/ReCut/issues/154), [#156](https://github.com/jelloshooter848/ReCut/issues/156)).
 
 ### Fixed
 
-- A blank untitled project was offered for recovery at the next start, and File › Open / New / Quit then asked to
-  save it ([#111](https://github.com/jelloshooter848/ReCut/issues/111)).
-- The Program monitor drew a long subtitle as one line running off both edges; it now wraps to the frame
-  ([#114](https://github.com/jelloshooter848/ReCut/issues/114)).
+#### Whisper
+
 - Whisper repeated a line echoed by the engine; a line said again later is kept
   ([#117](https://github.com/jelloshooter848/ReCut/issues/117)).
-- Dropping a clip on V2 put its audio on A1 (overwriting what was there); the audio now goes to A2, adding the track
-  if needed ([#120](https://github.com/jelloshooter848/ReCut/issues/120)).
+- Whisper transcripts looped on invented lines ("Thank you." hundreds of times) over music and silence
+  ([#158](https://github.com/jelloshooter848/ReCut/issues/158)).
+- Whisper wrote stock lines such as "Thank you." or "Thanks for watching!" over an opening logo or music; a spoken
+  "Thank you." stays ([#160](https://github.com/jelloshooter848/ReCut/issues/160)).
+- Whisper transcripts of an audio stream that starts after the file does were early by that delay
+  ([#157](https://github.com/jelloshooter848/ReCut/issues/157)).
+- `Start ReCut.cmd` (Windows, from a clone) now sets up speech-to-text: it compiles the Whisper engine when cmake and
+  Visual Studio C++ are installed, and otherwise says what to install. Run from source without the engine, the
+  Whisper dialogs explain how to set it up instead of saying it is "not included in this build"
+  ([#170](https://github.com/jelloshooter848/ReCut/issues/170)).
+
+#### Media, thumbnails and export
+
+- In a file whose audio starts before its video (some FFmpeg-made MKVs), the video was placed late, so an export from
+  the first frame began black, and thumbnails were early ([#154](https://github.com/jelloshooter848/ReCut/issues/154)).
+- Thumbnails and filmstrips of MPEG-TS / MPEG-PS files with long keyframe intervals showed the next keyframe instead
+  of the frame at that time ([#156](https://github.com/jelloshooter848/ReCut/issues/156)).
 - Every export to an exFAT drive failed at the end with "The render file … was replaced by another file"
   ([#133](https://github.com/jelloshooter848/ReCut/issues/133)).
 - Proxies that finished after the last save showed "Needs proxy" again when the project was reopened
   ([#136](https://github.com/jelloshooter848/ReCut/issues/136)).
+
+#### Timeline, monitors and subtitles
+
+- Dropping a clip on V2 put its audio on A1 (overwriting what was there); the audio now goes to A2, adding the track
+  if needed ([#120](https://github.com/jelloshooter848/ReCut/issues/120)).
 - Clicking the timeline while playing did not move the playhead; it now jumps there and keeps playing
   ([#139](https://github.com/jelloshooter848/ReCut/issues/139)).
 - Scrolling the timeline while playing snapped back to the playhead; it now pauses following until the playhead is
   back in view or you click **Follow playhead** ([#140](https://github.com/jelloshooter848/ReCut/issues/140)).
-- Whisper transcripts could get stuck repeating an invented line ("Thank you." hundreds of times) over music or
-  silence; they no longer loop. Transcribing again with the same settings returned the saved result: the Transcribe
-  dialog's new **Transcribe again (ignore the saved result)** makes a new transcript and replaces it
-  ([#158](https://github.com/jelloshooter848/ReCut/issues/158)).
-- Whisper wrote stock lines such as "Thank you." or "Thanks for watching!" over an opening logo or music; they are
-  dropped, and a spoken "Thank you." stays ([#160](https://github.com/jelloshooter848/ReCut/issues/160)).
-- Whisper transcripts of a file whose audio starts after its video (an audio track muxed with a delay) were early by
-  that delay; they are now placed where the words are spoken
-  ([#157](https://github.com/jelloshooter848/ReCut/issues/157)).
+- An opened shot or scene played on past its end into the rest of the file and zoomed out
+  ([#164](https://github.com/jelloshooter848/ReCut/issues/164)).
+- Suggest Scenes blocked the app with no progress while it analysed a long film
+  ([#151](https://github.com/jelloshooter848/ReCut/issues/151)).
+- The Program monitor drew a long subtitle as one line running off both edges; it now wraps to the frame
+  ([#114](https://github.com/jelloshooter848/ReCut/issues/114)).
+- Editing the text of a word-timed subtitle showed the old words in the monitors, and merging subtitles kept only the
+  first one's words ([#135](https://github.com/jelloshooter848/ReCut/issues/135)).
+
+#### App
+
+- A blank untitled project was offered for recovery at the next start, and File › Open / New / Quit then asked to
+  save it ([#111](https://github.com/jelloshooter848/ReCut/issues/111)).
+- The window's title bar, menus and system dialogs are dark to match the app, also when macOS (or Windows) is set
+  to light mode ([#166](https://github.com/jelloshooter848/ReCut/issues/166)).
 
 ### Development
 
-- The first `npm run dev` / `npm start` from a clone fetches FFmpeg and builds the speech-to-text engine when they
-  are missing (`npm run setup`; `RECUT_SKIP_SETUP=1` skips it). On Windows it checks for cmake and Visual Studio's
-  C++ tools first and says what to install.
 - Releases go `dev` → `rc` → `main`: changes are promoted from `dev` to `rc`, and the stable release is published
   from `main` (release candidates, for the releases that have them, from `rc`). CI runs on pull requests into
   `main`, `rc`, `dev` and the personal branches ([RELEASING](docs/RELEASING.md)).
+- `docs/NEXT-RELEASE.md` keeps the changelog draft and QA checklist of unreleased work
+  ([#167](https://github.com/jelloshooter848/ReCut/issues/167)).
+- Bugs are tracked in GitHub Issues; the `bugs/` folder is removed (old reports are readable at commit `59eafc6`)
+  ([#148](https://github.com/jelloshooter848/ReCut/issues/148)).
+- The first `npm run dev` / `npm start` from a clone fetches FFmpeg and builds the speech-to-text engine when they
+  are missing (`npm run setup`; `RECUT_SKIP_SETUP=1` skips it). On Windows it checks for cmake and Visual Studio's
+  C++ tools first and says what to install.
+- CI keeps `Start ReCut.cmd` in step with the installer: both smoke checks read one list of required results
+  (`scripts/smoke-requirements.json`), `Start ReCut.cmd -Smoke` requires the speech-to-text engine and OCR and never
+  waits for Enter, and a unit test fails when the installer bundles a `resources/` folder the launcher does not set
+  up. The Windows engine build also runs under Windows PowerShell 5.1
+  ([#170](https://github.com/jelloshooter848/ReCut/issues/170)).
+- Cold filmstrips run as balanced FFmpeg batches in one round, further from the perf guardrail
+  ([#155](https://github.com/jelloshooter848/ReCut/issues/155)).
 - Groundwork for a later change of the app's identity: one product-identity module, a user-data folder migration
   that does nothing while the name is unchanged, and a pinned Windows installer GUID so such a change upgrades in
   place. The Windows install check also installs each build over the latest release.
@@ -93,17 +207,6 @@ releases open unchanged.
 
 ### Known issues
 
-- Thumbnails and filmstrips of an MPEG-TS file with long keyframe intervals can show the next keyframe instead of
-  the frame at that time; the preview and the export are right
-  ([report](bugs/open/2026-10-09-ts-thumbnail-next-keyframe.md),
-  [#156](https://github.com/jelloshooter848/ReCut/issues/156)).
-- In a file that starts slightly before zero (some FFmpeg-made MKVs with AAC audio), thumbnails are one frame early,
-  and a clip that starts at the file's first frame exports that frame black; trimming one frame works around it
-  ([report](bugs/open/2026-10-09-negative-start-video-start-offset.md),
-  [#154](https://github.com/jelloshooter848/ReCut/issues/154)).
-- Run from source on Windows, `Start ReCut.cmd` does not set up the speech-to-text engine, so Transcribe stays
-  unavailable; run `npm run setup` once instead. The installed app is not affected
-  ([#170](https://github.com/jelloshooter848/ReCut/issues/170)).
 - Unchanged from 0.8.0: the Intel dmg is tested only under Rosetta 2
   ([LIMITATIONS](docs/LIMITATIONS.md#platform-and-packaging)), unsigned Windows builds (SmartScreen), NSIS 3.0.4
   (CVE-2025-43715, only when an installer runs as SYSTEM).
@@ -119,15 +222,15 @@ warning for damaged source files. Project files stay `formatVersion` 1.
   waveforms, scene detection, OCR and Whisper results had to be made again each time: the app's built-in browser
   kept its own cache in the same folder and cleared it. At the first start of 0.8.2, ReCut also removes, once, what
   that browser cache left in the folder. Linux, and cache folders chosen in Preferences, were not affected
-  ([report](bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md)).
 - **.ts, .m2ts and .mts files (and .mpg / .vob) whose video starts after the audio**, as in most TV and camcorder
   recordings, exported the picture early by that gap, in clips whose video was exported without its sound or with
   sound trimmed differently (an audio-only clip of an audio track that starts late lost its lead-in); scene detection put cuts early by the same gap, and the preview audio of a channel
   selection on a late audio stream played early. MKV files that start slightly before zero (some FFmpeg-made MKVs
-  with AAC audio) exported one frame early ([report](bugs/closed/2026-10-09-ts-late-video-export-early.md)).
+  with AAC audio) exported one frame early ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-ts-late-video-export-early.md)).
 - An export from a truncated or damaged source file finished as "Export complete", with a frozen, silent stretch
   and no warning. The export now warns, in the Export dialog and as a notification, naming the file and where its
-  data stops or what FFmpeg reported ([report](bugs/closed/2026-10-09-export-silently-pads-truncated-sources.md)).
+  data stops or what FFmpeg reported ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-export-silently-pads-truncated-sources.md)).
 
 After updating, scene detection and the preview audio of channel selections (an extracted centre channel, a
 downmix) are made again the next time they are needed, because the results cached by earlier versions could be
@@ -138,7 +241,7 @@ wrong. Scenes already detected in a project stay as they are: run **Detect Scene
 
 - The MKV export test checks the downmix level of each segment, with limits on both sides, and explains a failure
   (it failed intermittently on macOS CI)
-  ([report](bugs/closed/2026-10-09-mkv-downmix-tone-level-ci-failure.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-mkv-downmix-tone-level-ci-failure.md)).
 - A saved-project fixture for 0.8.2 (`tests/fixtures/projects/recut-0.8.2.recut`).
 - No new npm dependencies.
 
@@ -146,13 +249,13 @@ wrong. Scenes already detected in a project stay as they are: run **Detect Scene
 
 - Whisper transcripts of a file whose audio starts after its video (an audio track muxed with a delay) are early by
   that delay; shifting the subtitle track works around it
-  ([report](bugs/closed/2026-10-09-whisper-ignores-late-audio-start.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/issues/157)).
 - Thumbnails and filmstrips of an MPEG-TS file with long keyframe intervals can show the next keyframe instead of
   the frame at that time; the preview and the export are right
-  ([report](bugs/open/2026-10-09-ts-thumbnail-next-keyframe.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/issues/156)).
 - In a file that starts slightly before zero (some FFmpeg-made MKVs with AAC audio), thumbnails are one frame early,
   and a clip that starts at the file's first frame exports that frame black; trimming one frame works around it
-  ([report](bugs/open/2026-10-09-negative-start-video-start-offset.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/issues/154)).
 - Unchanged from 0.8.0: the Intel dmg is tested only under Rosetta 2
   ([LIMITATIONS](docs/LIMITATIONS.md#platform-and-packaging)), unsigned Windows builds (SmartScreen), NSIS 3.0.4
   (CVE-2025-43715, only when an installer runs as SYSTEM).
@@ -179,33 +282,33 @@ This change ships in a patch release by the maintainer's decision, because 0.8.0
   ReCut refused. Its storage hosts under `huggingface.co` and `hf.co` are now accepted, and every model is still
   checked against its fixed SHA-256. A download that receives nothing for 60 seconds now stops with "the download
   stalled" (**Resume** continues it), and a failed download names the host or the HTTP error
-  ([report](bugs/closed/2026-10-09-whisper-model-download-redirect.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-whisper-model-download-redirect.md)).
 - Nested sequences nested on several tracks at every level could make preview and export stall, or fail outright
-  ([report](bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md)). Make Compound Clip now also respects the
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md)). Make Compound Clip now also respects the
   8-level nesting limit.
 - Quitting could get stuck, so ReCut had to be killed, if its window crashed or stopped responding during the quit
-  ([report](bugs/closed/2026-10-08-quit-stuck-after-renderer-dies.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-quit-stuck-after-renderer-dies.md)).
 - A finished background job (a proxy, scene detection, channel preview audio) marked a saved project as changed, so
   quitting asked to save although nothing had changed
-  ([report](bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md)).
 - File › Collect Project… with **Include proxies** did not copy the preview audio of channel selections (an
   extracted centre channel, a downmix), so the copy still pointed at the original computer
-  ([report](bugs/closed/2026-10-08-collect-skips-channel-proxies.md)); with **Include subtitle files** it skipped
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-collect-skips-channel-proxies.md)); with **Include subtitle files** it skipped
   subtitle files that only a sequence snapshot still names
-  ([report](bugs/closed/2026-10-08-collect-skips-snapshot-subtitle-sources.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-collect-skips-snapshot-subtitle-sources.md)).
 - The Program monitor could keep showing the frame from before a fast scrub over a long sequence until the playhead
-  rested ([report](bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md)).
+  rested ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-09-program-scrub-stalls-on-unready-element.md)).
 - A damaged or hand-edited project file could freeze the app when a clip was selected: the audio stream details
   stored in it were not checked on load
-  ([report](bugs/closed/2026-10-08-stored-probe-audio-streams-not-repaired.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-stored-probe-audio-streams-not-repaired.md)).
 - The export warning for a channel selection on a stream whose 5.1 layout was guessed contradicted itself ("the
   stream (5.1) has no Centre (FC) channel")
-  ([report](bugs/closed/2026-10-08-channel-warning-names-guessed-layout.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-channel-warning-names-guessed-layout.md)).
 - File › Import Media… (Ctrl+I) did not offer many formats that the Project panel's Import… accepts (TIFF, HEIC,
-  AVIF, PSD, MTS, 3GP, Opus, DTS and others) ([report](bugs/closed/2026-10-08-import-menu-stale-file-filter.md)).
+  AVIF, PSD, MTS, 3GP, Opus, DTS and others) ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-import-menu-stale-file-filter.md)).
 - Sequence Settings… could change the frame rate of a sequence that already had clips, silently re-timing every
   clip. The frame rate is now fixed once a sequence has clips, as the Inspector said
-  ([report](bugs/closed/2026-10-08-sequence-settings-fps-retimes-clips.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-sequence-settings-fps-retimes-clips.md)).
 
 ### Development
 
@@ -214,7 +317,7 @@ This change ships in a patch release by the maintainer's decision, because 0.8.0
 - Release candidates (`1.0.0-rc.N`) can be published as pre-releases. The update check tells someone running a
   candidate about a later candidate or the final release, and still never offers a candidate to a stable version.
 - Performance gate re-run on 0.8.0; the flaky multi-hour scrub gate and the pool-element row are fixed in the bench
-  ([report](bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md)). Attack suites re-run with hostile
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-perf-multi-hour-scrub-long-tasks-flaky.md)). Attack suites re-run with hostile
   cases for the 0.8.0 features; Collect round trips cover 0.8.0 content.
 - CONTRIBUTING, a Code of Conduct and GitHub issue forms; README and docs checked against the app.
 - A saved-project fixture for 0.8.1 (`tests/fixtures/projects/recut-0.8.1.recut`).
@@ -270,24 +373,24 @@ earlier releases open unchanged.
 
 - Fades to and from black exported darker than the preview showed (up to 16 luma levels), and on upper tracks they
   covered the track below with black instead of fading the clip out
-  ([report](bugs/closed/2026-10-07-export-fade-to-black-ends-early.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-export-fade-to-black-ends-early.md)).
 - Transitions between two clips now export what the preview shows: a Cross Dissolve no longer dims halfway in the
   preview, and a Dip to Black exports as the preview shows it (each clip fades over its own half, without needing
   extra media past the cut; dips also export faster)
-  ([report](bugs/closed/2026-10-08-two-sided-transition-preview-mismatch.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-two-sided-transition-preview-mismatch.md)).
 - The Program monitor could briefly show the other clip's frame after a cut-back seek while paused, under load
-  ([report](bugs/closed/2026-10-07-program-transient-stale-frame-before-present.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-program-transient-stale-frame-before-present.md)).
 - The Program monitor could keep showing the previous frame after a seek while paused
-  ([report](bugs/closed/2026-10-07-program-stale-frame-after-seek.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-program-stale-frame-after-seek.md)).
 - Mono sources played 3 dB louder in the preview than in the export
-  ([report](bugs/closed/2026-10-07-mono-preview-level.md)), and the Program monitor's peak meter always showed
-  "unavailable" ([report](bugs/closed/2026-10-07-program-meter-always-unavailable.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-mono-preview-level.md)), and the Program monitor's peak meter always showed
+  "unavailable" ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-program-meter-always-unavailable.md)).
 - Verified downloads (OCR languages, transcription models) failed on any HTTP redirect
-  ([report](bugs/closed/2026-10-07-download-redirect-net-fetch-manual.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-download-redirect-net-fetch-manual.md)).
 - Double-clicking a clip on the timeline (open in Source, or open a compound clip) did not always register on
   Windows; double-clicks are now detected by the timeline itself.
 - After a clean save and quit, the next launch could offer to recover an autosave anyway: an autosave still being
-  written could finish after the save ([report](bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md)).
+  written could finish after the save ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md)).
 
 ### Development
 
@@ -339,7 +442,7 @@ can tell you when a new version is out. Project files stay `formatVersion` 1.
 - Moving, renaming, copying or relinking media no longer rebuilds its thumbnails, filmstrip, waveform, proxy, scene
   cuts or OCR results: they are now keyed by the file's content (its size and a sample of its bytes, read once) instead
   of its path and modification time. Caches made by earlier versions are still found and reused
-  ([report](bugs/closed/2026-10-05-moved-media-cache-miss.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-moved-media-cache-miss.md)).
 
 ### Development
 
@@ -388,7 +491,7 @@ every release like the Windows downloads. No changes to editing features; projec
 - The AppImage is about 240 MB (the Linux FFmpeg build is larger than the Windows one). AppImage only: no `.deb`,
   `.rpm`, Flatpak, Snap or ARM build, and it does not add itself to the application menu (an AppImage integration tool
   can). Tested on Ubuntu 22.04. See [LIMITATIONS](docs/LIMITATIONS.md).
-- Unchanged from 0.6.0: moved media rebuilds its cache ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)),
+- Unchanged from 0.6.0: moved media rebuilds its cache ([open report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-moved-media-cache-miss.md)),
   unsigned builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
 
 ## [0.6.0] - 2026-10-07
@@ -417,7 +520,7 @@ tracks gain an optional `streamIndex`).
 
 - Scene detection on media longer than about 2 h 47 min put cuts up to several frames early (FFmpeg 6.1 printed the
   times rounded); previously detected results are recomputed
-  ([report](bugs/closed/2026-10-07-scene-detect-pts-precision.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-scene-detect-pts-precision.md)).
 - The job queue's count of running jobs left out language downloads.
 
 ### Development
@@ -434,7 +537,7 @@ tracks gain an optional `streamIndex`).
 
 - OCR accuracy is measured on generated subtitles (100 % on the test streams); italic, coloured and sign subtitles on
   real discs may read less well. See [LIMITATIONS](docs/LIMITATIONS.md).
-- Unchanged: moved media rebuilds its cache ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned
+- Unchanged: moved media rebuilds its cache ([open report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned
   builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
 
 ## [0.5.0] - 2026-10-07
@@ -469,14 +572,14 @@ that otherwise only show up when the result is watched. Project files are unchan
   rendering) and, when it differs from the reference machine by more than 10 %, judges time and frame-rate results on
   the reference machine's scale. It still prints the raw results, and shows the machine and its speed next to the
   baseline's. The same code now gets the same verdict on faster and slower hosts
-  ([report](bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md)). `tests/perf/baseline.json` (format 2) records
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md)). `tests/perf/baseline.json` (format 2) records
   the reference machine's speed and was re-seeded.
 - New `npm run perf:compare -- <refA> <refB>`: compares two versions on the same machine, runs interleaved, and flags
   results that are worse beyond the noise.
 
 ### Known issues
 
-- Unchanged: moved media rebuilds its cache ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned
+- Unchanged: moved media rebuilds its cache ([open report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned
   builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
 
 ## [0.4.1] - 2026-10-07
@@ -495,13 +598,13 @@ Project files are unchanged (`formatVersion` 1).
 - The Windows build bundled FFmpeg without its licence or a pointer to its source code. It now ships
   `FFMPEG-LICENSE.txt`, `FFMPEG-README.txt` and `FFMPEG-BUILD.txt` (which FFmpeg build it is, and where to download its
   source), plus `LICENSE` and `THIRD_PARTY_NOTICES.md`
-  ([report](bugs/closed/2026-10-07-bundled-ffmpeg-licence-not-shipped.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-bundled-ffmpeg-licence-not-shipped.md)).
 
 ### Known issues
 
 - Unchanged from 0.4.0: the performance gate's verdict depends on the speed of the machine
-  ([report](bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md)), moved media rebuilds its cache
-  ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned builds, NSIS 3.0.4 (CVE-2025-43715, only
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md)), moved media rebuilds its cache
+  ([open report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned builds, NSIS 3.0.4 (CVE-2025-43715, only
   when an installer runs as SYSTEM).
 
 ## [0.4.0] - 2026-10-07
@@ -531,31 +634,31 @@ and every still image FFmpeg can decode shows in the monitors. Project files are
 
 - On Windows, opening a project at startup (double-clicking a `.recut` file or `--project`) or saving could fail with
   "EPERM … prefs.json" while ReCut was reading its preferences
-  ([report](bugs/closed/2026-10-07-startup-open-fails-prefs-rename-windows.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-startup-open-fails-prefs-rename-windows.md)).
 - Export failed for AVIF and single-frame GIF stills ("Option loop not found")
-  ([report](bugs/closed/2026-10-07-still-export-loop-option-non-image2.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-still-export-loop-option-non-image2.md)).
 - TGA, EXR, PSD and JPEG XL files were imported as zero-length videos, and AVIF as a playable video
-  ([report](bugs/closed/2026-10-07-still-classifier-mismatch.md)).
-- An EXIF-rotated JPEG got its sideways size ([report](bugs/closed/2026-10-07-exif-rotated-still-probe-size.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-still-classifier-mismatch.md)).
+- An EXIF-rotated JPEG got its sideways size ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-exif-rotated-still-probe-size.md)).
 - A rotated AVIF previewed rotated but exported unrotated
-  ([report](bugs/closed/2026-10-07-avif-preview-orientation-differs-from-export.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-avif-preview-orientation-differs-from-export.md)).
 
 ### Development
 
 - Releases and dev prereleases publish only when the installer, unit, end-to-end and launcher jobs all pass on
-  Windows ([report](bugs/closed/2026-10-07-release-publishes-on-red-tests.md)). 0.3.0 was published while the Windows
+  Windows ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-release-publishes-on-red-tests.md)). 0.3.0 was published while the Windows
   end-to-end suite was red; that suite is fixed
-  ([report](bugs/closed/2026-10-07-windows-program-e2e-failing-since-pr18.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-windows-program-e2e-failing-since-pr18.md)).
 
 ### Known issues
 
 - HEIC needs FFmpeg 7.1 or later (the Windows build bundles 9.0.2). With FFmpeg 6.1, a rotated AVIF is unrotated in
   preview and export alike. See [LIMITATIONS](docs/LIMITATIONS.md).
 - The bundled FFmpeg's licence is not yet shipped with the Windows build; 0.4.1 fixes this
-  ([report](bugs/closed/2026-10-07-bundled-ffmpeg-licence-not-shipped.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-bundled-ffmpeg-licence-not-shipped.md)).
 - The performance gate's verdict depends on the speed of the machine
-  ([report](bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md)).
-- Unchanged: moved media rebuilds its cache ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md)).
+- Unchanged: moved media rebuilds its cache ([open report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned
   builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
 
 ## [0.3.0] - 2026-10-07
@@ -594,9 +697,9 @@ sequence at 23.976 fps now save, open, edit, scrub, scroll and play back without
 ### Fixed
 
 - Edits made while a save was running could be marked as saved and lost
-  ([report](bugs/closed/2026-10-06-edits-during-save-marked-saved.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-06-edits-during-save-marked-saved.md)).
 - An autosave made during a save could be ignored by crash recovery
-  ([report](bugs/closed/2026-10-06-autosave-during-save-ignored-by-recovery.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-06-autosave-during-save-ignored-by-recovery.md)).
 - At display scales of 125% and 150% the timeline playhead could be drawn one pixel off.
 
 ### Development
@@ -610,9 +713,9 @@ sequence at 23.976 fps now save, open, edit, scrub, scroll and play back without
 ### Known issues
 
 - None of the performance gates fail (`npm run perf:check -- --runs 2`: 98 of 98 gates, 130 of 130 guardrails;
-  [closed report](bugs/closed/2026-10-05-perf-budgets-2500-clips.md)). On a heavily loaded machine, the first visit
+  [closed report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-perf-budgets-2500-clips.md)). On a heavily loaded machine, the first visit
   to each page while scrubbing a multi-hour sequence at the closest zoom can still stutter briefly.
-- Unchanged: moved media rebuilds its cache ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned
+- Unchanged: moved media rebuilds its cache ([open report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned
   builds, NSIS 3.0.4 (CVE-2025-43715, only when an installer runs as SYSTEM).
 
 ## [0.2.2] - 2026-10-06
@@ -625,7 +728,7 @@ Fixes chapter export. Project files are unchanged (`formatVersion` 1).
   Otherwise the first marker's chapter was moved to 0:00 and its break was lost: a sequence whose only Chapter marker
   is "Act Two" at 30:00 exported one chapter, "Act Two", from the start. Export now adds an untitled chapter from 0:00
   to the first marker, so every break stays where it was placed. A marker exactly at the start adds no extra chapter
-  ([report](bugs/closed/2026-10-06-first-chapter-break-lost-and-stale-roadmap.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-06-first-chapter-break-lost-and-stale-roadmap.md)).
 
 ### Changed
 
@@ -635,8 +738,8 @@ Fixes chapter export. Project files are unchanged (`formatVersion` 1).
 ### Known issues
 
 - Unchanged from 0.2.1: 2,500-clip performance budgets
-  ([open report](bugs/closed/2026-10-05-perf-budgets-2500-clips.md)), moved media rebuilds its cache
-  ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned builds, NSIS 3.0.4 (CVE-2025-43715,
+  ([open report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-perf-budgets-2500-clips.md)), moved media rebuilds its cache
+  ([open report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned builds, NSIS 3.0.4 (CVE-2025-43715,
   only when an installer runs as SYSTEM).
 
 ## [0.2.1] - 2026-10-05
@@ -650,7 +753,7 @@ Fixes the Windows installer crash in 0.2.0. Project files are unchanged (`format
   The cause was a fixed-length read in electron-builder's per-user install script, fixed upstream in
   electron-builder 26.12; ReCut now builds with electron-builder 26.15.3. Verified with 130 install/uninstall cycles
   on AMD and Intel runners, with no crash
-  ([report](bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md)).
 
 ### Changed
 
@@ -662,8 +765,8 @@ Fixes the Windows installer crash in 0.2.0. Project files are unchanged (`format
 ### Known issues
 
 - Unchanged from 0.2.0: 2,500-clip performance budgets
-  ([open report](bugs/closed/2026-10-05-perf-budgets-2500-clips.md)), moved media rebuilds its cache
-  ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned builds. The installer is built with NSIS
+  ([open report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-perf-budgets-2500-clips.md)), moved media rebuilds its cache
+  ([open report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-moved-media-cache-miss.md)), unsigned builds. The installer is built with NSIS
   3.0.4, which has CVE-2025-43715 (privilege escalation only when an installer runs as SYSTEM; ReCut's per-user
   installer normally does not).
 
@@ -685,7 +788,7 @@ and damaged or hostile files are now repaired on load (see Changed).
 - Export converts to the frame rate chosen in the Export dialog. Before, the setting was ignored with a warning.
   Chunked exports add up to the same frame count as a single pass.
 - Export writes the sequence's **Chapter** markers in the exported range as MP4 chapters
-  ([report](bugs/closed/2026-10-05-export-ignores-chapter-markers-copies-source-metadata.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-export-ignores-chapter-markers-copies-source-metadata.md)).
 - Export stall watchdog: an export with no FFmpeg progress for 2 minutes (`RECUT_EXPORT_STALL_MS`) stops with an
   error instead of hanging.
 - SMPTE drop-frame timecode at 29.97 and 59.94 fps (`HH:MM:SS;FF`), in display and typed entry.
@@ -693,7 +796,7 @@ and damaged or hostile files are now repaired on load (see Changed).
   `<file>.pre-repair-<time>`, and a warning names the copy. A project that cannot be read falls back to its `.bak`
   and keeps the damaged file as `<file>.corrupt-<time>`. The recovery prompt says when an autosave needed repairs.
 - Anamorphic (non-square pixel) sources: the sample aspect ratio is probed and used in preview, thumbnails and export.
-- `bugs/` folder for filing and closing bug reports ([bugs/README.md](bugs/README.md)).
+- `bugs/` folder for filing and closing bug reports ([bugs/README.md](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/README.md)).
 - This changelog and [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Changed
@@ -722,12 +825,12 @@ and damaged or hostile files are now repaired on load (see Changed).
   builds.
 - Roadmap revised twice: stem separation, nested sequences, OCR, a performance gate, pre-export warnings, MKV
   packaging and a scoped first version of keyframes
-  ([report](bugs/closed/2026-10-05-roadmap-revisions.md), [report](bugs/closed/2026-10-05-roadmap-revisions-grok-review.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-roadmap-revisions.md), [report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-roadmap-revisions-grok-review.md)).
 
 ### Fixed
 
 - Exports ignored Chapter markers and copied the first source's chapters and title
-  ([report](bugs/closed/2026-10-05-export-ignores-chapter-markers-copies-source-metadata.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-export-ignores-chapter-markers-copies-source-metadata.md)).
 - A failed final move during export could delete both the previous output and the new render. The previous file is now
   kept until the new one is in place, and a render that cannot be moved is kept as `<name>.recut-unsaved-<time>.mp4`.
 - Exporting with a sidecar could overwrite an imported subtitle file of the same name; subtitle export could
@@ -750,18 +853,18 @@ and damaged or hostile files are now repaired on load (see Changed).
   fields are repaired; a symlinked `.bak` is replaced rather than followed.
 - Electron build on Windows failed (doubled drive letter in the repo root path).
 - Tests: the export performance test asserted a stale input count
-  ([report](bugs/closed/2026-10-05-export-perf-inputcount-stale.md)); the media-move cache test failed about half
-  the time ([report](bugs/closed/2026-10-05-media-move-cache-mtime-precision.md)); several tests failed on Windows.
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-export-perf-inputcount-stale.md)); the media-move cache test failed about half
+  the time ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-media-move-cache-mtime-precision.md)); several tests failed on Windows.
 - Docs: INSTALL.md contradicted itself about whether the Windows installer is tested
-  ([report](bugs/closed/2026-10-05-install-packaging-contradiction.md)).
+  ([report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-install-packaging-contradiction.md)).
 
 ### Known issues
 
 - A 2,500-clip project still misses the edit, scrub, open/save and serialization budgets: edits lag 80-120 ms,
   scrubbing at working zoom runs at 32-35 fps, and opening freezes the window for about 3 s
-  ([open report](bugs/closed/2026-10-05-perf-budgets-2500-clips.md)).
+  ([open report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-perf-budgets-2500-clips.md)).
 - Moving a media file to another folder or drive rebuilds its thumbnails, waveform and proxy
-  ([open report](bugs/closed/2026-10-05-moved-media-cache-miss.md)).
+  ([open report](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-05-moved-media-cache-miss.md)).
 - Builds are not code-signed; Windows SmartScreen asks for confirmation. macOS and Linux packages are not tested.
   See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for the full list.
 
