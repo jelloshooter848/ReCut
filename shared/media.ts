@@ -123,3 +123,17 @@ function hevcProfileOk(pix: string, s: DecodeSupport): boolean {
   if (/12(le|be)?$/.test(pix)) return false;
   return /10(le|be)?$/.test(pix) ? s.hevcMain10 : s.hevcMain;
 }
+
+/**
+ * Revision of electron/media/probe.ts results, stored in MediaProbe.probeRev. Bump when a fix changes what a stored
+ * probe says about a file; the renderer re-probes stored probes the fix can affect (src/state/mediaActions.ts
+ * refreshStaleProbes). 2 (#154): stream start offsets are measured from the container start clamped to 0.
+ */
+export const PROBE_REVISION = 2;
+
+/**
+ * Containers whose input seek (`-ss` before `-i`) is frame-exact in FFmpeg: no decoder pre-roll needed. Others
+ * (MPEG-TS, MPEG-PS, AVI, …) can land after the target and start at the next keyframe, so the export (renderGraph
+ * inputPreroll) and thumbnails (thumbs.ts, #156) seek earlier and drop frames up to the target.
+ */
+export const EXACT_SEEK_CONTAINERS: ReadonlySet<string> = new Set(['mp4', 'mov', 'm4v', 'm4a', 'matroska', 'webm']);

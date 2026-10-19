@@ -35,7 +35,7 @@ export const MIN_SPLIT = 0.12;
 
 const BASE_ZONES: ZoneAssignments = {
   'left-top': ['project'],
-  'left-bottom': ['transcript', 'scenes', 'continuity', 'subtitles', 'markers', 'history', 'jobs'],
+  'left-bottom': ['transcript', 'scenes', 'sequences', 'continuity', 'subtitles', 'markers', 'history', 'jobs'],
   'monitor-left': ['source'],
   'monitor-right': ['program'],
   'center-bottom': ['timeline', 'storyline'],
@@ -47,7 +47,7 @@ export const WORKSPACE_PRESETS: Record<WorkspaceId, WorkspaceLayout> = {
   Editing: { zones: BASE_ZONES, active: {}, sizes: BASE_SIZES },
   Research: {
     zones: {
-      'left-top': ['transcript', 'scenes'],
+      'left-top': ['transcript', 'scenes', 'sequences'],
       'left-bottom': ['project', 'continuity', 'subtitles', 'markers', 'history', 'jobs'],
       'monitor-left': [],
       'monitor-right': ['program', 'source'],
@@ -61,7 +61,7 @@ export const WORKSPACE_PRESETS: Record<WorkspaceId, WorkspaceLayout> = {
   Compare: {
     zones: {
       'left-top': ['project', 'source'],
-      'left-bottom': ['transcript', 'scenes', 'continuity', 'subtitles', 'markers', 'history', 'jobs'],
+      'left-bottom': ['transcript', 'scenes', 'sequences', 'continuity', 'subtitles', 'markers', 'history', 'jobs'],
       'monitor-left': ['compare'],
       'monitor-right': ['program'],
       'center-bottom': ['timeline', 'storyline'],
@@ -90,9 +90,20 @@ function loadPersisted(): Persisted | null {
   } catch { return null; }
 }
 
+/** Panels added after layouts were first saved, and the panel each goes next to in a layout saved without it. */
+const ADDED_PANELS: { id: string; after: string }[] = [{ id: 'sequences', after: 'scenes' }];
+
 function sanitize(l: WorkspaceLayout): WorkspaceLayout {
   const out = cloneLayout(l);
   for (const z of ZONE_IDS) if (!Array.isArray(out.zones[z])) out.zones[z] = [];
+  // Panels cannot be closed, only moved: a saved layout without a newer panel predates it. Place it beside its sibling.
+  for (const { id, after } of ADDED_PANELS) {
+    if (ZONE_IDS.some((z) => out.zones[z].includes(id))) continue;
+    const zone = ZONE_IDS.find((z) => out.zones[z].includes(after)) ?? 'left-bottom';
+    const list = out.zones[zone];
+    const at = list.indexOf(after);
+    list.splice(at >= 0 ? at + 1 : list.length, 0, id);
+  }
   out.sizes = { ...BASE_SIZES, ...out.sizes };
   return out;
 }

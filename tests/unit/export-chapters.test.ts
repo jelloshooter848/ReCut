@@ -1,12 +1,12 @@
 /**
- * Export metadata and chapters (bugs/closed/2026-10-05-export-ignores-chapter-markers-copies-source-metadata.md),
+ * Export metadata and chapters (bugs/closed/2026-10-05-export-ignores-chapter-markers-copies-source-metadata.md @ 59eafc6),
  * measured on real FFmpeg exports with ffprobe:
  * - nothing from the sources reaches the output: no global tags (title, comment, artist, ...), no chapters, no
  *   stream titles / handler names / languages, in a single-pass or a chunked export;
  * - the sequence's Chapter markers (kind 'chapter' only) are the output's chapters: names (FFMETADATA-escaped),
  *   times relative to the export range, unaffected by output frame-rate conversion, identical single-pass and
  *   chunked; no chapter markers, no chapters; when no chapter marker is at or before the range start, an untitled
- *   leading chapter keeps the first break (bugs/closed/2026-10-06-first-chapter-break-lost-and-stale-roadmap.md).
+ *   leading chapter keeps the first break (bugs/closed/2026-10-06-first-chapter-break-lost-and-stale-roadmap.md @ 59eafc6).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFile } from 'node:child_process';
@@ -230,7 +230,7 @@ describe('export chapters: the sequence Chapter markers', () => {
     expect(b.chapters).toEqual(a.chapters);
   });
 
-  // bugs/closed/2026-10-06-first-chapter-break-lost-and-stale-roadmap.md: when no chapter marker is at or before the
+  // bugs/closed/2026-10-06-first-chapter-break-lost-and-stale-roadmap.md @ 59eafc6: when no chapter marker is at or before the
   // range start, an untitled leading chapter runs from 0 to the first marker, so the first break is kept.
   for (const mode of MODES) {
     it(`a single chapter marker mid-sequence (${mode}): an untitled leading chapter, then the marker's chapter`, async () => {

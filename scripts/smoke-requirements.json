@@ -1,0 +1,55 @@
+{
+  "about": [
+    "The lines a Windows smoke report (RECUT_SMOKE=1, electron/main.ts runSmoke) must contain, in one list for both",
+    "Windows smoke checks so they cannot drift apart (issue #170): mode 'installer' is the unpacked installer build",
+    "(.github/workflows/windows.yml, installer job, 'Smoke-test the unpacked app'); mode 'launcher' is a run from source",
+    "by 'Start ReCut.cmd -Smoke' (scripts/windows/start-recut.ps1, the launcher job). scripts/check-smoke.mjs applies it.",
+    "Both modes require the speech-to-text engine and OCR: -Smoke runs only in CI, whose runner has CMake and Visual",
+    "Studio C++, so a launcher run that skipped or failed the engine fails (a double-click start without the tools still",
+    "starts ReCut without speech-to-text).",
+    "Each required entry gives a JavaScript regular expression per mode, matched case-insensitively against each line of",
+    "the report; an entry without a pattern for a mode is not required in that mode. 'forbidden' is matched",
+    "case-sensitively against each line and fails the check wherever it matches. Patterns are JSON strings, so a regex",
+    "backslash is written twice (and a literal Windows backslash four times).",
+    "tests/unit/launcher-parity.test.ts checks this file against real reports of both modes."
+  ],
+  "modes": ["installer", "launcher"],
+  "forbidden": "FAILED|layout=MISSING",
+  "required": [
+    {
+      "id": "protocol",
+      "what": "the recut-media:// protocol serves a byte range",
+      "installer": "^smoke: protocol status=206 ",
+      "launcher": "^smoke: protocol status=206 "
+    },
+    {
+      "id": "ffmpeg",
+      "what": "FFmpeg encodes a generated clip and ffprobe reads it back",
+      "installer": "^smoke: ffmpeg encode\\+probe ok ",
+      "launcher": "^smoke: ffmpeg encode\\+probe ok "
+    },
+    {
+      "id": "ffmpeg-bundled",
+      "what": "FFmpeg comes from the package's resources\\ffmpeg (a run from source may use an FFmpeg on PATH instead: start-recut.ps1 downloads one only when none is installed)",
+      "installer": "^smoke: ffmpeg path=.*\\\\resources\\\\ffmpeg\\\\ffmpeg\\.exe ffprobe path=.*\\\\resources\\\\ffmpeg\\\\ffprobe\\.exe "
+    },
+    {
+      "id": "ocr",
+      "what": "the OCR worker starts and loads the Tesseract core (from app.asar.unpacked when packaged, from dist\\electron\\ocr when run from source)",
+      "installer": "^smoke: ocr core=(relaxedsimd-lstm|lstm) ok worker=.*\\\\resources\\\\app\\.asar\\.unpacked\\\\dist\\\\electron\\\\ocr\\\\worker\\.js$",
+      "launcher": "^smoke: ocr core=(relaxedsimd-lstm|lstm) ok worker=(?!.*app\\.asar).*\\\\dist\\\\electron\\\\ocr\\\\worker\\.js$"
+    },
+    {
+      "id": "whisper",
+      "what": "the speech-to-text engine resources\\whisper\\whisper-cli.exe runs (--version, no model needed)",
+      "installer": "^smoke: whisper engine=[0-9.]+ ok path=.*\\\\resources\\\\whisper\\\\whisper-cli\\.exe$",
+      "launcher": "^smoke: whisper engine=[0-9.]+ ok path=.*\\\\resources\\\\whisper\\\\whisper-cli\\.exe$"
+    },
+    {
+      "id": "window",
+      "what": "the window loads and React mounts the layout",
+      "installer": "^smoke: window loaded=.* layout=mounted$",
+      "launcher": "^smoke: window loaded=.* layout=mounted$"
+    }
+  ]
+}

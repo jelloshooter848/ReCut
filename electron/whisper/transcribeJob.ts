@@ -30,11 +30,10 @@ import { cacheKeyForPath, cacheSubdir, fileExists, removeQuietly } from '../medi
 import { FfmpegError, ffmpegFileArg, lineSplitter, runFfmpeg } from '../media/ffmpeg';
 import { probeMedia } from '../media/probe';
 import { ensureDirSafe } from '../safeMkdir';
-import { getWhisperCliPath, killTree, whisperThreads } from './engine';
+import { getWhisperCliPath, killTree, whisperMissingMessage, whisperThreads } from './engine';
 import { findWhisperModel, verifyModel } from './models';
 import { parseProgressLine, parseSegmentLine, parseWhisperJson, segmentsToCues } from './output';
 import { CHUNK_SECONDS, planChunks, readWavInfo, writeWavChunk } from './wav';
-import { PRODUCT_NAME } from '../../shared/productIdentity';
 
 /**
  * Bump when a change to extraction / chunking / clean-up changes the text or timing of a result.
@@ -45,6 +44,12 @@ import { PRODUCT_NAME } from '../../shared/productIdentity';
 export const WHISPER_PIPELINE_VERSION = 7;
 /** Share of the progress bar for the audio extraction. */
 const EXTRACT_SHARE = 0.1;
+/** Share of the progress bar for detecting each stretch's language (keepLanguages, #163). */
+const DETECT_SHARE = 0.2;
+/** Length of the stretches whose language is detected (cut at quiet moments). */
+export const LANGUAGE_WINDOW_SECONDS = 10;
+/** A stretch switches language only when detection is at least this sure (music and noise give unsure guesses). */
+export const LANGUAGE_MIN_P = 0.7;
 
 /** What the job needs besides the request. */
 export interface TranscribeJobContext {
@@ -74,16 +79,16 @@ export function transcriptionMediaKey(mediaPath: string): Promise<string> {
 }
 
 /** Settings part of the cache key: everything besides the media that changes the result. */
-export function transcriptionSettingsHash(req: Pick<TranscribeRequest, 'streamIndex' | 'model' | 'language' | 'translate'>, modelSha256: string): string {
+export function transcriptionSettingsHash(req: Pick<TranscribeRequest, 'streamIndex' | 'model' | 'language' | 'translate' | 'keepLanguages'>, modelSha256: string): string {
   const parts = {
     v: WHISPER_PIPELINE_VERSION, engine: WHISPER_ENGINE_VERSION, stream: req.streamIndex, model: req.model, sha: modelSha256,
-    language: req.language, translate: Boolean(req.translate),
+    language: req.language, translate: Boolean(req.translate), ...(req.keepLanguages ? { keepLanguages: true } : {}),
   };
   return crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 16);
 }
 
 /** Cache file of one transcription result. */
-export function transcriptionCachePath(fileKey: string, req: Pick<TranscribeRequest, 'streamIndex' | 'model' | 'language' | 'translate'>, modelSha256: string): string {
+export function transcriptionCachePath(fileKey: string, req: Pick<TranscribeRequest, 'streamIndex' | 'model' | 'language' | 'translate' | 'keepLanguages'>, modelSha256: string): string {
   return path.join(cacheSubdir('whisper'), `${fileKey}_s${req.streamIndex}_${req.model}-${transcriptionSettingsHash(req, modelSha256)}.json`);
 }
 
@@ -136,12 +141,23 @@ export function engineFileArg(p: string, from: string): string {
   return rel && !path.isAbsolute(rel) && /^[\x20-\x7e]+$/.test(rel) ? rel : p;
 }
 
+/** whisper-cli arguments that detect the spoken language and exit (#163). */
+export function detectArgs(o: { model: string; input: string; threads: number }): string[] {
+  return ['-m', o.model, '-f', o.input, '-t', String(o.threads), '-l', 'auto', '-dl'];
+}
+
+/** "auto-detected language: de (p = 0.93)" in whisper-cli's stderr → { code, p }, or null. */
+export function parseDetectedLanguage(lines: readonly string[]): { code: string; p: number } | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = /auto-detected language:\s*([a-z]{2,3})\s*\(p\s*=\s*([\d.]+)\)/i.exec(lines[i]);
+    if (m) return { code: m[1].toLowerCase(), p: Number(m[2]) };
+  }
+  return null;
+}
+
 /**
  * whisper-cli arguments for one chunk. `-ojf` writes the JSON result with tokens (word timing, #118); `dtw` is the
- * model's alignment preset (whisperDtwPreset), which needs flash attention off (`-nfa`) to take effect.
- */
-/**
- * whisper-cli arguments. `-mc 0`: no text context is carried from one 30 s window to the next, so a line hallucinated
+ * model's alignment preset (whisperDtwPreset), which needs flash attention off (`-nfa`) to take effect. `-mc 0`: no text context is carried from one 30 s window to the next, so a line hallucinated
  * over music or silence cannot repeat itself for the rest of the film (#158: "Thank you." and other lines hundreds of
  * times; worse with DTW, which needs flash attention off, `-nfa`). No prompt: a "verbatim" filler prompt made it
  * invent "uh, uh, uh…" rather than keep real fillers, and `-mc 0` drops prompts anyway.
@@ -207,7 +223,7 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
   if (!verified.ok) throw new Error(verified.error);
   if (jc.signal.aborted) throw canceled();
   const bin = ctx.enginePath === undefined ? getWhisperCliPath() : ctx.enginePath;
-  if (!bin) throw new Error(`The speech-to-text engine (whisper-cli) is not included in this build of ${PRODUCT_NAME}.`);
+  if (!bin) throw new Error(whisperMissingMessage());
 
   const fileKey = await transcriptionMediaKey(req.path);
   const cacheFile = transcriptionCachePath(fileKey, req, model.sha256);
@@ -254,22 +270,64 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
     const dtw = whisperDtwPreset(req.model);
     jc.setProgress(EXTRACT_SHARE, total > 0 ? 'Transcribing…' : 'No audio');
 
-    // 3. Transcribe each chunk.
-    for (let i = 0; i + 1 < cuts.length && total > 0; i++) {
-      const start = cuts[i];
-      const end = cuts[i + 1];
+    // 3. What to transcribe: the chunks, each in the spoken language; with keepLanguages (#163), stretches in the
+    // language detected for each (about 10 s, cut at quiet moments, so a short exchange in another language fills its
+    // stretch and is heard), within the chunks.
+    let runs: { start: number; end: number; lang: string | null }[] = [];
+    for (let i = 0; i + 1 < cuts.length; i++) runs.push({ start: cuts[i], end: cuts[i + 1], lang: null });
+    const keepLanguages = !!req.keepLanguages && !translate && !model.englishOnly && total > 0;
+    let detectShare = 0;
+    if (keepLanguages) {
+      detectShare = DETECT_SHARE;
+      const windows = await planChunks(wav, info, { chunkSeconds: LANGUAGE_WINDOW_SECONDS, searchSeconds: 2 });
+      const found: { start: number; end: number; code: string | null }[] = [];
+      for (let i = 0; i + 1 < windows.length; i++) {
+        if (jc.signal.aborted) throw canceled();
+        const w = path.join(tmp, 'detect.wav');
+        await writeWavChunk(wav, info, windows[i], windows[i + 1], w, jc.signal);
+        const run = await runEngine(bin, [...(ctx.enginePrefixArgs ?? []), ...detectArgs({ model: modelArg, input: 'detect.wav', threads })], tmp, 0, jc, () => {}, (child) => ctx.onEngine?.(child, tmp));
+        const d = parseDetectedLanguage(run.stderrTail);
+        found.push({ start: windows[i], end: windows[i + 1], code: d && d.p >= LANGUAGE_MIN_P && whisperLanguage(d.code) ? d.code : null });
+        jc.setProgress(EXTRACT_SHARE + detectShare * ((i + 1) / (windows.length - 1)), `Listening for languages… ${i + 1} of ${windows.length - 1}`);
+      }
+      await removeQuietly(path.join(tmp, 'detect.wav'));
+      // The main language: the one chosen, else the most common confident one. Unsure stretches keep it.
+      const counts = new Map<string, number>();
+      for (const f of found) if (f.code) counts.set(f.code, (counts.get(f.code) ?? 0) + (f.end - f.start));
+      const main = req.language !== 'auto' ? req.language : [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'en';
+      spoken = main;
+      const merged: { start: number; end: number; lang: string }[] = [];
+      for (const f of found) {
+        const lang = f.code ?? main;
+        const last = merged[merged.length - 1];
+        if (last && last.lang === lang) last.end = f.end; else merged.push({ start: f.start, end: f.end, lang });
+      }
+      // Never longer than a chunk: split at the chunk cuts.
+      runs = [];
+      for (const m of merged) {
+        let a = m.start;
+        for (const c of cuts) if (c > a && c < m.end) { runs.push({ start: a, end: c, lang: m.lang }); a = c; }
+        runs.push({ start: a, end: m.end, lang: m.lang });
+      }
+    }
+
+    // 4. Transcribe each run.
+    const span = 1 - EXTRACT_SHARE - detectShare;
+    for (let i = 0; i < runs.length && total > 0; i++) {
+      const start = runs[i].start;
+      const end = runs[i].end;
       const seconds = (end - start) / info.sampleRate;
-      const base = EXTRACT_SHARE + (1 - EXTRACT_SHARE) * (start / info.samples);
-      const share = (1 - EXTRACT_SHARE) * ((end - start) / info.samples);
-      const label = cuts.length > 2 ? ` (part ${i + 1} of ${cuts.length - 1})` : '';
+      const base = EXTRACT_SHARE + detectShare + span * (start / info.samples);
+      const share = span * ((end - start) / info.samples);
+      const label = runs.length > 1 ? ` (part ${i + 1} of ${runs.length})` : '';
       let input = 'audio.wav';
-      if (cuts.length > 2) {
+      if (runs.length > 1) {
         input = 'chunk.wav';
         await writeWavChunk(wav, info, start, end, path.join(tmp, input), jc.signal);
       }
       const outBase = 'out';
       await removeQuietly(path.join(tmp, `${outBase}.json`));
-      const lang = spoken ?? 'auto';
+      const lang = runs[i].lang ?? spoken ?? 'auto';
       await runEngine(bin, [...(ctx.enginePrefixArgs ?? []), ...whisperArgs({ model: modelArg, input, outBase, threads, language: lang, translate, dtw })], tmp, seconds, jc,
         (f) => jc.setProgress(base + share * f, `Transcribing${label}… ${Math.round((start / info.sampleRate + f * seconds) / 60)} of ${Math.max(1, Math.round(total / 60))} min`),
         (child) => ctx.onEngine?.(child, tmp));
@@ -280,7 +338,9 @@ export async function runTranscribe(req: TranscribeRequest, ctx: TranscribeJobCo
       if (!spoken && parsed.language && whisperLanguage(parsed.language)) spoken = parsed.language;
       // The WAV starts with the stream's first sample: a stream that starts after the file does (an audio delay muxed
       // into an MKV / TS) puts every cue that much later in the source (#157).
-      cues.push(...segmentsToCues(parsed.segments, audioStart + start / info.sampleRate, seconds));
+      const runCues = segmentsToCues(parsed.segments, audioStart + start / info.sampleRate, seconds);
+      if (keepLanguages && runs[i].lang) for (const c of runCues) c.lang = runs[i].lang!;
+      cues.push(...runCues);
       if (input !== 'audio.wav') await removeQuietly(path.join(tmp, input));
     }
 
@@ -314,7 +374,7 @@ export function transcribeJobTitle(req: TranscribeRequest): string {
  * or running, that job is returned. Its result is a TranscribeResult.
  */
 export function startTranscribeJob(queue: JobQueue, req: TranscribeRequest, ctx: TranscribeJobContext): JobInfo {
-  const key = `${req.path}|${req.streamIndex}|${req.model}|${req.language}|${req.translate ? 1 : 0}`;
+  const key = `${req.path}|${req.streamIndex}|${req.model}|${req.language}|${req.translate ? 1 : 0}|${req.keepLanguages ? 1 : 0}`;
   const existing = inFlightJob(queue, inFlightTranscribe, key);
   if (existing) return existing;
   const job = queue.add<TranscribeResult>({

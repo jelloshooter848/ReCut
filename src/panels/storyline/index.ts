@@ -8,7 +8,7 @@ registerPanel({
   defaultZone: 'center-bottom',
   icon: Map,
   component: StorylinePanel,
-  description: 'Story blocks, character / plotline filters and what-if runtime experiments over the active sequence',
+  description: 'Story blocks, character / plotline filters and what-if runtime experiments over the active timeline',
 });
 
 export { StorylinePanel };

@@ -77,7 +77,7 @@ test('Make Compound Clip, Open in Timeline, edit inside: the outer timeline and 
   innerId = nestedV[0][2]!;
   expect(nestedV[0]).toEqual([0, 96, innerId]);
   expect(await clipsOf(outerId, 'audio')).toEqual([[0, 96, innerId]]);
-  expect(await st<string>(`(s, id) => s.project.sequences[id].name`, innerId)).toBe('Nested Sequence 01');
+  expect(await st<string>(`(s, id) => s.project.sequences[id].name`, innerId)).toBe('Nested Timeline 01');
   expect(await clipsOf(innerId, 'video')).toEqual([[0, 48, null], [48, 48, null]]);
   await expect(page.locator('.tl-clip.nested')).toHaveCount(2);
   await expect(page.locator('.tl-clip.nested .tl-badge.nested').first()).toHaveText('NEST');
@@ -121,7 +121,7 @@ test('Make Compound Clip, Open in Timeline, edit inside: the outer timeline and 
   // Back on the outer sequence: the nested clip is unchanged; the Inspector shows its sequence.
   await st(`(s, a) => { s.setActiveSequence(a.outer); s.select([a.clip], 'set'); }`, { outer: outerId, clip: nestedClipId });
   const insp = page.getByTestId('inspector');
-  await expect(insp).toContainText('Sequence: Nested Sequence 01');
+  await expect(insp).toContainText('Timeline: Nested Timeline 01');
   await expect(insp.getByTestId('nested-range')).toBeVisible();
   await expect(insp.getByTestId('open-nested')).toBeVisible();
 
@@ -181,7 +181,7 @@ test('a sequence dropped on the timeline is nested there; a sequence cannot be n
   // Inside the nested sequence, dropping the outer one (which contains it) is refused.
   await st(`(s, id) => s.setActiveSequence(id)`, innerId);
   await drop(outerId, 0);
-  await expect.poll(() => st<string>(`(s) => s.ui.toasts.map((t) => t.text).join(' | ')`)).toContain('Cannot nest the sequence here');
+  await expect.poll(() => st<string>(`(s) => s.ui.toasts.map((t) => t.text).join(' | ')`)).toContain('Cannot nest the timeline here');
   expect(await clipsOf(innerId, 'video')).toEqual([[0, 48, null], [48, 48, null]]);
 });
 
@@ -201,7 +201,7 @@ test('keyframes on the compound clip: opacity keyed 0 -> 1 in the Inspector fade
   expect(await clipsOf(outerId, 'video')).toEqual([[0, 96, innerId]]);
   await st(`(s, id) => s.select([id], 'set')`, nestedClipId);
   await expect(insp).toHaveAttribute('data-mode', 'clip');
-  await expect(insp).toContainText('Sequence: Nested Sequence 01');
+  await expect(insp).toContainText('Timeline: Nested Timeline 01');
 
   // Opacity keyframes on the nested clip: 0 at frame 0, 100 % at frame 47.
   await setPlayhead(0);

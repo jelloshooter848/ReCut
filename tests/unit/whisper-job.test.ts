@@ -20,7 +20,7 @@ import { getFfmpegPath } from '../../electron/media/ffmpeg';
 import { WHISPER_CLI_NAME } from '../../electron/whisper/engine';
 import { _resetVerifiedModels, setTestWhisperModels } from '../../electron/whisper/models';
 import {
-  engineFileArg, startTranscribeJob, transcribeJobTitle, transcriptionCachePath, transcriptionMediaKey, transcriptionSettingsHash,
+  engineFileArg, parseDetectedLanguage, startTranscribeJob, transcribeJobTitle, transcriptionCachePath, transcriptionMediaKey, transcriptionSettingsHash,
   whisperArgs, type TranscribeJobContext,
 } from '../../electron/whisper/transcribeJob';
 import { readWavInfo, planChunks, wavHeader } from '../../electron/whisper/wav';
@@ -149,6 +149,36 @@ describe.skipIf(!hasFfmpeg)('transcription job (fake engine)', () => {
     const again = await run(q, req(), ctx());
     expect((again.job.result as TranscribeResult).cached).toBe(true);
     expect((again.job.result as TranscribeResult).cues[0].words).toEqual(first.words);
+  });
+
+  it('keep other languages (#163): each ~10 s stretch in its detected language; unsure guesses keep the main one', async () => {
+    const long = path.join(tmp, 'mixed.mkv');
+    ffmpeg(['-f', 'lavfi', '-i', 'sine=f=300:r=48000:d=70', '-c:a', 'flac', long]);
+    process.env.FAKE_WHISPER_DETECT = 'en:0.9,de:0.95,zh:0.4,en:0.9'; // the last answer repeats
+    try {
+      const q = new JobQueue({ throttleMs: 0 });
+      const { job } = await run(q, req({ path: long, language: 'auto', keepLanguages: true }), ctx());
+      expect(job.status, job.error).toBe('done');
+      const runs = engineRuns();
+      const detects = runs.filter((r) => r.args.includes('-dl')).length;
+      expect(detects).toBeGreaterThanOrEqual(6); // 70 s in stretches of about 10 s (cut at the quietest point nearby)
+      expect(detects).toBeLessThanOrEqual(10);
+      const langs = runs.filter((r) => !r.args.includes('-dl')).map((r) => r.args[r.args.indexOf('-l') + 1]);
+      expect(langs).toEqual(['en', 'de', 'en']); // the zh guess (p 0.4) keeps English, the main language
+      const res = job.result as TranscribeResult;
+      expect(res.spokenLanguage).toBe('en');
+      expect(new Set(res.cues.map((c) => c.lang))).toEqual(new Set(['en', 'de']));
+      const de = res.cues.filter((c) => c.lang === 'de');
+      expect(Math.min(...de.map((c) => c.start))).toBeGreaterThanOrEqual(8); // the second stretch: about 10 s in, cut at the quietest point ±2 s
+      expect(Math.max(...de.map((c) => c.start))).toBeLessThan(22);
+    } finally { delete process.env.FAKE_WHISPER_DETECT; }
+  }, 60_000);
+
+  it('keep other languages is part of the cache key, and ignored when translating', () => {
+    const base = { streamIndex: 1, model: 'small', language: 'en', translate: false };
+    expect(transcriptionSettingsHash({ ...base, keepLanguages: true }, 'a'.repeat(64))).not.toBe(transcriptionSettingsHash(base, 'a'.repeat(64)));
+    expect(parseDetectedLanguage(['x', 'whisper_lang_auto_detect_with_state: auto-detected language: de (p = 0.931000)'])).toEqual({ code: 'de', p: 0.931 });
+    expect(parseDetectedLanguage(['nothing here'])).toBeNull();
   });
 
   it('runs whisper-cli without text context or a prompt, so a hallucinated line cannot loop (#158)', async () => {
@@ -393,4 +423,16 @@ describe.skipIf(!hasEngine || !hasFfmpeg)('transcription with the bundled whispe
     expect(text).toMatch(/hello/);
     expect(text).toMatch(/test/);
   }, 300_000);
+});
+
+describe('missing engine message (#170)', () => {
+  it('an installed build says it is not included; a run from source says how to set it up', async () => {
+    const { whisperMissingMessage } = await import('../../electron/whisper/engine');
+    expect(whisperMissingMessage(false)).toMatch(/not included in this build/);
+    const src = whisperMissingMessage(true);
+    expect(src).toMatch(/runs from source/);
+    expect(src).toMatch(/npm run setup/);
+    expect(src).toMatch(/RECUT_WHISPER_CLI/);
+    expect(src).not.toMatch(/not included/);
+  });
 });

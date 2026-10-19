@@ -33,7 +33,9 @@ promotion PRs that bring them to `rc`, never touch `package.json` `version`, `pa
 
 1. The version bump: `npm version <x.y.z>-rc.<N> --no-git-tag-version` for a candidate, `npm version <x.y.z>
    --no-git-tag-version` for the final release (updates `package.json` and `package-lock.json`).
-2. A new dated section at the top of `CHANGELOG.md`: `## [x.y.z-rc.N] - YYYY-MM-DD` or `## [x.y.z] - YYYY-MM-DD`.
+2. A new dated section at the top of `CHANGELOG.md`, `## [x.y.z-rc.N] - YYYY-MM-DD` or `## [x.y.z] - YYYY-MM-DD`,
+   written from the changelog draft in [NEXT-RELEASE.md](NEXT-RELEASE.md). A candidate's release-prep PR leaves the
+   draft as it is; the final release's resets it to its [empty template](#the-empty-next-releasemd).
 3. Doc lines that name the current version, if any (prefer wording that does not name a version).
 4. The saved-project fixture of the new version, `tests/fixtures/projects/recut-<x.y.z>.recut`, made with
    `node scripts/make-project-fixture.mjs` after the bump (see [the fixtures' README](../tests/fixtures/projects/README.md)).
@@ -161,8 +163,9 @@ straight to the [final release](#final-release-rc--main).
 1. **Release-prep PR into `rc`**, once what the candidate ships is on `rc`: branch `claude/release-X.Y.Z-rc.N` from
    `rc`, run `npm version X.Y.Z-rc.N --no-git-tag-version`, and add `## [X.Y.Z-rc.N] - YYYY-MM-DD` at the top of
    `CHANGELOG.md`, listing the changes since the previous candidate (for `rc.1`: since the last stable release; see
-   [What goes in the changelog](#what-goes-in-the-changelog)). No saved-project fixture, and no roadmap **Status** or
-   Progress change (they name stable releases). Run `npm run typecheck` and `npm test`, then open the PR against `rc`.
+   [What goes in the changelog](#what-goes-in-the-changelog)). It does not reset [NEXT-RELEASE.md](NEXT-RELEASE.md):
+   the draft keeps growing until the stable release. No saved-project fixture, and no roadmap **Status** or Progress
+   change (they name stable releases). Run `npm run typecheck` and `npm test`, then open the PR against `rc`.
 2. **The owner merges it.** The merge is a push to `rc`, so `.github/workflows/windows.yml` runs. Its first step sees
    a release-candidate version (`X.Y.Z-rc.N`, N from 1) that has its changelog section and no tag yet, and makes the
    run a release. After the same seven gates as a stable release ([What gates a release](#what-gates-a-release)) the
@@ -171,24 +174,24 @@ straight to the [final release](#final-release-rc--main).
 3. Check the release page: the **Pre-release** label is shown, **Latest** is still on the last stable release, the
    notes start with the release-candidate line, and both `.exe` files, the `.AppImage` and both `.dmg` files are
    attached.
-4. **Test the candidate.** A fix goes into `dev` first, in a normal PR, and is then picked into `rc` (a promotion
-   PR); the fixes are released as the next candidate, `rc.N+1`, with its own release-prep PR. A published candidate
-   is never changed: its tag and release are final.
+4. **QA the candidate** with the QA checklist in [NEXT-RELEASE.md](NEXT-RELEASE.md). A fix goes into `dev` first, in
+   a normal PR, and is then picked into `rc` (a promotion PR); the fixes are released as the next candidate,
+   `rc.N+1`, with its own release-prep PR. A published candidate is never changed: its tag and release are final.
 
 Later pushes to `rc` (promotions of fixes) find `vX.Y.Z-rc.N` already tagged and make test builds until the next
 release-prep PR is merged.
 
 ### Final release (rc → main)
 
-1. **Release-prep PR into `rc`**, once what the release ships is on `rc` (for a release with candidates, once the
-   last candidate has been tested): branch `claude/release-X.Y.Z` from `rc`,
-   run `npm version X.Y.Z --no-git-tag-version` and add the full `## [X.Y.Z] - YYYY-MM-DD` section at the top of
+1. **Release-prep PR into `rc`**, once what the release ships is on `rc` (for a release with candidates, once the last
+   candidate has passed QA): branch `claude/release-X.Y.Z` from `rc`, run
+   `npm version X.Y.Z --no-git-tag-version` and add the full `## [X.Y.Z] - YYYY-MM-DD` section at the top of
    `CHANGELOG.md`, written for people coming from the last stable release (everything since then, any candidates'
-   changes included; their `## [X.Y.Z-rc.N]` sections stay below it unchanged, as history). Update
-   [LIMITATIONS](LIMITATIONS.md) if what it lists changed. Check `docs/ROADMAP.md`:
-   every roadmap entry this release ships has its **Status** line and its row in the Progress table marked done with
-   this version (the feature PR sets them; the release-prep PR fixes any that are missing or still name an older
-   version). Add the version's
+   changes included; their `## [X.Y.Z-rc.N]` sections stay below it unchanged, as history), written from the whole
+   draft in [NEXT-RELEASE.md](NEXT-RELEASE.md); then reset that file to its
+   [empty template](#the-empty-next-releasemd). Update [LIMITATIONS](LIMITATIONS.md) if what it lists changed. Check `docs/ROADMAP.md`: every roadmap entry this release
+   ships has its **Status** line and its row in the Progress table marked done with this version (the feature PR sets
+   them; the release-prep PR fixes any that are missing or still name an older version). Add the version's
    saved-project fixture: `node scripts/make-project-fixture.mjs` writes `tests/fixtures/projects/recut-X.Y.Z.recut`
    with this checkout's own code (the unit suite fails while the fixture of a stable version in `package.json` is
    missing). Never edit or regenerate an older fixture. Run `npm run typecheck` and `npm test`, then open the PR
@@ -196,10 +199,10 @@ release-prep PR is merged.
    nothing.
 2. **Smoke-test the `rc` test build.** The artifacts of that `rc` push run (`ReCut-windows`, `ReCut-linux`,
    `ReCut-macos-arm64`, `ReCut-macos-x64`) are the installers of `X.Y.Z` as it will ship, already named for the
-   version. The owner can install them and smoke-test them before the next step; for a release without candidates
-   this is the build tested before publishing. A problem found here is fixed in `dev` and picked into `rc` like any
-   fix; the version is still unreleased, so no new release-prep PR is needed, and the `rc` push run of the pick is the
-   new build to test.
+   version. The owner can install them and smoke-test them (or run the QA checklist in [NEXT-RELEASE.md](NEXT-RELEASE.md))
+   before the next step; for a release without candidates this is the build tested before publishing. A problem found
+   here is fixed in `dev` and picked into `rc` like any fix; the version is still unreleased, so no new release-prep PR
+   is needed, and the `rc` push run of the pick is the new build to test.
 3. **Release merge: one PR from `rc` into `main`.** Open it once the release-prep PR is merged, the `rc` push run of
    that merge (or of a later fix) is green and its installers have been smoke-tested. It contains nothing but `rc`'s
    commits since the last release. Merging it is the release step. Don't merge anything else into `rc` between the
@@ -230,6 +233,8 @@ release's version, changelog section and fixture (and a hotfix's fix), and the n
 1. **`main` into `rc`:** branch `claude/merge-main-X.Y.Z` from `rc`, `git merge origin/main`, PR into `rc`. The owner
    merges it. Its push run is a test build (`rc` now has a stable version).
 2. **`main` into `dev`:** branch `claude/merge-main-X.Y.Z-dev` from `dev`, `git merge origin/main`, PR into `dev`.
+   This brings the reset [NEXT-RELEASE.md](NEXT-RELEASE.md) from `main`: keep the entries of `dev` changes that were
+   not promoted to `rc` (they are not released yet) and drop the ones the release shipped.
 
 Merge, never rebase: the merge commits are what let later cuts and picks apply cleanly.
 
@@ -281,7 +286,7 @@ report even when one fails):
 | `installer` (Installer + portable exe) | Builds the installer and portable exe, smoke-tests the unpacked app, runs the install check (five silent install / smoke / uninstall cycles and a portable launch), and decides the release metadata. |
 | `tests` (Unit tests on Windows) | The vitest suite. |
 | `e2e` (End-to-end tests on Windows) | The Playwright suite driving the built app. |
-| `launcher` (Start ReCut.cmd from a fresh clone) | `Start ReCut.cmd -Smoke`. |
+| `launcher` (Start ReCut.cmd from a fresh clone) | `Start ReCut.cmd -Smoke`, which requires the speech-to-text engine and OCR (the list of required results it shares with the installer's smoke test, `scripts/smoke-requirements.json`). |
 | `linux` (Linux AppImage + tests) | On `ubuntu-22.04`: typecheck, the vitest suite and the Playwright suite under xvfb, all with the FFmpeg that gets bundled; builds the x86-64 AppImage with that FFmpeg (`scripts/linux/get-ffmpeg.sh`), checks the OCR packaging budget and the bundled FFmpeg files, and smoke-tests the AppImage twice, mounted with FUSE and with `--appimage-extract-and-run` (media protocol, encode + probe with the FFmpeg inside the AppImage, licence files, OCR worker, UI mounted). Uploads the `ReCut-linux` artifact. |
 | `macos` (macOS arm64 / x64 dmg + smoke test) | A matrix over `arm64` and `x64`, both on `macos-14` (Apple Silicon; the x64 leg runs its programs under Rosetta 2, never on Intel hardware): typecheck and the vitest suite with the FFmpeg and speech-to-text engine that get bundled; builds that arch's dmg, Developer ID signed and notarized when the signing secrets are set ([MACOS-SIGNING.md](MACOS-SIGNING.md)); checks the OCR packaging budget, the bundled FFmpeg and engine files (that arch only) and the signature of every binary (plus Gatekeeper and the stapled ticket when signed); mounts the dmg and smoke-tests the app inside it. **On a release run it fails unless all five signing secrets are set and the app is signed, notarized and stapled**; a test build without the secrets is ad-hoc signed. Uploads the `ReCut-macos-arm64` / `ReCut-macos-x64` artifact. |
 | `macos-e2e` (End-to-end tests on macOS) | The Playwright suite on `macos-14` (arm64 only). |
@@ -503,22 +508,59 @@ section uses these headings (leave out empty ones):
 - **Added**: new features and capabilities.
 - **Changed**: behaviour users will notice even though nothing is broken: new prompts, stricter validation, different
   output, different defaults. Put behaviour changes here, in bold if a user could be surprised.
-- **Fixed**: bugs fixed. Link the closed report for every bug that has one, for example
-  `([report](bugs/closed/2026-10-05-export-perf-inputcount-stale.md))`.
-- **Known issues**: important open reports under `bugs/open/`, linked, plus any limitation users must know about.
+- **Fixed**: bugs fixed. Link the closed issue for every bug, for example
+  `([#139](https://github.com/jelloshooter848/ReCut/issues/139))`.
+- **Known issues**: important open bug issues, linked, plus any limitation users must know about.
 
 Rules:
 
 - Describe what users see, not how it was implemented. One line per item where possible. No marketing.
-- Build the section from `git log --oneline <previous tag>..origin/rc` and from the reports moved to
-  `bugs/closed/` since the previous release.
+- Write the section from the changelog draft in [NEXT-RELEASE.md](NEXT-RELEASE.md) as it is on `rc`, which each
+  issue's PR fills in as it goes and which promotions carry to `rc`. Check it against
+  `git log --oneline <previous tag>..origin/rc` and the bug issues closed since the previous release (label `bug`, or
+  `done on dev`) that were promoted: add what is missing, drop "(on devJames)" / "(on devDavid)" marks, and tidy the
+  wording. The draft's **Development** items go under the section's own **Development** heading.
 - A candidate's section (`## [X.Y.Z-rc.N]`) lists the changes since the previous candidate (`rc.1`: since the last
-  stable release). The final `## [X.Y.Z]` section covers everything since the last stable release.
-- Link repository files with relative links (`bugs/closed/...`, `docs/...`). CI rewrites them to absolute links at
+  stable release). Candidates do not reset the draft, so take the entries the previous candidate's section does not
+  have yet. The final `## [X.Y.Z]` section covers everything since the last stable release.
+- Link repository files with relative links (`docs/...`). CI rewrites them to absolute links at
   the release tag for the GitHub release notes.
 - Mention a project `formatVersion` change explicitly.
 - CI copies everything between `## [x.y.z]` and the next `## [` heading into the release notes, so keep that section
   self-contained.
+
+### The empty NEXT-RELEASE.md
+
+[NEXT-RELEASE.md](NEXT-RELEASE.md) is reset once per stable release: the final release-prep PR into `rc` resets it
+to this template (keep the intro paragraph as it is in the file), the `rc` → `main` merge takes the reset to `main`,
+and merging `main` back brings it to `rc` and `dev` (where the entries of changes not promoted yet are kept, see
+[After a release](#after-a-release-merge-main-back)). A candidate (`X.Y.Z-rc.N`) never resets it. The template:
+
+```markdown
+# Next release
+
+Changes on `dev` (and on the personal branches heading there) that are not in a release yet. ...
+
+## Changelog draft
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Known issues
+
+### Development
+
+## QA checklist
+
+Test on a `dev` build (`npm run dev` on `dev`). Tick an item when it behaves as described. A block marked (on devJames) or
+(on devDavid) needs that branch until it is merged into `dev`.
+```
+
+A hotfix does not touch NEXT-RELEASE.md: its fix is released at once and gets its changelog line in the hotfix's own
+section.
 
 ## Build names
 

@@ -1,6 +1,6 @@
 /**
  * electron/chromiumCache.ts: the one-time removal of Chromium's HTTP cache from the default cache folder
- * (bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md). Only Chromium's folder names, only in
+ * (bugs/closed/2026-10-09-default-cache-dir-is-chromium-http-cache.md @ 59eafc6). Only Chromium's folder names, only in
  * `<userData>/cache`, never anything of the app's.
  */
 import { afterEach, describe, expect, it } from 'vitest';

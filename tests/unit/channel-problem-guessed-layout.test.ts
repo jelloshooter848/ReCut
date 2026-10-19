@@ -1,5 +1,5 @@
 /**
- * bugs/closed/2026-10-08-channel-warning-names-guessed-layout.md: when the probe guessed a stream's layout from its
+ * bugs/closed/2026-10-08-channel-warning-names-guessed-layout.md @ 59eafc6: when the probe guessed a stream's layout from its
  * channel count (PCM in Matroska stores none), a named channel cannot be used; the reason must say the layout is
  * unknown instead of presenting the guess ("the stream (5.1) has no Centre (FC) channel").
  */

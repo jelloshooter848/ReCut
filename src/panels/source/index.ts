@@ -9,7 +9,7 @@ registerPanel({
   icon: Film,
   component: SourcePanel,
   keepAlive: true,
-  description: 'Source Monitor — preview media, mark In/Out, insert into the sequence',
+  description: 'Source Monitor — preview media, mark In/Out, insert into the timeline',
 });
 
 export { SourcePanel };

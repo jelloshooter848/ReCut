@@ -1,5 +1,5 @@
 /**
- * bugs/closed/2026-10-08-quit-stuck-after-renderer-dies.md
+ * bugs/closed/2026-10-08-quit-stuck-after-renderer-dies.md @ 59eafc6
  *
  * The main process's quit state machine (electron/quitFlow.ts): once the renderer acked ev:beforeQuit, main has no
  * fallback timer (the renderer may be showing Save / Don't Save / Cancel). A renderer that dies or hangs after the ack

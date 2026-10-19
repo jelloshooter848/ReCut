@@ -9,7 +9,7 @@ registerPanel({
   defaultZone: 'left-bottom',
   icon: Captions,
   component: SubtitlesPanel,
-  description: 'Edit, nudge, split and export the active sequence’s subtitle tracks',
+  description: 'Edit, nudge, split and export the active timeline’s subtitle tracks',
 });
 
 export { SubtitlesPanel };

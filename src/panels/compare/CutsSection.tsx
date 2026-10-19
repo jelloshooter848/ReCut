@@ -91,7 +91,7 @@ export function CutsSection({ sequences, order, activeId, aId, bId, bSnapshotId,
                 const dur = sequenceDuration(s);
                 return (
                   <div key={s.id} className={`cmp-cut-row ${s.id === activeId ? 'active' : ''}`} data-testid="cut-row" data-seq={s.id} style={{ paddingLeft: isRoot ? 8 : 22 }}
-                    title={`${s.name}${s.versionLabel ? ` (${s.versionLabel})` : ''} · ${formatSequenceTimecode(dur, s.fps)}${s.parentSequenceId ? `\nderived from ${sequences[s.parentSequenceId]?.name ?? 'missing sequence'}` : ''}`}
+                    title={`${s.name}${s.versionLabel ? ` (${s.versionLabel})` : ''} · ${formatSequenceTimecode(dur, s.fps)}${s.parentSequenceId ? `\nderived from ${sequences[s.parentSequenceId]?.name ?? 'missing timeline'}` : ''}`}
                     onDoubleClick={() => st().setActiveSequence(s.id)}>
                     {!isRoot ? <span className="cmp-branch" /> : null}
                     <span className="ellipsis grow">{s.name}</span>

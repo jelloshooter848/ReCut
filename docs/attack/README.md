@@ -31,7 +31,7 @@ suite on its own; media from `tests/attack/gen-media.sh` (plus the files `v080.t
 No existing attack test failed, so none needed updating. The performance gate's misses were all at the edge of their
 budgets on a host that was not quiet (other jobs running, load 4.1 against 0.8–2.6 for the baseline) in a single run:
 openProject round trip 1,080 ms and 1,092 ms incl. multi-hour (≤ 1,000 ms; 782–1,349 ms in the 7 October variance
-report, `bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md`), sequenceDuration 0.22 ms (≤ 0.2), planFrame
+report, `https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-07-perf-gate-verdict-not-reproducible.md`), sequenceDuration 0.22 ms (≤ 0.2), planFrame
 multi-hour max 8.0 ms (≤ 4; a max), filmstrip cold 3,007 ms (≤ 3,000). Classified as environment; a two-run
 `npm run perf:check -- --runs 2` on a quiet machine is the way to confirm. One trend to watch there: the multi-hour
 openProject main-side handler (a diagnostic) was ×1.35 its baseline.
@@ -54,6 +54,6 @@ Bugs found:
 
 | Bug | Severity | Status |
 |---|---|---|
-| [Stored probe audio streams trusted as is: a huge channel count freezes the channel menu](../../bugs/closed/2026-10-08-stored-probe-audio-streams-not-repaired.md) | medium | fixed |
-| [Channel-selection warning presents a guessed layout as the stream's](../../bugs/closed/2026-10-08-channel-warning-names-guessed-layout.md) | low | fixed |
-| [Nested fan-out within the depth limit makes flattening exponential](../../bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md) | medium | fixed |
+| [Stored probe audio streams trusted as is: a huge channel count freezes the channel menu](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-stored-probe-audio-streams-not-repaired.md) | medium | fixed |
+| [Channel-selection warning presents a guessed layout as the stream's](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-channel-warning-names-guessed-layout.md) | low | fixed |
+| [Nested fan-out within the depth limit makes flattening exponential](https://github.com/jelloshooter848/ReCut/blob/59eafc65917cf0d5ec5344079a5c84811bfcf80c/bugs/closed/2026-10-08-nested-fan-out-flatten-blowup.md) | medium | fixed |

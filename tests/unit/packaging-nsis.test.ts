@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 
-// Regression guard for bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md.
+// Regression guard for bugs/closed/2026-10-05-nsis-installer-crash-system-dll.md @ 59eafc6.
 //
 // electron-builder < 26.12.0 generates a per-user installer whose multiUser.nsh copies the SHGetKnownFolderPath
 // result with `System::Call '*$2(&w${NSIS_MAX_STRLEN} .s)'`: a fixed NSIS_MAX_STRLEN-wide read from a heap string

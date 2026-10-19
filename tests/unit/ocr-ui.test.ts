@@ -124,7 +124,7 @@ describe('embedded subtitle actions', () => {
   it('the project media menu lists streams with the OCR labels', () => {
     const m = mediaWith(SUBS);
     S().addMedia([m]);
-    const env = { selectedMedia: [m.id], openPanelDialog: () => undefined, startRename: () => undefined, expandScenes: () => undefined, newBin: () => undefined };
+    const env = { selectedMedia: [m.id], selectedShots: [], openPanelDialog: () => undefined, startRename: () => undefined, expandScenes: () => undefined, newBin: () => undefined };
     const embedded = mediaMenu(m, env).find((i) => i.label === 'Embedded Subtitles')!;
     expect(embedded.submenu!.map((i) => [i.label, !!i.disabled])).toEqual([
       ['#2 eng — Commentary (subrip)', false], ['#3 fre (PGS) — Read with OCR…', false],

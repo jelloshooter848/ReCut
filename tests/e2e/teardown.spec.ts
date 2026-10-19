@@ -1,6 +1,6 @@
 /**
  * Test teardown: the helpers' close() quits the app whatever the project's state when the quit request is handled
- * (bugs/closed/2026-10-08-e2e-close-hangs-on-quit-prompt.md).
+ * (bugs/closed/2026-10-08-e2e-close-hangs-on-quit-prompt.md @ 59eafc6).
  */
 import { test, expect } from '@playwright/test';
 import { launchApp } from './helpers';
@@ -13,8 +13,8 @@ type W = Window & {
 test('close() quits when a background job marks the project dirty while the quit request is handled', async () => {
   const { app, page } = await launchApp();
   // A change that marks the project dirty landing while the renderer handles the quit request, as a proxy job
-  // finishing did (jobsRouter → store.setProxy; not dirty since bugs/closed/2026-10-08-job-mirror-marks-saved-project-
-  // dirty.md; a probe result still is). Registered after the app's own before-quit handler,
+  // finishing did (jobsRouter → store.setProxy; not dirty since
+  // bugs/closed/2026-10-08-job-mirror-marks-saved-project-dirty.md @ 59eafc6; a probe result still is). Registered after the app's own before-quit handler,
   // this listener runs while that handler awaits quitAck (which drops main's 3 s fallback), so the handler then finds
   // the project dirty and asks Save / Don't Save / Cancel: nobody answers that box in a test.
   await page.evaluate(() => {

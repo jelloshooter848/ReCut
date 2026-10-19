@@ -24,7 +24,7 @@ import type { AppPreferences, ID, JobInfo, MediaProbe, Project } from '../shared
 import { IPC, pathToMediaUrl } from '../shared/ipc';
 import type {
   AppInfo, ExportRequest, ExportStartResult, FilmstripRequest, LicenceFile, LoadReply, MessageOptions, OpenFilesOptions, OpenLicenceResult,
-  ChannelProxyRequest, ProxyLookup, ProxyRequest, RecoveryReply, RecutApi, RelinkScanRequest, SaveFileOptions, SaveResult, SceneDetectRequest, ThumbnailRequest, WaveformData,
+  ChannelProxyRequest, ProxyLookup, ProxyRequest, RecoveryReply, RecutApi, RelinkScanRequest, SaveFileOptions, SaveResult, SceneDetectRequest, SuggestScenesRequest, ThumbnailRequest, WaveformData,
 } from '../shared/ipc';
 import { encodeProjectWire, isAutosaveStreamRef, SAVE_STREAM_IPC as IPC_SAVE, type SaveBeginResult } from '../shared/projectWire';
 import * as io from './project/io';
@@ -72,6 +72,7 @@ export interface MediaHandlers {
   lookupProxy(req: ProxyRequest): Promise<ProxyLookup | null>;
   startChannelProxy(req: ChannelProxyRequest): Promise<JobInfo>;
   startSceneDetect(req: SceneDetectRequest): Promise<JobInfo>;
+  startSuggestScenes(req: SuggestScenesRequest): Promise<JobInfo>;
   extractSubtitles(path: string, streamIndex: number): Promise<string>;
 
   startOcr(req: OcrRequest): Promise<JobInfo>;
@@ -103,7 +104,7 @@ export interface MediaHandlers {
 }
 
 // Compile-time check: MediaHandlers must stay in sync with the RecutApi surface.
-type MediaApiKeys = 'probe' | 'thumbnail' | 'filmstrip' | 'cancelThumbnails' | 'waveform' | 'startProxy' | 'lookupProxy' | 'startChannelProxy' | 'startSceneDetect' | 'extractSubtitles'
+type MediaApiKeys = 'probe' | 'thumbnail' | 'filmstrip' | 'cancelThumbnails' | 'waveform' | 'startProxy' | 'lookupProxy' | 'startChannelProxy' | 'startSceneDetect' | 'startSuggestScenes' | 'extractSubtitles'
   | 'startOcr' | 'ocrLanguages' | 'ocrInstallLanguage' | 'ocrRemoveLanguage' | 'ocrInstallLanguageFromFile'
   | 'startTranscribe' | 'whisperEngine' | 'whisperModels' | 'whisperInstallModel' | 'whisperRemoveModel' | 'whisperInstallModelFromFile'
   | 'listJobs' | 'cancelJob' | 'clearJobs' | 'startExport' | 'cancelExport' | 'previewExportCommand'
@@ -123,6 +124,7 @@ export function registerMediaIpc(h: MediaHandlers): void {
   ipcMain.handle(IPC.mediaProxyLookup, (_e, req: ProxyRequest) => h.lookupProxy(req));
   ipcMain.handle(IPC.mediaChannelProxyStart, (_e, req: ChannelProxyRequest) => h.startChannelProxy(req));
   ipcMain.handle(IPC.mediaSceneDetectStart, (_e, req: SceneDetectRequest) => h.startSceneDetect(req));
+  ipcMain.handle(IPC.mediaSuggestScenesStart, (_e, req: SuggestScenesRequest) => h.startSuggestScenes(req));
   ipcMain.handle(IPC.mediaExtractSubtitles, (_e, p: string, streamIndex: number) => h.extractSubtitles(assertString(p, 'path'), Number(streamIndex)));
   // OCR: arguments are checked here (electron/ocr/validate.ts) before they reach the OCR layer.
   ipcMain.handle(IPC.ocrStart, (_e, req: unknown) => h.startOcr(parseOcrRequest(req)));

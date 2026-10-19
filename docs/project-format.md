@@ -35,6 +35,7 @@ which writes it as-is.
 | `sequences` | `Record<ID, Sequence>` | Timelines. |
 | `sequenceOrder` | `ID[]` | Display order. |
 | `scenes` | `Record<ID, SceneRecord>` | Scene library (reusable source ranges). |
+| `sceneSequences` | `Record<ID, SceneSequence>` | Sequences: groups of library scenes in story order (`name`, `sceneIds`, `color`, `tags`, `notes`, `createdAt`). Not timelines (those are `sequences`). Absent in files saved by 0.8.2 and earlier, and read as `{}`; scene ids that are not in `scenes` are dropped on load. |
 | `subtitleTracks` | `Record<ID, SubtitleTrack>` | Imported subtitle/transcript tracks attached to media. |
 | `tags` | `TagVocabulary` | Known characters / plotlines / locations / themes / custom tags. |
 | `settings` | `ProjectSettings` | Proxies on/off, proxy height, autosave interval, carry-subtitles, scene threshold, snapping, defaults. |

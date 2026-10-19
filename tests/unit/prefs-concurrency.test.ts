@@ -1,5 +1,5 @@
 /**
- * prefs.json under concurrent use (bugs/closed/2026-10-07-startup-open-fails-prefs-rename-windows.md).
+ * prefs.json under concurrent use (bugs/closed/2026-10-07-startup-open-fails-prefs-rename-windows.md @ 59eafc6).
  *
  * A launch with `--project` opens the project (which puts it on the recent list: read + write prefs.json) while the
  * renderer asks for AppInfo (reads prefs.json for the cache folder) and checks for recovery (reads prefs.json). On

@@ -4,7 +4,7 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import type { AudioStreamInfo, MediaKind, MediaProbe, Rational, SubtitleStreamInfo, VideoStreamInfo } from '@shared/model';
-import { STILL_IMAGE_CODECS, STILL_IMAGE_EXTS, evaluatePlayability } from '@shared/media';
+import { PROBE_REVISION, STILL_IMAGE_CODECS, STILL_IMAGE_EXTS, evaluatePlayability } from '@shared/media';
 import { assertAbsoluteMediaPath, ffmpegFileArg, runFfprobeJson } from './ffmpeg';
 
 // ------------------------------------------------------------------
@@ -145,11 +145,15 @@ export function layoutForChannels(channels: number): string {
   }
 }
 
-/** Start of a stream relative to the container start_time (seconds, >= 0; 0 when unknown). */
+/**
+ * Start of a stream in source time: after the container start, clamped to 0 as MediaProbe.startTime is (seconds,
+ * >= 0; 0 when unknown). A negative container start (audio before the video at 0) counts as 0, as Chromium plays it:
+ * measuring from it put a video that starts at 0 late by the audio's lead (#154).
+ */
 export function streamStartOffset(s: FfprobeStream, format: FfprobeFormat): number {
   const st = num(s.start_time);
   if (st === undefined) return 0;
-  const fst = num(format.start_time) ?? 0;
+  const fst = Math.max(0, num(format.start_time) ?? 0);
   const d = st - fst;
   return d > 1e-6 ? Math.round(d * 1e6) / 1e6 : 0;
 }
@@ -288,10 +292,14 @@ export function probeFromFfprobe(raw: FfprobeOutput, filePath: string, fileSize?
 
   const size = fileSize ?? num(format.size) ?? 0;
   const startTime = Math.max(0, num(format.start_time) ?? 0);
+  const rawStart = num(format.start_time) ?? 0;
+  const startLead = rawStart < -1e-6 ? Math.round(-rawStart * 1e6) / 1e6 : 0;
   const bitrate = num(format.bit_rate);
 
   const play = evaluatePlayability({ container, video, audio });
   const probe: MediaProbe = {
+    probeRev: PROBE_REVISION,
+    ...(startLead > 0 ? { startLead } : {}),
     container,
     duration,
     size,

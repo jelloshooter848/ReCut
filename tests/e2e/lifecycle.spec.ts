@@ -179,7 +179,7 @@ test('Save As of an untitled project names it after the file', async () => {
 });
 
 test('a clean save + quit while an autosave is still being written offers no recovery on relaunch', async () => {
-  // bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md (gauntlet TEST 1 on Windows CI): the first
+  // bugs/closed/2026-10-08-autosave-after-save-spurious-recovery.md @ 59eafc6 (gauntlet TEST 1 on Windows CI): the first
   // autosave of an untitled project was still serializing (in idle slices) when the project was saved; it landed
   // after the save had dropped the untitled autosave, and the next launch offered it for recovery.
   type Rw = Window & { requestIdleCallback: (cb: (d: unknown) => void, o?: unknown) => number; __held?: ((d: unknown) => void)[]; __holding?: boolean; __auto?: Promise<void>; __recut: { actions: { autosaveProject(): Promise<void> } } };

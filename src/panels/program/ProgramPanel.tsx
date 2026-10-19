@@ -96,7 +96,7 @@ function TimecodeOverlay({ frame, fps, mode, onToggle }: { frame: FrameSignal; f
   }
   return (
     <button type="button" className={['pm-tc', mode === 'source' ? 'source' : ''].filter(Boolean).join(' ')} onClick={onToggle} data-testid="program-timecode"
-      title={mode === 'source' ? 'Showing source timecode of the top clip. Click for sequence timecode.' : 'Showing sequence timecode. Click for source timecode of the top clip.'}>
+      title={mode === 'source' ? 'Showing source timecode of the top clip. Click for timeline timecode.' : 'Showing timeline timecode. Click for source timecode of the top clip.'}>
       <span className="pm-tc-mode">{mode === 'source' ? 'SRC' : 'SEQ'}</span>
       <span>{text}</span>
       {file ? <span className="pm-tc-file">{file}</span> : null}
@@ -116,7 +116,7 @@ function CurrentTimecode({ frame, fps, onSeek }: { frame: FrameSignal; fps: Rati
 
 const SequenceDurationField = memo(function SequenceDurationField({ fps }: { fps: Rational }) {
   const duration = useStore(activeSequenceDuration);
-  return <TimecodeField className="pm-dur" value={duration} fps={fps} onChange={() => { /* read-only */ }} scrub={false} disabled tone="default" title="Sequence duration" />;
+  return <TimecodeField className="pm-dur" value={duration} fps={fps} onChange={() => { /* read-only */ }} scrub={false} disabled tone="default" title="Timeline duration" />;
 });
 
 const ProgramScrubBar = memo(function ProgramScrubBar(props: Omit<ScrubBarProps, 'durationFrames'>) {
@@ -437,11 +437,11 @@ export function ProgramPanel({ zoneId, focused }: PanelProps) {
             </div>
           ) : null}
         </div>
-        {!seqId ? <div className="pm-empty"><Monitor /><span>No sequence open</span></div> : null}
+        {!seqId ? <div className="pm-empty"><Monitor /><span>No timeline open</span></div> : null}
         {seqId && empty ? (
           <div className="pm-empty" data-testid="program-empty-hint">
             <Film />
-            <span className="pm-empty-title">Sequence is empty</span>
+            <span className="pm-empty-title">Timeline is empty</span>
             <span>Insert from the Source monitor (<kbd>{getShortcutLabel(COMMAND_IDS.insert) || ','}</kbd> / <kbd>{getShortcutLabel(COMMAND_IDS.overwrite) || '.'}</kbd>) or drag media onto the Timeline.</span>
           </div>
         ) : null}
